@@ -1356,19 +1356,6 @@ int *last_exp;
 }
 
 /*
- * Bcopy copies `bytes' bytes from the `from' address into the `to' address.
- *
- * bcopy(from, to, bytes)
- * register char *from, *to;
- * register int bytes;
- * {
- *   while (bytes--)
- *   	*to++ = *from++;
- * }
- */
-
-
-/*
  * Compile compiles the pattern into a more comprehensible form and returns a 
  * REGEX structure. If something went wrong, the status field of the structure
  * is set to REG_ERROR and an error message is set into the err_mess field of

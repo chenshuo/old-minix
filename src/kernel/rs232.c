@@ -1,566 +1,651 @@
-/* Now begins the code and data for the device RS232 drivers. */
+/*==========================================================================*
+ *		rs232.c - serial driver for 8250 and 16450 UARTs 	    *
+ *==========================================================================*/
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "../h/sgtty.h"
-#include "../h/signal.h"
-#include "const.h"
-#include "type.h"
-#include "glo.h"
-#include "proc.h"
+#include "kernel.h"
+#include <sgtty.h>
 #include "tty.h"
 
-/* Definitions used by the RS232 driver. */
-#define	RS_BUF_SIZE		 256	/* output buffer per serial line */
-#define PRIMARY                0x3F8	/* I/O port of primary RS232 */
-#define SECONDARY              0x2F8	/* I/O port of secondary RS232 */
-#define SPARE                     16	/* leave room in buffer for echoes */
-#define THRESHOLD                 20	/* # chars to accumulate before msg */
-
-/* Constants relating to the 8250. */
-#define	RS232_RATE_DIVISOR	   0	/* address of baud rate divisor reg */
-#define	RS232_TRANSMIT_HOLDING	   0	/* address of transmitter holding reg*/
-#define	RS232_RECEIVER_DATA_REG	   0	/* address of receiver data register */
-#define	RS232_INTERRUPTS	   1	/* address of interrupt enable reg */
-#define	RS232_INTERRUPT_ID_REG	   2	/* address of interrupt id register */
-#define	RS232_LINE_CONTROL	   3	/* address of line control register */
-#define	RS232_MODEM_CONTROL	   4	/* address of modem control register */
-#define	RS232_LINE_STATUS	   5	/* address of line status register */
-#define	RS232_MODEM_STATUS	   6	/* address of modem status register */
-#define	LINE_CONTROLS		0x0B	/* odd parity,1 stop bit,8 data bits */
-#define	MODEM_CONTROLS		0x0B	/* RTS & DTR */
-#define	ADDRESS_DIVISOR		0x80	/* value to address divisor */
-#define HOLDING_REG_EMPTY       0x20	/* transmitter holding reg empty */
-#define	RS232_INTERRUPT_CLASSES	0x03	/* receiver Data Ready & xmt empty */
-#define	UART_FREQ  	     115200L	/* UART timer frequency */
-#define DEF_BAUD                1200	/* default baud rate */
-
-/* Line control setting related constants. */
-#define ODD			   0
-#define	EVEN			   1
-#define NONE			  -1
-#define	PARITY_ON_OFF		0x08	/* position of parity bit in line reg*/
-#define	PARITY_TYPE_SHIFT	   4	/* shift count for parity_type bit */
-#define	STOP_BITS_SHIFT		   2	/* shift count for # stop_bits */
-#define DATA_LEN                   8	/* how much to shift sg_mode for len */
-
-/* RS232 interrupt types. */
-#define MODEM_STATUS            0x00	/* UART modem status change */
-#define TRANSMITTER_READY	0x02	/* transmitter ready to accept data */
-#define RECEIVER_READY		0x04	/* data received interrupt */
-#define LINE_STATUS             0x06	/* UART line status change */
-#define INT_TYPE_MASK		0x06	/* mask to mask out interrupt type */
-#define	INT_PENDING		0x01	/* position of interrupt-pending bit */
-
-/* Status register values. */
-#define DATA_REGISTER_EMPTY	0x20	/* mask to see if data reg is empty */
-#define DATA_RECEIVED		0x01	/* mask to see if data has arrived */
-
-/* Global variables used by the RS232 driver. */
-PUBLIC message rs232_rd_mess;		/* used when chars arrive from tty */
-PUBLIC message rs232_wt_mess;		/* used when output to tty done */
-PUBLIC int flush_flag;			/* indicates chars in tty_driver_buf */
-PRIVATE int first_rs_write_int_seen = FALSE;
-
-PRIVATE struct rs_struct{
-  int rs_base;			/* 0x3F8 for primary, 0x2F8 secondary*/
-  int rs_busy;			/* line is idle or not */
-  int rs_left;			/* # chars left in buffer to output */
-  char *rs_next;		/* pointer to next char to output */
-  char rs_buf[RS_BUF_SIZE];	/* output buffer */
-} rs_struct[NR_RS_LINES];
-
-
-/*===========================================================================*
- *				rs232				 	     *
- *===========================================================================*/
-PUBLIC rs232(unit)
-int unit;				/* which unit caused the interrupt */
-{
-/* When an RS232 interrupt occurs, mpx88.s catches it and calls rs232().
- * Because more than one interrupt condition can occur at the same
- * time, the conditions are presented in the interrupt-identification
- * register in priority order, we have to keep scanning until the 
- * interrupt-pending bit goes down.  Only one communications port is really
- * supported here because the other vector is used by the Ethernet.
+/* Switches.
+ * #define C_RS232_INT_HANDLERS to use the interrupt handlers in this file.
+ * #define NO_HANDSHAKE to avoid requiring CTS for output.
  */
 
-  int interrupt_type, t, old_state, val;
-  struct rs_struct *rs;
+/* 8250 constants. */
+#define DEF_BAUD             1200	/* default baud rate */
+#define UART_FREQ         115200L	/* timer frequency */
 
-  old_state = lock();
-  rs = &rs_struct[unit - NR_CONS];
-  while (TRUE) {
-	port_in(rs->rs_base + RS232_INTERRUPT_ID_REG, &interrupt_type); 
-	if ((interrupt_type & INT_PENDING) == 1) break;	/* 1 = no interrupt */
-	t = interrupt_type & INT_TYPE_MASK;
-	switch(t) {
-	    case RECEIVER_READY:	/* a character has arrived */
-		rs_read_int(unit);
-		break;
+/* Interrupt enable bits. */
+#define IE_RECEIVER_READY       1
+#define IE_TRANSMITTER_READY    2
+#define IE_LINE_STATUS_CHANGE   4
+#define IE_MODEM_STATUS_CHANGE  8
 
-	    case TRANSMITTER_READY:	/* a character has been output */
-		rs_write_int(unit);
-		break;
+/* Interrupt status bits. */
+#define IS_MODEM_STATUS_CHANGE  0
+#define IS_TRANSMITTER_READY    2
+#define IS_RECEIVER_READY       4
+#define IS_LINE_STATUS_CHANGE   6
 
-	    case LINE_STATUS:		/* line status event, (disabled) */
-		port_in(rs_struct[unit-1].rs_base + RS232_LINE_STATUS, &val);
-		printf("RS 232 line status event %x\n", val);
-		break;
+/* Line control bits. */
+#define LC_NO_PARITY            0
+#define LC_DATA_BITS            3
+#define LC_ODD_PARITY           8
+#define LC_EVEN_PARITY       0x18
+#define LC_ADDRESS_DIVISOR   0x80
+#define LC_STOP_BITS_SHIFT      2
 
-	    case MODEM_STATUS:		/* modem status event, (disabled) */
-		port_in(rs_struct[unit-1].rs_base + RS232_MODEM_STATUS, &val);
-		printf("RS 232 modem status event %x\n", val);
-		break;
-	}
-  }
-  restore(old_state);
-}
+#define DATA_BITS_SHIFT         8	/* amount data bits shifted in mode */
 
+/* Line status bits. */
+#define LS_OVERRUN_ERR          2
+#define LS_PARITY_ERR           4
+#define LS_FRAMING_ERR          8
+#define LS_BREAK_INTERRUPT   0x10
+#define LS_TRANSMITTER_READY 0x20
 
-/*===========================================================================*
- *				rs_read_int			 	     *
- *===========================================================================*/
-PRIVATE	rs_read_int(line)
-int line;
-{
-  int val, k, base;
+/* Modem control bits. */
+#define MC_DTR                  1
+#define MC_RTS                  2
+#define MC_OUT2                 8	/* required for PC & AT interrupts */
 
-  base = rs_struct[line - NR_CONS].rs_base;
+/* Modem status bits. */
+#define MS_CTS               0x10
 
-  /* Fetch the character from the RS232 hardware. */
-  port_in(base + RS232_RECEIVER_DATA_REG, &val);
-
-  /* Store the character in memory so the task can get at it later */
-  if ((k = tty_buf_count(tty_driver_buf)) < tty_buf_max(tty_driver_buf)) {
-	/* There is room to store this character, do it */
-	k = k + k;			/* each entry contains two bytes */
-	tty_driver_buf[k + 4] = val;	/* store the ascii code */
-	tty_driver_buf[k + 5] = line;	/* tell wich line it came from */ 
-	tty_buf_count(tty_driver_buf)++;		/* increment counter */
-
-	if (tty_buf_count(tty_driver_buf) < THRESHOLD) {
-		/* Don't send message.  Just accumulate.  Let clock do it. */
-		port_out(INT_CTL, ENABLE);
-		flush_flag++;
-		return;
-	}
-	rs_flush();			/* send TTY task a message */
-  } else {
-	/* Too many character have been buffered. Discard excess */
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-  }
-}
-
-
-/*===========================================================================*
- *				rs_flush	  		 	     *
- *===========================================================================*/
-PUBLIC rs_flush()
-{
-/* Flush the tty_driver_buf by sending a message to TTY.  This procedure can
- * be triggered locally, when a character arrives, or by the clock task.
+/* Input buffer watermarks.
+ * The external device is asked to stop sending when the buffer
+ * exactly reaches high water, or when TTY requests it.
+ * TTY is also notified directly (rather than at a later clock tick) when
+ * this watermark is reached.
+ * A lower threshold could be used, but the buffer size and wakeup intervals
+ * are chosen so the watermark shouldn't be hit at reasonable baud rates,
+ * so this is unnecessary - the throttle is applied when TTY's buffers
+ * get too full.
+ * The low watermark is invisibly 0 since the buffer is always emptied all
+ * at once.
  */
+#define RS_IHIGHWATER (3 * RS_IBUFSIZE / 4)
 
-  /* Build and send the interrupt message */ 
-  flush_flag = 0;
-  if (tty_buf_count(tty_driver_buf) == 0) return;	/* nothing to flush */
-  rs232_rd_mess.m_type = TTY_CHAR_INT;
-  rs232_rd_mess.ADDRESS = tty_driver_buf;
-  interrupt(TTY, &rs232_rd_mess);	/* send a message to the tty task */
-}
-
-
-/*===========================================================================*
- *				rs_write_int	  		 	     *
- *===========================================================================*/
-PRIVATE	rs_write_int(line)
-int line;
-{
-/* An output ready interrupt has occurred, or a write has been done to an idle
- * line.  In both cases, start the output.
+/* Macros to handle flow control.
+ * Interrupts must be off when they are used.
+ * Time is critical - already the function call for out_byte() is annoying.
+ * If out_byte() can be done in-line, tests to avoid it can be dropped.
+ * istart() tells external device we are ready by raising RTS.
+ * istop() tells external device we are not ready by dropping RTS.
+ * DTR is kept high all the time (it probably should be raised by open and
+ * dropped by close of the device).
+ * OUT2 is also kept high all the time.
  */
+#define istart(rs) \
+  (out_byte( (rs)->modem_ctl_port, MC_OUT2 | MC_RTS | MC_DTR), \
+   (rs)->idevready = TRUE)
+#define istop(rs) \
+  (out_byte( (rs)->modem_ctl_port, MC_OUT2 | MC_DTR), (rs)->idevready = FALSE)
 
-  int val;
-  struct tty_struct *tp;
-  struct rs_struct *rs;
-
-  if (first_rs_write_int_seen == FALSE) {
-	first_rs_write_int_seen = TRUE;
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-	return;
-  }
-
-  /* On the XT and clones, check for spurious write-completed interrupts. */
-  rs = &rs_struct[line - NR_CONS];
-  port_in(rs->rs_base + RS232_LINE_STATUS, &val);
-  if ( (val & HOLDING_REG_EMPTY) == 0) {
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-	return;
-  }
-
-  /* If there are more characters in rs_buf, output the next one. */
-  if (rs->rs_left > 0) {
-	rs_feed(rs);			/* output the next char in rs_buf */
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-	return;
-  }
-
-  /* The current rs_buf is finished.  See if the complete user buf is done. */
-  tp = &tty_struct[line];
-  rs->rs_busy = FALSE;
-  rs->rs_next = &rs->rs_buf[0];
-  if (tp->tty_outleft > 0) {
-	serial_out(tp);			/* copy the next chunk to rs_buf */
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-	return;
-  }
-
-  /* The current output buffer is finished.  Send a message to the tty task. */
-  if (tp->tty_waiting == WAITING) {
-	rs232_wt_mess.m_type = TTY_O_DONE;	/* build the message */
-	rs232_wt_mess.ADDRESS = tty_driver_buf;	/* pro forma */
-	rs232_wt_mess.TTY_LINE = line;	/* which line is finished */
-	tp->tty_waiting = COMPLETED;	/* mark this line as done */
-	output_done++;			/* # of RS232 lines now completed */
-	interrupt(TTY, &rs232_wt_mess);	/* send the message to the tty task */
-  } else {
-	port_out(INT_CTL, ENABLE);	/* re-enable 8259A controller */
-  }
-}
-
-
-/*===========================================================================*
- *				rs_feed		  		 	     *
- *===========================================================================*/
-PRIVATE rs_feed(rs)
-struct rs_struct *rs;			/* which line */
-{
-/* If there is more output queued, output the next character. */
-
-  char byte;
-
-  if (rs->rs_left > 0) {
-	byte = *rs->rs_next;
-	port_out(rs->rs_base + RS232_TRANSMIT_HOLDING, (int) byte);
-	rs->rs_next++;
-	rs->rs_left--;			/* one char done */
-  }
-}
-
-
-/*===========================================================================*
- *				start_rs232				     * 
- *===========================================================================*/
-PRIVATE	start_rs232(tp)
-struct tty_struct *tp;			/* which tty */
-{
-  int old_state;
-
-  old_state = lock();
-  serial_out(tp);
-  restore(old_state);
-}	
-
-
-/*===========================================================================*
- *				serial_out				     * 
- *===========================================================================*/
-PRIVATE	serial_out(tp)
-register struct tty_struct *tp;	/* tells which terminal is to be used */
-{
-/* Copy as much data as possible to the output queue, then start I/O if
- * necessary.
+/* Macro to tell if device is ready.
+ * Don't require DSR, since modems drop this to indicate the line is not
+ * ready even when the modem itself is ready.
+ * If NO_HANDSHAKE, read the status port to clear the interrupt, then force
+ * the ready bit.
  */
-  int bytes, line;
-  char c, *limit;
-  unsigned short segment, offset, offset1;
-  register struct rs_struct *rs;
-  extern char get_byte();
-
-  if (tp->tty_inhibited != RUNNING) return;
-
-  line = tp - &tty_struct[0];		/* line is index into tty_struct */
-  rs = &rs_struct[line - NR_CONS];	/* 0 to NR_CONS - 1 are consoles */
-	
-  /* Copy bytes from user space to rs_buf. */
-  limit = &rs->rs_buf[RS_BUF_SIZE - SPARE];
-  segment = (tp->tty_phys >> 4) & WORD_MASK;
-  offset = tp->tty_phys & OFF_MASK;
-  offset1 = offset;
-
-  /* While there is still data to output and there is still room in buf, copy*/
-  while (tp->tty_outleft > 0 && rs->rs_next + rs->rs_left < limit) {
-	c = get_byte(segment, offset);	/* fetch 1 byte */
-	offset++;
-	tp->tty_outleft--;
-	if (c < ' ') {
-		rs_expand(tp, rs, c);	/* insert the char in rs_buf */
-	} else {
-		*(rs->rs_next + rs->rs_left) = c;	/* avoid proc call */
-		rs->rs_left++;
-		tp->tty_column++;
-	}
-  }
-
-  bytes = offset - offset1;		/* does not include '\r' or tab exp */
-  tp->tty_cum += bytes;			/* update cumulative total */
-  tp->tty_phys += bytes;		/* next time, take different bytes */
-
-  if (!rs->rs_busy) {			/* is the line idle? */
-	rs->rs_busy = TRUE;		/* if so, mark it as busy */
-	rs_feed(rs);			/* and start it going */
-  }
-}
-
-
-/*===========================================================================*
- *				rs_out_char				     *
- *===========================================================================*/
-PRIVATE rs_out_char(tp, c)
-register struct tty_struct *tp;	/* pointer to tty struct */
-char c;				/* character to be output */
-{
-/* Output a character on an RS232 line. */
-
-  int line, old_state;
-  register struct rs_struct *rs;
-
-  /* See if there is room to store a character, and if so, do it. */
-  old_state = lock();
-  line = tp - tty_struct;
-  rs = &rs_struct[line - NR_CONS];
-  if (rs->rs_next + rs->rs_left == &rs->rs_buf[RS_BUF_SIZE]) return;  /*full */
-  rs_expand(tp, rs, c);
-
-  if (!rs->rs_busy) {		/* if terminal line is idle, start it */
-	rs->rs_busy = TRUE;
-	rs_feed(rs);
-  }
-  restore(old_state);
-}
-
-
-/*===========================================================================*
- *				rs_expand				     *
- *===========================================================================*/
-PRIVATE rs_expand(tp, rs, c)
-register struct tty_struct *tp;	/* pointer to tty struct */
-register struct rs_struct *rs;	/* pointer to rs struct */
-char c;				/* character to be output */
-{
-/* Some characters output to RS-232 lines need special processing, such as
- * tab expansion and LF to CR+CF mapping.  These things are done here.
- */
-
-  int mode, count, count1;
-  char *deposit;		/* where to deposit the next character */
-
-  mode = tp->tty_mode;
-  deposit = rs->rs_next + rs->rs_left;
-
-  switch(c) {
-	case '\b':
-		tp->tty_column -= 2;	/* it is incremented later */
-		break;
-
-	case '\r':
-		tp->tty_column = -1;	/* it is incremented below */
-		break;
-
-	case '\n':
-		/* Check to see if LF has to be mapped to CR + LF. */
-		if (mode & CRMOD) {
-			*deposit++ = '\r';
-			rs->rs_left++;
-			tp->tty_column = -1;
-		}
-		break;
-
-	case '\t':
-	 	count = 8 - (tp->tty_column % 8);	/* # spaces */
-		count1 = count;
-		if ((mode & XTABS) == XTABS) {
-			/* Tabs must be expanded. */
-			while (count1--) *deposit++ = ' ';
-			rs->rs_left += count;
-			tp->tty_column += count;
-			return;
-		} else {
-			/* Tabs are sent to the terminal hardware. */
-			tp->tty_column += count - 1;
-		}
-  }
-
-  /* Output character and update counters. */
-  *deposit = c;			/* copy character to rs_buf */
-  rs->rs_left++;		/* there is one more character to print */
-  tp->tty_column++;		/* update column */
-}
-
-
-/*===========================================================================*
- *				tty_o_done				     *
- *===========================================================================*/
-PUBLIC int tty_o_done()
-{
-/* A write request on an RS232 line has completed.  Send FS a message. */
-
-  int replyee, caller, old_state;
-  struct tty_struct *tp;
-
-  /* See if any of the RS232 lines are complete.  Send at most one message. */
-  old_state = lock();
-  for (tp = &tty_struct[NR_CONS]; tp < &tty_struct[NR_CONS+NR_RS_LINES]; tp++){
-	if (tp->tty_waiting == COMPLETED) {
-		replyee = (int) tp->tty_otcaller;
-		caller = (int) tp->tty_outproc;
-		tty_reply(REVIVE, replyee, caller, tp->tty_cum, 0L, 0L);
-		tp->tty_waiting = NOT_WAITING;
-		output_done--;
-		restore(old_state);
-		return(1);
-	}
-  }
-  restore(old_state);
-  return(0);
-}
-
-/*===========================================================================*
- *				rs_sig					     * 
- *===========================================================================*/
-PUBLIC rs_sig(tp)
-struct tty_struct *tp;
-{
-/* Called when a DEL character is typed.  It resets the output. */
-
-  int line;
-  struct rs_struct *rs;
-
-  line = tp - tty_struct;
-  rs = &rs_struct[line - NR_CONS];
-  rs->rs_left = 0;
-  rs->rs_busy = 0;
-  rs->rs_next = &rs->rs_buf[0];
-}
-
-
-/*===========================================================================*
- *				init_rs232				     * 
- *===========================================================================*/
-PRIVATE	init_rs232()
-{
-  register struct tty_struct *tp;
-  register struct rs_struct *rs;
-  int line;
-
-  for (tp = &tty_struct[NR_CONS]; tp < &tty_struct[NR_CONS+NR_RS_LINES]; tp++){
-	tp->tty_inhead = tp->tty_inqueue;
-	tp->tty_intail = tp->tty_inqueue;
-/*	tp->tty_mode = CRMOD | XTABS | ECHO; */
-	tp->tty_mode = RAW | BITS8;
-	tp->tty_devstart = start_rs232;
-	tp->tty_erase	= ERASE_CHAR;
-	tp->tty_kill	= KILL_CHAR;
-	tp->tty_intr	= INTR_CHAR;
-	tp->tty_quit	= QUIT_CHAR;
-	tp->tty_xon	= XON_CHAR;
-	tp->tty_xoff	= XOFF_CHAR;
-	tp->tty_eof	= EOT_CHAR;
-	tp->tty_makebreak = ONE_INT;	/* RS232 only interrupts once/char */
-  }
-
-#if NR_RS_LINES > 0
-  rs_struct[0].rs_base = PRIMARY;
-#endif
-#if NR_RS_LINES > 1
-  rs_struct[1].rs_base = SECONDARY;
+#if NO_HANDSHAKE
+# define devready(rs) (in_byte(rs->modem_status_port), MS_CTS)
+#else
+# define devready(rs) (in_byte(rs->modem_status_port) & MS_CTS)
 #endif
 
-  for (rs = &rs_struct[0]; rs < &rs_struct[NR_RS_LINES]; rs++) {
-	line = rs - rs_struct + NR_CONS;
-	rs->rs_next = & rs->rs_buf[0];
-	rs->rs_left = 0;
-	rs->rs_busy = FALSE;
-	config_rs232(line, DEF_BAUD, DEF_BAUD, NONE, 1, 8);    /* set params */
-	port_out(rs->rs_base + RS232_MODEM_CONTROL, MODEM_CONTROLS);
-	port_out(rs->rs_base + RS232_INTERRUPTS, RS232_INTERRUPT_CLASSES);
-  }
+/* Macro to tell if transmitter is ready. */
+#define txready(rs) (in_byte(rs->line_status_port) & LS_TRANSMITTER_READY)
+
+/* Types. */
+typedef char bool_t;		/* boolean */
+typedef unsigned port_t;	/* hardware port */
+
+/* RS232 device structure, one per device. */
+struct rs232_s {
+  int minor;			/* minor number of this line (base 0) */
+
+  bool_t idevready;		/* nonzero if we are ready to receive (RTS) */
+  bool_t ittyready;		/* nonzero if TTY is ready to receive */
+  char *ibuf;			/* start of input buffer */
+  char *ibufend;		/* end of input buffer */
+  char *ihighwater;		/* threshold in input buffer */
+  char *iptr;			/* next free spot in input buffer */
+
+  unsigned char ostate;		/* combination of flags: */
+#define ODEVREADY MS_CTS	/* external device hardware ready (CTS) */
+#define ODONE          1	/* output completed (< output enable bits) */
+#define OQUEUED     0x20	/* output buffer not empty */
+#define ORAW           2	/* raw mode for xoff disable (< enab. bits) */
+#define OSWREADY    0x40	/* external device software ready (no xoff) */
+#define OWAKEUP        4	/* tty_wakeup() pending (asm code only) */
+#if (ODEVREADY | 0x63) == 0x63
+#error				/* bits are not unique */
+#endif
+  unsigned char oxoff;		/* char to stop output */
+  char *obufend;		/* end of output buffer */
+  char *optr;			/* next char to output */
+
+  port_t xmit_port;		/* i/o ports */
+  port_t recv_port;
+  port_t div_low_port;
+  port_t div_hi_port;
+  port_t int_enab_port;
+  port_t int_id_port;
+  port_t line_ctl_port;
+  port_t modem_ctl_port;
+  port_t line_status_port;
+  port_t modem_status_port;
+
+  unsigned char lstatus;	/* last line status */
+  unsigned char pad;		/* ensure alignment for 16-bit ints */
+  unsigned framing_errors;	/* error counts (no reporting yet) */
+  unsigned overrun_errors;
+  unsigned parity_errors;
+  unsigned break_interrupts;
+
+  char ibuf1[RS_IBUFSIZE + 1];	/* 1st input buffer, guard at end */
+  char ibuf2[RS_IBUFSIZE + 1];	/* 2nd input buffer (for swapping) */
+};
+
+/* Table and macro to translate an RS232 minor device number to its
+ * struct rs232_s pointer.
+ */
+struct rs232_s *p_rs_addr[NR_RS_LINES];
+
+#define rs_addr(minor) (p_rs_addr[minor])
+
+/* 8250 base addresses. */
+PRIVATE port_t addr_8250[] = {
+  0x3F8,			/* COM1: (line 0); COM3 might be at 0x3E8 */
+  0x2F8,			/* COM2: (line 1); COM4 might be at 0x2E8 */
+};
+
+PUBLIC struct rs232_s rs_lines[NR_RS_LINES];
+
+#if C_RS232_INT_HANDLERS
+FORWARD void in_int();
+FORWARD void line_int();
+FORWARD void modem_int();
+
+#endif
+FORWARD void out_int();
+FORWARD int rs_config();
+
+
+/* High level routines (should only be called by TTY). */
+
+/*==========================================================================*
+ *				rs_config			 	    *
+ *==========================================================================*/
+PRIVATE int rs_config(minor, in_baud, out_baud, parity, stop_bits, data_bits,
+		      mode)
+int minor;			/* which rs line */
+int in_baud;			/* input speed: 110, 300, 1200, etc */
+int out_baud;			/* output speed: 110, 300, 1200, etc */
+int parity;			/* LC_something */
+int stop_bits;			/* 2 (110 baud) or 1 (other speeds) */
+int data_bits;			/* 5, 6, 7, or 8 */
+int mode;			/* sgtty.h sg_mode word */
+{
+/* Set various line control parameters for RS232 I/O.
+ * If DataBits == 5 and StopBits == 2, 8250 will generate 1.5 stop bits.
+ * The 8250 can't handle split speed, but we have propagated both speeds
+ * anyway for the benefit of future UART chips.
+ */
+
+  int divisor;
+  int line_controls;
+  register struct rs232_s *rs;
+
+  rs = rs_addr(minor);
+
+  /* Precalculate divisor and line_controls for reduced latency. */
+  if (in_baud < 50) in_baud = DEF_BAUD;	/* prevent divide overflow */
+  if (out_baud < 50) out_baud = DEF_BAUD;	/* prevent divide overflow */
+  divisor = (int) (UART_FREQ / in_baud);	/* 8250 can't hack 2 speeds */
+  line_controls = parity | ((stop_bits - 1) << LC_STOP_BITS_SHIFT)
+			 | (data_bits - 5);
+
+  /* Lock out interrupts while setting the speed. The receiver register is
+   * going to be hidden by the div_low register, but the input interrupt
+   * handler relies on reading it to clear the interrupt and avoid looping
+   * forever.
+   */
+  lock();
+
+  /* Select the baud rate divisor registers and change the rate. */
+  out_byte(rs->line_ctl_port, LC_ADDRESS_DIVISOR);
+  out_byte(rs->div_low_port, divisor);
+  out_byte(rs->div_hi_port, divisor >> 8);
+
+  /* Change the line controls and reselect the usual registers. */
+  out_byte(rs->line_ctl_port, line_controls);
+
+  if (mode & RAW)
+	rs->ostate |= ORAW;
+  else
+	rs->ostate &= ~ORAW;
+  unlock();
+  return( (out_baud / 100) << 8) | (in_baud / 100);
 }
 
 
-/*===========================================================================*
- *				set_uart			 	     *
- *===========================================================================*/
-PRIVATE set_uart(line, mode, speeds)
-int line;			/* which line number (>= NR_CONS) */
+/*==========================================================================*
+ *				rs_ioctl			 	    *
+ *==========================================================================*/
+PUBLIC int rs_ioctl(minor, mode, speeds)
+int minor;			/* which rs line */
 int mode;			/* sgtty.h sg_mode word */
 int speeds;			/* low byte is input speed, next is output */
 {
 /* Set the UART parameters. */
-  int in_baud, out_baud, parity, stop_bits, data_bits;
+
+  int data_bits;
+  int in_baud;
+  int out_baud;
+  int parity;
+  int stop_bits;
 
   in_baud = 100 * (speeds & BYTE);
   if (in_baud == 100) in_baud = 110;
   out_baud = 100 * ((speeds >> 8) & BYTE);
   if (out_baud == 100) out_baud = 110;
-  parity = NONE;
-  if (mode & ODDP) parity = ODD;
-  if (mode & EVENP) parity = EVEN;
-  stop_bits = (in_baud == 110 ? 2 : 1);		/* not quite cricket */
-  data_bits = 5 + ((mode >> DATA_LEN) & 03);
-  config_rs232(line, in_baud, out_baud, parity, stop_bits, data_bits);
+  parity = LC_NO_PARITY;
+  if (mode & ODDP) parity = LC_ODD_PARITY;
+  if (mode & EVENP) parity = LC_EVEN_PARITY;
+  stop_bits = in_baud == 110 ? 2 : 1;	/* not quite cricket */
+  data_bits = 5 + ((mode >> DATA_BITS_SHIFT) & LC_DATA_BITS);
+  return(rs_config(minor, in_baud, out_baud, parity, stop_bits, data_bits,
+		     mode));
 }
 
 
-/*===========================================================================*
- *				config_rs232			 	     *
- *===========================================================================*/
-PRIVATE	config_rs232(line, in_baud, out_baud, parity, stop_bits, data_bits)
-int line;			/* which tty */
-int in_baud;			/* input speed: 110, 300, 1200, etc. */
-int out_baud;			/* output speed: 110, 300, 1200, etc. */
-int parity;			/* EVEN, ODD, or NONE */
-int stop_bits;			/* 2 (110 baud) or 1 (other speeds) */
-int data_bits;			/* 5, 6, 7, or 8 */
+/*==========================================================================*
+ *				rs_inhibit				    *
+ *==========================================================================*/
+PUBLIC void rs_inhibit(minor, inhibit)
+int minor;			/* which rs line */
+bool_t inhibit;			/* nonzero to inhibit, zero to uninhibit */
 {
-/* Set various line control parameters for RS232 I/O.
- * If DataBits == 5 and StopBits == 2, UART will generate 1.5 stop bits
- * The 8250 can't handle split speed, but we have propagated both speeds
- * anyway for the benefit of future UART chips.
+/* Update inhibition state to keep in sync with TTY. */
+
+  register struct rs232_s *rs;
+
+  rs = rs_addr(minor);
+  lock();
+  if (inhibit)
+	rs->ostate &= ~OSWREADY;
+  else
+	rs->ostate |= OSWREADY;
+  unlock();
+}
+
+
+/*==========================================================================*
+ *				rs_init					    *
+ *==========================================================================*/
+PUBLIC int rs_init(minor)
+int minor;			/* which rs line */
+{
+/* Initialize RS232 for one line. */
+
+  register struct rs232_s *rs;
+  int speed;
+  port_t this_8250;
+
+  rs = rs_addr(minor) = &rs_lines[minor];
+
+  /* Record minor number. */
+  rs->minor = minor;
+
+  /* Set up input queue. */
+  rs->iptr = rs->ibuf = rs->ibuf1;
+  rs->ibufend = rs->ibuf1 + RS_IBUFSIZE;
+  rs->ihighwater = rs->ibuf1 + RS_IHIGHWATER;
+  rs->ittyready = TRUE;		/* idevready set to TRUE by istart() */
+
+  /* Precalculate port numbers for speed. Magic numbers in the code (once). */
+  this_8250 = addr_8250[minor];
+  rs->xmit_port = this_8250 + 0;
+  rs->recv_port = this_8250 + 0;
+  rs->div_low_port = this_8250 + 0;
+  rs->div_hi_port = this_8250 + 1;
+  rs->int_enab_port = this_8250 + 1;
+  rs->int_id_port = this_8250 + 2;
+  rs->line_ctl_port = this_8250 + 3;
+  rs->modem_ctl_port = this_8250 + 4;
+  rs->line_status_port = this_8250 + 5;
+  rs->modem_status_port = this_8250 + 6;
+
+  /* Set up the hardware to a base state, in particular
+   *	o turn off DTR (MC_DTR) to try to stop the external device.
+   *	o disable interrupts at the chip level, to force an edge transition
+   *	  on the 8259 line when interrupts are next enabled and active.
+   *	  RS232 interrupts are guaranteed to be disabled now by the 8259
+   *	  mask, but there used to be trouble if the mask was set without
+   *	  handling a previous interrupt.
+   *	o be careful about the divisor latch.  It may be enabled now, and
+   *	  that used to cause trouble when interrupts were enabled too early
+   *	  (see comment in rs_config()).  Call rs_config() early to avoid this.
+   */
+  istop(rs);			/* sets modem_ctl_port */
+  out_byte(rs->int_enab_port, 0);
+  speed = rs_config(minor, DEF_BAUD, DEF_BAUD, LC_NO_PARITY, 1, 8, RAW);
+
+  /* Clear any harmful leftover interrupts.  An output interrupt is harmless
+   * and will occur when interrupts are enabled anyway.  Set up the output
+   * queue using the status from clearing the modem status interrupt.
+   */
+  in_byte(rs->line_status_port);
+  in_byte(rs->recv_port);
+  rs->ostate = devready(rs) | ORAW | OSWREADY;	/* reads modem_ctl_port */
+
+  /* Enable interrupts for both interrupt controller and device. */
+  if (minor & 1)		/* COM2 on IRQ3 */
+	enable_irq(SECONDARY_IRQ);
+  else				/* COM1 on IRQ4 */
+	enable_irq(RS232_IRQ);
+  out_byte(rs->int_enab_port, IE_LINE_STATUS_CHANGE | IE_MODEM_STATUS_CHANGE
+				| IE_RECEIVER_READY | IE_TRANSMITTER_READY);
+
+  /* Tell external device we are ready. */
+  istart(rs);
+
+  return(speed);
+}
+
+
+/*==========================================================================*
+ *				rs_istop				    *
+ *==========================================================================*/
+PUBLIC void rs_istop(minor)
+int minor;			/* which rs line */
+{
+/* TTY wants RS232 to stop input.
+ * RS232 drops RTS but keeps accepting input until its buffer overflows.
  */
 
-  int line_controls = 0, base, freq;
+  register struct rs232_s *rs;
 
-  base = rs_struct[line - NR_CONS].rs_base;
+  rs = rs_addr(minor);
+  lock();
+  rs->ittyready = FALSE;
+  istop(rs);
+  unlock();
+}
 
-  /* First tell line control register to address baud rate divisor */
-  port_out(base + RS232_LINE_CONTROL, ADDRESS_DIVISOR);
 
-  /* Now set the baud rate. */
-  if (in_baud < 50) in_baud = DEF_BAUD;		/* prevent divide overflow */
-  if (out_baud < 50) out_baud = DEF_BAUD;	/* prevent divide overflow */
-  freq = (int) (UART_FREQ / in_baud);		/* UART can't hack 2 speeds  */
-  port_out(base + RS232_RATE_DIVISOR, freq & BYTE);
-  port_out(base + RS232_RATE_DIVISOR+1, (freq >> 8) & BYTE);
-  tty_struct[line].tty_speed = ((out_baud/100) << 8) | (in_baud/100);
+/*==========================================================================*
+ *				rs_istart				    *
+ *==========================================================================*/
+PUBLIC void rs_istart(minor)
+int minor;			/* which rs line */
+{
+/* TTY is ready for another buffer full of input from RS232.
+ * RS232 raises RTS unless its own buffer is already too full.
+ */
 
-  /* Put parity_type bits in line_controls */
-  if (parity != NONE) {
-	line_controls |= PARITY_ON_OFF;
-	line_controls |= (parity << PARITY_TYPE_SHIFT);
+  register struct rs232_s *rs;
+
+  rs = rs_addr(minor);
+  lock();
+  rs->ittyready = TRUE;
+  if (rs->iptr < rs->ihighwater) istart(rs);
+  unlock();
+}
+
+
+/*==========================================================================*
+ *				rs_ocancel				    *
+ *==========================================================================*/
+PUBLIC void rs_ocancel(minor)
+int minor;			/* which rs line */
+{
+/* Cancel pending output. */
+
+  register struct rs232_s *rs;
+
+  lock();
+  rs = rs_addr(minor);
+  if (rs->ostate & ODONE) tty_events -= EVENT_THRESHOLD;
+  rs->ostate &= ~(ODONE | OQUEUED);
+  unlock();
+}
+
+
+/*==========================================================================*
+ *				rs_read					    *
+ *==========================================================================*/
+PUBLIC int rs_read(minor, bufindirect, odoneindirect)
+int minor;			/* which rs line */
+char **bufindirect;		/* where to return pointer to our buffer */
+bool_t *odoneindirect;		/* where to return output-done status */
+{
+/* Swap the input buffers, giving the old one to TTY, and restart input. */
+
+  register char *ibuf;
+  int nread;
+  register struct rs232_s *rs;
+
+  rs = rs_addr(minor);
+  *odoneindirect = rs->ostate & ODONE;
+  if (rs->iptr == (ibuf = rs->ibuf)) return(0);
+  *bufindirect = ibuf;
+  lock();
+  nread = rs->iptr - ibuf;
+  tty_events -= nread;
+  if (ibuf == rs->ibuf1)
+	ibuf = rs->ibuf2;
+  else
+	ibuf = rs->ibuf1;
+  rs->ibufend = ibuf + RS_IBUFSIZE;
+  rs->ihighwater = ibuf + RS_IHIGHWATER;
+  rs->iptr = ibuf;
+  if (!rs->idevready && rs->ittyready) istart(rs);
+  unlock();
+  rs->ibuf = ibuf;
+  return(nread);
+}
+
+
+/*==========================================================================*
+ *				rs_setc					    *
+ *==========================================================================*/
+PUBLIC void rs_setc(minor, xoff)
+int minor;			/* which rs line */
+int xoff;			/* xoff character */
+{
+/* RS232 needs to know the xoff character. */
+
+  rs_addr(minor)->oxoff = xoff;
+}
+
+
+/*==========================================================================*
+ *				rs_write				    *
+ *==========================================================================*/
+PUBLIC void rs_write(minor, buf, nbytes)
+int minor;			/* which rs line */
+char *buf;			/* pointer to buffer to write */
+int nbytes;			/* number of bytes to write */
+{
+/* Tell RS232 about the buffer to be written and start output.
+ * Previous output must have completed.
+ */
+
+  register struct rs232_s *rs;
+
+  rs = rs_addr(minor);
+  lock();
+  rs->obufend = (rs->optr = buf) + nbytes;
+  rs->ostate |= OQUEUED;
+  if (txready(rs)) out_int(rs);
+  unlock();
+}
+
+
+/* Low level (interrupt) routines. */
+
+#if C_RS232_INT_HANDLERS
+/*==========================================================================*
+ *				rs232_1handler				    *
+ *==========================================================================*/
+PUBLIC void rs232_1handler()
+{
+/* Interrupt hander for IRQ4.
+ * Only 1 line (usually COM1) should use it.
+ */
+
+#if NR_RS_LINES > 0
+  register struct rs232_s *rs;
+
+  rs = &rs_lines[0];
+  while (TRUE) {
+	/* Loop to pick up ALL pending interrupts for device.
+	 * This usually just wastes time unless the hardware has a buffer
+	 * (and then we have to worry about being stuck in the loop too long).
+	 * Unfortunately, some serial cards lock up without this.
+	 */
+	switch (in_byte(rs->int_id_port)) {
+	case IS_RECEIVER_READY:
+		in_int(rs);
+		continue;
+	case IS_TRANSMITTER_READY:
+		out_int(rs);
+		continue;
+	case IS_MODEM_STATUS_CHANGE:
+		modem_int(rs);
+		continue;
+	case IS_LINE_STATUS_CHANGE:
+		line_int(rs);
+		continue;
+	}
+	return;
   }
+#endif
+}
 
-  /* Put #stop_bits bits in line_controls */
-  if (stop_bits == 1 || stop_bits == 2)
-	line_controls |= (stop_bits - 1) << STOP_BITS_SHIFT;
 
-  /* Put #data_bits bits in line_controls */
-  if (data_bits >=5 && data_bits <= 8)
-	line_controls |= (data_bits - 5);
+/*==========================================================================*
+ *				rs232_2handler				    *
+ *==========================================================================*/
+PUBLIC void rs232_2handler()
+{
+/* Interrupt hander for IRQ3.
+ * Only 1 line (usually COM2) should use it.
+ */
 
-  port_out(base + RS232_LINE_CONTROL, line_controls);
+#if NR_RS_LINES > 1
+  register struct rs232_s *rs;
+
+  rs = &rs_lines[1];
+  while (TRUE) {
+	switch (in_byte(rs->int_id_port)) {
+	case IS_RECEIVER_READY:
+		in_int(rs);
+		continue;
+	case IS_TRANSMITTER_READY:
+		out_int(rs);
+		continue;
+	case IS_MODEM_STATUS_CHANGE:
+		modem_int(rs);
+		continue;
+	case IS_LINE_STATUS_CHANGE:
+		line_int(rs);
+		continue;
+	}
+	return;
+  }
+#endif
+}
+
+
+/*==========================================================================*
+ *				in_int					    *
+ *==========================================================================*/
+PRIVATE void in_int(rs)
+register struct rs232_s *rs;	/* line with input interrupt */
+{
+/* Read the data which just arrived.
+ * If it is the oxoff char, clear OSWREADY, else if OSWREADY was clear, set
+ * it and restart output (any char does this, not just xon).
+ * Put data in the buffer if room, * otherwise discard it.
+ * Set a flag for the clock interrupt handler to eventually notify TTY.
+ */
+
+  if (rs->ostate & ORAW)
+	*rs->iptr = in_byte(rs->recv_port);
+  else if ( (*rs->iptr = in_byte(rs->recv_port)) == rs->oxoff)
+	rs->ostate &= ~OSWREADY;
+  else if (!(rs->ostate & OSWREADY)) {
+	rs->ostate |= OSWREADY;
+	if (txready(rs)) out_int(rs);
+  }
+  if (rs->iptr < rs->ibufend) {
+	++tty_events;
+	if (++rs->iptr == rs->ihighwater) istop(rs);
+  }
+}
+
+
+/*==========================================================================*
+ *				line_int				    *
+ *==========================================================================*/
+PRIVATE void line_int(rs)
+register struct rs232_s *rs;	/* line with line status interrupt */
+{
+/* Check for and record errors. */
+
+  rs->lstatus = in_byte(rs->line_status_port);
+  if (rs->lstatus & LS_FRAMING_ERR) ++rs->framing_errors;
+  if (rs->lstatus & LS_OVERRUN_ERR) ++rs->overrun_errors;
+  if (rs->lstatus & LS_PARITY_ERR) ++rs->parity_errors;
+  if (rs->lstatus & LS_BREAK_INTERRUPT) ++rs->break_interrupts;
+}
+
+
+/*==========================================================================*
+ *				modem_int				    *
+ *==========================================================================*/
+PRIVATE void modem_int(rs)
+register struct rs232_s *rs;	/* line with modem interrupt */
+{
+/* Get possibly new device-ready status, and clear ODEVREADY if necessary.
+ * If the device just became ready, restart output.
+ */
+
+  if (!devready(rs))
+	rs->ostate &= ~ODEVREADY;
+  else if (!(rs->ostate & ODEVREADY)) {
+	rs->ostate |= ODEVREADY;
+	if (txready(rs)) out_int(rs);
+  }
+}
+
+#endif /* C_RS232_INT_HANDLERS (except out_int is used from high level) */
+
+
+/*==========================================================================*
+ *				out_int					    *
+ *==========================================================================*/
+PRIVATE void out_int(rs)
+register struct rs232_s *rs;	/* line with output interrupt */
+{
+/* If there is output to do and everything is ready, do it (local device is
+ * known ready).
+ * Interrupt TTY to indicate completion.
+ */
+
+  if (rs->ostate >= (ODEVREADY | OQUEUED | OSWREADY)) {
+	/* Bit test allows ORAW and requires the others. */
+	out_byte(rs->xmit_port, *rs->optr);
+	if (++rs->optr >= rs->obufend) {
+		tty_events += EVENT_THRESHOLD;
+		rs->ostate ^= (ODONE | OQUEUED);  /* ODONE on, OQUEUED off */
+		unlock();	/* safe, for complicated reasons */
+		tty_wakeup();
+		lock();
+	}
+  }
 }

@@ -16,15 +16,11 @@
  */
 
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "../h/signal.h"
-#include "../h/stat.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <sys/stat.h>
+#include <signal.h>
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -34,9 +30,13 @@
 
 PRIVATE message m_sig;
 
-#ifdef AM_KERNEL
+#if AM_KERNEL
 PRIVATE int Tfs;		/* if true then Tell file server to unpause */
 #endif
+
+FORWARD int check_sig();
+FORWARD void dump_core();
+FORWARD void unpause();
 
 /*===========================================================================*
  *				do_signal				     *
@@ -50,7 +50,7 @@ PUBLIC int do_signal()
   int mask;
   int sigign = mp->mp_ignore;
 
-  if (sig < 1 || sig > NR_SIGS) return(EINVAL);
+  if (sig < 1 || sig > _NSIG) return(EINVAL);
   if (sig == SIGKILL) return(OK);	/* SIGKILL may not ignored/caught */
   mask = 1 << (sig - 1);	/* singleton set with 'sig' bit on */
 
@@ -112,7 +112,7 @@ PUBLIC int do_ksig()
   mp->mp_procgrp = rmp->mp_procgrp;	/* get process group right */
 
   /* Stack faults are passed from kernel to MM as pseudo-signal 16. */
-  if (sig_map == 1 << (STACK_FAULT - 1))
+  if (sig_map == 1 << (SIGSTKFLT - 1))
 	stack_fault(proc_nr);
 
   /* Check each bit in turn to see if a signal is to be sent.  Unlike
@@ -120,10 +120,13 @@ PUBLIC int do_ksig()
    * and pass them to MM in one blow.  Thus loop on the bit map. For SIGINT
    * and SIGQUIT, use proc_id 0, since multiple processes may have to signaled.
    */
-  for (i = 0, j = 1; i < NR_SIGS - 1; i++, j++) {
+  for (i = 0, j = 1; i < _NSIG - 1; i++, j++) {
 	id = (j == SIGINT || j == SIGQUIT) ? 0 : proc_id;
 	if (j == SIGKILL) id = -1;	/* simulate kill -1 9 */
-	if ( (sig_map >> i) & 1) check_sig(id, j, SUPER_USER);
+	if ( (sig_map >> i) & 1) {
+		check_sig(id, j, SUPER_USER);
+		sys_sig(proc_nr, -1, SIG_DFL);	/* tell kernel it's done */
+	}
   }
 
   return(OK);
@@ -136,7 +139,7 @@ PUBLIC int do_ksig()
 PRIVATE int check_sig(proc_id, sig_nr, send_uid)
 int proc_id;			/* pid of process to signal, or 0 or -1 */
 int sig_nr;			/* which signal to send (1-16) */
-uid send_uid;			/* identity of process sending the signal */
+uid_t send_uid;			/* identity of process sending the signal */
 {
 /* Check to see if it is possible to send a signal.  The signal may have to be
  * sent to a group of processes.  This routine is invoked by the KILL system
@@ -146,9 +149,8 @@ uid send_uid;			/* identity of process sending the signal */
   register struct mproc *rmp;
   int count, send_sig;
   unshort mask;
-  extern unshort core_bits;
 
-  if (sig_nr < 1 || sig_nr > NR_SIGS) return(EINVAL);
+  if (sig_nr < 1 || sig_nr > _NSIG) return(EINVAL);
   count = 0;			/* count # of signals sent */
   mask = 1 << (sig_nr - 1);
 
@@ -158,14 +160,16 @@ uid send_uid;			/* identity of process sending the signal */
    *	- if a process has already exited, it can't receive signals
    *	- if 'proc_id' is 0 signal everyone in same process group except caller
    */
-  for (rmp = &mproc[INIT_PROC_NR + 1]; rmp < &mproc[NR_PROCS]; rmp++ ) {
+  for (rmp = &mproc[INIT_PROC_NR]; rmp < &mproc[NR_PROCS]; rmp++ ) {
 	if ( (rmp->mp_flags & IN_USE) == 0) continue;
-	send_sig = TRUE;	/* if it's FALSE at end of loop, don't signal */
+	send_sig = TRUE;	/* if it's FALSE at end of loop, don't signal*/
 	if (send_uid != rmp->mp_effuid && send_uid != SUPER_USER)send_sig=FALSE;
 	if (proc_id > 0 && proc_id != rmp->mp_pid) send_sig = FALSE;
 	if (rmp->mp_flags & HANGING) send_sig = FALSE;   /*don't wake the dead*/
-	if (proc_id == 0 && mp->mp_procgrp != rmp->mp_procgrp) send_sig = FALSE;
+	if (proc_id == 0 && mp->mp_procgrp != rmp->mp_procgrp)send_sig = FALSE;
 	if (send_uid == SUPER_USER && proc_id == -1) send_sig = TRUE;
+	if (rmp->mp_pid == INIT_PID && proc_id == -1) send_sig = FALSE;
+	if (rmp->mp_pid == INIT_PID && sig_nr == SIGKILL) send_sig = FALSE;
 
 	/* SIGALARM is a little special.  When a process exits, a clock signal
 	 * can arrive just as the timer is being turned off.  Also, turn off
@@ -180,9 +184,9 @@ uid send_uid;			/* identity of process sending the signal */
 	count++;
 	if (rmp->mp_ignore & mask) continue;
 
-#ifdef AM_KERNEL
+#if AM_KERNEL
 	/* see if an amoeba transaction should be signalled */
-	Tfs = am_check_sig(rmp - mproc, 0);
+	Tfs = am_check_sig((int)(rmp - mproc), 0);
 #endif
 
 	/* Send the signal or kill the process, possibly with core dump. */
@@ -194,7 +198,7 @@ uid send_uid;			/* identity of process sending the signal */
   }
 
   /* If the calling process has killed itself, don't reply. */
-  if ((mp->mp_flags & IN_USE) == 0 || (mp->mp_flags & HANGING))dont_reply =TRUE;
+  if ((mp->mp_flags & IN_USE) == 0 || (mp->mp_flags & HANGING))dont_reply=TRUE;
   return(count > 0 ? OK : ESRCH);
 }
 
@@ -202,7 +206,7 @@ uid send_uid;			/* identity of process sending the signal */
 /*===========================================================================*
  *				sig_proc				     *
  *===========================================================================*/
-PUBLIC sig_proc(rmp, sig_nr)
+PUBLIC void sig_proc(rmp, sig_nr)
 register struct mproc *rmp;	/* pointer to the process to be signaled */
 int sig_nr;			/* signal to send to process (1-16) */
 {
@@ -215,9 +219,13 @@ int sig_nr;			/* signal to send to process (1-16) */
   unshort mask;
   int core_file;
   vir_bytes new_sp;
-  extern unshort core_bits;
 
   if ( (rmp->mp_flags & IN_USE) == 0) return;	/* if already dead forget it */
+  if (rmp->mp_flags & TRACED && sig_nr != SIGKILL) {
+	/* A traced process has special handling. */
+	stop_proc(rmp, sig_nr); /* a signal causes it to stop */
+	return;
+  }
   mask = 1 << (sig_nr - 1);
   if (rmp->mp_catch & mask) {
 	/* Signal should be caught. */
@@ -298,7 +306,7 @@ PUBLIC int do_pause()
 /*===========================================================================*
  *				unpause					     *
  *===========================================================================*/
-PRIVATE unpause(pro)
+PRIVATE void unpause(pro)
 int pro;			/* which process number */
 {
 /* A signal is to be sent to a process.  If that process is hanging on a
@@ -326,7 +334,7 @@ int pro;			/* which process number */
 	return;
   }
 
-#ifdef AM_KERNEL
+#if AM_KERNEL
   /* if it was an amoeba transaction, it is already tidied up by now. */
   if (Tfs)
 #endif
@@ -340,7 +348,7 @@ int pro;			/* which process number */
 /*===========================================================================*
  *				dump_core				     *
  *===========================================================================*/
-PRIVATE dump_core(rmp)
+PRIVATE void dump_core(rmp)
 register struct mproc *rmp;	/* whose core is to be dumped */
 {
 /* Make a core dump on the file "core", if possible. */
@@ -351,8 +359,8 @@ register struct mproc *rmp;	/* whose core is to be dumped */
   vir_bytes v_buf;
   long a, c, ct, dest;
   struct mproc *xmp;
-  extern char core_name[];
-
+  long trace_data;
+  int trace_off;
 
   /* Change to working directory of dumpee. */
   slot = (int)(rmp - mproc);
@@ -380,9 +388,16 @@ register struct mproc *rmp;	/* whose core is to be dumped */
 	rmp->mp_sigstatus |= DUMPED;
 
 	/* First write the memory map of all segments on core file. */
-	if (write(r, (char *) rmp->mp_seg, sizeof(rmp->mp_seg)) < 0) {
+	if (write(r, (char *) rmp->mp_seg, (int)sizeof(rmp->mp_seg)) < 0) {
 		close(r);
 		return;
+	}
+
+	/* Write out the whole kernel process table entry to get the regs. */
+	trace_off = 0;
+	while (sys_trace(3, slot, (long)trace_off, (long)&trace_data) == OK) { 
+		write(r, (char *) &trace_data, (unsigned) sizeof(long));
+ 		trace_off += sizeof(long);
 	}
 
 	/* Now loop through segments and write the segments themselves out. */

@@ -12,17 +12,17 @@
  *   The only entry point is do_exec.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/error.h"
-#include "../h/stat.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <sys/stat.h>
+#include <minix/callnr.h>
 #include "mproc.h"
 #include "param.h"
 
+#if INTEL_32BITS
+#define MAGIC    0x10000301L
+#else
 #define MAGIC    0x04000301L	/* magic number with 2 bits masked off */
+#endif
 #define SEP      0x00200000L	/* value for separate I & D */
 #define TEXTB              2	/* location of text size in header */
 #define DATAB              3	/* location of data size in header */
@@ -30,8 +30,13 @@
 #define TOTB               6	/* location of total size in header */
 #define SYMB               7	/* location of symbol size in header */
 
-#ifdef ATARI_ST
-PUBLIC long lseek();
+FORWARD void load_seg();
+FORWARD int new_mem();
+FORWARD void patch_ptr();
+FORWARD int read_header();
+
+#if (CHIP == M68000)
+FORWARD int relocate();
 #endif
 
 /*===========================================================================*
@@ -46,9 +51,9 @@ PUBLIC int do_exec()
 
   register struct mproc *rmp;
   int m, r, fd, ft;
-  char mbuf[MAX_ISTACK_BYTES];	/* buffer for stack and zeroes */
+  char mbuf[ARG_MAX];	/* buffer for stack and zeroes */
   union u {
-	char name_buf[MAX_PATH];	/* the name of the file to exec */
+	char name_buf[PATH_MAX];/* the name of the file to exec */
 	char zb[ZEROBUF_SIZE];	/* used to zero bss */
   } u;
   char *new_sp;
@@ -61,8 +66,8 @@ PUBLIC int do_exec()
   /* Do some validity checks. */
   rmp = mp;
   stk_bytes = (vir_bytes) stack_bytes;
-  if (stk_bytes > MAX_ISTACK_BYTES) return(ENOMEM);	/* stack too big */
-  if (exec_len <= 0 || exec_len > MAX_PATH) return(EINVAL);
+  if (stk_bytes > ARG_MAX) return(ENOMEM);	/* stack too big */
+  if (exec_len <= 0 || exec_len > PATH_MAX) return(EINVAL);
 
   /* Get the exec file name and see if the file is executable. */
   src = (vir_bytes) exec_name;
@@ -112,7 +117,7 @@ PUBLIC int do_exec()
   /* Read in text and data segments. */
   load_seg(fd, T, text_bytes);
   load_seg(fd, D, data_bytes);
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   if (lseek(fd, sym_bytes, 1) < 0)
 	;	/* error */
   if (relocate(fd, mbuf) < 0)
@@ -121,13 +126,15 @@ PUBLIC int do_exec()
   close(fd);			/* don't need exec file any more */
 
   /* Take care of setuid/setgid bits. */
-  if (s_buf.st_mode & I_SET_UID_BIT) {
-	rmp->mp_effuid = s_buf.st_uid;
-	tell_fs(SETUID, who, (int) rmp->mp_realuid, (int) rmp->mp_effuid);
-  }
-  if (s_buf.st_mode & I_SET_GID_BIT) {
-	rmp->mp_effgid = s_buf.st_gid;
-	tell_fs(SETGID, who, (int) rmp->mp_realgid, (int) rmp->mp_effgid);
+  if ((rmp->mp_flags & TRACED) == 0) { /* suppress if tracing */
+	if (s_buf.st_mode & I_SET_UID_BIT) {
+		rmp->mp_effuid = s_buf.st_uid;
+		tell_fs(SETUID, who, (int) rmp->mp_realuid, (int) rmp->mp_effuid);
+	}
+	if (s_buf.st_mode & I_SET_GID_BIT) {
+		rmp->mp_effgid = s_buf.st_gid;
+		tell_fs(SETGID, who, (int) rmp->mp_realgid, (int) rmp->mp_effgid);
+	}
   }
 
   /* Fix up some 'mproc' fields and tell kernel that exec is done. */
@@ -135,7 +142,7 @@ PUBLIC int do_exec()
   rmp->mp_flags &= ~SEPARATE;	/* turn off SEPARATE bit */
   rmp->mp_flags |= ft;		/* turn it on for separate I & D files */
   new_sp = (char *) vsp;
-  sys_exec(who, new_sp);
+  sys_exec(who, new_sp, rmp->mp_flags & TRACED);
   return(OK);
 }
 
@@ -190,7 +197,7 @@ vir_clicks sc;			/* stack size in clicks */
   if (*tot_bytes == 0) return(ENOEXEC);
 
   if (*ft != SEPARATE) {
-#ifndef ATARI_ST
+#if (CHIP != M68000)
 	/* If I & D space is not separated, it is all considered data. Text=0 */
 	*data_bytes += *text_bytes;
 	*text_bytes = 0;
@@ -246,9 +253,7 @@ int zs;				/* true size of 'bf' */
   register struct mproc *rmp;
   vir_clicks text_clicks, data_clicks, gap_clicks, stack_clicks, tot_clicks;
   phys_clicks new_base;
-  extern phys_clicks alloc_mem();
-  extern phys_clicks max_hole();
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   phys_clicks base, size;
 #else
   char *rzp;
@@ -277,7 +282,7 @@ int zs;				/* true size of 'bf' */
 
   /* There is enough memory for the new core image.  Release the old one. */
   rmp = mp;
-#ifndef ATARI_ST
+#if (CHIP != M68000)
   old_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   old_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
   if (rmp->mp_flags & SEPARATE) old_clicks += rmp->mp_seg[T].mem_len;
@@ -295,7 +300,7 @@ int zs;				/* true size of 'bf' */
   rmp->mp_seg[D].mem_phys = new_base + text_clicks;
   rmp->mp_seg[S].mem_len = stack_clicks;
   rmp->mp_seg[S].mem_phys = rmp->mp_seg[D].mem_phys + data_clicks + gap_clicks;
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   rmp->mp_seg[T].mem_vir = rmp->mp_seg[T].mem_phys;
   rmp->mp_seg[D].mem_vir = rmp->mp_seg[D].mem_phys;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[S].mem_phys;
@@ -304,7 +309,7 @@ int zs;				/* true size of 'bf' */
   rmp->mp_seg[D].mem_vir = 0;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
 #endif
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
 			&base, &size);
   free_mem(base, size);
@@ -336,8 +341,8 @@ int zs;				/* true size of 'bf' */
 /*===========================================================================*
  *				patch_ptr				     *
  *===========================================================================*/
-PRIVATE patch_ptr(stack, base)
-char stack[MAX_ISTACK_BYTES];	/* pointer to stack image within MM */
+PRIVATE void patch_ptr(stack, base)
+char stack[ARG_MAX];	/* pointer to stack image within MM */
 vir_bytes base;			/* virtual address of stack base inside user */
 {
 /* When doing an exec(name, argv, envp) call, the user builds up a stack
@@ -353,7 +358,7 @@ vir_bytes base;			/* virtual address of stack base inside user */
   ap = (char **) stack;		/* points initially to 'nargs' */
   ap++;				/* now points to argv[0] */
   while (flag < 2) {
-	if (ap >= (char **) &stack[MAX_ISTACK_BYTES]) return;	/* too bad */
+	if (ap >= (char **) &stack[ARG_MAX]) return;	/* too bad */
 	if (*ap != NIL_PTR) {
 		v = (vir_bytes) *ap;	/* v is relative pointer */
 		v += base;		/* relocate it */
@@ -369,7 +374,7 @@ vir_bytes base;			/* virtual address of stack base inside user */
 /*===========================================================================*
  *				load_seg				     *
  *===========================================================================*/
-PRIVATE load_seg(fd, seg, seg_bytes)
+PRIVATE void load_seg(fd, seg, seg_bytes)
 int fd;				/* file descriptor to read from */
 int seg;			/* T or D */
 vir_bytes seg_bytes;		/* how big is the segment */
@@ -400,7 +405,7 @@ vir_bytes seg_bytes;		/* how big is the segment */
   }
 }
 
-#ifdef ATARI_ST
+#if (CHIP == M68000)
 /*===========================================================================*
  *				relocate				     *
  *===========================================================================*/
@@ -437,7 +442,7 @@ char *buf;			/* borrowed from do_exec() */
    */
   off = (phys_bytes)rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
   p = buf;
-  n = read(fd, p, MAX_ISTACK_BYTES);
+  n = read(fd, p, ARG_MAX);
   if (n < sizeof(long))
 	return(-1);	/* error */
   if (*((long *)p) == 0)
@@ -451,7 +456,7 @@ char *buf;			/* borrowed from do_exec() */
 	for (;;) {		/* once per byte */
 		if (--n < 0) {
 			p = buf;
-			n = read(fd, p, MAX_ISTACK_BYTES);
+			n = read(fd, p, ARG_MAX);
 			if (--n < 0)
 				return(-1);	/* error */
 		}

@@ -1,3 +1,6 @@
+#ifndef _AMOEBA_H
+#define _AMOEBA_H
+
 /****************************************************************************/
 /*									    */
 /* (c) Copyright 1988 by the Vrije Universiteit, Amsterdam, The Netherlands */
@@ -93,3 +96,5 @@ typedef struct {
 ** because they are lazy.
 */
 extern unshort trans(), getreq(), putrep(), timeout();
+
+#endif /* _AMOEBA_H */

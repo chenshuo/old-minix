@@ -2,23 +2,18 @@
  *
  * The entry points into this file are
  *   clock_time:  ask the clock task for the real time
- *   cmp_string:  compare two strings (e.g., while searching directory)
- *   copy:        copy a string
+ *   copy:	  copy a block of data
  *   fetch_name:  go get a path name from user space
  *   no_sys:      reject a system call that FS does not handle
  *   panic:       something awful has occurred;  MINIX cannot continue
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <minix/com.h>
+#include <minix/boot.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
@@ -29,13 +24,15 @@ PRIVATE message clock_mess;
 /*===========================================================================*
  *				clock_time				     *
  *===========================================================================*/
-PUBLIC real_time clock_time()
+PUBLIC time_t clock_time()
 {
-/* This routine returns the time in seconds since 1.1.1970. */
+/* This routine returns the time in seconds since 1.1.1970.  MINIX is an
+ * astrophysically naive system that assumes the earth rotates at a constant
+ * rate and that such things as leap seconds do not exist.
+ */
 
   register int k;
   register struct super_block *sp;
-  extern struct super_block *get_super();
 
   clock_mess.m_type = GET_TIME;
   if ( (k = sendrec(CLOCK, &clock_mess)) != OK) panic("clock_time err", k);
@@ -47,35 +44,14 @@ PUBLIC real_time clock_time()
 	if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
   }
 
-  return (real_time) clock_mess.NEW_TIME;
+  return (time_t) clock_mess.NEW_TIME;
 }
-
-
-/*===========================================================================*
- *				cmp_string				     *
- *===========================================================================*/
-PUBLIC int cmp_string(rsp1, rsp2, n)
-register char *rsp1, *rsp2;	/* pointers to the two strings */
-register int n;			/* string length */
-{
-/* Compare two strings of length 'n'.  If they are the same, return 1.
- * If they differ, return 0.
- */
-
-  do {
-	if (*rsp1++ != *rsp2++) return(0);
-  } while (--n);
-
-  /* The strings are identical. */
-  return(1);
-}
-
 
 
 /*===========================================================================*
  *				copy					     *
  *===========================================================================*/
-PUBLIC copy(dest, source, bytes)
+PUBLIC void copy(dest, source, bytes)
 char *dest;			/* destination pointer */
 char *source;			/* source pointer */
 int bytes;			/* how much data to move */
@@ -85,10 +61,14 @@ int bytes;			/* how much data to move */
  * an integer at a time.  Otherwise copy character-by-character.
  */
 
-  if (bytes <= 0) return;		/* makes test-at-the-end possible */
+  int src, dst;
 
-  if (bytes % sizeof(int) == 0 && (int) dest % sizeof(int) == 0 &&
-      						(int) source % sizeof(int) == 0) {
+  if (bytes <= 0) return;	/* makes test-at-the-end possible */
+  src = (int) source;		/* only low-order bits needed */	
+  dst = (int) dest;		/* only low-order bits needed */
+
+  if (bytes % sizeof(int) == 0 && src % sizeof(int) == 0 &&
+						dst % sizeof(int) == 0) {
 	/* Copy the string an integer at a time. */
 	register int n = bytes/sizeof(int);
 	register int *dpi = (int *) dest;
@@ -125,6 +105,10 @@ int flag;			/* M3 means path may be in message */
   register char *rpu, *rpm;
   vir_bytes vpath;
 
+  if (len <= 0) {
+	err_code = EINVAL;
+	return(ERROR);
+  }
   if (flag == M3 && len <= M3_STRING) {
 	/* Just copy the path from the message to 'user_path'. */
 	rpu = &user_path[0];
@@ -134,8 +118,8 @@ int flag;			/* M3 means path may be in message */
   }
 
   /* String is not contained in the message.  Go get it from user space. */
-  if (len > MAX_PATH) {
-	err_code = E_LONG_STRING;
+  if (len > PATH_MAX) {
+	err_code = ENAMETOOLONG;
 	return(ERROR);
   }
   vpath = (vir_bytes) path;
@@ -158,7 +142,7 @@ PUBLIC int no_sys()
 /*===========================================================================*
  *				panic					     *
  *===========================================================================*/
-PUBLIC panic(format, num)
+PUBLIC void panic(format, num)
 char *format;			/* format string */
 int num;			/* number to go with format string */
 {
@@ -172,6 +156,6 @@ int num;			/* number to go with format string */
   printf("File system panic: %s ", format);
   if (num != NO_NUM) printf("%d",num); 
   printf("\n");
-  do_sync();			/* flush everything to the disk */
+  (void) do_sync();			/* flush everything to the disk */
   sys_abort();
 }

@@ -1,4 +1,5 @@
 #define Extern extern
+#include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
 #include <setjmp.h>
@@ -39,8 +40,8 @@ typedef union {
 
 /* #include "sh.h" */
 #define	SYNTAXERR	zzerr()
-static	int	startl = 1;
-static	int	peeksym = 0;
+static	int	startl;
+static	int	peeksym;
 static	void	zzerr();
 static	void	word();
 static	char	**copyw();
@@ -66,6 +67,7 @@ static	YYSTYPE	yylval;
 int
 yyparse()
 {
+	startl  = 1;
 	peeksym = 0;
 	yynerrs = 0;
 	outtree = c_list();
@@ -155,6 +157,7 @@ int cf;
 	iounit = IODEFAULT;
 	if (i & IOHERE)
 		markhere(yylval.cp, iop);
+	return(1);
 }
 
 static void
@@ -227,7 +230,7 @@ int cf;
 		peeksym = c;
 		if ((t = simple()) == NULL) {
 			if (iolist == NULL)
-				return(NULL);
+				return((struct op *)NULL);
 			t = newtp();
 			t->type = TCOM;
 		}
@@ -306,7 +309,7 @@ int onlydone;
 
 	c = yylex(CONTIN);
 	if (c == DONE && onlydone)
-		return(NULL);
+		return((struct op *)NULL);
 	if (c != DO)
 		SYNTAXERR;
 	list = c_list();
@@ -322,7 +325,7 @@ thenpart()
 
 	if ((c = yylex(0)) != THEN) {
 		peeksym = c;
-		return(NULL);
+		return((struct op *)NULL);
 	}
 	t = newtp();
 	t->type = 0;
@@ -354,7 +357,7 @@ elsepart()
 
 	default:
 		peeksym = c;
-		return(NULL);
+		return((struct op *)NULL);
 	}
 }
 
@@ -409,7 +412,7 @@ wordlist()
 
 	if ((c = yylex(0)) != IN) {
 		peeksym = c;
-		return(NULL);
+		return((char **)NULL);
 	}
 	startl = 0;
 	while ((c = yylex(0)) == WORD)
@@ -574,11 +577,9 @@ yyerror(s)
 char *s;
 {
 	yynerrs++;
-	if (talking) {
-		if (multiline && nlseen)
-			unget('\n');
+	if (talking && e.iop <= iostack) {
 		multiline = 0;
-		while (yylex(0) != '\n')
+		while (eofc() == 0 && yylex(0) != '\n')
 			;
 	}
 	err(s);

@@ -7,16 +7,11 @@
  *   do_tims:	perform the TIMES system call
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 
@@ -31,7 +26,6 @@ PUBLIC int do_utime()
 
   register struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Temporarily open the file. */
   if (fetch_name(utime_file, utime_length, M1) != OK) return(err_code);
@@ -42,7 +36,7 @@ PUBLIC int do_utime()
   if (rip->i_uid != fp->fp_effuid && !super_user) r = EPERM;
   if (read_only(rip) != OK) r = EROFS;	/* not even su can touch if R/O */
   if (r == OK) {
-	rip->i_modtime = update_time;
+	rip->i_mtime = updated_time;
 	rip->i_dirt = DIRTY;
   }
 
@@ -58,8 +52,6 @@ PUBLIC int do_time()
 
 {
 /* Perform the time(tp) system call. */
-
-  extern real_time clock_time();
 
   reply_l1 = clock_time();	/* return time in seconds */
   return(OK);
@@ -90,7 +82,7 @@ PUBLIC int do_tims()
 {
 /* Perform the times(buffer) system call. */
 
-  real_time t[4];
+  time_t t[4];
 
   sys_times(who, t);
   reply_t1 = t[0];

@@ -1,4 +1,7 @@
-/* a.out header file */
+/* The <a.out> header file describes the format of executable files. */
+
+#ifndef _AOUT_H
+#define _AOUT_H
 
 struct	exec {			/* a.out header */
 	unsigned char	a_magic[2];	/* magic number */
@@ -32,6 +35,7 @@ struct	exec {			/* a.out header */
 #define A_I8086	0x04	/* intel i8086/8088 */
 #define A_M68K	0x0B	/* motorola m68000 */
 #define A_NS16K	0x0C	/* national semiconductor 16032 */
+#define A_I80386	0x10	/* intel i80386 */
 
 #define A_BLR(cputype)	((cputype&0x01)!=0) /* TRUE if bytes left-to-right */
 #define A_WLR(cputype)	((cputype&0x02)!=0) /* TRUE if words left-to-right */
@@ -102,4 +106,5 @@ struct nlist {			/* symbol table entry */
 #define C_NULL
 #define C_EXT		0020	/* external symbol */
 #define C_STAT		0030	/* static */
-	/* there are many others, but they are not supported */
+
+#endif /* _AOUT_H */

@@ -1,3 +1,9 @@
+/* EXTERN should be extern except in table.c */
+#ifdef _TABLE
+#undef EXTERN
+#define EXTERN
+#endif
+
 /* Global variables. */
 EXTERN struct mproc *mp;	/* ptr to 'mproc' slot of current process */
 EXTERN int dont_reply;		/* normally 0; set to 1 to inhibit reply */
@@ -14,5 +20,11 @@ EXTERN int err_code;		/* temporary storage for error number */
 EXTERN int result2;		/* secondary result */
 EXTERN char *res_ptr;		/* result, if pointer */
 
+extern int (*call_vec[])();	/* functions to handle system calls */
+extern char core_name[];	/* file name where core images are produced */
+extern unshort core_bits;	/* which signals cause core images */
 EXTERN char mm_stack[MM_STACK_BYTES];	/* MM's stack */
+
+/* Library variables. */
+extern int errno;
 

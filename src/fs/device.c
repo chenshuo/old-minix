@@ -13,32 +13,33 @@
  *   tty_exit:   a process with pid=pgrp has exited.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <minix/com.h>
 #include "dev.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 
 PRIVATE message dev_mess;
 PRIVATE major, minor, task;
-extern max_major;
+
+FORWARD void find_dev();
 
 /*===========================================================================*
  *				dev_open				     *
  *===========================================================================*/
-PUBLIC int dev_open(dev, mod)
-dev_nr dev;			/* which device to open */
+PUBLIC int dev_open(rip, mod, nonblock)
+struct inode *rip;		/* pointer to the inode */
 int mod;			/* how to open it */
+int nonblock;			/* TRUE if nonblocking open */
 {
 /* Special files may need special processing upon open. */
 
+  dev_t dev;
+
+  if (rip->i_count > 1) return(OK);
+  dev = (dev_t) rip->i_zone[0];	/* device type */
   find_dev(dev);
   dev_mess.DEVICE = dev;
   (*dmap[major].dmap_open)(task, &dev_mess);
@@ -49,11 +50,15 @@ int mod;			/* how to open it */
 /*===========================================================================*
  *				dev_close				     *
  *===========================================================================*/
-PUBLIC dev_close(dev)
-dev_nr dev;			/* which device to close */
+PUBLIC void dev_close(rip)
+struct inode *rip;		/* ptr to the inode */
 {
 /* This procedure can be used when a special file needs to be closed. */
 
+  dev_t dev;			/* which device to close */
+
+  if (rip->i_count > 1) return;
+  dev = (dev_t) rip->i_zone[0];
   find_dev(dev);
   (*dmap[major].dmap_close)(task, &dev_mess);
 }
@@ -62,10 +67,11 @@ dev_nr dev;			/* which device to close */
 /*===========================================================================*
  *				dev_io					     *
  *===========================================================================*/
-PUBLIC int dev_io(rw_flag, dev, pos, bytes, proc, buff)
+PUBLIC int dev_io(rw_flag, nonblock, dev, pos, bytes, proc, buff)
 int rw_flag;			/* READING or WRITING */
-dev_nr dev;			/* major-minor device number */
-long pos;			/* byte position */
+int nonblock;			/* TRUE if nonblocking op */
+dev_t dev;			/* major-minor device number */
+off_t pos;			/* byte position */
 int bytes;			/* how many bytes to transfer */
 int proc;			/* in whose address space is buff? */
 char *buff;			/* virtual address of the buffer */
@@ -75,12 +81,14 @@ char *buff;			/* virtual address of the buffer */
   find_dev(dev);
 
   /* Set up the message passed to task. */
-  dev_mess.m_type   = (rw_flag == READING ? DISK_READ : DISK_WRITE);
+  dev_mess.m_type   = (rw_flag == READING ? DISK_READ :
+		       rw_flag == WRITING ? DISK_WRITE : rw_flag);
   dev_mess.DEVICE   = (dev >> MINOR) & BYTE;
   dev_mess.POSITION = pos;
   dev_mess.PROC_NR  = proc;
   dev_mess.ADDRESS  = buff;
   dev_mess.COUNT    = bytes;
+  dev_mess.TTY_FLAGS = nonblock; /* temporary kludge */
 
   /* Call the task. */
   (*dmap[major].dmap_rw)(task, &dev_mess);
@@ -95,13 +103,12 @@ char *buff;			/* virtual address of the buffer */
 /*===========================================================================*
  *				do_ioctl				     *
  *===========================================================================*/
-PUBLIC do_ioctl()
+PUBLIC int do_ioctl()
 {
 /* Perform the ioctl(ls_fd, request, argx) system call (uses m2 fmt). */
 
   struct filp *f;
   register struct inode *rip;
-  extern struct filp *get_filp();
 
   if ( (f = get_filp(ls_fd)) == NIL_FILP) return(err_code);
   rip = f->filp_ino;		/* get inode pointer */
@@ -112,10 +119,8 @@ PUBLIC do_ioctl()
   dev_mess.PROC_NR = who;
   dev_mess.TTY_LINE = minor;	
   dev_mess.TTY_REQUEST = m.TTY_REQUEST;
-  dev_mess.TTY_SPEED = m.TTY_SPEED;
   dev_mess.TTY_SPEK = m.TTY_SPEK;
   dev_mess.TTY_FLAGS = m.TTY_FLAGS;
-
   /* Call the task. */
   (*dmap[major].dmap_rw)(task, &dev_mess);
 
@@ -130,8 +135,8 @@ PUBLIC do_ioctl()
 /*===========================================================================*
  *				find_dev				     *
  *===========================================================================*/
-PRIVATE find_dev(dev)
-dev_nr dev;			/* device */
+PRIVATE void find_dev(dev)
+dev_t dev;			/* device */
 {
 /* Extract the major and minor device number from the parameter. */
 
@@ -145,22 +150,30 @@ dev_nr dev;			/* device */
 /*===========================================================================*
  *				rw_dev					     *
  *===========================================================================*/
-PUBLIC rw_dev(task_nr, mess_ptr)
+PUBLIC void rw_dev(task_nr, mess_ptr)
 int task_nr;			/* which task to call */
 message *mess_ptr;		/* pointer to message for task */
 {
 /* All file system I/O ultimately comes down to I/O on major/minor device
  * pairs.  These lead to calls on the following routines via the dmap table.
  */
+
   int r;
   message m;
 
-  while ((r = sendrec(task_nr, mess_ptr)) == E_LOCKED) {
+  while ((r = sendrec(task_nr, mess_ptr)) == ELOCKED) {
 	/* sendrec() failed to avoid deadlock. The task 'task_nr' is
 	 * trying to send a REVIVE message for an earlier request.
 	 * Handle it and go try again.
 	 */
 	if (receive(task_nr, &m) != OK) panic("rw_dev: can't receive", NO_NUM);
+
+	/* If we're trying to send a cancel message to a task which has just
+	 * sent a completion reply, ignore the reply and abort the cancel
+	 * request. The caller will do the revive for the process. 
+	 */
+	if (mess_ptr->m_type == CANCEL && m.REP_PROC_NR == mess_ptr->PROC_NR)
+		return;
 	revive(m.REP_PROC_NR, m.REP_STATUS);
   }
   if (r != OK) panic("rw_dev: can't send", NO_NUM);
@@ -170,7 +183,7 @@ message *mess_ptr;		/* pointer to message for task */
 /*===========================================================================*
  *				rw_dev2					     *
  *===========================================================================*/
-PUBLIC rw_dev2(dummy, mess_ptr)
+PUBLIC void rw_dev2(dummy, mess_ptr)
 int dummy;			/* not used - for compatibility with rw_dev() */
 message *mess_ptr;		/* pointer to message for task */
 {
@@ -196,7 +209,7 @@ message *mess_ptr;		/* pointer to message for task */
 /*===========================================================================*
  *				no_call					     *
  *===========================================================================*/
-PUBLIC int no_call(task_nr, m_ptr)
+PUBLIC void no_call(task_nr, m_ptr)
 int task_nr;			/* which task */
 message *m_ptr;			/* message pointer */
 {
@@ -208,12 +221,12 @@ message *m_ptr;			/* message pointer */
 /*===========================================================================*
  *				tty_open				     *
  *===========================================================================*/
-PUBLIC tty_open(task_nr, mess_ptr)
+PUBLIC void tty_open(task_nr, mess_ptr)
 int task_nr;
 message *mess_ptr;
 {
   register struct fproc *rfp;
-  int major;
+  int maj;
 
   mess_ptr->REP_STATUS = OK;
 
@@ -222,31 +235,32 @@ message *mess_ptr;
 
   /* Is there a current control terminal? */
   if (fp->fs_tty != 0) return;
+
   /* Is this one already allocated to another process? */
   for (rfp = &fproc[INIT_PROC_NR + 1]; rfp < &fproc[NR_PROCS]; rfp++)
 	if (rfp->fs_tty == mess_ptr->DEVICE) return;
 
   /* All conditions satisfied.  Make this a control terminal. */
   fp->fs_tty = mess_ptr->DEVICE;
-  major = (mess_ptr->DEVICE >> MAJOR) & BYTE;
+  maj = (mess_ptr->DEVICE >> MAJOR) & BYTE;
   mess_ptr->DEVICE = (mess_ptr->DEVICE >> MINOR) & BYTE;
   mess_ptr->m_type = TTY_SETPGRP;
   mess_ptr->PROC_NR = who;
   mess_ptr->TTY_PGRP = who;
-  (*dmap[major].dmap_rw)(task_nr, mess_ptr);
+  (*dmap[maj].dmap_rw)(task_nr, mess_ptr);
 }
 
 /*===========================================================================*
  *				tty_exit				     *
  *===========================================================================*/
-PUBLIC tty_exit()
+PUBLIC int tty_exit()
 {
 /* Process group leader exits. Remove its control terminal
  * from any processes currently running.
  */
 
   register struct fproc *rfp;
-  register dev_nr ttydev;
+  register dev_t ttydev;
 
   ttydev = fp->fs_tty;
   for (rfp = &fproc[INIT_PROC_NR + 1]; rfp < &fproc[NR_PROCS]; rfp++)
@@ -261,4 +275,3 @@ PUBLIC tty_exit()
   (*dmap[major].dmap_rw)(task, &dev_mess);
   return(OK);
 }
-

@@ -1,0 +1,74 @@
+prog=`basename $0`
+
+case $1 in
+	at)	cpu=88
+		wini=at_wini
+		what_bits=16
+		what_cpu=8088
+		what_wini=AT;;
+
+	bios)	cpu=88
+		wini=bios_wini
+		what_bits=16
+		what_cpu=8088
+		what_wini=BIOS;;
+
+	xt)	cpu=88
+		wini=xt_wini
+		what_bits=16
+		what_cpu=8088
+		what_wini=XT;;
+
+	386)	cpu=386
+		wini=at_wini
+		what_bits=32
+		what_cpu=80386
+		what_wini=AT;;
+
+	ps)     cpu=88
+		wini=ps_wini.c
+		what_bits=16
+		what_cpu=8088
+		what_wini="PS/2";;
+
+	clean)	echo "rm -f klib.x mpx.x wini.c"
+		rm -f klib.x mpx.x wini.c
+		exit 0;;
+	*)	
+		echo "$prog: usage: $prog [at, bios, xt, 386, ps2]"
+		exit 1;;
+esac
+
+if test ! -f klib$cpu.x || test ! -f mpx$cpu.x || test ! -f $wini.c
+then
+	echo "$prog: missing klib$cpu.x, mpx$cpu.x or $wini.c"
+	exit 2
+fi
+
+if test -f klib.x && cmp -s klib.x klib$cpu.x
+then
+	:
+else
+	echo "cp klib$cpu.x klib.x"
+	cp klib$cpu.x klib.x
+fi
+
+if test -f mpx.x && cmp -s mpx.x mpx$cpu.x
+then
+	:
+else
+	echo "cp mpx$cpu.x mpx.x"
+	cp mpx$cpu.x mpx.x
+fi
+
+if test -f wini.c && cmp -s wini.c $wini.c
+then
+	:
+else
+	echo "cp $wini.c wini.c"
+	cp $wini.c wini.c
+fi
+
+echo "Now set up for the $what_wini wini driver and the $what_cpu ($what_bits-bit) kernel"
+
+exit 0

@@ -2,37 +2,23 @@
  * routines that perform them.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/stat.h"
-#include "const.h"
-#include "type.h"
-#include "dev.h"
+#define _TABLE
 
-#undef EXTERN
-#define EXTERN
+#include "fs.h"
+#include <sys/stat.h>
 
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "buf.h"
+#include "dev.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "super.h"
 
-extern do_access(), do_chdir(), do_chmod(), do_chown(), do_chroot();
-extern do_close(), do_creat(), do_dup(), do_exit(), do_fork(), do_fstat();
-extern do_ioctl(), do_link(), do_lseek(), do_mknod(), do_mount(), do_open();
-extern do_pipe(), do_read(), do_revive(), do_set(), do_stat(), do_stime();
-extern do_sync(), do_time(), do_tims(), do_umask(), do_umount(), do_unlink();
-extern do_unpause(), do_utime(), do_write(), no_call(), no_sys();
+PUBLIC char *stackpt = &fstack[FS_STACK_BYTES];	/* initial stack pointer */
 
-extern char fstack[];
-char *stackpt = &fstack[FS_STACK_BYTES];	/* initial stack pointer */
-
-int (*call_vector[NCALLS])() = {
+PUBLIC int (*call_vector[NCALLS])() = {
 	no_sys,		/*  0 = unused	*/
 	do_exit,	/*  1 = exit	*/
 	do_fork,	/*  2 = fork	*/
@@ -71,9 +57,9 @@ int (*call_vector[NCALLS])() = {
 	no_sys,		/* 35 = (ftime)	*/
 	do_sync,	/* 36 = sync	*/
 	no_sys,		/* 37 = kill	*/
-	no_sys,		/* 38 = unused	*/
-	no_sys,		/* 39 = unused	*/
-	no_sys,		/* 40 = unused	*/
+	do_rename,	/* 38 = rename	*/
+	do_mkdir,	/* 39 = mkdir	*/
+	do_unlink,	/* 40 = rmdir	*/
 	do_dup,		/* 41 = dup	*/
 	do_pipe,	/* 42 = pipe	*/
 	do_tims,	/* 43 = times	*/
@@ -88,7 +74,7 @@ int (*call_vector[NCALLS])() = {
 	no_sys,		/* 52 = (phys)	*/
 	no_sys,		/* 53 = (lock)	*/
 	do_ioctl,	/* 54 = ioctl	*/
-	no_sys,		/* 55 = unused	*/
+	do_fcntl,	/* 55 = fcntl	*/
 	no_sys,		/* 56 = (mpx)	*/
 	no_sys,		/* 57 = unused	*/
 	no_sys,		/* 58 = unused	*/
@@ -103,24 +89,19 @@ int (*call_vector[NCALLS])() = {
 	no_sys, 	/* 66 = BRK2 (used to tell MM size of FS,INIT)	*/
 	do_revive,	/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
-#ifdef i8088
 	no_sys,		/* 69 = unused */
-#endif
 };
-
-
-extern rw_dev(), rw_dev2(), tty_open();
 
 
 /* The order of the entries here determines the mapping between major device
  * numbers and tasks.  The first entry (major device 0) is not used.  The
  * next entry is major device 1, etc.  Character and block devices can be
- * intermixed at random.  If this ordering is changed, BOOT_DEV and ROOT_DEV
+ * intermixed at random.  If this ordering is changed, the devices in h/boot.h
  * must be changed to correspond to the new values.  Note that the major
  * device numbers used in /dev are NOT the same as the task numbers used
  * inside the kernel (as defined in h/com.h).
  */
-struct dmap dmap[] = {
+PUBLIC struct dmap dmap[] = {
 /*  Open       Read/Write   Close       Task #      Device  File
     ----       ----------   -----       -------     ------  ----      */
     0,         0,           0,          0,           /* 0 = not used  */
@@ -132,4 +113,4 @@ struct dmap dmap[] = {
     no_call,   rw_dev,      no_call,    PRINTER,     /* 6 = /dev/lp   */
 };
 
-int max_major = sizeof(dmap)/sizeof(struct dmap);
+PUBLIC int max_major = sizeof(dmap)/sizeof(struct dmap);

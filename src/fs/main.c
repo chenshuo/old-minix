@@ -7,51 +7,56 @@
  *   reply:	send a reply to a process after the requested work is done
  */
 
-#ifdef ATARI_ST
-#define ASKDEV		/* ask for boot device */
-#define FASTLOAD	/* use multiple block transfers to init ram */
-#endif
-
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <minix/callnr.h>
+#include <minix/com.h>
+#include <minix/boot.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
 
-#ifdef FASTLOAD
+#if FASTLOAD
 #include "dev.h"
-#endif FASTLOAD
+#endif
 
 #define M64K     0xFFFF0000L	/* 16 bit mask for DMA check */
-#define INFO               2	/* where in data_org is info from build */
 #define MAX_RAM        16384	/* maximum RAM disk size in blocks */
-#define RAM_IMAGE (dev_nr)0x303	/* major-minor dev where root image is kept */
+#define RAM_IMAGE (dev_t)0x303	/* major-minor dev where root image is kept */
+#define DEMO_RAM_OFFSET  200	/* location of RAM image on demo diskette */
 
-#ifdef i8088
-#define EM_ORIGIN   0x100000	/* origin of extended memory RAM disk on AT */
-#define MAX_CRD           255	/* if root fs > MAX_CRD, use extended mem */
+FORWARD void buf_pool();
+FORWARD void fs_init();
+FORWARD void get_boot_parameters();
+FORWARD void get_work();
+FORWARD dev_t load_ram();
+FORWARD void load_super();
+
+#if ASKDEV
+FORWARD int askdev();
+#endif
+
+#if FASTLOAD
+FORWARD void fastload();
+FORWARD int lastused();
+#endif
+
+#if (CHIP == INTEL)
+FORWARD phys_bytes get_physbase();
 #endif
 
 /*===========================================================================*
  *				main					     *
  *===========================================================================*/
-PUBLIC main()
+PUBLIC void main()
 {
 /* This is the main program of the file system.  The main loop consists of
  * three major activities: getting new work, processing the work, and sending
  * the reply.  This loop never terminates as long as the file system runs.
  */
   int error;
-  extern int (*call_vector[NCALLS])();
 
   fs_init();
 
@@ -65,7 +70,7 @@ PUBLIC main()
 
 	/* Call the internal function that does the work. */
 	if (fs_call < 0 || fs_call >= NCALLS)
-		error = E_BAD_CALL;
+		error = EBADCALL;
 	else
 		error = (*call_vector[fs_call])();
 
@@ -80,7 +85,7 @@ PUBLIC main()
 /*===========================================================================*
  *				get_work				     *
  *===========================================================================*/
-PRIVATE get_work()
+PRIVATE void get_work()
 {  
   /* Normally wait for new input.  However, if 'reviving' is
    * nonzero, a suspended process must be awakened.
@@ -116,7 +121,7 @@ PRIVATE get_work()
 /*===========================================================================*
  *				reply					     *
  *===========================================================================*/
-PUBLIC reply(whom, result)
+PUBLIC void reply(whom, result)
 int whom;			/* process to reply to */
 int result;			/* result of the call (usually OK or error #) */
 {
@@ -132,17 +137,18 @@ int result;			/* result of the call (usually OK or error #) */
 /*===========================================================================*
  *				fs_init					     *
  *===========================================================================*/
-PRIVATE fs_init()
+PRIVATE void fs_init()
 {
 /* Initialize global variables, tables, etc. */
 
   register struct inode *rip;
   int i;
-  extern struct inode *get_inode();
+  dev_t d;			/* device to fetch the superblock from */
 
   buf_pool();			/* initialize buffer pool */
-  load_ram();			/* Load RAM disk from root diskette. */
-  load_super();			/* Load super block for root device */
+  get_boot_parameters();
+  d = load_ram();		/* init RAM disk, load if it is root */
+  load_super(d);		/* Load super block for root device */
 
   /* Initialize the 'fproc' fields for process 0 and process 2. */
   for (i = 0; i < 3; i+= 2) {
@@ -151,18 +157,18 @@ PRIVATE fs_init()
 	fp->fp_rootdir = rip;
 	dup_inode(rip);
 	fp->fp_workdir = rip;
-	fp->fp_realuid = (uid) SYS_UID;
-	fp->fp_effuid = (uid) SYS_UID;
-	fp->fp_realgid = (gid) SYS_GID;
-	fp->fp_effgid = (gid) SYS_GID;
+	fp->fp_realuid = (uid_t) SYS_UID;
+	fp->fp_effuid = (uid_t) SYS_UID;
+	fp->fp_realgid = (gid_t) SYS_GID;
+	fp->fp_effgid = (gid_t) SYS_GID;
 	fp->fp_umask = ~0;
   }
 
   /* Certain relations must hold for the file system to work at all. */
   if (ZONE_NUM_SIZE != 2) panic("ZONE_NUM_SIZE != 2", NO_NUM);
   if (SUPER_SIZE > BLOCK_SIZE) panic("SUPER_SIZE > BLOCK_SIZE", NO_NUM);
-  if(BLOCK_SIZE % INODE_SIZE != 0)panic("BLOCK_SIZE % INODE_SIZE != 0", NO_NUM);
-  if (NR_FDS > 127) panic("NR_FDS > 127", NO_NUM);
+  if(BLOCK_SIZE % INODE_SIZE != 0)panic("BLOCK_SIZE % INODE_SIZE != 0",NO_NUM);
+  if (OPEN_MAX > 127) panic("OPEN_MAX > 127", NO_NUM);
   if (NR_BUFS < 6) panic("NR_BUFS < 6", NO_NUM);
   if (sizeof(d_inode) != 32) panic("inode size != 32", NO_NUM);
 }
@@ -170,7 +176,7 @@ PRIVATE fs_init()
 /*===========================================================================*
  *				buf_pool				     *
  *===========================================================================*/
-PRIVATE buf_pool()
+PRIVATE void buf_pool()
 {
 /* Initialize the buffer pool.  On the IBM PC, the hardware DMA chip is
  * not able to cross 64K boundaries, so any buffer that happens to lie
@@ -179,11 +185,9 @@ PRIVATE buf_pool()
  * the PC hardware.
  */
   register struct buf *bp;
-#ifdef i8088
-  vir_bytes low_off, high_off;
+
+  vir_bytes low_off, high_off;		/* only used on INTEL chips */
   phys_bytes org;
-  extern phys_clicks get_base();
-#endif
 
   bufs_in_use = 0;
   front = &buf[0];
@@ -198,24 +202,15 @@ PRIVATE buf_pool()
   buf[0].b_prev = NIL_BUF;
   buf[NR_BUFS - 1].b_next = NIL_BUF;
 
-  /* Delete any buffers that span a 64K boundary. */
-#ifdef i8088
+  /* Delete any buffers that span a 64K boundary, by marking them as used. */
+#if (CHIP == INTEL)
   for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) {
-	org = get_base() << CLICK_SHIFT;	/* phys addr where FS is */
+	org = get_physbase();	/* phys addr where FS is */
 	low_off = (vir_bytes) bp->b_data;
 	high_off = low_off + BLOCK_SIZE - 1;
 	if (((org + low_off) & M64K) != ((org + high_off) & M64K)) {
-		if (bp == &buf[0]) {
-			front = &buf[1];
-			buf[1].b_prev = NIL_BUF;
-		} else if (bp == &buf[NR_BUFS - 1]) {
-			rear = &buf[NR_BUFS - 2];
-			buf[NR_BUFS - 2].b_next = NIL_BUF;
-		} else {
-			/* Delete a buffer in the middle. */
-			bp->b_prev->b_next = bp + 1;
-			bp->b_next->b_prev = bp - 1;
-		}
+		++bp->b_count;	/* it was 0, by static initialization */
+		++bufs_in_use;
 	}
   }
 #endif
@@ -228,71 +223,75 @@ PRIVATE buf_pool()
 /*===========================================================================*
  *				load_ram				     *
  *===========================================================================*/
-PRIVATE load_ram()
+PRIVATE dev_t load_ram()
 {
-/* The root diskette contains a block-by-block image of the root file system
- * starting at 0.  Go get it and copy it to the RAM disk. 
+/* If the root device is the RAM disk, copy the entire root image device
+ * block-by-block to a RAM disk with the same size as the image.
+ * Otherwise, just allocate a RAM disk with size given in the boot parameters.
  */
 
   register struct buf *bp, *bp1;
   int count;
   long k_loaded;
   struct super_block *sp;
-  block_nr i;
-  dev_nr root_device;
+  block_nr ram_offset = 0;	/* block offset of RAM image on demo diskette*/
+  block_nr i, b;
+  dev_t root_device;		/* really the root image device */
+  dev_t super_dev;		/* device to get superblock from */
   phys_clicks ram_clicks, init_org, init_text_clicks, init_data_clicks;
-  long base;
-  extern phys_clicks data_org[INFO + 2];
-  extern struct buf *get_block();
 
   /* Get size of INIT by reading block on diskette where 'build' put it. */
   init_org = data_org[INFO];
   init_text_clicks = data_org[INFO + 1];
   init_data_clicks = data_org[INFO + 2];
-  base = (long) init_org + (long) init_text_clicks + (long) init_data_clicks;
-  base = base << CLICK_SHIFT;
+
+  /* Print ATARI copyright message. */
+#if (MACHINE == ATARI)
+  printf("Booting MINIX 1.5.  Copyright 1990 Prentice-Hall, Inc.\n");
+#endif
+
+  /* If the root device is specified in the boot parameters, use it. */
+  if (ROOT_DEV != DEV_RAM) {
+	count = boot_parameters.bp_ramsize;
+	super_dev = ROOT_DEV;	/* get superblock directly from root device */
+	goto got_root_dev;	/* kludge to avoid excessive indent/diffs */
+  } else {
+	super_dev = DEV_RAM;	/* get superblock from RAM disk */
+  }
 
   /* Get size of RAM disk by reading root file system's super block.
    * First read block 0 from the floppy.  If this is a valid file system, use
    * it as the root image, otherwise try the hard disk (RAM_IMAGE).  
    */
-#ifdef ATARI_ST
-  printf("Booting MINIX-ST 1.1.  Copyright 1988 Prentice-Hall, Inc.\n");
-#endif ATARI_ST
-#ifdef ASKDEV
-  root_device = (dev_nr)askdev();
+#if ASKDEV
+  root_device = (dev_t)askdev();
   if (root_device == 0)
-#endif ASKDEV
-  root_device = BOOT_DEV;	/* try floppy disk first */
-  bp = get_block(root_device, SUPER_BLOCK, NORMAL);  /* get RAM super block */
-  copy(super_block, bp->b_data, sizeof(struct super_block));
+#endif
+
+#if DEMO
+  /* If this file is compiled with -DDEMO=1, RAM image is at DEMO_RAM_OFFSET */
+  ram_offset = DEMO_RAM_OFFSET;
+#endif
+
+  root_device = BOOT_DEV;	/* get super block; try floppy disk first */
+  bp = get_block(root_device, SUPER_BLOCK + ram_offset, NORMAL);
+  copy(super_block, bp->b_data, SUPER_SIZE);
   sp = &super_block[0];
   if (sp->s_magic != SUPER_MAGIC) {
 	put_block(bp, FULL_DATA_BLOCK);
 	root_device = RAM_IMAGE;
-	bp = get_block(root_device, SUPER_BLOCK, NORMAL);  /* get RAM super block */
-	copy(super_block, bp->b_data, sizeof(struct super_block));
+	bp = get_block(root_device, SUPER_BLOCK, NORMAL);  /* get super block*/
+	copy(super_block, bp->b_data, SUPER_SIZE);
 	sp = &super_block[0];
 	if (sp->s_magic != SUPER_MAGIC)
 		panic("Invalid root file system", NO_NUM);
   }
   count = sp->s_nzones << sp->s_log_zone_size;	/* # blocks on root dev */
-  if (count > MAX_RAM) panic("RAM disk is too big. # blocks = ", count);
-  ram_clicks = count * (BLOCK_SIZE/CLICK_SIZE);
   put_block(bp, FULL_DATA_BLOCK);
 
-#ifdef i8088
-  /* There are two possibilities now (by convention):  
-   *    count < MAX_CRD  ==> RAM disk is in core
-   *    count >=MAX_CRD  ==> RAM disk is in extended memory (AT only)
-   * In the latter case, tell MM that RAM disk size is 0 and tell the ram disk
-   * driver than the device begins at 1MB.
-   */
-  if (count > MAX_CRD) {
-	ram_clicks = 0;		/* MM does not have to allocate any core */
-	base = EM_ORIGIN;	/* tell RAM disk driver RAM disk origin */
-  }
-#endif
+got_root_dev:
+  if (count > MAX_RAM) panic("RAM disk is too big. # blocks = ", count);
+  ram_clicks = count * (BLOCK_SIZE/CLICK_SIZE);
 
   /* Tell MM the origin and size of INIT, and the amount of memory used for the
    * system plus RAM disk combined, so it can remove all of it from the map.
@@ -301,31 +300,48 @@ PRIVATE load_ram()
   m1.m1_i1 = init_text_clicks;
   m1.m1_i2 = init_data_clicks;
   m1.m1_i3 = init_org + init_text_clicks + init_data_clicks + ram_clicks;
-#ifdef ATARI_ST
-  m1.m1_p1 = (char *) (int) init_org;	/* Bug in Alcyon 4.14 C */
+
+#if (MACHINE == ATARI)
+  m1.m1_p1 = (char *) (int) init_org;	/* bug in Alcyon 4.14 C */
 #else
-  m1.m1_p1 = (char *) init_org;
+  m1.m1_p1 = (char *) init_org;		/* other compilers */
 #endif
+
   if (sendrec(MM_PROC_NR, &m1) != OK) panic("FS Can't report to MM", NO_NUM);
 
-  /* Tell RAM driver where RAM disk is and how big it is. */
+  /* Tell RAM driver where RAM disk is and how big it is. The BRK2 call has
+   * filled in the m1.POSITION field.
+   */
   m1.m_type = DISK_IOCTL;
   m1.DEVICE = RAM_DEV;
-  m1.POSITION = base;
   m1.COUNT = count;
   if (sendrec(MEM, &m1) != OK) panic("Can't report size to MEM", NO_NUM);
 
-  /* Copy the blocks one at a time from the root diskette to the RAM */
-#ifdef i8088
-  if (ram_clicks == 0) 	
-	printf("RAM disk of %d blocks is in extended memory\n\n", count);
+#if (CHIP == INTEL)
+  /* Say if we are running in real mode or protected mode.
+   * 'bp_processor' is re-used to mean 'protected_mode'.
+   */
+  printf("Executing in %s mode\n\n",
+	 boot_parameters.bp_processor ? "protected" : "real");
 #endif
-#ifdef FASTLOAD
-  fastload(root_device, (char *)base);
+
+  /* If the root device is not the RAM disk, it doesn't need loading. */
+  if (ROOT_DEV != DEV_RAM) return(super_dev);	/* ROOT_DEV is a macro */
+
+  /* Copy the blocks one at a time from the root diskette to the RAM */
+
+#if FASTLOAD
+  fastload(root_device, (char *) m1.POSITION);	/* assumes 32 bit pointers */
 #else
-  printf("Loading RAM disk.                          Loaded:   0K ");
+  printf("Loading RAM disk.                            Loaded:   0K ");
+
+  inode[0].i_mode = I_BLOCK_SPECIAL;	/* temp inode for rahead */
+  inode[0].i_size = MAX_P_LONG;
+  inode[0].i_dev = inode[0].i_zone[0] = root_device;
+
   for (i = 0; i < count; i++) {
-	bp = get_block(root_device, (block_nr) i, NORMAL);
+	b = i + ram_offset;		/* true block number */
+	bp = rahead(&inode[0], (block_nr) b, (off_t)BLOCK_SIZE*b, BLOCK_SIZE);
 	bp1 = get_block(ROOT_DEV, i, NO_READ);
 	copy(bp1->b_data, bp->b_data, BLOCK_SIZE);
 	bp1->b_dirt = DIRTY;
@@ -334,34 +350,34 @@ PRIVATE load_ram()
 	k_loaded = ( (long) i * BLOCK_SIZE)/1024L;	/* K loaded so far */
 	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b%4DK %c", k_loaded, 0);
   }
-#endif FASTLOAD
+#endif /* FASTLOAD */
 
-  if (root_device == BOOT_DEV)
+  if ( ((root_device ^ DEV_FD0) & ~BYTE) == 0 )
 	printf("\rRAM disk loaded.    Please remove root diskette.           \n\n");
   else
 	printf("\rRAM disk loaded.                                           \n\n");
+  return(super_dev);
 }
 
 
 /*===========================================================================*
  *				load_super				     *
  *===========================================================================*/
-PRIVATE load_super()
+PRIVATE void load_super(super_dev)
+dev_t super_dev;			/* place to get superblock from */
 {
   register struct super_block *sp;
   register struct inode *rip;
-  extern struct inode *get_inode();
 
-/* Initialize the super_block table. */
-
+  /* Initialize the super_block table. */
   for (sp = &super_block[0]; sp < &super_block[NR_SUPERS]; sp++)
   	sp->s_dev = NO_DEV;
 
   /* Read in super_block for the root file system. */
   sp = &super_block[0];
-  sp->s_dev = ROOT_DEV;
+  sp->s_dev = super_dev;
   rw_super(sp,READING);
-  rip = get_inode(ROOT_DEV, ROOT_INODE);	/* inode for root dir */
+  rip = get_inode(super_dev, ROOT_INODE);	/* inode for root dir */
 
   /* Check super_block for consistency (is it the right diskette?). */
   if ( (rip->i_mode & I_TYPE) != I_DIRECTORY || rip->i_nlinks < 3 ||
@@ -372,11 +388,12 @@ PRIVATE load_super()
   dup_inode(rip);
   sp->s_isup = rip;
   sp->s_rd_only = 0;
-  if (load_bit_maps(ROOT_DEV) != OK)
+  if (load_bit_maps(super_dev) != OK)
 	panic("init: can't load root bit maps", NO_NUM);
+  return;
 }
 
-#ifdef ASKDEV
+#if ASKDEV
 /*===========================================================================*
  *				askdev					     *
  *===========================================================================*/
@@ -428,14 +445,14 @@ PRIVATE askdev()
 	return(0);
   return((maj << 8) | min);
 }
-#endif ASKDEV
+#endif /* ASKDEV */
 
-#ifdef FASTLOAD
+#if FASTLOAD
 /*===========================================================================*
  *				fastload				     *
  *===========================================================================*/
-PRIVATE fastload(boot_dev, address)
-dev_nr boot_dev;
+PRIVATE void fastload(boot_dev, address)
+dev_t boot_dev;
 char *address;
 {
   register i, blocks;
@@ -472,8 +489,8 @@ char *address;
 /*===========================================================================*
  *				lastused				     *
  *===========================================================================*/
-PRIVATE lastused(boot_dev)
-dev_nr boot_dev;
+PRIVATE int lastused(boot_dev)
+dev_t boot_dev;
 {
   register i, w, b, last, this, zbase;
   register struct super_block *sp = &super_block[0];
@@ -503,4 +520,44 @@ dev_nr boot_dev;
   }
   panic("lastused", NO_NUM);
 }
-#endif FASTLOAD
+#endif /* FASTLOAD */
+
+/*===========================================================================*
+ *				get_boot_parameters			     *
+ *===========================================================================*/
+PUBLIC struct bparam_s boot_parameters =  /* overwritten if new kernel */
+{
+  DROOTDEV, DRAMIMAGEDEV, DRAMSIZE, DSCANCODE,
+};
+
+PRIVATE void get_boot_parameters()
+{
+/* Ask kernel for boot parameters. */
+
+  struct bparam_s temp_parameters;
+
+  m1.m_type = SYS_GBOOT;
+  m1.PROC1 = FS_PROC_NR;
+  m1.MEM_PTR = (char *) &temp_parameters;
+  if (sendrec(SYSTASK, &m1) == OK && m1.m_type == OK)
+	boot_parameters = temp_parameters;
+}
+
+#if (CHIP == INTEL)
+/*===========================================================================*
+ *				get_physbase				     *
+ *===========================================================================*/
+PRIVATE phys_bytes get_physbase()
+{
+/* Ask kernel for base of fs data space. */
+
+  m1.m_type = SYS_UMAP;
+  m1.SRC_PROC_NR = FS_PROC_NR;
+  m1.SRC_SPACE = D;
+  m1.SRC_BUFFER = 0;
+  m1.COPY_BYTES = 1;
+  if (sendrec(SYSTASK, &m1) != OK || m1.SRC_BUFFER == 0)
+	panic("Can't get fs base", NO_NUM);
+  return m1.SRC_BUFFER;
+}
+#endif /* INTEL */

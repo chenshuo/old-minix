@@ -1,64 +1,56 @@
 /* This file contains some dumping routines for debugging. */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
-#include "glo.h"
+#include "kernel.h"
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "proc.h"
 
 #define NSIZE 20
 phys_bytes aout[NR_PROCS];	/* pointers to the program names */
 char nbuff[NSIZE+1];
-int vargv;
+char *vargv;
 
-extern struct tasktab tasktab[];
+FORWARD void prname();
 
 /*===========================================================================*
  *				DEBUG routines here			     * 
  *===========================================================================*/
-p_dmp()
+PUBLIC void p_dmp()
 {
 /* Proc table dump */
 
   register struct proc *rp;
   char *np;
-  vir_bytes base, limit, first, last;
-  phys_bytes ltmp, dst;
+  phys_clicks base, size;
+  phys_bytes dst;
   int index;
-  extern phys_bytes umap();
 
   printf(
- "\nproc  -pid- -pc-  -sp-  flag  user  -sys-  base limit recv   command\r\n");
+  "\r\nproc  --pid -pc- -sp flag -user- --sys-- -base- -size-  recv- command\r\n");
 
-  dst = umap(proc_addr(SYSTASK), D, (vir_bytes)nbuff, NSIZE);
+  dst = umap(cproc_addr(SYSTASK), D, (vir_bytes)nbuff, NSIZE);
 
-  for (rp = &proc[0]; rp < &proc[NR_PROCS+NR_TASKS]; rp++)  {
+  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++)  {
 	if (rp->p_flags & P_SLOT_FREE) continue;
-	first = rp->p_map[T].mem_phys;
-	last = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	ltmp = ((long) first << 4) + 512L;
-	base = (vir_bytes) (ltmp/1024L);
-	ltmp = (((long) last << 4) + 512L);
-	limit = (vir_bytes) (ltmp/1024L);
-	prname(rp - proc);
-	printf(" %4d %4x %4x %4x %6D %7D  %3dK %3dK  ",
-		rp->p_pid, rp->p_pcpsw.pc, rp->p_sp, rp->p_flags,
+	base = rp->p_map[T].mem_phys;
+	size = rp->p_map[S].mem_phys + rp->p_map[S].mem_len - base;
+	prname(proc_number(rp));
+	printf("%5u %4lx %4lx %2x %7U %7U %5uK %5uK  ",
+		rp->p_pid,
+		(unsigned long) rp->p_reg.pc,
+		(unsigned long) rp->p_reg.sp,
+		rp->p_flags,
 		rp->user_time, rp->sys_time,
-		base, limit);
+		click_to_round_k(base), click_to_round_k(size));
 		if (rp->p_flags == 0)
 			printf("      ");
 		else
-			prname(NR_TASKS + rp->p_getfrom);
+			prname(rp->p_getfrom);
 
 	/* Fetch the command string from the user process. */
-	index = rp - proc - NR_TASKS;
+	index = proc_number(rp);
 	if (index > LOW_USER && aout[index] != 0) {
 		phys_copy(aout[index], dst, (long) NSIZE);
-		aout[NSIZE] = 0;
 		for (np = &nbuff[0]; np < &nbuff[NSIZE]; np++)
 			if (*np <= ' ' || *np >= 0177) *np = 0;
 		if (index == LOW_USER + 1)
@@ -73,43 +65,38 @@ p_dmp()
 
 
 
-map_dmp()
+PUBLIC void map_dmp()
 {
   register struct proc *rp;
-  vir_bytes base, limit, first, last;
-  phys_bytes ltmp;
+  phys_clicks base, size;
 
-  printf("\nPROC   -----TEXT-----  -----DATA-----  ----STACK-----  BASE SIZE\r\n");
-  for (rp = &proc[NR_TASKS]; rp < &proc[NR_TASKS+NR_PROCS]; rp++)  {
+  printf("\r\nPROC   -----TEXT-----  -----DATA-----  ----STACK-----  -BASE- -SIZE-\r\n");
+  for (rp = BEG_SERV_ADDR; rp < END_PROC_ADDR; rp++)  {
 	if (rp->p_flags & P_SLOT_FREE) continue;
-	first = rp->p_map[T].mem_phys;
-	last = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	ltmp = ((long) first << 4) + 512L;
-	base = (vir_bytes) (ltmp/1024L);
-	ltmp = (((long) (last-first) << 4) + 512L);
-	limit = (vir_bytes) (ltmp/1024L);
-	prname(rp-proc);
-	printf(" %4x %4x %4x  %4x %4x %4x  %4x %4x %4x  %3dK %3dK\r\n", 
+	base = rp->p_map[T].mem_phys;
+	size = rp->p_map[S].mem_phys + rp->p_map[S].mem_len - base;
+	prname(proc_number(rp));
+	printf(" %4x %4x %4x  %4x %4x %4x  %4x %4x %4x  %5uK %5uK\r\n", 
 	    rp->p_map[T].mem_vir, rp->p_map[T].mem_phys, rp->p_map[T].mem_len,
 	    rp->p_map[D].mem_vir, rp->p_map[D].mem_phys, rp->p_map[D].mem_len,
 	    rp->p_map[S].mem_vir, rp->p_map[S].mem_phys, rp->p_map[S].mem_len,
-	    base, limit);
+	    click_to_round_k(base), click_to_round_k(size));
   }
 }
 
 
-prname(i)
+PRIVATE void prname(i)
 int i;
 {
-  if (i == ANY+NR_TASKS)
+  if (i == ANY)
 	printf("ANY   ");
-  else if (i >= 0 && i <= NR_TASKS+2)
-	printf("%s", tasktab[i].name);
+  else if ( (unsigned) (i + NR_TASKS) <= LOW_USER + NR_TASKS)
+	printf("%s", tasktab[i + NR_TASKS].name);
   else
-	printf("%4d  ", i-NR_TASKS);
+	printf("%4d  ", i);
 }
 
-set_name(proc_nr, ptr)
+PUBLIC void set_name(proc_nr, ptr)
 int proc_nr;
 char *ptr;
 {
@@ -118,7 +105,6 @@ char *ptr;
  * purposes.
  */
 
-  extern phys_bytes umap();
   phys_bytes src, dst;
 
   if (ptr == (char *) 0) {
@@ -126,10 +112,11 @@ char *ptr;
 	return;
   }
 
-  src = umap(proc_addr(proc_nr), D, (vir_bytes)(ptr + 2), 2);
+  src = umap(proc_addr(proc_nr), D, (vir_bytes)(ptr + sizeof vargv),
+	     sizeof vargv);
   if (src == 0) return;
-  dst = umap(proc_addr(SYSTASK), D, (vir_bytes)&vargv, 2);
-  phys_copy(src, dst, 2L);
+  dst = umap(cproc_addr(SYSTASK), D, (vir_bytes)&vargv, sizeof vargv);
+  phys_copy(src, dst, (phys_bytes) sizeof vargv);
 
   aout[proc_nr] = umap(proc_addr(proc_nr), D, (vir_bytes)vargv, NSIZE);
 }

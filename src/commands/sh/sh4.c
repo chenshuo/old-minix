@@ -1,10 +1,11 @@
 #define Extern extern
-#include <signal.h>
-#include <errno.h>
-#include <setjmp.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/dir.h>
+#include <limits.h>
+#include <signal.h>
+#include <errno.h>
+#include <setjmp.h>
 #include "sh.h"
 
 /* -------- eval.c -------- */
@@ -30,33 +31,41 @@ register char **ap;
 {
 	struct wdblock *wb;
 	char **wp;
+	char **wf;
 	jmp_buf ev;
 
-	inword++;
 	wp = NULL;
 	wb = NULL;
+	wf = NULL;
 	if (newenv(setjmp(errpt = ev)) == 0) {
-		wb = addword((char *)0, wb); /* space for shell name, if command file */
-		while (expand(*ap++, &wb, f))
-			;
+		while (*ap && isassign(*ap))
+			expand(*ap++, &wb, f & ~DOGLOB);
+		if (flag['k']) {
+			for (wf = ap; *wf; wf++) {
+				if (isassign(*wf))
+					expand(*wf, &wb, f & ~DOGLOB);
+			}
+		}
+		for (wb = addword((char *)0, wb); *ap; ap++) {
+			if (!flag['k'] || !isassign(*ap))
+				expand(*ap, &wb, f & ~DOKEY);
+		}
 		wb = addword((char *)0, wb);
-		wp = getwords(wb) + 1;
+		wp = getwords(wb);
 		quitenv();
 	} else
 		gflg = 1;
-	inword--;
-	return(gflg? NULL: wp);
+	return(gflg? (char **)NULL: wp);
 }
 
 /*
  * Make the exported environment from the exported
- * names in the dictionary.  Keyword assignments
- * ought to be taken from wp (the list of words on the command line)
- * but aren't, yet. Until then: ARGSUSED
+ * names in the dictionary. Keyword assignments
+ * will already have been done.
  */
 char **
-makenv(wp)
-char **wp;
+makenv()
+
 {
 	register struct wdblock *wb;
 	register struct var *vp;
@@ -76,7 +85,6 @@ int f;
 {
 	struct wdblock *wb;
 
-	inword++;
 	wb = NULL;
 	if (expand(cp, &wb, f)) {
 		if (wb == NULL || wb->w_nword == 0 || (cp = wb->w_words[0]) == NULL)
@@ -84,7 +92,6 @@ int f;
 		DELETE(wb);
 	} else
 		cp = NULL;
-	inword--;
 	return(cp);
 }
 
@@ -134,11 +141,14 @@ blank(f)
 {
 	register c, c1;
 	register char *sp;
+	int scanequals, foundequals;
 
 	sp = e.linep;
+	scanequals = f & DOKEY;
+	foundequals = 0;
 
 loop:
-	switch (c = subgetc('"', 0)) {
+	switch (c = subgetc('"', foundequals)) {
 	case 0:
 		if (sp == e.linep)
 			return(0);
@@ -152,6 +162,7 @@ loop:
 
 	case '"':
 	case '\'':
+		scanequals = 0;
 		if (INSUB())
 			break;
 		for (c1 = c; (c = subgetc(c1, 1)) != c1;) {
@@ -164,16 +175,26 @@ loop:
 		c = 0;
 	}
 	unget(c);
+	if (!letter(c))
+		scanequals = 0;
 	for (;;) {
-		c = subgetc('"', 0);
+		c = subgetc('"', foundequals);
 		if (c == 0 ||
 		    f & DOBLANK && any(c, ifs->value) ||
-		    !INSUB() && any(c, "\"'`")) {
+		    !INSUB() && any(c, "\"'")) {
+		        scanequals = 0;
 			unget(c);
-			if (any(c, "\"'`"))
+			if (any(c, "\"'"))
 				goto loop;
 			break;
 		}
+		if (scanequals)
+			if (c == '=') {
+				foundequals = 1;
+				scanequals  = 0;
+			}
+			else if (!letnum(c))
+				scanequals = 0;
 		*e.linep++ = c;
 	}
 	*e.linep++ = 0;
@@ -305,7 +326,7 @@ int quoted;
 		gflg++;
 	}
 	e.linep = s;
-	PUSHIO(aword, dolp, strchar);
+	PUSHIO(aword, dolp, quoted ? qstrchar : strchar);
 	return(0);
 }
 
@@ -320,7 +341,7 @@ int quoted;
 	register int i;
 	int pf[2];
 
-	for (cp = e.iop->arg.aword; *cp != '`'; cp++)
+	for (cp = e.iop->argp->aword; *cp != '`'; cp++)
 		if (*cp == 0) {
 			err("no closing `");
 			return(0);
@@ -333,14 +354,14 @@ int quoted;
 		return(0);
 	}
 	if (i != 0) {
-		e.iop->arg.aword = ++cp;
+		e.iop->argp->aword = ++cp;
 		close(pf[1]);
 		PUSHIO(afile, remap(pf[0]), quoted? qgravechar: gravechar);
 		return(1);
 	}
 	*cp = 0;
 	/* allow trapped signals */
-	for (i=0; i<NSIG; i++)
+	for (i=0; i<=_NSIG; i++)
 		if (ourtrap[i] && signal(i, SIG_IGN) != SIG_IGN)
 			signal(i, SIG_DFL);
 	dup2(pf[1], 1);
@@ -348,7 +369,7 @@ int quoted;
 	flag['e'] = 0;
 	flag['v'] = 0;
 	flag['n'] = 0;
-	cp = strsave(e.iop->arg.aword, 0);
+	cp = strsave(e.iop->argp->aword, 0);
 	areanum = 1;
 	freehere(areanum);
 	freearea(areanum);	/* free old space */
@@ -444,7 +465,7 @@ register char *pp;
 	char *name, *gp, *dp;
 	int dn, j, n, k;
 	struct direct ent[NDENT];
-	char dname[DIRSIZ+1];
+	char dname[NAME_MAX+1];
 	struct stat dbuf;
 
 	for (np = we; np != pp; pp--)
@@ -463,17 +484,17 @@ register char *pp;
 		DELETE(gp);
 		return;
 	}
-	dname[DIRSIZ] = '\0';
+	dname[NAME_MAX] = '\0';
 	while ((n = read(dn, (char *)ent, sizeof(ent))) >= sizeof(*ent)) {
 		n /= sizeof(*ent);
 		for (j=0; j<n; j++) {
 			if (ent[j].d_ino == 0)
 				continue;
-			strncpy(dname, ent[j].d_name, DIRSIZ);
+			strncpy(dname, ent[j].d_name, NAME_MAX);
 			if (dname[0] == '.')
 				if (*gp != '.')
 					continue;
-			for(k=0; k<DIRSIZ; k++)
+			for(k=0; k<NAME_MAX; k++)
 				if (any(dname[k], spcl))
 					dname[k] |= QUOTE;
 			if (gmatch(dname, gp)) {
@@ -587,10 +608,10 @@ register struct wdblock *wb;
 	register nb;
 
 	if (wb == NULL)
-		return(NULL);
+		return((char **)NULL);
 	if (wb->w_nword == 0) {
 		DELETE(wb);
-		return(NULL);
+		return((char **)NULL);
 	}
 	wd = (char **) space(nb = sizeof(*wd) * wb->w_nword);
 	memcpy((char *)wd, (char *)wb->w_words, nb);

@@ -1,7 +1,12 @@
 #define Extern extern
+#include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
 #include <setjmp.h>
+#include <stddef.h>
+#include <time.h>
+#include <sys/times.h>
+#undef NULL
 #include "sh.h"
 
 /* -------- exec.c -------- */
@@ -14,18 +19,18 @@
 static	char	*signame[] = {
 	"Signal 0",
 	"Hangup",
-	NULL,	/* interrupt */
+	(char *)NULL,	/* interrupt */
 	"Quit",
 	"Illegal instruction",
 	"Trace/BPT trap",
-	"abort",
+	"Abort",
 	"EMT trap",
 	"Floating exception",
 	"Killed",
 	"Bus error",
 	"Memory fault",
 	"Bad system call",
-	NULL,	/* broken pipe */
+	(char *)NULL,	/* broken pipe */
 	"Alarm clock",
 	"Terminated",
 };
@@ -53,7 +58,9 @@ int act;
 		return(0);
 	rv = 0;
 	a = areanum++;
-	wp = (wp2 = t->words) != NULL? eval(wp2, DOALL): NULL;
+	wp = (wp2 = t->words) != NULL
+	     ? eval(wp2, t->type == TCOM ? DOALL : DOALL & ~DOKEY)
+	     : NULL;
 
 	switch(t->type) {
 	case TPAREN:
@@ -83,6 +90,7 @@ int act;
 		i = parent();
 		if (i != 0) {
 			if (i != -1) {
+				setval(lookup("!"), putn(i));
 				if (pin != NULL)
 					closepipe(pin);
 				if (talking) {
@@ -118,8 +126,11 @@ int act;
 			wp = dolv+1;
 			if ((i = dolc) < 0)
 				i = 0;
-		} else
+		} else {
 			i = -1;
+			while (*wp++ != NULL)
+				;			
+		}
 		vp = lookup(t->str);
 		while (setjmp(bc.brkpt))
 			if (isbreak)
@@ -146,9 +157,11 @@ int act;
 
 	case TIF:
 	case TELIF:
-		rv = !execute(t->left, pin, pout, 0)?
+	 	if (t->right != NULL) {
+		rv = !execute(t->left, pin, pout, 0) ?
 			execute(t->right->left, pin, pout, 0):
 			execute(t->right->right, pin, pout, 0);
+		}
 		break;
 
 	case TCASE:
@@ -178,9 +191,13 @@ broken:
 	freehere(areanum);
 	freearea(areanum);
 	areanum = a;
-	if (intr) {
+	if (talking && intr) {
 		closeall();
 		fail();
+	}
+	if ((i = trapset) != 0) {
+		trapset = 0;
+		runtrap(i);
 	}
 	return(rv);
 }
@@ -199,21 +216,27 @@ int *pforked;
 	char *cp;
 	struct ioword **iopp;
 	int resetsig;
+	char **owp;
 
+	owp = wp;
 	resetsig = 0;
 	*pforked = 0;
 	shcom = NULL;
 	rv = -1;	/* system-detected error */
 	if (t->type == TCOM) {
+		while ((cp = *wp++) != NULL)
+			;
+		cp = *wp;
+
 		/* strip all initial assignments */
 		/* not correct wrt PATH=yyy command  etc */
 		if (flag['x'])
-			echo(wp);
-		while ((cp = *wp++) != NULL && assign(cp, COPYV))
-			;
-		wp--;
-		if (cp == NULL && t->ioact == NULL)
+			echo (cp ? wp: owp);
+		if (cp == NULL && t->ioact == NULL) {
+			while ((cp = *owp++) != NULL && assign(cp, COPYV))
+				;
 			return(setstatus(0));
+		}
 		else if (cp != NULL)
 			shcom = inbuilt(cp);
 	}
@@ -239,6 +262,10 @@ int *pforked;
 		brklist = 0;
 		execflg = 0;
 	}
+	if (owp != NULL)
+		while ((cp = *owp++) != NULL && assign(cp, COPYV))
+			if (shcom == NULL)
+				export(lookup(cp));
 #ifdef COMPIPE
 	if ((pin != NULL || pout != NULL) && shcom != NULL && shcom != doexec) {
 		err("piping to/from shell builtins not yet done");
@@ -276,7 +303,7 @@ int *pforked;
 		exit(execute(t->left, NOPIPE, NOPIPE, FEXEC));
 	if (wp[0] == NULL)
 		exit(0);
-	cp = rexecve(wp[0], wp, makenv(wp));
+	cp = rexecve(wp[0], wp, makenv());
 	prs(wp[0]); prs(": "); warn(cp);
 	if (!execflg)
 		trap[0] = NULL;
@@ -296,7 +323,6 @@ parent()
 	if (i != 0) {
 		if (i == -1)
 			warn("try again");
-		setval(lookup("!"), putn(i));
 	}
 	return(i);
 }
@@ -401,7 +427,7 @@ char *w;
 	register char **wp, *cp;
 
 	if (t == NULL)
-		return(NULL);
+		return((struct op **)NULL);
 	if (t->type == TLIST) {
 		if ((tp = find1case(t->left, w)) != NULL)
 			return(tp);
@@ -411,7 +437,7 @@ char *w;
 	for (wp = t1->words; *wp;)
 		if ((cp = evalstr(*wp++, DOSUB)) && gmatch(w, cp))
 			return(&t1->left);
-	return(NULL);
+	return((struct op **)NULL);
 }
 
 static struct op *
@@ -421,7 +447,7 @@ char *w;
 {
 	register struct op **tp;
 
-	return((tp = find1case(t, w)) != NULL? *tp: NULL);
+	return((tp = find1case(t, w)) != NULL? *tp: (struct op *)NULL);
 }
 
 /*
@@ -449,7 +475,9 @@ int canintr;
 {
 	register int pid, rv;
 	int s;
+	int oheedint = heedint;
 
+	heedint = 0;
 	rv = 0;
 	do {
 		pid = wait(&s);
@@ -475,14 +503,22 @@ int canintr;
 				}
 				if (WAITCORE(s))
 					prs(" - core dumped");
-				prs("\n");
+				if (rv >= NSIGNAL || signame[rv])
+					prs("\n");
 				rv = -1;
 			} else
 				rv = WAITVAL(s);
 		}
-/* Special patch for MINIX: sync before each command */
-		sync();
 	} while (pid != lastpid);
+	heedint = oheedint;
+	if (intr)
+		if (talking) {
+			if (canintr)
+				intr = 0;
+		} else {
+			if (exstat == 0) exstat = rv;
+			onintr();
+		}
 	return(rv);
 }
 
@@ -551,8 +587,8 @@ char *c, **v, **envp;
  * Run the command produced by generator `f'
  * applied to stream `arg'.
  */
-run(arg, f)
-struct ioarg arg;
+run(argp, f)
+struct ioarg *argp;
 int (*f)();
 {
 	struct op *otree;
@@ -571,7 +607,7 @@ int (*f)();
 	if (newenv(setjmp(errpt = ev)) == 0) {
 		wdlist = 0;
 		iolist = 0;
-		pushio(arg, f);
+		pushio(argp, f);
 		e.iobase = e.iop;
 		yynerrs = 0;
 		if (setjmp(failpt = rt) == 0 && yyparse() == 0)
@@ -647,7 +683,7 @@ struct op *t;
 		signal(SIGINT, SIG_DFL);
 		signal(SIGQUIT, SIG_DFL);
 	}
-	cp = rexecve(t->words[0], t->words, makenv(t->words));
+	cp = rexecve(t->words[0], t->words, makenv());
 	prs(t->words[0]); prs(": "); err(cp);
 	return(1);
 }
@@ -734,11 +770,7 @@ struct op *t;
 			return(0);
 	} else
 		i = -1;
-	if (talking)
-		signal(SIGINT, onintr);
 	setstatus(waitfor(i, 1));
-	if (talking)
-		signal(SIGINT, SIG_IGN);
 	return(0);
 }
 
@@ -747,15 +779,16 @@ struct op *t;
 {
 	register char *cp, **wp;
 	register nb;
+	register int  nl = 0;
 
 	if (t->words[1] == NULL) {
 		err("Usage: read name ...");
 		return(1);
 	}
 	for (wp = t->words+1; *wp; wp++) {
-		for (cp = e.linep; cp < elinep-1; cp++)
+		for (cp = e.linep; !nl && cp < elinep-1; cp++)
 			if ((nb = read(0, cp, sizeof(*cp))) != sizeof(*cp) ||
-			    *cp == '\n' ||
+			    (nl = (*cp == '\n')) ||
 			    wp[1] && any(*cp, ifs->value))
 				break;
 		*cp = 0;
@@ -778,10 +811,11 @@ dotrap(t)
 register struct op *t;
 {
 	register char *s;
-	register n, i;
+	register int  n, i;
+	register int  resetsig;
 
 	if (t->words[1] == NULL) {
-		for (i=0; i<NSIG; i++)
+		for (i=0; i<=_NSIG; i++)
 			if (trap[i]) {
 				prn(i);
 				prs(": ");
@@ -790,17 +824,28 @@ register struct op *t;
 			}
 		return(0);
 	}
-	n = getsig((s = t->words[2])!=NULL? s: t->words[1]);
-	xfree(trap[n]);
-	trap[n] = 0;
-	if (s != NULL) {
-		if ((i = strlen(s = t->words[1])) != 0) {
-			trap[n] = strsave(s, 0);
-			setsig(n, sig);
-		} else
-			setsig(n, SIG_IGN);
-	} else
-		setsig(n, (n == SIGINT || n == SIGQUIT) && talking? SIG_IGN: SIG_DFL);
+	resetsig = digit(*t->words[1]);
+	for (i = resetsig ? 1 : 2; t->words[i] != NULL; ++i) {
+		n = getsig(t->words[i]);
+		xfree(trap[n]);
+		trap[n] = 0;
+		if (!resetsig) {
+			if (*t->words[1] != '\0') {
+				trap[n] = strsave(t->words[1], 0);
+				setsig(n, sig);
+			} else
+				setsig(n, SIG_IGN);
+		} else {
+			if (talking)
+				if (n == SIGINT)
+					setsig(n, onintr);
+				else
+					setsig(n, n == SIGQUIT ? SIG_IGN 
+							       : SIG_DFL);
+			else
+				setsig(n, SIG_DFL);
+		}
+	}
 	return(0);
 }
 
@@ -809,7 +854,7 @@ char *s;
 {
 	register int n;
 
-	if ((n = getn(s)) < 0 || n >= NSIG) {
+	if ((n = getn(s)) < 0 || n > _NSIG) {
 		err("trap: bad signal number");
 		n = 0;
 	}
@@ -947,7 +992,9 @@ register struct op *t;
 		return(0);
 	}
 	if (*cp == '-') {
-		t->words++;
+		/* bad: t->words++; */
+		for(n = 0; (t->words[n]=t->words[n+1]) != NULL; n++)
+			;
 		if (*++cp == 0)
 			flag['x'] = flag['v'] = 0;
 		else
@@ -987,6 +1034,25 @@ register char *s;
 }
 
 
+#define	SECS	60L
+#define	MINS	3600L
+
+dotimes()
+{
+	struct tms tbuf;
+
+	times(&tbuf);
+
+	prn((int)(tbuf.tms_cutime / MINS));
+	prs("m");
+	prn((int)((tbuf.tms_cutime % MINS) / SECS));
+	prs("s ");
+	prn((int)(tbuf.tms_cstime / MINS));
+	prs("m");
+	prn((int)((tbuf.tms_cstime % MINS) / SECS));
+	prs("s\n");
+}
+
 struct	builtin {
 	char	*command;
 	int	(*fn)();
@@ -1010,6 +1076,7 @@ static struct	builtin	builtin[] = {
 	"umask",	doumask,
 	"login",	dologin,
 	"newgrp",	dologin,
+	"times",	dotimes,
 	0,
 };
 
@@ -1021,6 +1088,6 @@ register char *s;
 	for (bp = builtin; bp->command != NULL; bp++)
 		if (strcmp(bp->command, s) == 0)
 			return(bp->fn);
-	return(NULL);
+	return((int(*)())NULL);
 }
 

@@ -8,17 +8,15 @@
  *   do_fstat:	perform the FSTAT system call
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "../h/stat.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <sys/stat.h>
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
+
+FORWARD int change();
+FORWARD int stat_inode();
 
 /*===========================================================================*
  *				do_chdir				     *
@@ -72,7 +70,6 @@ int len;			/* length of the directory name string */
 
   struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Try to open the new directory. */
   if (fetch_name(name_ptr, len, M3) != OK) return(err_code);
@@ -106,7 +103,6 @@ PUBLIC int do_stat()
 
   register struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Both stat() and fstat() use the same routine to do the real work.  That
    * routine expects an inode, so acquire it temporarily.
@@ -127,7 +123,6 @@ PUBLIC int do_fstat()
 /* Perform the fstat(fd, buf) system call. */
 
   register struct filp *rfilp;
-  extern struct filp *get_filp();
 
   /* Is the file descriptor valid? */
   if ( (rfilp = get_filp(fd)) == NIL_FILP) return(err_code);
@@ -151,6 +146,9 @@ char *user_addr;			/* user space address where stat buf goes */
   int r;
   vir_bytes v;
 
+  /* Update the atime, ctime, and mtime fields in the inode, if need be. */
+  if (rip->i_update) update_times(rip);
+
   /* Fill in the statbuf struct. */
   stp = &statbuf;		/* set up pointer to the buffer */
   stp->st_dev = (int) rip->i_dev;
@@ -165,9 +163,9 @@ char *user_addr;			/* user space address where stat buf goes */
 	(fil_ptr != NIL_FILP) &&	/* AND it was fstat */
 	(fil_ptr->filp_mode == R_BIT))	/* on the reading end, */
 	stp->st_size -= fil_ptr->filp_pos; /* adjust the visible size. */
-  stp->st_atime = rip->i_modtime;
-  stp->st_mtime = rip->i_modtime;
-  stp->st_ctime = rip->i_modtime;
+  stp->st_atime = rip->i_atime;
+  stp->st_mtime = rip->i_mtime;
+  stp->st_ctime = rip->i_ctime;
 
   /* Copy the struct to user space. */
   v = (vir_bytes) user_addr;

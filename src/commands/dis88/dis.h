@@ -24,12 +24,12 @@
   *                                                         *
   * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-#include <stdio.h>      /* System standard I/O definitions  */
-
-/* fcntl.h not used in MINIX */
-/* #include <fcntl.h>      /* System file-control definitions  */
-
+#include <sys/types.h>
 #include <a.out.h>      /* Object file format definitions   */
+#include <fcntl.h>      /* System file-control definitions  */
+#include <unistd.h>
+#include <string.h>
+#include <stdio.h>      /* System standard I/O definitions  */
 
 #if i8086 || i8088      /* For CPU's with 16-bit integers   */
 #undef int
@@ -190,17 +190,21 @@ extern struct exec HDR; /* Holds the object file's header   */
 #define FETCH(p) \
    ++PC; p = getchar() & 0xff; objbuf[objptr++] = p
 
+#ifdef OBSOLETE		/* Declarations to use if headers   */
+			/* are inadequate.  sprintf() and   */
+			/* strlen() may have the wrong type.*/
 extern int close();     /* System file-close primitive      */
-extern int fprintf();   /* Library file-output function     */
 extern long lseek();    /* System file-position primitive   */
 extern int open();      /* System file-open primitive       */
-extern int printf();    /* Library output-format function   */
 extern int read();      /* System file-read primitive       */
-extern int sprintf();   /* Library string-output function   */
 extern char *strcat();  /* Library string-join function     */
 extern char *strcpy();  /* Library string-copy function     */
 extern int strlen();    /* Library string-length function   */
+#endif
 
+/* extern int sprintf();   /* Library string-output function   */
+/* extern int printf();    /* Library output-format function   */
+/* extern int fprintf();   /* Library file-output function     */
  /* * * * * * * * * * *  END OF  dis.h  * * * * * * * * * * */
 
 

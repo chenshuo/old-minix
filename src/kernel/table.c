@@ -23,42 +23,38 @@
  * in one of the *.h files without the initialization.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/com.h"
-#include "const.h"
-#include "type.h"
-#undef   EXTERN
-#define  EXTERN
-#include "glo.h"
+#define _TABLE
+
+#include "kernel.h"
+#include <minix/com.h>
 #include "proc.h"
 #include "tty.h"
 
-extern int sys_task(), clock_task(), mem_task(), floppy_task(),
-           winchester_task(), tty_task(), printer_task();
-#ifdef AM_KERNEL
-extern int amoeba_task();
-extern int amint_task();
-#endif
-
 /* The startup routine of each task is given below, from -NR_TASKS upwards.
  * The order of the names here MUST agree with the numerical values assigned to
- * the tasks in ../h/com.h.
+ * the tasks in <minix/com.h>.
  */
-#define	SMALL_STACK	256
+#define SMALL_STACK	(128 * sizeof (char *))
 
+#if (MACHINE == ATARI)
+#define	TTY_STACK	(2 * SMALL_STACK)
+#define IDLE_STACK	SMALL_STACK
+#else
 #define	TTY_STACK	SMALL_STACK
+#define	IDLE_STACK	(3 * 2 + 3 * 2 + 4 * 2)	/* 3 intr, 3 temps, 4 db */
+#endif
 #define	PRINTER_STACK	SMALL_STACK
 #define	WINCH_STACK	SMALL_STACK
-#define	FLOP_STACK	SMALL_STACK
+#define	FLOP_STACK	(3*SMALL_STACK/2)
 #define	MEM_STACK	SMALL_STACK
 #define	CLOCK_STACK	SMALL_STACK
 #define	SYS_STACK	SMALL_STACK
+#define	HARDWARE_STACK	0		/* dummy task, uses kernel stack */
 
 
 
-#ifdef AM_KERNEL
-#	define	AMINT_STACK		SMALL_STACK
+#if AM_KERNEL
+#	define	AMINT_STACK		(SMALL_STACK*4)
 #	define	AMOEBA_STACK		1532
 #	define	AMOEBA_STACK_SPACE	(AM_NTASKS*AMOEBA_STACK + AMINT_STACK)
 #else
@@ -66,6 +62,7 @@ extern int amint_task();
 #endif
 
 #define	TOT_STACK_SPACE		(TTY_STACK + AMOEBA_STACK_SPACE + \
+				 IDLE_STACK + HARDWARE_STACK + \
 				 PRINTER_STACK + WINCH_STACK + FLOP_STACK + \
 				 MEM_STACK + CLOCK_STACK + SYS_STACK)
 
@@ -81,29 +78,27 @@ extern int amint_task();
 
 PUBLIC struct tasktab tasktab[] = {
 	tty_task,		TTY_STACK,	"TTY   ",
-#ifdef AM_KERNEL
+#if AM_KERNEL
 	amint_task,		AMINT_STACK,	"AMINT ",
 	amoeba_task,		AMOEBA_STACK,	"AMTASK",
 	amoeba_task,		AMOEBA_STACK,	"AMTASK",
 	amoeba_task,		AMOEBA_STACK,	"AMTASK",
 	amoeba_task,		AMOEBA_STACK,	"AMTASK",
 #endif
+	idle_task,		IDLE_STACK,	"IDLE  ",
 	printer_task,		PRINTER_STACK,	"PRINTR",
 	winchester_task,	WINCH_STACK,	"WINCHE",
 	floppy_task,		FLOP_STACK,	"FLOPPY",
 	mem_task,		MEM_STACK,	"RAMDSK",
 	clock_task,		CLOCK_STACK,	"CLOCK ",
 	sys_task,		SYS_STACK,	"SYS   ",
-	0,			0,		"IDLE  ",
+	0,			HARDWARE_STACK,	"HARDWA",
 	0,			0,		"MM    ",
 	0,			0,		"FS    ",
 	0,			0,		"INIT  "
 };
 
-int t_stack[TOT_STACK_SPACE/sizeof (int)];
-
-int k_stack[K_STACK_BYTES/sizeof (int)];	/* The kernel stack. */
-
+PUBLIC char t_stack[TOT_STACK_SPACE + ALIGNMENT - 1];	/* to be aligned */
 
 /*
 ** The number of kernel tasks must be the same as NR_TASKS.
@@ -113,7 +108,7 @@ int k_stack[K_STACK_BYTES/sizeof (int)];	/* The kernel stack. */
 */
 
 #define NKT (sizeof tasktab / sizeof (struct tasktab) - (INIT_PROC_NR + 1))
-___dummy()
+PUBLIC void ___dummy()
 {
 	switch(0)
 	{

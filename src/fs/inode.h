@@ -9,21 +9,24 @@
 
 EXTERN struct inode {
   unshort i_mode;		/* file type, protection, etc. */
-  uid i_uid;			/* user id of the file's owner */
-  file_pos i_size;		/* current file size in bytes */
-  real_time i_modtime;		/* when was file data last changed */
-  gid i_gid;			/* group number */
-  links i_nlinks;		/* how many links to this file */
+  uid_t i_uid;			/* user id of the file's owner */
+  off_t i_size;			/* current file size in bytes */
+  time_t i_mtime;		/* when was file data last changed */
+  gid_t i_gid;			/* group number */
+  nlink_t i_nlinks;		/* how many links to this file */
   zone_nr i_zone[NR_ZONE_NUMS];	/* zone numbers for direct, ind, and dbl ind */
 
   /* The following items are not present on the disk. */
-  dev_nr i_dev;			/* which device is the inode on */
-  inode_nr i_num;		/* inode number on its (minor) device */
+  time_t i_atime;		/* time of last access */
+  time_t i_ctime;		/* time of last change to the inode's status */
+  dev_t i_dev;			/* which device is the inode on */
+  ino_t i_num;			/* inode number on its (minor) device */
   short int i_count;		/* # times inode used; 0 means slot is free */
   char i_dirt;			/* CLEAN or DIRTY */
   char i_pipe;			/* set to I_PIPE if pipe */
   char i_mount;			/* this bit is set if file mounted on */
   char i_seek;			/* set on LSEEK, cleared on READ/WRITE */
+  char i_update;		/* the ATIME, CTIME, and MTIME bits are here */
 } inode[NR_INODES];
 
 

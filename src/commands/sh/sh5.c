@@ -1,4 +1,5 @@
 #define Extern extern
+#include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
 #include <setjmp.h>
@@ -11,6 +12,11 @@
  * shell IO
  */
 
+static struct iobuf sharedbuf = {AFID_NOBUF};
+static struct iobuf mainbuf = {AFID_NOBUF};
+static unsigned bufid = AFID_ID;	/* buffer id counter */
+
+struct ioarg temparg = {0, 0, 0, AFID_NOBUF, 0};
 
 int
 getc(ec)
@@ -45,26 +51,48 @@ unget(c)
 }
 
 int
+eofc()
+
+{
+  return e.iop < e.iobase || (e.iop->peekc == 0 && e.iop->prev == 0);
+}
+
+int
 readc()
 {
 	register c;
-	static int eofc;
 
 	for (; e.iop >= e.iobase; e.iop--)
 		if ((c = e.iop->peekc) != '\0') {
 			e.iop->peekc = 0;
 			return(c);
-		} else if ((c = (*e.iop->iofn)(&e.iop->arg, e.iop)) != '\0') {
-			if (c == -1) {
-				e.iop++;
-				continue;
-			}
-			if (e.iop == iostack)
-				ioecho(c);
-			return(c);
 		}
-	if (e.iop >= iostack ||
-	    multiline && eofc++ < 3)
+		else {
+		    if (e.iop->prev != 0) {
+		        if ((c = (*e.iop->iofn)(e.iop->argp, e.iop)) != '\0') {
+			        if (c == -1) {
+				        e.iop++;
+				        continue;
+			        }
+			        if (e.iop == iostack)
+				        ioecho(c);
+			        return(e.iop->prev = c);
+		        }
+		        else if (e.iop->task == XIO && e.iop->prev != '\n') {
+			        e.iop->prev = 0;
+				if (e.iop == iostack)
+					ioecho('\n');
+			        return '\n';
+		        }
+		    }
+		    if (e.iop->task == XIO) {
+			if (multiline)
+			    return e.iop->prev = 0;
+			if (talking && e.iop == iostack+1)
+			    prs(prompt->value);
+		    }
+		}
+	if (e.iop >= iostack)
 		return(0);
 	leave();
 	/* NOTREACHED */
@@ -79,8 +107,8 @@ char c;
 }
 
 void
-pushio(arg, fn)
-struct ioarg arg;
+pushio(argp, fn)
+struct ioarg *argp;
 int (*fn)();
 {
 	if (++e.iop >= &iostack[NPUSH]) {
@@ -90,11 +118,27 @@ int (*fn)();
 		return;
 	}
 	e.iop->iofn = fn;
-	e.iop->arg = arg;
+
+	if (argp->afid != AFID_NOBUF)
+	  e.iop->argp = argp;
+	else {
+	  e.iop->argp  = ioargstack + (e.iop - iostack);
+	  *e.iop->argp = *argp;
+	  e.iop->argp->afbuf = e.iop == &iostack[0] ? &mainbuf : &sharedbuf;
+	  if (isatty(e.iop->argp->afile) == 0 &&
+	      (e.iop == &iostack[0] ||
+	       lseek(e.iop->argp->afile, 0L, 1) != -1)) {
+	    if (++bufid == AFID_NOBUF)
+	      bufid = AFID_ID;
+	    e.iop->argp->afid  = bufid;
+	  }
+	}
+
+	e.iop->prev  = ~'\n';
 	e.iop->peekc = 0;
 	e.iop->xchar = 0;
 	e.iop->nlcount = 0;
-	if (fn == filechar || fn == linechar || fn == nextchar)
+	if (fn == filechar || fn == linechar)
 		e.iop->task = XIO;
 	else if (fn == gravechar || fn == qgravechar)
 		e.iop->task = XGRAVE;
@@ -162,7 +206,7 @@ register struct ioarg *ap;
  * Return the characters of a list of words,
  * producing a space between them.
  */
-static	int	xxchar(), qqchar();
+static	int	xxchar();
 
 int
 dolchar(ap)
@@ -171,7 +215,7 @@ register struct ioarg *ap;
 	register char *wp;
 
 	if ((wp = *ap->awordlist++) != NULL) {
-		PUSHIO(aword, wp, *ap->awordlist == NULL? qqchar: xxchar);
+		PUSHIO(aword, wp, *ap->awordlist == NULL? strchar: xxchar);
 		return(-1);
 	}
 	return(0);
@@ -192,17 +236,6 @@ register struct ioarg *ap;
 	return(c);
 }
 
-static int
-qqchar(ap)
-register struct ioarg *ap;
-{
-	register int c;
-
-	if (ap->aword == NULL || (c = *ap->aword++) == '\0')
-		return(0);
-	return(c);
-}
-
 /*
  * Produce the characters from a single word (string).
  */
@@ -212,9 +245,23 @@ register struct ioarg *ap;
 {
 	register int c;
 
-	if (ap->aword == 0 || (c = *ap->aword++) == 0)
+	if (ap->aword == NULL || (c = *ap->aword++) == 0)
 		return(0);
 	return(c);
+}
+
+/*
+ * Produce quoted characters from a single word (string).
+ */
+int
+qstrchar(ap)
+register struct ioarg *ap;
+{
+	register int c;
+
+	if (ap->aword == NULL || (c = *ap->aword++) == 0)
+		return(0);
+	return(c|QUOTE);
 }
 
 /*
@@ -226,7 +273,26 @@ register struct ioarg *ap;
 {
 	register int i;
 	char c;
+	struct iobuf *bp = ap->afbuf;
 	extern int errno;
+
+	if (ap->afid != AFID_NOBUF) {
+	  if ((i = ap->afid != bp->id) || bp->bufp == bp->ebufp) {
+	    if (i)
+	      lseek(ap->afile, ap->afpos, 0);
+	    do {
+	      i = read(ap->afile, bp->buf, sizeof(bp->buf));
+	    } while (i < 0 && errno == EINTR);
+	    if (i <= 0) {
+	      closef(ap->afile);
+	      return 0;
+	    }
+	    bp->id = ap->afid;
+	    bp->ebufp = (bp->bufp  = bp->buf) + i;
+	  }
+	  ap->afpos++;
+	  return *bp->bufp++ & 0177;
+	}
 
 	do {
 		i = read(ap->afile, &c, sizeof(c));
@@ -311,23 +377,6 @@ register struct ioarg *ap;
 		}
 	}
 	return(c);
-}
-
-/*
- * Return the next character from the command source,
- * prompting when required.
- */
-int
-nextchar(ap)
-register struct ioarg *ap;
-{
-	register int c;
-
-	if ((c = filechar(ap)) != 0)
-		return(c);
-	if (talking && e.iop <= iostack+1)
-		prs(prompt->value);
-	return(0);
 }
 
 void
@@ -433,9 +482,7 @@ struct	here {
 static	struct here *inhere;		/* list of hear docs while parsing */
 static	struct here *acthere;		/* list of active here documents */
 
-static	char *readhere();
-
-#define	NCPB	100	/* here text block allocation unit */
+static	void readhere();
 
 markhere(s, iop)
 register char *s;
@@ -450,6 +497,7 @@ struct ioword *iop;
 	if (h->h_tag == 0)
 		return;
 	h->h_iop = iop;
+	iop->io_name = 0;
 	h->h_next = NULL;
 	if (inhere == 0)
 		inhere = h;
@@ -470,20 +518,23 @@ struct ioword *iop;
 
 gethere()
 {
-	register struct here *h;
+	register struct here *h, *hp;
 
-	for (h = inhere; h != NULL; h = inhere) {
-		h->h_iop->io_name = readhere(h->h_tag, h->h_dosub? 0: '\'');
-		/* relink from inhere to acthere list */
-		inhere = h->h_next;
-		h->h_next = acthere;
-		acthere = h;
+	/* Scan here files first leaving inhere list in place */
+	for (hp = h = inhere; h != NULL; hp = h, h = h->h_next)
+	  readhere(&h->h_iop->io_name, h->h_tag, h->h_dosub? 0: '\'');
+
+	/* Make inhere list active - keep list intact for scraphere */
+	if (hp != NULL) {
+	  hp->h_next = acthere;
+	  acthere    = inhere;
+	  inhere     = NULL;
 	}
-	inhere = h;
 }
 
-static char *
-readhere(s, ec)
+static void
+readhere(name, s, ec)
+char **name;
 register char *s;
 {
 	int tf;
@@ -494,41 +545,40 @@ register char *s;
 	char *next;
 
 	tempname(tname);
+	*name = strsave(tname, areanum);
 	tf = creat(tname, 0600);
 	if (tf < 0)
-		return (0);
+		return;
 	if (newenv(setjmp(errpt = ev)) != 0)
-		return (0);
-	if (e.iop == iostack && e.iop->iofn == filechar) {
-		pushio(e.iop->arg, filechar);
+		unlink(tname);
+	else {
+		pushio(e.iop->argp, e.iop->iofn);
 		e.iobase = e.iop;
-	}
-	for (;;) {
-		if (talking && e.iop <= iostack)
-			prs(cprompt->value);
-		next = line;
-		while ((c = getc(ec)) != '\n' && c) {
-			if (ec == '\'')
-				c &= ~ QUOTE;
-			if (next >= &line[LINELIM]) {
-				c = 0;
-				break;
+		for (;;) {
+			if (talking && e.iop <= iostack)
+				prs(cprompt->value);
+			next = line;
+			while ((c = getc(ec)) != '\n' && c) {
+				if (ec == '\'')
+					c &= ~ QUOTE;
+				if (next >= &line[LINELIM]) {
+					c = 0;
+					break;
+				}
+				*next++ = c;
 			}
-			*next++ = c;
+			*next = 0;
+			if (strcmp(s, line) == 0 || c == 0)
+				break;
+			*next++ = '\n';
+			write (tf, line, (int)(next-line));
 		}
-		*next = 0;
-		if (strcmp(s, line) == 0 || c == 0)
-			break;
-		*next++ = '\n';
-		write (tf, line, (int)(next-line));
-	}
-	if (c == 0) {
-		prs("here document `"); prs(s); err("' unclosed");
+		if (c == 0) {
+			prs("here document `"); prs(s); err("' unclosed");
+		}
+		quitenv();
 	}
 	close(tf);
-	quitenv();
-	/* correct area? */
-	return (strsave(tname, areanum));
 }
 
 /*
@@ -573,6 +623,12 @@ char *hname;
 
 scraphere()
 {
+	register struct here *h;
+
+	for (h = inhere; h != NULL; h = h->h_next) {
+		if (h->h_iop && h->h_iop->io_name)
+		  unlink(h->h_iop->io_name);
+	}
 	inhere = NULL;
 }
 
@@ -583,7 +639,7 @@ int area;
 	register struct here *h, *hl;
 
 	hl = NULL;
-	for (h = acthere; h != NULL; hl = h, h = h->h_next)
+	for (h = acthere; h != NULL; h = h->h_next)
 		if (getarea(h) >= area) {
 			if (h->h_iop->io_name != NULL)
 				unlink(h->h_iop->io_name);
@@ -591,7 +647,8 @@ int area;
 				acthere = h->h_next;
 			else
 				hl->h_next = h->h_next;
-		}
+		} else
+			hl = h;
 }
 
 tempname(tname)

@@ -1,13 +1,11 @@
 #define NR_CONS            1	/* how many consoles can system handle */
-#define	NR_RS_LINES	   1	/* how many rs232 terminals can system handle*/
-#define TTY_IN_BYTES    1000	/* input queue size */
+#define	NR_RS_LINES	   2	/* how many rs232 terminals can system handle*/
+#define KB_IN_BYTES      200   	/* keyboard input queue size */
+#define RS_IN_BYTES   (1024 + 2 * RS_IBUFSIZE)	/* RS232 input queue size */
 #define TTY_RAM_WORDS    320	/* ram buffer size */
 #define TTY_BUF_SIZE     256	/* unit for copying to/from queues */
 #define TAB_SIZE           8	/* distance between tabs */
 #define TAB_MASK          07	/* mask for tty_column when tabbing */
-#define WORD_MASK     0xFFFF	/* mask for 16 bits */
-#define OFF_MASK      0x000F	/* mask for  4 bits */
-#define MAX_OVERRUN      500	/* size of overrun input buffer */
 #define MAX_ESC_PARMS      2	/* number of escape sequence params allowed */
 
 #define ERASE_CHAR      '\b'	/* default erase character */
@@ -28,36 +26,28 @@
  * completely out of band value.
  */
 #define MARKER   (char) 0200	/* non-escaped CTRL-D stored as MARKER */
-#define SCODE1            71	/* scan code for Home on numeric pad */
-#define SCODE2            81	/* scan code for PgDn on numeric pad */
-#define DEL_CODE   (char) 83	/* DEL for use in CTRL-ALT-DEL reboot */
 #define ESC       (char) 033	/* escape */
 #define BRACKET          '['	/* Part of the ESC [ letter escape seq */
 
-#define F1                59	/* scan code for function key F1 */
-#define F2                60	/* scan code for function key F2 */
-#define F3                61	/* scan code for function key F3 */
-#define F4                62	/* scan code for function key F4 */
-#define F9                67	/* scan code for function key F9 */
-#define F10               68	/* scan code for function key F10 */
-#define TOP_ROW           14	/* codes below this are shifted if CTRL */
-
-#define IBM_PC		   1	/* Standard IBM keyboard */
-#define OLIVETTI	   2	/* Olivetti keyboard	 */
-#define DUTCH_EXT	   3	/* Dutch extended IBM keyboard */
-#define US_EXT		   4	/* U.S. extended keyboard */
-#define NR_SCAN_CODES   0x69	/* Number of scan codes */
+#define EVENT_THRESHOLD   64	/* events to accumulate before waking TTY */
+#define RS_IBUFSIZE      256	/* RS232 input buffer size */
 
 EXTERN struct tty_struct {
   /* Input queue.  Typed characters are stored here until read by a program. */
-  char tty_inqueue[TTY_IN_BYTES];    /* array used to store the characters */
+  char *tty_inbuf;		/* pointer to input buffer */
+  char *tty_inbufend;		/* pointer to place after last in buffer */
   char *tty_inhead;		/* pointer to place where next char goes */
+  int tty_ihighwater;		/* threshold for queue too full */
+  int tty_ilow_water;		/* threshold for queue not too full */
+  int tty_insize;		/* size of buffer */
   char *tty_intail;		/* pointer to next char to be given to prog */
+  phys_bytes tty_inphys;	/* physical address of input buffer */
   int tty_incount;		/* # chars in tty_inqueue */
   int tty_lfct;			/* # line feeds in tty_inqueue */
+  int (*tty_devread)();		/* routine to read from low level buffers */
 
   /* Output section. */
-  int tty_ramqueue[TTY_RAM_WORDS];	/* buffer for video RAM */
+  phys_bytes tty_outphys;	/* physical address of output buffer */
   int tty_rwords;		/* number of WORDS (not bytes) in outqueue */
   int tty_org;			/* location in RAM where 6845 base points */
   int tty_vid;			/* current position of cursor in video RAM */
@@ -65,8 +55,11 @@ EXTERN struct tty_struct {
   char tty_esc_intro;		/* Distinguishing character following ESC */
   int tty_esc_parmv[MAX_ESC_PARMS];	/* list of escape parameters */
   int *tty_esc_parmp;		/* pointer to current escape parameter */
-  int tty_attribute;		/* current attribute byte << 8 */
-  int (*tty_devstart)();	/* routine to start actual device output */
+  void (*tty_devstart)();	/* routine to start actual device output */
+
+  /* Echo buffer. Echoing is also delayed by output in progress. */
+  char *tty_ebufend;		/* end of echo buffer */
+  char *tty_etail;		/* tail of echo buffer (head is fixed) */
 
   /* Terminal parameters and status. */
   int tty_mode;			/* terminal mode set by IOCTL */
@@ -78,6 +71,7 @@ EXTERN struct tty_struct {
   char tty_inhibited;		/* 1 when CTRL-S just seen (stops output) */
   char tty_makebreak;		/* 1 for terminals that interrupt twice/key */
   char tty_waiting;		/* 1 when output process waiting for reply */
+  int tty_pgrp;			/* slot number of controlling process */
 
   /* User settable characters: erase, kill, interrupt, quit, x-on; x-off. */
   char tty_erase;		/* char used to erase 1 char (init ^H) */
@@ -97,13 +91,15 @@ EXTERN struct tty_struct {
   char tty_outproc;		/* process that wants to write to tty */
   char *tty_out_vir;		/* virtual address where data comes from */
   phys_bytes tty_phys;		/* physical address where data comes from */
-  int tty_outleft;		/* # chars yet to be copied to tty_outqueue */
-  int tty_cum;			/* # chars copied to tty_outqueue so far */
-  int tty_pgrp;			/* slot number of controlling process */
+  int tty_outleft;		/* # chars yet to be output */
+  int tty_cum;			/* # chars output so far */
 
-  /* Miscellaneous. */
-  int tty_ioport;		/* I/O port number for this terminal */
+  /* Cross reference to avoid slow pointer subtraction. */
+  int tty_line;			/* line number of this tty less NR_CONS */
 
+  /* Large arrays moved to end for shorter addresses. */
+  short tty_ramqueue[TTY_RAM_WORDS];	/* buffer for video RAM */
+  char tty_ebuf[32];		/* echo buffer */
 } tty_struct[NR_CONS+NR_RS_LINES];
 
 
@@ -118,20 +114,13 @@ EXTERN struct tty_struct {
 #define TWO_INTS           1	/* IBM console interrupts two times per char */
 #define NOT_WAITING        0	/* no output process is hanging */
 #define WAITING            1	/* an output process is waiting for a reply */
-#define COMPLETED          2	/* output done; send a completion message */
+#define SUSPENDED          2	/* like WAITING but different reply type */
 
-EXTERN char tty_driver_buf[2*MAX_OVERRUN+4]; /* driver collects chars here */
-#define tty_buf_count(p) (((int *)(p))[0])
-#define tty_buf_max(p) (((int *)(p))[1])
-EXTERN char tty_copy_buf[2*MAX_OVERRUN];  /* copy buf used to avoid races */
 EXTERN char tty_buf[TTY_BUF_SIZE];	/* scratch buffer to/from user space */
-EXTERN int shift1, shift2, capslock, numlock;	/* keep track of shift keys */
-EXTERN int control, alt;	/* keep track of key statii */
-EXTERN int caps_off;		/* 1 = normal position, 0 = depressed */
-EXTERN int num_off;		/* 1 = normal position, 0 = depressed */
-EXTERN int softscroll;		/* 1 = software scrolling, 0 = hardware */
-EXTERN int output_done;		/* number of RS232 output messages to be sent*/
-EXTERN int char_height;		/* number of scan lines for a char */
-EXTERN int keyb_type;		/* type of keyboard attached */
-EXTERN int minus_code;		/* numeric minus on dutch extended keyboard */
-EXTERN int num_slash;		/* scan code of numeric slash */
+
+EXTERN unsigned tty_events;	/* weighted input chars + output completions*/
+EXTERN phys_bytes tty_bphys;	/* physical address of tty_buf buffer */
+
+/* Appropiately sized buffers for keyboard and RS232 lines. */
+EXTERN char kb_inbuf[NR_CONS][KB_IN_BYTES];
+EXTERN char rs_inbuf[NR_RS_LINES][RS_IN_BYTES];

@@ -9,15 +9,10 @@
  *   forbidden:	check to see if a given access is allowed on a given inode
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
@@ -31,7 +26,6 @@ PUBLIC int do_chmod()
 
   register struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Temporarily open the file. */
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
@@ -69,7 +63,6 @@ PUBLIC int do_chown()
 
   register struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Only the super_user may perform the chown() call. */
   if (!super_user) return(EPERM);
@@ -97,7 +90,7 @@ PUBLIC int do_chown()
 PUBLIC int do_umask()
 {
 /* Perform the umask(co_mode) system call. */
-  register mask_bits r;
+  register mode_t r;
 
   r = ~fp->fp_umask;		/* set 'r' to complement of old mask */
   fp->fp_umask = ~(co_mode & RWX_MODES);
@@ -114,14 +107,13 @@ PUBLIC int do_access()
 
   struct inode *rip;
   register int r;
-  extern struct inode *eat_path();
 
   /* Temporarily open the file whose access is to be checked. */
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
   if ( (rip = eat_path(user_path)) == NIL_INODE) return(err_code);
 
   /* Now check the permissions. */
-  r = forbidden(rip, (mask_bits) mode, 1);
+  r = forbidden(rip, (mode_t) mode, 1);
   put_inode(rip);
   return(r);
 }
@@ -132,16 +124,16 @@ PUBLIC int do_access()
  *===========================================================================*/
 PUBLIC int forbidden(rip, access_desired, real_uid)
 register struct inode *rip;	/* pointer to inode to be checked */
-mask_bits access_desired;	/* RWX bits */
+mode_t access_desired;	/* RWX bits */
 int real_uid;			/* set iff real uid to be tested */
 {
 /* Given a pointer to an inode, 'rip', and the access desired, determine
  * if the access is allowed, and if not why not.  The routine looks up the
- * caller's uid in the 'fproc' table.  If the access is allowed, OK is returned
+ * caller's uid in the 'fproc' table.  If access is allowed, OK is returned
  * if it is forbidden, EACCES is returned.
  */
 
-  register mask_bits bits, perm_bits, xmask;
+  register mode_t bits, perm_bits, xmask;
   int r, shift, test_uid, test_gid;
 
   /* Isolate the relevant rwx bits from the mode. */
@@ -186,7 +178,6 @@ struct inode *ip;		/* ptr to inode whose file sys is to be cked */
  */
 
   register struct super_block *sp;
-  extern struct super_block *get_super();
 
   sp = get_super(ip->i_dev);
   return(sp->s_rd_only ? EROFS : OK);

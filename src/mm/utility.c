@@ -7,14 +7,10 @@
  *   panic:	MM has run aground of a fatal error and cannot continue
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "../h/stat.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <sys/stat.h>
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "mproc.h"
 
 PRIVATE message copy_mess;
@@ -33,7 +29,6 @@ int mask;			/* R_BIT, W_BIT, or X_BIT */
 
   register int fd, shift;
   int mode;
-  extern errno;
 
   /* Open the file and stat it. */
   if ( (fd = open(name_buf, 0)) < 0) return(-errno);
@@ -108,7 +103,7 @@ PUBLIC int no_sys()
 /*===========================================================================*
  *				panic					     *
  *===========================================================================*/
-PUBLIC panic(format, num)
+PUBLIC void panic(format, num)
 char *format;			/* format string */
 int num;			/* number to go with format string */
 {

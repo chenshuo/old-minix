@@ -3,12 +3,8 @@
  * seemed worthwhile to make each a separate function.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/error.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <minix/callnr.h>
 #include "mproc.h"
 #include "param.h"
 

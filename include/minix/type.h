@@ -8,37 +8,29 @@ typedef unshort block_nr;	/* block number */
 #define NO_BLOCK (block_nr) 0	/* indicates the absence of a block number */
 #define MAX_BLOCK_NR (block_nr) 0177777
 
-typedef unshort inode_nr;	/* inode number */
-#define NO_ENTRY (inode_nr) 0	/* indicates the absence of a dir entry */
-#define MAX_INODE_NR (inode_nr) 0177777
+#define NO_ENTRY (ino_t) 0	/* indicates the absence of a dir entry */
+#define MAX_INODE_NR (ino_t) 0177777
 
 typedef unshort zone_nr;	/* zone number */
 #define NO_ZONE   (zone_nr) 0	/* indicates the absence of a zone number */
 #define HIGHEST_ZONE (zone_nr)  0177777
 
-typedef unshort bit_nr;		/* if inode_nr & zone_nr both unshort,
+typedef unshort bit_nr;		/* if ino_t & zone_nr both unshort,
 				   then also unshort, else long */
 
 typedef long zone_type;		/* zone size */
-typedef unshort mask_bits;	/* mode bits */
-typedef unshort dev_nr;		/* major | minor device number */
-#define NO_DEV    (dev_nr) ~0	/* indicates absence of a device number */
+#define NO_DEV    (dev_t) ~0	/* indicates absence of a device number */
 
-typedef char links;		/* number of links to an inode */
-#define MAX_LINKS 	0177
-
-typedef long real_time;		/* real time in seconds since Jan 1, 1970 */
-typedef long file_pos;		/* position in, or length of, a file */
 #define MAX_FILE_POS 017777777777L
-typedef short int uid;		/* user id */
-typedef char gid;		/* group id */
 
-#ifdef i8088
+#if (CHIP == INTEL)
 typedef unsigned vir_bytes;	/* virtual addresses and lengths in bytes */
 #endif
-#ifdef ATARI_ST
+
+#if (CHIP == M68000)
 typedef long vir_bytes;		/* virtual addresses and lengths in bytes */
 #endif
+
 typedef unsigned vir_clicks;	/* virtual addresses and lengths in clicks */
 typedef long phys_bytes;	/* physical addresses and lengths in bytes */
 typedef unsigned phys_clicks;	/* physical addresses and lengths in clicks */
@@ -55,7 +47,7 @@ typedef struct {int m2i1, m2i2, m2i3; long m2l1, m2l2; char *m2p1;} mess_2;
 typedef struct {int m3i1, m3i2; char *m3p1; char m3ca1[M3_STRING];} mess_3;
 typedef struct {long m4l1, m4l2, m4l3, m4l4;} mess_4;
 typedef struct {char m5c1, m5c2; int m5i1, m5i2; long m5l1, m5l2, m5l3;} mess_5;
-typedef struct {int m6i1, m6i2, m6i3; long m6l1; int (*m6f1)();} mess_6;
+typedef struct {int m6i1, m6i2, m6i3; long m6l1; void (*m6f1)();} mess_6;
 
 typedef struct {
   int m_source;			/* who sent the message */
@@ -120,11 +112,18 @@ struct mem_map {
 };
 
 struct copy_info {		/* used by sys_copy(src, dst, bytes) */
-	int cp_src_proc;
-	int cp_src_space;
-	vir_bytes cp_src_vir;
-	int cp_dst_proc;
-	int cp_dst_space;
-	vir_bytes cp_dst_vir;
-	vir_bytes cp_bytes;
+  int cp_src_proc;
+  int cp_src_space;
+  vir_bytes cp_src_vir;
+  int cp_dst_proc;
+  int cp_dst_space;
+  vir_bytes cp_dst_vir;
+  vir_bytes cp_bytes;
+};
+
+struct iorequest_s {
+  long io_position;		/* position in device file (really off_t) */
+  char *io_buf;			/* buffer in user space */
+  unsigned short io_nbytes;	/* size of request */
+  unsigned short io_request;	/* read, write (optionally) */
 };

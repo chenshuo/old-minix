@@ -16,6 +16,8 @@
 #define ls_fd	      m.m2_i1
 #define mk_mode	      m.m1_i2
 #define mode	      m.m3_i2
+#define c_mode        m.m1_i3
+#define c_name        m.m1_p1
 #define name	      m.m3_p1
 #define name1	      m.m1_p1
 #define name2	      m.m1_p2
@@ -35,7 +37,7 @@
 #define sig	      m.m1_i2
 #define slot1	      m.m1_i1
 #define tp	      m.m2_l1
-#define update_time   m.m2_l2
+#define updated_time  m.m2_l2
 #define utime_file    m.m2_p1
 #define utime_length  m.m2_i1
 #define whence	      m.m2_i2

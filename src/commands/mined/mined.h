@@ -2,6 +2,7 @@
  *				Mined.h					      *	
  *  ========================================================================  */
 
+#include <minix/config.h>
 #ifndef YMAX
 #ifdef UNIX
 #include <stdio.h>
@@ -47,7 +48,7 @@ extern char *pos_string;	/* Absolute cursor positioning */
 
 #define STD_OUT	 	1		/* Filedescriptor for terminal */
 #define FILE_LENGTH	14		/* Length of filename in minix */
-#ifdef i8088
+#if (CHIP == INTEL)
 #define MEMORY_SIZE	(50 * 1024)	/* Size of data space to malloc */
 #endif
 

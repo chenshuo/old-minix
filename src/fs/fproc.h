@@ -5,17 +5,17 @@
 
 
 EXTERN struct fproc {
-  mask_bits fp_umask;		/* mask set by umask system call */
+  mode_t fp_umask;		/* mask set by umask system call */
   struct inode *fp_workdir;	/* pointer to working directory's inode */
   struct inode *fp_rootdir;	/* pointer to current root dir (see chroot) */
-  struct filp *fp_filp[NR_FDS];	/* the file descriptor table */
-  uid fp_realuid;		/* real user id */
-  uid fp_effuid;		/* effective user id */
-  gid fp_realgid;		/* real group id */
-  gid fp_effgid;		/* effective group id */
-  dev_nr fs_tty;		/* major/minor of controlling tty */
+  struct filp *fp_filp[OPEN_MAX];/* the file descriptor table */
+  uid_t fp_realuid;		/* real user id */
+  uid_t fp_effuid;		/* effective user id */
+  gid_t fp_realgid;		/* real group id */
+  gid_t fp_effgid;		/* effective group id */
+  dev_t fs_tty;			/* major/minor of controlling tty */
   int fp_fd;			/* place to save fd if rd/wr can't finish */
-  char *fp_buffer;		/* place to save buffer if rd/wr can't finish */
+  char *fp_buffer;		/* place to save buffer if rd/wr can't finish*/
   int  fp_nbytes;		/* place to save bytes if rd/wr can't finish */
   char fp_suspended;		/* set to indicate process hanging */
   char fp_revived;		/* set to indicate process being revived */

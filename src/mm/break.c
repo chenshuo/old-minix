@@ -16,12 +16,8 @@
  *   stack_fault: grow the stack segment
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "../h/signal.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -84,6 +80,8 @@ vir_bytes sp;			/* new value of sp */
   mem_sp = &rmp->mp_seg[S];	/* pointer to stack segment map */
   changed = 0;			/* set when either segment changed */
 
+  if(rmp - mproc == INIT_PROC_NR) return(OK);	/* don't bother init */
+
   /* See if stack size has gone negative (i.e., sp too close to 0xFFFF...) */
   base_of_stack = (long) mem_sp->mem_vir + (long) mem_sp->mem_len;
   sp_click = sp >> CLICK_SHIFT;	/* click containing sp */
@@ -92,7 +90,11 @@ vir_bytes sp;			/* new value of sp */
   /* Compute size of gap between stack and data segments. */
   delta = (long) mem_sp->mem_vir - (long) sp_click;
   lower = (delta > 0 ? sp_click : mem_sp->mem_vir);
-  gap_base = mem_dp->mem_vir + data_clicks;
+
+  /* Add a safety margin for future stack growth. Impossible to do right. */
+#define SAFETY_BYTES  (384 * sizeof(char *))
+#define SAFETY_CLICKS ((SAFETY_BYTES + CLICK_SIZE - 1) / CLICK_SIZE)
+  gap_base = mem_dp->mem_vir + data_clicks + SAFETY_CLICKS;
   if (lower < gap_base) return(ENOMEM);	/* data and stack collided */
 
   /* Update data length (but not data orgin) on behalf of brk() system call. */
@@ -148,7 +150,7 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
  * is needed, since the data and stack may not exceed 4096 clicks.
  */
 
-#ifndef ATARI_ST
+#if (PAGE_SIZE > 1)
   int pt, pd, ps;		/* segment sizes in pages */
 
   pt = ( (tc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;
@@ -171,7 +173,7 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
 /*===========================================================================*
  *				stack_fault  				     *
  *===========================================================================*/
-PUBLIC stack_fault(proc_nr)
+PUBLIC void stack_fault(proc_nr)
 int proc_nr;			/* tells who got the stack fault */
 {
 /* Handle a stack fault by growing the stack segment until sp is inside of it. 
@@ -184,7 +186,7 @@ int proc_nr;			/* tells who got the stack fault */
 
   rmp = &mproc[proc_nr];
   sys_getsp((int)(rmp - mproc), &new_sp);
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   new_sp -= CLICK_SIZE;		/* one click margin between D and S */
 #endif
   r = adjust(rmp, rmp->mp_seg[D].mem_len, new_sp);

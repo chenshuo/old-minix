@@ -1,4 +1,5 @@
 #define Extern extern
+#include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
 #include <setjmp.h>
@@ -16,8 +17,9 @@ char	flags['z'-'a'+1];
 char	*flag = flags-'a';
 char	*elinep = line+sizeof(line)-5;
 char	*null	= "";
-int	inword	=1;
-struct	env	e ={line, iostack, iostack-1, NULL, FDBASE, NULL};
+int	heedint =1;
+struct	env	e ={line, iostack, iostack-1,
+		    (xint *)NULL, FDBASE, (struct env *)NULL};
 
 extern	char	**environ;	/* environment pointer */
 
@@ -27,7 +29,7 @@ extern	char	**environ;	/* environment pointer */
 char	shellname[] = "/bin/sh";
 char	search[] = ":/bin:/usr/bin";
 
-int	(*qflag)() = SIG_IGN;
+void	(*qflag)() = SIG_IGN;
 
 main(argc, argv)
 int argc;
@@ -131,7 +133,7 @@ register char **argv;
 			setval(cprompt, "");
 			prompt->status &= ~EXPORT;
 			cprompt->status &= ~EXPORT;
-			if (newfile(*++argv))
+			if (newfile(name = *++argv))
 				exit(1);
 		}
 	}
@@ -144,15 +146,15 @@ register char **argv;
 	signal(SIGQUIT, qflag);
 	if (name && name[0] == '-') {
 		talking++;
-		if ((f = open("/etc/profile", 0)) >= 0)
-			next(remap(f));
 		if ((f = open(".profile", 0)) >= 0)
 			next(remap(f));
+		if ((f = open("/etc/profile", 0)) >= 0)
+			next(remap(f));
 	}
-	if (talking) {
+	if (talking)
 		signal(SIGTERM, sig);
-		signal(SIGINT, SIG_IGN);
-	}
+	if (signal(SIGINT, SIG_IGN) != SIG_IGN)
+		signal(SIGINT, onintr);
 	dolv = argv;
 	dolc = argc;
 	dolv[0] = name;
@@ -162,7 +164,7 @@ register char **argv;
 				dolc--;	/* keyword */
 			else
 				ap++;
-	setval(lookup("#"), putn(--dolc));
+	setval(lookup("#"), putn((--dolc < 0) ? (dolc = 0) : dolc));
 
 	for (;;) {
 		if (talking && e.iop <= iostack)
@@ -207,7 +209,6 @@ onecommand()
 	register i;
 	jmp_buf m1;
 
-	inword++;
 	while (e.oenv)
 		quitenv();
 	areanum = 1;
@@ -221,33 +222,32 @@ onecommand()
 	yynerrs = 0;
 	multiline = 0;
 	inparse = 1;
+	intr = 0;
+	execflg = 0;
 	setjmp(failpt = m1);	/* Bruce Evans' fix */
-	if (talking)
-		signal(SIGINT, onintr);
 	if (setjmp(failpt = m1) || yyparse() || intr) {
 		while (e.oenv)
 			quitenv();
 		scraphere();
+		if (!talking && intr)
+			leave();
 		inparse = 0;
 		intr = 0;
 		return;
 	}
 	inparse = 0;
-	inword = 0;
-	if ((i = trapset) != 0) {
-		trapset = 0;
-		runtrap(i);
-	}
 	brklist = 0;
 	intr = 0;
 	execflg = 0;
-	if (!flag['n']) {
-		if (talking)
-			signal(SIGINT, onintr);
+	if (!flag['n'])
 		execute(outtree, NOPIPE, NOPIPE, 0);
-		intr = 0;
-		if (talking)
-			signal(SIGINT, SIG_IGN);
+	if (!talking && intr) {
+		execflg = 0;
+		leave();
+	}
+	if ((i = trapset) != 0) {
+		trapset = 0;
+		runtrap(i);
 	}
 }
 
@@ -263,8 +263,9 @@ leave()
 {
 	if (execflg)
 		fail();
+	scraphere();
+	freehere(1);
 	runtrap(0);
-	sync();
 	exit(exstat);
 	/* NOTREACHED */
 }
@@ -390,17 +391,23 @@ register unsigned u;
 
 next(f)
 {
-	PUSHIO(afile, f, nextchar);
+	PUSHIO(afile, f, filechar);
 }
 
-onintr()
+void onintr()
 {
-	signal(SIGINT, SIG_IGN);
-	if (inparse) {
-		prs("\n");
-		fail();
+	signal(SIGINT, onintr);
+	intr = 1;
+	if (talking) {
+		if (inparse) {
+			prs("\n");
+			fail();
+		}
 	}
-	intr++;
+	else if (heedint) {
+		execflg = 0;
+		leave();
+	}
 }
 
 letter(c)
@@ -427,10 +434,8 @@ int n;
 {
 	register char *cp;
 
-	inword++;
 	if ((cp = getcell(n)) == 0)
 		err("out of string space");
-	inword--;
 	return(cp);
 }
 
@@ -449,31 +454,19 @@ register char *s;
 	return("");
 }
 
-/*
- * if inword is set, traps
- * are delayed, avoiding
- * having two people allocating
- * at once.
- */
 xfree(s)
 register char *s;
 {
-	inword++;
 	DELETE(s);
-	inword--;
 }
 
 /*
  * trap handling
  */
-sig(i)
+void sig(i)
 register i;
 {
-	if (inword == 0) {
-		signal(i, SIG_IGN);
-		runtrap(i);
-	} else
-		trapset = i;
+	trapset = i;
 	signal(i, sig);
 }
 
@@ -638,7 +631,7 @@ int cf;
 		if (*cp == 0 || !letnum(*cp))
 			return(0);
 	vp = lookup(s);
-	nameval(vp, ++cp, cf == COPYV? NULL: s);
+	nameval(vp, ++cp, cf == COPYV? (char *)NULL: s);
 	if (cf != COPYV)
 		vp->status &= ~GETCELL;
 	return(1);
@@ -757,7 +750,7 @@ register int sub;
 	found = not;
 	do {
 		if (*p == '\0')
-			return(NULL);
+			return((char *)NULL);
 		c = *p & CMASK;
 		if (p[1] == '-' && p[2] != ']') {
 			d = p[2] & CMASK;
@@ -767,7 +760,7 @@ register int sub;
 		if (c == sub || c <= sub && sub <= d)
 			found = !not;
 	} while (*++p != ']');
-	return(found? p+1: NULL);
+	return(found? p+1: (char *)NULL);
 }
 
 /* -------- area.c -------- */
@@ -827,7 +820,7 @@ unsigned nbytes;
 			/*
 			 * merge free cells
 			 */
-			while ((q = p->next)->area > areanum)
+			while ((q = p->next)->area > areanum && q != areanxt)
 				p->next = q->next;
 			/*
 			 * exit loop if cell big enough
@@ -841,8 +834,8 @@ unsigned nbytes;
 	}
 	i = nregio >= GROWBY ? nregio : GROWBY;
 	p = (struct region *)sbrk(i * REGSIZE);
-	if ((int)p == -1)
-		return(NULL);
+	if (p == (struct region *)-1)
+		return((char *)NULL);
 	p--;
 	if (p != areatop)
 		abort();	/* allocated areas are contiguous */

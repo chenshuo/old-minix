@@ -2,40 +2,18 @@
  * routines that perform them.
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "const.h"
+#define _TABLE
 
-#undef EXTERN
-#define EXTERN
-
-#include "../h/callnr.h"
-#include "glo.h"
+#include "mm.h"
+#include <minix/callnr.h>
 #include "mproc.h"
 #include "param.h"
 
 /* Miscellaneous */
-char core_name[] = {"core"};	/* file name where core images are produced */
-#ifdef ATARI_ST
-/*
- * Creating core files is disabled, except for SIGQUIT and SIGIOT.
- * Set core_bits to 0x0EFC if you want compatibility with UNIX V7.
- */
+char core_name[] = "core";	/* file name where core images are produced */
 unshort core_bits = 0x0EFC;	/* which signals cause core images */
-#else
-unshort core_bits = 0x0EFC;	/* which signals cause core images */
-#endif
 
-extern char mm_stack[];
 char *stackpt = &mm_stack[MM_STACK_BYTES];	/* initial stack pointer */
-
-extern do_mm_exit(), do_fork(), do_wait(), do_brk(), do_getset(), do_exec();
-extern do_signal(), do_kill(), do_pause(), do_alarm();
-extern no_sys(), do_ksig(), do_brk2();
-
-#ifdef AM_KERNEL
-extern do_amoeba();
-#endif
 
 int (*call_vec[NCALLS])() = {
 	no_sys,		/*  0 = unused	*/
@@ -64,7 +42,7 @@ int (*call_vec[NCALLS])() = {
 	do_getset,	/* 23 = setuid	*/
 	do_getset,	/* 24 = getuid	*/
 	no_sys,		/* 25 = stime	*/
-	no_sys,		/* 26 = (ptrace)*/
+	do_trace,	/* 26 = ptrace	*/
 	do_alarm,	/* 27 = alarm	*/
 	no_sys,		/* 28 = fstat	*/
 	do_pause,	/* 29 = pause	*/
@@ -76,9 +54,9 @@ int (*call_vec[NCALLS])() = {
 	no_sys,		/* 35 = (ftime)	*/
 	no_sys,		/* 36 = sync	*/
 	do_kill,	/* 37 = kill	*/
-	no_sys,		/* 38 = unused	*/
-	no_sys,		/* 39 = unused	*/
-	no_sys,		/* 40 = unused	*/
+	no_sys,		/* 38 = rename	*/
+	no_sys,		/* 39 = mkdir	*/
+	no_sys,		/* 40 = rmdir	*/
 	no_sys,		/* 41 = dup	*/
 	no_sys,		/* 42 = pipe	*/
 	no_sys,		/* 43 = times	*/
@@ -108,11 +86,11 @@ int (*call_vec[NCALLS])() = {
 	do_brk2, 	/* 66 = BRK2 (used to tell MM size of FS,INIT) */
 	no_sys,		/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
-#ifdef i8088
-#ifdef AM_KERNEL
+#if (CHIP == INTEL)
+#if AM_KERNEL
 	do_amoeba,	/* 69 = AMOEBA SYSTEM CALL */
 #else
 	no_sys,		/* 69 = AMOEBA SYSTEM CALL */
 #endif
-#endif i8088
+#endif
 };

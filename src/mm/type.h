@@ -3,4 +3,3 @@
  * System, which do have some local type definitions.
  */
 
-#include "../h/type.h"

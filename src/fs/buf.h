@@ -26,7 +26,7 @@ EXTERN struct buf {
   struct buf *b_prev;		/* used to link bufs the other way */
   struct buf *b_hash;		/* used to link bufs on hash chains */
   block_nr b_blocknr;		/* block number of its (minor) device */
-  dev_nr b_dev;			/* major | minor device where block resides */
+  dev_t b_dev;			/* major | minor device where block resides */
   char b_dirt;			/* CLEAN or DIRTY */
   char b_count;			/* number of users of this buffer */
 } buf[NR_BUFS];
@@ -46,16 +46,17 @@ EXTERN struct buf *buf_hash[NR_BUF_HASH];	/* the buffer hash table */
 
 EXTERN struct buf *front;	/* points to least recently used free block */
 EXTERN struct buf *rear;	/* points to most recently used free block */
-EXTERN int bufs_in_use;		/* # bufs currently in use (not on free list) */
+EXTERN int bufs_in_use;		/* # bufs currently in use (not on free list)*/
 
 /* When a block is released, the type of usage is passed to put_block(). */
 #define WRITE_IMMED        0100	/* block should be written to disk now */
 #define ONE_SHOT           0200	/* set if block not likely to be needed soon */
-#define INODE_BLOCK        0 + WRITE_IMMED		 /* inode block */
-#define DIRECTORY_BLOCK    1 + WRITE_IMMED		 /* directory block */
-#define INDIRECT_BLOCK     2 + WRITE_IMMED		 /* pointer block */
-#define I_MAP_BLOCK        3 + WRITE_IMMED + ONE_SHOT	 /* inode bit map */
-#define ZMAP_BLOCK         4 + WRITE_IMMED + ONE_SHOT	 /* free zone map */
-#define ZUPER_BLOCK        5 + WRITE_IMMED + ONE_SHOT	 /* super block */
+
+#define INODE_BLOCK       (0 + MAYBE_WRITE_IMMED)	 /* inode block */
+#define DIRECTORY_BLOCK   (1 + MAYBE_WRITE_IMMED)	 /* directory block */
+#define INDIRECT_BLOCK    (2 + MAYBE_WRITE_IMMED)	 /* pointer block */
+#define I_MAP_BLOCK       (3 + WRITE_IMMED + ONE_SHOT)	 /* inode bit map */
+#define ZMAP_BLOCK        (4 + WRITE_IMMED + ONE_SHOT)	 /* free zone map */
+#define ZUPER_BLOCK       (5 + WRITE_IMMED + ONE_SHOT)	 /* super block */
 #define FULL_DATA_BLOCK    6		 	 	 /* data, fully used */
-#define PARTIAL_DATA_BLOCK 7 				 /* data, partly used */
+#define PARTIAL_DATA_BLOCK 7 				 /* data, partly used*/

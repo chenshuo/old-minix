@@ -5,18 +5,16 @@
  *   do_umount:	perform the UMOUNT system call
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <sys/stat.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
+
+FORWARD dev_t name_to_dev();
 
 /*===========================================================================*
  *				do_mount				     *
@@ -27,11 +25,9 @@ PUBLIC int do_mount()
 
   register struct inode *rip, *root_ip;
   struct super_block *xp, *sp;
-  dev_nr dev;
-  mask_bits bits;
+  dev_t dev;
+  mode_t bits;
   int r, found, loaded;
-  extern struct inode *get_inode(), *eat_path();
-  dev_nr name_to_dev();
 
   /* Only the super-user may do MOUNT. */
   if (!super_user) return(EPERM);
@@ -102,8 +98,8 @@ PUBLIC int do_mount()
   if (r != OK) {
 	put_inode(rip);
 	put_inode(root_ip);
-	if (loaded) unload_bit_maps(dev);
-	do_sync();
+	if (loaded) (void) unload_bit_maps(dev);
+	(void) do_sync();
 	invalidate(dev);
 	sp->s_dev = NO_DEV;
 	return(r);
@@ -127,10 +123,8 @@ PUBLIC int do_umount()
 
   register struct inode *rip;
   struct super_block *sp, *sp1;
-  dev_nr dev;
+  dev_t dev;
   int count;
-  dev_nr name_to_dev();
-
 
   /* Only the super-user may do UMOUNT. */
   if (!super_user) return(EPERM);
@@ -159,7 +153,7 @@ PUBLIC int do_umount()
   /* Release the bit maps, sync the disk, and invalidate cache. */
   if (sp != NIL_SUPER)
 	if (unload_bit_maps(dev) != OK) panic("do_umount", NO_NUM);
-  do_sync();			/* force any cached blocks out of memory */
+  (void) do_sync();		/* force any cached blocks out of memory */
   invalidate(dev);		/* invalidate cache entries for this dev */
   if (sp == NIL_SUPER) return(EINVAL);
 
@@ -176,7 +170,7 @@ PUBLIC int do_umount()
 /*===========================================================================*
  *				name_to_dev				     *
  *===========================================================================*/
-PRIVATE dev_nr name_to_dev(path)
+PRIVATE dev_t name_to_dev(path)
 char *path;			/* pointer to path name */
 {
 /* Convert the block special file 'path' to a device number.  If 'path'
@@ -184,8 +178,7 @@ char *path;			/* pointer to path name */
  */
 
   register struct inode *rip;
-  register dev_nr dev;
-  extern struct inode *eat_path();
+  register dev_t dev;
 
   /* If 'path' can't be opened, give up immediately. */
   if ( (rip = eat_path(path)) == NIL_INODE) return(NO_DEV);
@@ -198,7 +191,7 @@ char *path;			/* pointer to path name */
   }
 
   /* Extract the device number. */
-  dev = (dev_nr) rip->i_zone[0];
+  dev = (dev_t) rip->i_zone[0];
   put_inode(rip);
   return(dev);
 }

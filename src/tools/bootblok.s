@@ -1,34 +1,34 @@
 | When the PC is powered on, it reads the first block from the floppy
 | disk into address 0x7C00 and jumps to it.  This boot block must contain
 | the boot program in this file.  The boot program first copies itself to
-| address 192K - 512 (to get itself out of the way).  Then it loads the 
-| operating system from the boot diskette into memory, and then jumps to fsck.
+| address 256K - 1536 (to get itself out of the way).  Then it loads the 
+| operating system from the boot diskette into memory, and then jumps to menu.
 | Loading is not trivial because the PC is unable to read a track into
 | memory across a 64K boundary, so the positioning of everything is critical.
 | The number of sectors to load is contained at address 504 of this block.
 | The value is put there by the build program after it has discovered how
 | big the operating system is.  When the bootblok program is finished loading,
-| it jumps indirectly to the program (fsck) which address is given by the
+| it jumps indirectly to the program (menu) which address is given by the
 | last two words in the boot block. 
 |
 | Summary of the words patched into the boot block by build:
 | Word at 504: # sectors to load
-| Word at 506: # DS value for fsck
-| Word at 508: # PC value for fsck
-| Word at 510: # CS value for fsck
+| Word at 506: # DS value for menu
+| Word at 508: # PC value for menu
+| Word at 510: # CS value for menu
 |
 | This version of the boot block must be assembled without separate I & D
 | space.  
 
         LOADSEG = 0x0060         | here the boot block will start loading
         BIOSSEG = 0x07C0         | here the boot block itself is loaded
-        BOOTSEG = 0x2FE0         | here it will copy itself (192K-512b)
+        BOOTSEG = 0x3FA0         | here it will copy itself (256K-1.5K)
         DSKBASE = 120            | 120 = 4 * 0x1E = ptr to disk parameters
 
 final   = 504
-fsck_ds = 506
-fsck_pc = 508
-fsck_cs = 510
+menu_ds = 506
+menu_pc = 508
+menu_cs = 510
 
 
 .globl begtext, begdata, begbss, endtext, enddata, endbss  | asld needs these
@@ -166,14 +166,14 @@ load:
         mov     ax,#0x000C
         out
         cli
-	mov	bx,tracksiz	| fsck expects # sectors/track in bx
-        mov     ax,fsck_ds      | set segment registers
+	mov	bx,tracksiz	| menu expects # sectors/track in bx
+        mov     ax,menu_ds      | set segment registers
         mov     ds,ax           | when sep I&D DS != CS
         mov     es,ax           | otherwise they are the same.
         mov     ss,ax           | words 504 - 510 are patched by build
 
 	seg cs
-	jmpi	@fsck_pc	| jmp to fsck
+	jmpi	@menu_pc	| jmp to menu
 
 | Given the number of the next disk block to read, disksec, compute the
 | cylinder, sector, head, and number of sectors to read as follows:
@@ -257,7 +257,7 @@ pcpar:	.byte	0xDF, 0x02, 25, 2, 9, 0x2A, 0xFF, 0x50, 0xF6, 1, 3 | for pc
 atpar:	.byte	0xDF, 0x02, 25, 2,15, 0x1B, 0xFF, 0x54, 0xF6, 1, 8 | for at
 
 fderr:	.asciz "Read error.  Automatic reboot.\r\n"
-greet:	.asciz "\rBooting MINIX 1.3.  Copyright 1988 Prentice-Hall, Inc.\r\n"
+greet:	.asciz "\rBooting MINIX 1.5.  Copyright 1991 Prentice-Hall, Inc.\r\n"
 tracksiz:.word 15	| changed to 9 for ps and pc
 
 | Don't forget that words 504 - 510 are filled in by build.  The regular

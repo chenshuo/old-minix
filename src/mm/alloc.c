@@ -13,11 +13,10 @@
  *   free_mem:	release a previously allocated chunk of memory
  *   mem_init:	initialize the tables when MM start up
  *   max_hole:	returns the largest hole currently available
+ *   mem_left:	returns the sum of the sizes of all current holes
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "const.h"
+#include "mm.h"
 
 #define NR_HOLES         128	/* max # entries in hole table */
 #define NIL_HOLE (struct hole *) 0
@@ -31,6 +30,9 @@ PRIVATE struct hole {
 
 PRIVATE struct hole *hole_head;	/* pointer to first hole */
 PRIVATE struct hole *free_slots;	/* ptr to list of unused table slots */
+
+FORWARD void del_slot();
+FORWARD void merge();
 
 /*===========================================================================*
  *				alloc_mem				     *
@@ -74,7 +76,7 @@ phys_clicks clicks;		/* amount of memory requested */
 /*===========================================================================*
  *				free_mem				     *
  *===========================================================================*/
-PUBLIC free_mem(base, clicks)
+PUBLIC void free_mem(base, clicks)
 phys_clicks base;		/* base address of block to free */
 phys_clicks clicks;		/* number of clicks to free */
 {
@@ -120,7 +122,7 @@ phys_clicks clicks;		/* number of clicks to free */
 /*===========================================================================*
  *				del_slot				     *
  *===========================================================================*/
-PRIVATE del_slot(prev_ptr, hp)
+PRIVATE void del_slot(prev_ptr, hp)
 register struct hole *prev_ptr;	/* pointer to hole entry just ahead of 'hp' */
 register struct hole *hp;	/* pointer to hole entry to be removed */
 {
@@ -143,7 +145,7 @@ register struct hole *hp;	/* pointer to hole entry to be removed */
 /*===========================================================================*
  *				merge					     *
  *===========================================================================*/
-PRIVATE merge(hp)
+PRIVATE void merge(hp)
 register struct hole *hp;	/* ptr to hole to merge with its successors */
 {
 /* Check for contiguous holes and merge any found.  Contiguous holes can occur
@@ -199,26 +201,47 @@ PUBLIC phys_clicks max_hole()
 /*===========================================================================*
  *				mem_init				     *
  *===========================================================================*/
-PUBLIC mem_init(clicks)
-phys_clicks clicks;		/* amount of memory available */
+PUBLIC void mem_init()
 {
 /* Initialize hole lists.  There are two lists: 'hole_head' points to a linked
  * list of all the holes (unused memory) in the system; 'free_slots' points to
  * a linked list of table entries that are not in use.  Initially, the former
- * list has one entry, a single hole encompassing all of memory, and the second
- * list links together all the remaining table slots.  As memory becomes more
- * fragmented in the course of time (i.e., the initial big hole breaks up into
- * many small holes), new table slots are needed to represent them.  These
- * slots are taken from the list headed by 'free_slots'.
+ * list has one entry for each chunk of physical memory, and the second
+ * list links together the remaining table slots.  As memory becomes more
+ * fragmented in the course of time (i.e., the initial big holes break up into
+ * smaller holes), new table slots are needed to represent them.  These slots
+ * are taken from the list headed by 'free_slots'.
  */
 
   register struct hole *hp;
+  phys_clicks base;		/* base address of chunk */
+  phys_clicks size;		/* size of chunk */
 
+  /* Put all holes on the free list. */
   for (hp = &hole[0]; hp < &hole[NR_HOLES]; hp++) hp->h_next = hp + 1;
-  hole[0].h_next = NIL_HOLE;	/* only 1 big hole initially */
   hole[NR_HOLES-1].h_next = NIL_HOLE;
-  hole_head = &hole[0];
-  free_slots = &hole[1];
-  hole[0].h_base = 0;
-  hole[0].h_len = clicks;
+  hole_head = NIL_HOLE;
+  free_slots = &hole[0];
+
+  /* Allocate a hole for each chunk of physical memory. */
+  while ( (size = get_mem(&base, FALSE)) != 0)
+	free_mem(base, size);
+}
+
+
+/*===========================================================================*
+ *				mem_left				     *
+ *===========================================================================*/
+PUBLIC phys_clicks mem_left()
+{
+/* Determine how much memory is left.  This procedure is called just after
+ * initialization to find the original amount.
+ */
+
+  register struct hole *hp;
+  phys_clicks tot;
+
+  for (hp = hole_head, tot = 0; hp != NIL_HOLE; hp = hp->h_next)
+	tot += hp->h_len;
+  return(tot);
 }

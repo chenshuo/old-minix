@@ -14,20 +14,16 @@
  */
 
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/error.h"
-#include "const.h"
-#include "glo.h"
+#include "mm.h"
+#include <minix/callnr.h>
 #include "mproc.h"
 #include "param.h"
 
 #define LAST_FEW            2	/* last few slots reserved for superuser */
 
-PRIVATE next_pid = INIT_PROC_NR+1;	/* next pid to be assigned */
+PRIVATE next_pid = INIT_PID+1;	/* next pid to be assigned */
 
-/* Some C compilers require static declarations to precede their first use. */
+FORWARD void cleanup();
 
 /*===========================================================================*
  *				do_fork					     *
@@ -41,8 +37,7 @@ PUBLIC int do_fork()
   int i, child_nr, t;
   char *sptr, *dptr;
   phys_clicks prog_clicks, child_base;
-  extern phys_clicks alloc_mem();
-#ifndef ATARI_ST
+#if (CHIP == INTEL)
   long prog_bytes;
   long parent_abs, child_abs;
 #endif
@@ -58,13 +53,13 @@ PUBLIC int do_fork()
   /* Determine how much memory to allocate. */
   prog_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-#ifndef ATARI_ST
+#if (CHIP == INTEL)
   if (rmp->mp_flags & SEPARATE) prog_clicks += rmp->mp_seg[T].mem_len;
   prog_bytes = (long) prog_clicks << CLICK_SHIFT;
 #endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
 
-#ifndef ATARI_ST
+#if (CHIP == INTEL)
   /* Create a copy of the parent's core image for the child. */
   child_abs = (long) child_base << CLICK_SHIFT;
   parent_abs = (long) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
@@ -85,7 +80,8 @@ PUBLIC int do_fork()
   while (i--) *dptr++ = *sptr++;/* copy from parent slot to child's */
 
   rmc->mp_parent = who;		/* record child's parent */
-#ifndef ATARI_ST
+  rmc->mp_flags &= ~TRACED;	/* child does not inherit trace status */
+#if (CHIP == INTEL)
   rmc->mp_seg[T].mem_phys = child_base;
   rmc->mp_seg[D].mem_phys = child_base + rmc->mp_seg[T].mem_len;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
@@ -97,7 +93,7 @@ PUBLIC int do_fork()
   /* Find a free pid for the child and put it in the table. */
   do {
 	t = 0;			/* 't' = 0 means pid still free */
-	next_pid = (next_pid < 30000 ? next_pid + 1 : INIT_PROC_NR + 1);
+	next_pid = (next_pid < 30000 ? next_pid + 1 : INIT_PID + 1);
 	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
 		if (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid) {
 			t = 1;
@@ -110,7 +106,7 @@ PUBLIC int do_fork()
   if (who == INIT_PROC_NR) rmc->mp_procgrp = rmc->mp_pid;
 
   /* Tell kernel and file system about the (now successful) FORK. */
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   sys_fork(who, child_nr, rmc->mp_pid, child_base);
 #else
   sys_fork(who, child_nr, rmc->mp_pid);
@@ -118,7 +114,7 @@ PUBLIC int do_fork()
 
   tell_fs(FORK, who, child_nr, rmc->mp_pid);
 
-#ifndef ATARI_ST
+#if (CHIP == INTEL)
   /* Report child's memory map to kernel. */
   sys_newmap(child_nr, rmc->mp_seg);
 #endif
@@ -147,15 +143,16 @@ PUBLIC int do_mm_exit()
 /*===========================================================================*
  *				mm_exit					     *
  *===========================================================================*/
-PUBLIC mm_exit(rmp, exit_status)
+PUBLIC void mm_exit(rmp, exit_status)
 register struct mproc *rmp;	/* pointer to the process to be terminated */
 int exit_status;		/* the process' exit status (for parent) */
 {
 /* A process is done.  If parent is waiting for it, clean it up, else hang. */
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   phys_clicks base, size;
-#endif
+#else
   phys_clicks s;
+#endif
   register int proc_nr = (int)(rmp - mproc);
 
   /* How to terminate a process is determined by whether or not the
@@ -171,13 +168,13 @@ int exit_status;		/* the process' exit status (for parent) */
   /* If the exited process has a timer pending, kill it. */
   if (rmp->mp_flags & ALARM_ON) set_alarm(proc_nr, (unsigned) 0);
 
-#ifdef AM_KERNEL
+#if AM_KERNEL
 /* see if an amoeba transaction was pending or a putrep needed to be done */
   am_check_sig(proc_nr, 1);
 #endif
 
   /* Tell the kernel and FS that the process is no longer runnable. */
-#ifdef ATARI_ST
+#if (CHIP == M68000)
   sys_xit(rmp->mp_parent, proc_nr, &base, &size);
   free_mem(base, size);
 #else
@@ -185,7 +182,7 @@ int exit_status;		/* the process' exit status (for parent) */
 #endif
   tell_fs(EXIT, proc_nr, 0, 0);  /* file system can free the proc slot */
 
-#ifndef ATARI_ST
+#if (CHIP == INTEL)
   /* Release the memory occupied by the child. */
   s = (phys_clicks) rmp->mp_seg[S].mem_len;
   s += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
@@ -223,6 +220,13 @@ PUBLIC int do_wait()
 			dont_reply = TRUE;
 			return(OK);
 		}
+		if (rp->mp_flags & STOPPED && rp->mp_sigstatus) {
+			reply(who, rp->mp_pid, 0177 | (rp->mp_sigstatus << 8),
+				NIL_PTR);
+			dont_reply = TRUE;
+			rp->mp_sigstatus = 0;
+			return(OK);
+		}
 	}
   }
 
@@ -239,7 +243,7 @@ PUBLIC int do_wait()
 /*===========================================================================*
  *				cleanup					     *
  *===========================================================================*/
-PRIVATE cleanup(child)
+PRIVATE void cleanup(child)
 register struct mproc *child;	/* tells which process is exiting */
 {
 /* Clean up the remains of a process.  This routine is only called if two
@@ -264,6 +268,7 @@ register struct mproc *child;	/* tells which process is exiting */
   reply(child->mp_parent, child->mp_pid, r, NIL_PTR);
 
   /* Update flags. */
+  child->mp_flags  &= ~TRACED;	/* turn off TRACED bit */
   child->mp_flags  &= ~HANGING;	/* turn off HANGING bit */
   child->mp_flags  &= ~PAUSED;	/* turn off PAUSED bit */
   parent->mp_flags &= ~WAITING;	/* parent is no longer waiting */

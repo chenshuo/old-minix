@@ -9,7 +9,7 @@
  * and calls keyboard(), which enters the character in an internal table, and
  * then sends a message to the terminal task.  The main program of the terminal
  * task is tty_task(). It accepts not only messages about typed input, but
- * also requests to read and write from terminals, etc. 
+ * also requests to read and write from terminals, etc.
  *
  * The device-dependent part interfaces with the IBM console and ASCII
  * terminals.  The IBM keyboard is unusual in that keystrokes yield key numbers
@@ -20,7 +20,7 @@
  *
  * The valid messages and their parameters are:
  *
- *   TTY_CHAR_INT: a character has been typed (character arrived interrupt)
+ *   HARD_INT:     output has been completed or input has arrived
  *   TTY_READ:     a process wants to read from a terminal
  *   TTY_WRITE:    a process wants to write on a terminal
  *   TTY_IOCTL:    a process wants to change a terminal's parameters
@@ -28,10 +28,8 @@
  *   CANCEL:       terminate a previous incomplete system call immediately
  *
  *    m_type      TTY_LINE   PROC_NR    COUNT   TTY_SPEK  TTY_FLAGS  ADDRESS
- * ---------------------------------------------------------------------------
- * | TTY_CHAR_INT|         |         |         |         |         |array ptr|
  * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_O_DONE  |minor dev|         |         |         |         |array ptr|
+ * | HARD_INT    |         |         |         |         |         |         |
  * |-------------+---------+---------+---------+---------+---------+---------|
  * | TTY_READ    |minor dev| proc nr |  count  |         |         | buf ptr |
  * |-------------+---------+---------+---------+---------+---------+---------|
@@ -45,46 +43,84 @@
  * ---------------------------------------------------------------------------
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "../h/sgtty.h"
-#include "../h/signal.h"
-#include "const.h"
-#include "type.h"
-#include "glo.h"
-#include "proc.h"
+#include "kernel.h"
+#include <sgtty.h>
+#include <signal.h>
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "tty.h"
-#include "ttymaps.h"
+
+/* Array and macros to convert line numbers to structure pointers. */
+PRIVATE struct tty_struct *p_tty_addr[NR_CONS + NR_RS_LINES];
+#define ctty_addr(line) (&tty_struct[(line)])	/* faster if line is const */
+#define tty_addr(line)  (p_tty_addr[(line)])
+
+/* Macros for magic tty types. */
+#define isconsole(tp) ((tp) < ctty_addr(NR_CONS))
+#define isrs232(tp)   ((tp) >= ctty_addr(NR_CONS))
+
+/* Macros for magic tty line numbers. */
+#define isttyline(line) ((unsigned) (line) < NR_CONS + NR_RS_LINES)
+
+/* Macros for magic tty structure pointers. */
+#define FIRST_TTY (ctty_addr(0))
+#define END_TTY   (ctty_addr(NR_CONS + NR_RS_LINES))
+
+/* Miscellaneous. */
+#define LF        '\012'	/* '\n' is not portablly a LF */
+
+/* Test-and-set flag, set during tty_wakeup().  Remains set if do_int() is
+ * scheduled until do_int() is finished.
+ */
+PRIVATE int tty_awake;
+
+FORWARD void back_over();
+FORWARD int chuck();
+FORWARD void do_cancel();
+FORWARD void do_int();
+FORWARD void do_ioctl();
+FORWARD void do_read();
+FORWARD void do_setpgrp();
+FORWARD void do_write();
+FORWARD void echo();
+FORWARD void in1_char();
+FORWARD void in_char();
+FORWARD int out_process();
+FORWARD int rd_chars();
+FORWARD void rs_start();
+FORWARD void tty_icancel();
+FORWARD void tty_init();
+FORWARD void tty_ocancel();
+FORWARD void tty_reply();
+FORWARD void uninhibit();
 
 /*===========================================================================*
  *				tty_task				     *
  *===========================================================================*/
-PUBLIC tty_task()
+PUBLIC void tty_task()
 {
 /* Main routine of the terminal task. */
 
   message tty_mess;		/* buffer for all incoming messages */
   register struct tty_struct *tp;
 
-  tty_init();			/* initialize */
-  init_rs232();
-
+  tty_init();
   while (TRUE) {
 	receive(ANY, &tty_mess);
-	tp = &tty_struct[tty_mess.TTY_LINE];
+	if (!isttyline(tty_mess.TTY_LINE)) {
+		tty_mess.m_type = -1;	/* force error */
+		tty_mess.TTY_LINE = 0;	/* so hardware ints can get through */
+	}
+	tp = tty_addr(tty_mess.TTY_LINE);
 	switch(tty_mess.m_type) {
-	    case TTY_O_DONE:	/* same action as TTY_CHAR_INT */
-	    case TTY_CHAR_INT:	do_int(&tty_mess);		break;
+	    case HARD_INT:	do_int();			break;
 	    case TTY_READ:	do_read(tp, &tty_mess);		break;
 	    case TTY_WRITE:	do_write(tp, &tty_mess);	break;
 	    case TTY_IOCTL:	do_ioctl(tp, &tty_mess);	break;
 	    case TTY_SETPGRP:   do_setpgrp(tp, &tty_mess);	break;
 	    case CANCEL:	do_cancel(tp, &tty_mess);	break;
-	    default:		tty_reply(TASK_REPLY, tty_mess.m_source, 
-					tty_mess.PROC_NR, EINVAL, 0L, 0L);
+	    default:		tty_reply(TASK_REPLY, tty_mess.m_source,
+					  tty_mess.PROC_NR, EINVAL);
 	}
   }
 }
@@ -93,158 +129,161 @@ PUBLIC tty_task()
 /*===========================================================================*
  *				do_int					     *
  *===========================================================================*/
-PRIVATE do_int(m_ptr)
-message *m_ptr;
+PRIVATE void do_int()
 {
 /* The TTY task can generate two kinds of interrupts:
- *	- a character has been typed on the console or an RS232 line
- *	- an RS232 line has completed a write request (on behalf of a user)
- * If either interrupt happens and the TTY task is idle, the task gets the
- * interrupt message immediately and processes it.  However, if the TTY
- * task is busy, a bit is set in 'busy_map' and the message pointer stored.
- * If multiple messages happen, the bit is only set once.  No input data is
- * lost even if this happens because all the input messages say is that there
- * is some input.  The actual input is in the tty_driver_buf array, so losing
- * a message just means that when the one interrupt-generated message is given
- * to the TTY task, it will find multiple characters in tty_driver_buf.
+ *	- a character has been received from the console or an RS232 line.
+ *	- an RS232 line has completed a write request (on behalf of a user).
+ * The interrupt handler may delay the interrupt message at its discretion
+ * to avoid swamping the TTY task.  Messages may be overwritten when the
+ * lines are fast or when there are races between different lines, input
+ * and output, because MINIX only provides single buffering for interrupt
+ * messages (in proc.c).  This is handled by explicitly checking each line
+ * for fresh input and completed output on each interrupt.  Input is given
+ * priority so signal characters are not delayed by lots of small output
+ * requests.  This does not signifigantly delay the detection of output
+ * completions, since TTY will be scheduled to handle the output before
+ * any new user can request input.
  *
- * The introduction of RS232 lines has complicated this situation somewhat. Now
- * a message can mean that some RS232 line has finished transmitting all the
- * output given to it.  If a character is typed at the instant an RS232 line
- * finishes, one of the two messages may be overwritten because MINIX only
- * provides single buffering for interrupt messages (in proc.c).To avoid losing
- * information, whenever an RS232 line finishes, the flag tty_waiting is set
- * to COMPLETED and kept that way until its completion is processed and a 
- * message sent to FS saying that output is done.  The number of RS232 lines in
- * COMPLETED state is kept in output_done, which is checked on each interrupt,
- * so that a lost TTY_O_DONE line completion interrupt will be quickly
- * recovered.
- *
- * In short, when this procedure is called, it can check for RS232 line done
- * by inspecting output_done and it can check for characters in the input
- * buffer by inspecting tty_driver_buf[0].  Thus losing a message to the TTY
- * task is not serious because the underlying conditions are explicitly checked
- * for on each interrupt.
+ * If a reply is sent (to FS), further input/output must not be processed
+ * for fear of sending a second message to FS, which would be lost under
+ * certain race conditions.  E.g. when FS is now ready and is about to
+ * sendrec() to TTY (usually from rw_dev()).  FS handles the deadlock
+ * resulting from the _first_ send() from TTY clashing with the sendrec()
+ * from FS.  But then the scheduling causes the retried sendrec() to get
+ * through, so the second send() fails with an E_LOCKED error.  This might
+ * be avoided by preempting tasks like TTY over servers like FS, or giving
+ * preference to senders over receivers.  In practice, TTY relies on being
+ * woken at a later clock tick.
  */
 
-  /* First check to see if any RS232 lines have completed. */
-  if (output_done > 0) {
-	/* If a message is sent to FS for RS232 done, don't process any input
-	 * characters now for fear of sending a second message to FS, which 
-	 * would be lost.
-	 */
-	if (tty_o_done()) {
-		return;
+  char *buf;
+  static struct tty_struct *last_tp = FIRST_TTY;  /* round-robin service */
+  unsigned char odone;
+  register char *rbuf;
+  unsigned remaining;
+  register struct tty_struct *tp;
+  unsigned wrapcount;
+
+  tp = last_tp;
+  do {
+	if (++tp >= END_TTY) tp = FIRST_TTY;
+
+	/* Transfer any fresh input to TTY's buffer, and test output done. */
+	remaining = (*tp->tty_devread)(tp->tty_line, &buf, &odone);
+	if (remaining == 0)
+		goto check_output;	/* avoid even uglier indentation */
+
+	rbuf = buf;
+	if (!isconsole(tp) && tp->tty_mode & RAW) {
+		/* Avoid grotesquely inefficient in_char(), except for console
+		 * which needs further translation.
+		 * Line feeds need not be counted.
+		 */
+
+		/* If queue becomes too full, ask external device to stop. */
+		if (tp->tty_incount < tp->tty_ihighwater &&
+		    tp->tty_incount + remaining >= tp->tty_ihighwater)
+			rs_istop(tp->tty_line);
+
+		if (remaining > tp->tty_insize - tp->tty_incount)
+			/* not all fit, discard */
+			remaining = tp->tty_insize - tp->tty_incount;
+		wrapcount = tp->tty_inbufend - tp->tty_inhead;
+		if (wrapcount < remaining) {
+			memcpy(tp->tty_inhead, rbuf, wrapcount);
+			tp->tty_inhead = tp->tty_inbuf;
+			rbuf += wrapcount;
+			tp->tty_incount += wrapcount;
+			remaining -= wrapcount;
+		}
+		memcpy(tp->tty_inhead, rbuf, remaining);
+		tp->tty_inhead += remaining;
+		tp->tty_incount += remaining;
+	} else {
+		do
+			in_char(tp, *rbuf++);
+		while (--remaining != 0);
 	}
-  }
-  charint(m_ptr);			/* check for input characters */
-}
 
-
-/*===========================================================================*
- *				charint					     *
- *===========================================================================*/
-PRIVATE charint(m_ptr)
-message *m_ptr;			/* message containing pointer to char(s) */
-{
-/* A character has been typed.  If a character is typed and the tty task is
- * not able to service it immediately, the character is accumulated within
- * the tty driver.  Thus multiple chars may be accumulated.  A single message
- * to the tty task may have to process several characters.
- */
-
-  int m, n, count, replyee, caller, old_state;
-  char *ptr, *copy_ptr, ch;
-  struct tty_struct *tp;
-
-  old_state = lock();
-  ptr = m_ptr->ADDRESS;		/* pointer to accumulated char array */
-  copy_ptr = tty_copy_buf;	/* ptr to shadow array where chars copied */
-  n = tty_buf_count(ptr);	/* how many chars have been accumulated */
-  count = n;			/* save the character count */
-  n = n + n;			/* each char occupies 2 bytes */
-  ptr += 4;			/* skip count field at start of array */
-  while (n-- > 0)
-	*copy_ptr++ = *ptr++;	/* copy the array to safety */
-  ptr = m_ptr->ADDRESS;
-  tty_buf_count(ptr) = 0;		/* accumulation count set to 0 */
-  restore(old_state);
-
-  /* Loop on the accumulated characters, processing each in turn. */
-  if (count == 0) return;	/* on TTY_O_DONE interrupt, count might be 0 */
-  copy_ptr = tty_copy_buf;
-  while (count-- > 0) {
-	ch = *copy_ptr++;	/* get the character typed */
-	n = *copy_ptr++;	/* get the line number it came in on */
-	in_char(n, ch);		/* queue the char and echo it */
+	/* Possibly restart output (in case there were xoffs or echoes). */
+	(*tp->tty_devstart)(tp);
 
 	/* See if a previously blocked reader can now be satisfied. */
-	tp = &tty_struct[n];	/* pointer to struct for this character */
-	if (tp->tty_inleft > 0 ) {	/* does anybody want input? */
-		m = tp->tty_mode & (CBREAK | RAW);
-		if (tp->tty_lfct > 0 || (m != 0 && tp->tty_incount > 0)) {
-			m = rd_chars(tp);
+	if (tp->tty_inleft != 0 && tp->tty_incount != 0 &&
+	    (tp->tty_mode & (RAW | CBREAK) || tp->tty_lfct != 0)) {
+		/* Tell hanging reader that chars have arrived. */
+		tty_reply(REVIVE, (int) tp->tty_incaller,
+			  (int) tp->tty_inproc, rd_chars(tp));
+	}
 
-			/* Tell hanging reader that chars have arrived. */
-			replyee = (int) tp->tty_incaller;
-			caller = (int) tp->tty_inproc;
-			tty_reply(REVIVE, replyee, caller, m, 0L, 0L);
+check_output:
+	/* Finish off any completed block of output. */
+	if (odone) {
+		if (tp->tty_rwords > 0) {
+			/* not echo */
+			tp->tty_phys += tp->tty_rwords;
+			tp->tty_cum += tp->tty_rwords;
+			tp->tty_outleft -= tp->tty_rwords;
+			if (tp->tty_outleft == 0) {
+				finish(tp, tp->tty_cum);
+				continue;
+			}
 		}
+		tp->tty_rwords = 0;
+		rs_ocancel(tp->tty_line);	/* tty_ocancel does too much*/
+		(*tp->tty_devstart)(tp);	/* maybe continue output */
 	}
   }
+  while (tp != last_tp || tty_events >= EVENT_THRESHOLD);
+  tty_awake = FALSE;
+  last_tp = tp;
 }
 
 
 /*===========================================================================*
  *				in_char					     *
  *===========================================================================*/
-PRIVATE in_char(line, ch)
-int line;			/* line number on which char arrived */
-char ch;			/* scan code for character that arrived */
+PRIVATE void in_char(tp, ch)
+register struct tty_struct *tp;	/* terminal on which char arrived */
+register char ch;		/* scan code for character that arrived */
 {
 /* A character has just been typed in.  Process, save, and echo it. */
 
-  register struct tty_struct *tp;
   int mode, sig, scode, c;
-  int make_break();
 
   scode = ch;			/* save the scan code */
-  tp = &tty_struct[line];	/* set 'tp' to point to proper struct */
 
   /* Function keys are temporarily being used for debug dumps. */
-  if (line == 0 && ch >= F1 && ch <= F10) {	/* Check for function keys */
-	func_key(ch);		/* process function key */
-	return;
-  }
-  if (tp->tty_incount >= TTY_IN_BYTES) return;	/* no room, discard char */
+  if (isconsole(tp) && func_key(ch))
+	return;			/* just processed function key */
   mode = tp->tty_mode & (RAW | CBREAK);
   if (tp->tty_makebreak == TWO_INTS) {
 	c = make_break(ch);	/* console give 2 ints/ch */
 	if (c == -1) return;
 	ch = c;
-  }
-  else
-	if (mode != RAW) ch &= 0177;	/* 7-bit chars except in raw mode */
+  } else if (mode != RAW)
+	ch &= 0177;		/* 7-bit chars except in raw mode */
 
   /* Processing for COOKED and CBREAK mode contains special checks. */
   if (mode == COOKED || mode == CBREAK) {
 	/* Handle erase, kill and escape processing. */
 	if (mode == COOKED) {
 		/* First erase processing (rub out of last character). */
-		if (ch == tp->tty_erase && tp->tty_escaped == NOT_ESCAPED) {
-			if (chuck(tp) != -1) {	/* remove last char entered */
-				echo(tp, '\b');	/* remove it from the screen */
-				echo(tp, ' ');
-				echo(tp, '\b');
+		if (ch == tp->tty_erase) {
+			if (tp->tty_escaped == ESCAPED || chuck(tp) != -1) {
+				/* Removed it from buffer OK. */
+				tp->tty_escaped = NOT_ESCAPED;
+				back_over(tp);	/* remove from screen too */
 			}
 			return;
 		}
 
 		/* Now do kill processing (remove current line). */
 		if (ch == tp->tty_kill && tp->tty_escaped == NOT_ESCAPED) {
-			while( chuck(tp) == OK) /* keep looping */ ;
+			while(chuck(tp) == OK)	/* keep looping */ ;
 			echo(tp, tp->tty_kill);
-			echo (tp, '\n');
+			echo(tp, '\n');
 			return;
 		}
 
@@ -264,20 +303,17 @@ char ch;			/* scan code for character that arrived */
 			 */
 			if (ch == tp->tty_eof) {
 				ch = MARKER;
-				tp->tty_lfct++; /* counts as LF */
+				if (tp->tty_incount < tp->tty_insize)
+					tp->tty_lfct++;	/* counts as LF */
 			}
 		} else {
 			/* Previous character was backslash. */
 			tp->tty_escaped = NOT_ESCAPED;	/* turn escaping off */
+			back_over(tp);	/* to overwrite or re-echo */
 			if (ch != tp->tty_erase && ch != tp->tty_kill &&
-						   ch != tp->tty_eof) {
+			    ch != tp->tty_eof)
 				/* Store the escape previously skipped over */
-				*tp->tty_inhead++ = '\\';
-				tp->tty_incount++;
-				if (tp->tty_inhead ==
-						&tp->tty_inqueue[TTY_IN_BYTES])
-					tp->tty_inhead = tp->tty_inqueue;
-			}
+				in1_char(tp, '\\', '\\');
 		}
 	}
 	/* Both COOKED and CBREAK modes come here; first map CR to LF. */
@@ -293,113 +329,38 @@ char ch;			/* scan code for character that arrived */
 	/* Check for and process CTRL-S (terminal stop). */
 	if (ch == tp->tty_xoff) {
 		tp->tty_inhibited = STOPPED;
+		if (isrs232(tp))
+			rs_inhibit(tp->tty_line, TRUE);	/* sync avoid races */
 		return;
 	}
 
-	/* Check for and process CTRL-Q (terminal start). */
-	if (tp->tty_inhibited == STOPPED) {
-		tp->tty_inhibited = RUNNING;
-		(*tp->tty_devstart)(tp);	/* resume output */
-		return;
-	}
+	/* Check for and process terminal start character, now anything. */
+	if (tp->tty_inhibited == STOPPED) uninhibit(tp);
+
+	/* Check for and discard xon (terminal start). */
+	if (ch == tp->tty_xon) return;
   }
 
   /* All 3 modes come here. */
-  if (ch == '\n') tp->tty_lfct++;	/* count line feeds */
+  if (ch == '\n' && tp->tty_incount < tp->tty_insize)
+	tp->tty_lfct++;		/* count line feeds */
 
   /* The numeric pad generates ASCII escape sequences: ESC [ letter */
-  if (line == 0 && scode >= SCODE1 && scode <= SCODE2 && 
-		shift1 == 0 && shift2 == 0 && numlock == 0) {
+  if (isconsole(tp) && (scode = letter_code(scode)) != 0) {
 	/* This key is to generate a three-character escape sequence. */
-	*tp->tty_inhead++ = ESC; /* put ESC in the input queue */
-	if (tp->tty_inhead == &tp->tty_inqueue[TTY_IN_BYTES])
-		tp->tty_inhead = tp->tty_inqueue;      /* handle wraparound */
-	tp->tty_incount++;
-	echo(tp, 'E');
-	*tp->tty_inhead++ = BRACKET; /* put ESC in the input queue */
-	if (tp->tty_inhead == &tp->tty_inqueue[TTY_IN_BYTES])
-		tp->tty_inhead = tp->tty_inqueue;      /* handle wraparound */
-	tp->tty_incount++;
-	echo(tp, BRACKET);
-	ch = scode_map[scode-SCODE1];	/* generate the letter */
+	in1_char(tp, ESC, 'E');
+	in1_char(tp, BRACKET, BRACKET);
+	ch = scode;
   }
 
-  *tp->tty_inhead++ = ch;	/* save the character in the input queue */
-  if (tp->tty_inhead == &tp->tty_inqueue[TTY_IN_BYTES])
-	tp->tty_inhead = tp->tty_inqueue;	/* handle wraparound */
-  tp->tty_incount++;
-  echo(tp, ch);
+  in1_char(tp, ch, ch);
 }
-
-
-#ifdef i8088
-/*===========================================================================*
- *				make_break				     *
- *===========================================================================*/
-PRIVATE int make_break(ch)
-char ch;			/* scan code of key just struck or released */
-{
-/* This routine can handle keyboards that interrupt only on key depression,
- * as well as keyboards that interrupt on key depression and key release.
- * For efficiency, the interrupt routine filters out most key releases.
- */
-
-  int c, make, code;
-
-  c = ch & 0177;		/* high-order bit set on key release */
-  make = (ch & 0200 ? 0 : 1);	/* 1 when key depressed, 0 when key released */
-
-  if (alt && keyb_type == DUTCH_EXT) 
-	code = alt_c[c];
-  else 
-	code = (shift1 || shift2 ? sh[c] : unsh[c]);
-
-  if (control && c < TOP_ROW) code = sh[c];	/* CTRL-(top row) */
-  if (numlock && c > 70 && c < 0x56)
-	code = (shift1 || shift2 ? unsh[c] : sh[c]);
-
-  code &= BYTE;
-  if (code < 0200 || code >= 0206) {
-	/* Ordinary key, i.e. not shift, control, alt, etc. */
-	if (capslock)
-		if (code >= 'A' && code <= 'Z')
-			code += 'a' - 'A';
-		else if (code >= 'a' && code <= 'z')
-			code -= 'a' - 'A';
-	if (alt && keyb_type != DUTCH_EXT) code |= 0200;  /* alt ORs in 0200 */
-	if (control) code &= 037;
-	if (make == 0) code = -1;	/* key release */
-	return(code);
-  }
-
-  /* Table entries 0200 - 0206 denote special actions. */
-  switch(code - 0200) {
-    case 0:	shift1 = make;		break;	/* shift key on left */
-    case 1:	shift2 = make;		break;	/* shift key on right */
-    case 2:	control = make;		break;	/* control */
-    case 3:	alt = make;		break;	/* alt key */
-    case 4:	if (make && caps_off) {
-			capslock = 1 - capslock;
-			set_leds();
-		}
-		caps_off = 1 - make;
-		break;	/* caps lock */
-    case 5:	if (make && num_off) {
-			numlock  = 1 - numlock;
-			set_leds();
-		}
-		num_off = 1 - make;
-		break;	/* num lock */
-  }
-  return(-1);
-}
-#endif
 
 
 /*===========================================================================*
  *				echo					     *
  *===========================================================================*/
-PRIVATE echo(tp, c)
+PRIVATE void echo(tp, c)
 register struct tty_struct *tp;	/* terminal on which to echo */
 register char c;		/* character to echo */
 {
@@ -408,12 +369,12 @@ register char c;		/* character to echo */
   if ( (tp->tty_mode & ECHO) == 0) return;	/* if no echoing, don't echo */
 /* MARKER is meaningful only in cooked mode */
   if (c != MARKER || tp->tty_mode & (CBREAK | RAW)) {
-	if (tp - tty_struct < NR_CONS)
+	if (isconsole(tp)) {
 		out_char(tp, c);	/* echo to console */
-	else
-		rs_out_char(tp, c);	/* echo to RS232 line */
+		flush(tp);		/* force character out onto screen */
+	} else if (tp->tty_etail < tp->tty_ebufend)
+		*tp->tty_etail++ = c;	/* echo to RS232 line */
   }
-  flush(tp);			/* force character out onto the screen */
 }
 
 
@@ -431,11 +392,14 @@ register struct tty_struct *tp;	/* from which tty should chars be removed */
   if (tp->tty_incount == 0) return(-1);
 
   /* Don't delete '\n' or '\r'. */
-  prev = (tp->tty_inhead != tp->tty_inqueue ? tp->tty_inhead - 1 :
-					     &tp->tty_inqueue[TTY_IN_BYTES-1]);
+  prev = (tp->tty_inhead != tp->tty_inbuf ? tp->tty_inhead - 1 :
+					    tp->tty_inbufend - 1);
   if (*prev == '\n' || *prev == '\r') return(-1);
   tp->tty_inhead = prev;
-  tp->tty_incount--;
+
+  /* If queue becomes empty enough, tell external device it can start. */
+  if (--tp->tty_incount == tp->tty_ilow_water && isrs232(tp))
+	rs_istart(tp->tty_line);
   return(OK);			/* char erasure was possible */
 }
 
@@ -443,17 +407,14 @@ register struct tty_struct *tp;	/* from which tty should chars be removed */
 /*===========================================================================*
  *				do_read					     *
  *===========================================================================*/
-PRIVATE do_read(tp, m_ptr)
-register struct tty_struct *tp;	/* pointer to tty struct */
+PRIVATE void do_read(tp, m_ptr)
+register struct tty_struct *tp;
 message *m_ptr;			/* pointer to message sent to the task */
 {
 /* A process wants to read from a terminal. */
 
-  int code, caller;
-
-
   if (tp->tty_inleft > 0) {	/* if someone else is hanging, give up */
-	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EIO, 0L, 0L);
+	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EIO);
 	return;
   }
 
@@ -464,10 +425,7 @@ message *m_ptr;			/* pointer to message sent to the task */
   tp->tty_inleft = m_ptr->COUNT;
 
   /* Try to get chars.  This call either gets enough, or gets nothing. */
-  code = rd_chars(tp);
-
-  caller = (int) tp->tty_inproc;
-  tty_reply(TASK_REPLY, m_ptr->m_source, caller, code, 0L, 0L);
+  tty_reply(TASK_REPLY, m_ptr->m_source, (int) tp->tty_inproc, rd_chars(tp));
 }
 
 
@@ -483,105 +441,102 @@ register struct tty_struct *tp;	/* pointer to terminal to read from */
  * copies it to the user space directly and notifies FS with a message.
  */
 
-  int cooked, ct, user_ct, buf_ct, cum, enough, eot_seen;
-  vir_bytes in_vir, left;
-  phys_bytes user_phys, tty_phys;
-  char ch, *tty_ptr;
-  struct proc *rp;
-  extern phys_bytes umap();
+  char *bufend;
+  int ct;
+  register char *rtail;
+  int user_ct;
+  int user_cum;
+  phys_bytes user_phys;
 
-  cooked = ( (tp->tty_mode & (RAW | CBREAK)) ? 0 : 1);	/* 1 iff COOKED mode */
-  if (tp->tty_incount == 0 || (cooked && tp->tty_lfct == 0)) return(SUSPEND);
-  rp = proc_addr(tp->tty_inproc);
-  in_vir = (vir_bytes) tp-> tty_in_vir;
-  left = (vir_bytes) tp->tty_inleft;
-  if ( (user_phys = umap(rp, D, in_vir, left)) == 0) return(E_BAD_ADDR);
-  tty_phys = umap(proc_addr(TTY), D, (vir_bytes) tty_buf, TTY_BUF_SIZE);
-  cum = 0;
-  enough = 0;
-  eot_seen = 0;
+  if (tp->tty_incount == 0 ||
+      !(tp->tty_mode & (RAW | CBREAK)) && tp->tty_lfct == 0)
+	return(SUSPEND);
+  if ( (user_phys = numap(tp->tty_inproc, (vir_bytes) tp->tty_in_vir,
+                          (vir_bytes) tp->tty_inleft)) == 0)
+	return(E_BAD_ADDR);
+  if (tp->tty_inleft > tp->tty_incount) tp->tty_inleft = tp->tty_incount;
+  user_cum = 0;
 
-  /* The outer loop iterates on buffers, one buffer load per iteration. */
-  while (tp->tty_inleft > 0) {
-	buf_ct = MIN(tp->tty_inleft, tp->tty_incount);
-	buf_ct = MIN(buf_ct, TTY_BUF_SIZE);
-	ct = 0;
-	tty_ptr = tty_buf;
+  do {
+	rtail = tp->tty_intail;
+	if ( (ct = tp->tty_inleft) > tp->tty_inbufend - rtail)
+		ct = tp->tty_inbufend - rtail;
 
-	/* The inner loop fills one buffer. */
-	while(buf_ct-- > 0) {
-		ch = *tp->tty_intail++;
-		if (tp->tty_intail == &tp->tty_inqueue[TTY_IN_BYTES])
-			tp->tty_intail = tp->tty_inqueue;
-		*tty_ptr++ = ch;
-		ct++;
-		if (ch == '\n' || ch == MARKER && cooked) {
-			tp->tty_lfct--;
-			if (ch == MARKER) eot_seen++;
-			enough++;	/* exit loop */
-			if (cooked) break;	/* only provide 1 line */
+	/* Be careful about CTRL-D.  In cooked
+	 * mode it is not transmitted to user programs, and is not counted as
+	 * a character as far as the count goes, but it does occupy space in
+	 * the driver's tables and must be counted there.
+	 */
+	user_ct = ct;
+	if (!(tp->tty_mode & (RAW | CBREAK))) {
+		/* COOKED mode.
+		 * Don't bother counting lines in CBREAK and RAW modes.
+		 */
+		for (bufend = rtail + ct; rtail < bufend;) {
+			if (*rtail++ == '\n') {
+				user_ct =
+					tp->tty_inleft =
+					ct = rtail - tp->tty_intail;
+				tp->tty_lfct--;;
+				break;
+			}
+			if (rtail[-1] == MARKER) {
+				tp->tty_inleft =
+					ct = rtail - tp->tty_intail;
+					user_ct = ct - 1;
+				tp->tty_lfct--;
+				break;
+			}
 		}
 	}
 
-	/* Copy one buffer to user space.  Be careful about CTRL-D.  In cooked
-	 * mode it is not transmitted to user programs, and is not counted as
-	 * a character as far as the count goes, but it does occupy space in 
-	 * the driver's tables and must be counted there.
-	 */
-	user_ct = (eot_seen ? ct - 1 : ct);	/* bytes to copy to user */
-	phys_copy(tty_phys, user_phys, (phys_bytes) user_ct);
+	/* Copy at least half of buffer to user space. */
+	phys_copy(tp->tty_inphys + (tp->tty_intail - tp->tty_inbuf),
+		  user_phys, (phys_bytes) user_ct);
 	user_phys += user_ct;
-	cum += user_ct;
+	user_cum += user_ct;
+	if ( (tp->tty_intail += ct) == tp->tty_inbufend)
+		tp->tty_intail = tp->tty_inbuf;
 	tp->tty_inleft -= ct;
-	tp->tty_incount -= ct;
-	if (tp->tty_incount == 0 || enough) break;
+	if ( (tp->tty_incount -= ct) <= tp->tty_ilow_water &&
+	     tp->tty_incount + ct > tp->tty_ilow_water && isrs232(tp))
+		rs_istart(tp->tty_line);
   }
-
-  tp->tty_inleft = 0;
-  return(cum);
+  while (tp->tty_inleft != 0);
+  return(user_cum);
 }
 
 
 /*===========================================================================*
  *				finish					     *
  *===========================================================================*/
-PUBLIC finish(tp, code)
-register struct tty_struct *tp;	/* pointer to tty struct */
+PUBLIC void finish(tp, code)
+register struct tty_struct *tp;
 int code;			/* reply code */
 {
 /* A command has terminated (possibly due to DEL).  Tell caller. */
 
-  int line, result, replyee, caller;
-
-  tp->tty_rwords = 0;
-  tp->tty_outleft = 0;
-  if (tp->tty_waiting == NOT_WAITING) return;
-  line = tp - tty_struct;
-  result = (line < NR_CONS ? TASK_REPLY : REVIVE);
-  replyee = (int) tp->tty_otcaller;
-  caller = (int) tp->tty_outproc;
-  tty_reply(result, replyee, caller, code, 0L, 0L);
-  tp->tty_waiting = NOT_WAITING;
+  if (tp->tty_waiting != NOT_WAITING)
+	tty_reply(tp->tty_waiting == SUSPENDED ? REVIVE : TASK_REPLY,
+		  (int) tp->tty_otcaller, (int) tp->tty_outproc, code);
+  tty_ocancel(tp);
 }
 
 
 /*===========================================================================*
  *				do_write				     *
  *===========================================================================*/
-PRIVATE do_write(tp, m_ptr)
-register struct tty_struct *tp;	/* pointer to tty struct */
-message *m_ptr;			/* pointer to message sent to the task */
+PRIVATE void do_write(tp, m_ptr)
+register struct tty_struct *tp;
+register message *m_ptr;	/* pointer to message sent to the task */
 {
 /* A process wants to write on a terminal. */
 
   vir_bytes out_vir, out_left;
-  struct proc *rp;
-  extern phys_bytes umap();
-  int caller,replyee;
 
   /* If the slot is already in use, better return an error than mess it up. */
   if (tp->tty_outleft > 0) {	/* if someone else is hanging, give up */
-	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EIO, 0L, 0L);
+	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EIO);
 	return;
   }
 
@@ -590,18 +545,23 @@ message *m_ptr;			/* pointer to message sent to the task */
   tp->tty_outproc = m_ptr->PROC_NR;
   tp->tty_out_vir = m_ptr->ADDRESS;
   tp->tty_outleft = m_ptr->COUNT;
-  tp->tty_waiting = WAITING;
-  tp->tty_cum = 0;
 
   /* Compute the physical address where the data is in user space. */
-  rp = proc_addr(tp->tty_outproc);
   out_vir = (vir_bytes) tp->tty_out_vir;
   out_left = (vir_bytes) tp->tty_outleft;
-  if ( (tp->tty_phys = umap(rp, D, out_vir, out_left)) == 0) {
+  if ( (tp->tty_phys = numap(tp->tty_outproc, out_vir, out_left)) == 0) {
 	/* Buffer address provided by user is outside its address space. */
-	tp->tty_cum = E_BAD_ADDR;
 	tp->tty_outleft = 0;
+	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, E_BAD_ADDR);
+	return;
   }
+
+  /* Everything is OK.  Fill in remaining tty fields.  Only tty_waiting is
+   * critical - it must be held at NOT_WAITING together with tty_outleft == 0
+   * for the error cases.
+   */
+  tp->tty_cum = 0;
+  tp->tty_waiting = WAITING;
 
   /* Copy characters from the user process to the terminal. */
   (*tp->tty_devstart)(tp);	/* copy data to queue and start I/O */
@@ -609,11 +569,12 @@ message *m_ptr;			/* pointer to message sent to the task */
   /* If output is for a bitmapped terminal as the IBM-PC console, the output-
    * routine will return at once so there is no need to suspend the caller,
    * on ascii terminals however, the call is suspended and later revived.
+   * Oops, even bitmapped terminals need suspension after an XOFF.
    */
-  if (m_ptr->TTY_LINE != 0) {
-	caller = (int) tp->tty_outproc;
-	replyee = (int) tp->tty_otcaller;
-	tty_reply(TASK_REPLY, replyee, caller, SUSPEND, 0L, 0L);
+  if (tp->tty_outleft > 0) {
+	tty_reply(TASK_REPLY, (int) tp->tty_otcaller, (int) tp->tty_outproc,
+		  SUSPEND);
+	tp->tty_waiting = SUSPENDED;
   }
 }
 
@@ -621,14 +582,16 @@ message *m_ptr;			/* pointer to message sent to the task */
 /*===========================================================================*
  *				do_ioctl				     *
  *===========================================================================*/
-PRIVATE do_ioctl(tp, m_ptr)
-register struct tty_struct *tp;	/* pointer to tty_struct */
+PRIVATE void do_ioctl(tp, m_ptr)
+register struct tty_struct *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
 /* Perform IOCTL on this terminal. */
 
   long flags, erki, erase, kill, intr, quit, xon, xoff, eof;
   int r;
+  int speed;
+  message ioctl_mess;
 
   r = OK;
   flags = 0;
@@ -638,10 +601,38 @@ message *m_ptr;			/* pointer to message sent to task */
 	/* Set erase, kill, and flags. */
 	tp->tty_erase = (char) ((m_ptr->TTY_SPEK >> 8) & BYTE);	/* erase  */
 	tp->tty_kill  = (char) ((m_ptr->TTY_SPEK >> 0) & BYTE);	/* kill  */
-	tp->tty_mode  = (int) m_ptr->TTY_FLAGS;	/* mode word */
-	if (m_ptr->TTY_SPEED != 0) tp->tty_speed = m_ptr->TTY_SPEED;
-	if (tp-tty_struct >= NR_CONS)
-		set_uart(tp - tty_struct, tp->tty_mode, tp->tty_speed);
+	tp->tty_mode  = (int) m_ptr->TTY_FLAGS & 0xFFFF;	/* mode word*/
+	if (!(tp->tty_mode & (RAW | CBREAK))) {
+		/* (Re)calculate the line count. The logic of rd_chars()
+		 * requires newlines and MARKERs returned in cooked mode
+		 * to be interpreted as line ends, even if they were
+		 * received in another mode.
+		 */
+		int ct;
+		register char *rtail;
+
+		tp->tty_lfct = 0;
+		for (rtail = tp->tty_intail, ct = tp->tty_incount;
+		     ct-- != 0;) {
+			if (*rtail == '\n' || *rtail == MARKER)
+				++tp->tty_lfct;
+			if (++rtail == tp->tty_inbufend)
+				rtail = tp->tty_inbuf;
+		}
+		/* The column should really be recalculated for RS232, but
+		 * is too much trouble.
+		 */
+	}
+	if (tp->tty_mode & RAW)
+		/* Inhibited RAW mode makes no sense since there is no way
+		 * to uninhibit it. The inhibition flag must be cleared
+		 * explicitly since the drivers check it in all modes.
+		 */
+		uninhibit(tp);
+	speed = (int) (m_ptr->TTY_SPEK >> 16);
+	if (speed != 0) tp->tty_speed = speed;
+	if (isrs232(tp)) tp->tty_speed = rs_ioctl(tp->tty_line, tp->tty_mode,
+						  tp->tty_speed);
 	break;
 
      case TIOCSETC:
@@ -651,14 +642,15 @@ message *m_ptr;			/* pointer to message sent to task */
 	tp->tty_xon  = (char) ((m_ptr->TTY_SPEK >>  8) & BYTE);	/* CTRL-S */
 	tp->tty_xoff = (char) ((m_ptr->TTY_SPEK >>  0) & BYTE);	/* CTRL-Q */
 	tp->tty_eof  = (char) ((m_ptr->TTY_FLAGS >> 8) & BYTE);	/* CTRL-D */
+	if (isrs232(tp)) rs_setc(tp->tty_line, tp->tty_xoff);
 	break;
 
      case TIOCGETP:
 	/* Get erase, kill, and flags. */
 	erase = ((long) tp->tty_erase) & BYTE;
 	kill  = ((long) tp->tty_kill) & BYTE;
-	erki  = (erase << 8) | kill;
-	flags = ( (long) tp->tty_speed << 16) | (long) tp->tty_mode;
+	erki  = ((long) tp->tty_speed << 16) | (erase << 8) | kill;
+	flags =  (long) tp->tty_mode;
 	break;
 
      case TIOCGETC:
@@ -672,77 +664,79 @@ message *m_ptr;			/* pointer to message sent to task */
 	flags = (eof <<8);
 	break;
 
-     default:
-	r = EINVAL;
+#ifdef TIOCFLUSH
+     case TIOCFLUSH:
+	/* Discard current input and output. */
+	tty_icancel(tp);
+	tty_ocancel(tp);
+	break;
+#endif
   }
 
-  /* Send the reply. */
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r, flags, erki);
+  /* Send the reply. Like tty_reply() with extra arguments flags and erki. */
+  ioctl_mess.m_type = TASK_REPLY;
+  ioctl_mess.REP_PROC_NR = m_ptr->PROC_NR;
+  ioctl_mess.REP_STATUS = r;
+  ioctl_mess.TTY_FLAGS = flags;
+  ioctl_mess.TTY_SPEK = erki;
+  send(m_ptr->m_source, &ioctl_mess);
 }
 
 
 /*===========================================================================*
  *				do_setpgrp				     *
  *===========================================================================*/
-PRIVATE do_setpgrp(tp, m_ptr)
-register struct tty_struct *tp; /* pointer to tty struct */
+PRIVATE void do_setpgrp(tp, m_ptr)
+register struct tty_struct *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
 /* A control process group has changed */
 
-   tp->tty_pgrp = m_ptr->TTY_PGRP;
-   tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK, 0L, 0L);
+  tp->tty_pgrp = m_ptr->TTY_PGRP;
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK);
 }
 
 
 /*===========================================================================*
  *				do_cancel				     *
  *===========================================================================*/
-PRIVATE do_cancel(tp, m_ptr)
-register struct tty_struct *tp;	/* pointer to tty_struct */
+PRIVATE void do_cancel(tp, m_ptr)
+register struct tty_struct *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
 /* A signal has been sent to a process that is hanging trying to read or write.
  * The pending read or write must be finished off immediately.
  */
 
+  int caller;
   int mode;
 
-  /* First check to see if the process is indeed hanging.  If it is not, don't
-   * reply (to avoid race conditions).
+  /* Check the parameters carefully, to avoid cancelling twice, but don't
+   * generate error replies since it is normal for sigchar() to have
+   * already done the cancellation.
    */
-  if (tp->tty_inleft == 0 && tp->tty_outleft == 0) return;
-
-  /* Kill off input/output. */
+  caller = m_ptr->PROC_NR;
   mode = m_ptr->COUNT;
-  if (mode & R_BIT) {
+  if (mode & R_BIT && tp->tty_inleft != 0 && caller == tp->tty_inproc) {
 	/* Process was reading when killed.  Clean up input. */
-	tp->tty_inhead = tp->tty_inqueue;	/* discard all data */
-	tp->tty_intail = tp->tty_inqueue;
-	tp->tty_incount = 0;
-	tp->tty_lfct = 0;
+	tty_icancel(tp);
 	tp->tty_inleft = 0;
-	tp->tty_inhibited = RUNNING;
   }
-  if (mode & W_BIT) {
+  if (mode & W_BIT && tp->tty_outleft != 0 && caller == tp->tty_outproc)
 	/* Process was writing when killed.  Clean up output. */
-	tp->tty_outleft = 0;
-	tp->tty_waiting = NOT_WAITING;	/* don't send reply */
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EINTR, 0L, 0L);
+	tty_ocancel(tp);
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EINTR);
 }
 
 
 /*===========================================================================*
  *				tty_reply				     *
  *===========================================================================*/
-PUBLIC tty_reply(code, replyee, proc_nr, status, extra, other)
+PRIVATE void tty_reply(code, replyee, proc_nr, status)
 int code;			/* TASK_REPLY or REVIVE */
 int replyee;			/* destination address for the reply */
 int proc_nr;			/* to whom should the reply go? */
 int status;			/* reply code */
-long extra;			/* extra value */
-long other;			/* used for IOCTL replies */
 {
 /* Send a reply to a process that wanted to read or write data. */
 
@@ -751,27 +745,300 @@ long other;			/* used for IOCTL replies */
   tty_mess.m_type = code;
   tty_mess.REP_PROC_NR = proc_nr;
   tty_mess.REP_STATUS = status;
-  tty_mess.TTY_FLAGS = extra;	/* used by IOCTL for flags (mode) */
-  tty_mess.TTY_SPEK = other;	/* used by IOCTL for erase and kill chars */
-  send(replyee, &tty_mess);
+  if ((status = send(replyee, &tty_mess)) != OK)
+	printf("\r\ntty_reply failed with status %d\r\n", status);
 }
 
 
 /*===========================================================================*
  *				sigchar					     *
  *===========================================================================*/
-PUBLIC sigchar(tp, sig)
-register struct tty_struct *tp;	/* pointer to tty_struct */
+PUBLIC void sigchar(tp, sig)
+register struct tty_struct *tp;
 int sig;			/* SIGINT, SIGQUIT, or SIGKILL */
 {
 /* Process a SIGINT, SIGQUIT or SIGKILL char from the keyboard */
 
-  tp->tty_inhibited = RUNNING;	/* do implied CRTL-Q */
-  finish(tp, EINTR);		/* send reply */
-  tp->tty_inhead = tp->tty_inqueue;	/* discard input */
-  tp->tty_intail = tp->tty_inqueue;
+  uninhibit(tp);		/* do implied CRTL-Q */
+  finish(tp, EINTR);		/* reply and/or cancel output if necessary */
+  tty_icancel(tp);
+  if (tp->tty_pgrp) cause_sig(tp->tty_pgrp, sig);
+}
+
+
+/*==========================================================================*
+ *				back_over				    *
+ *==========================================================================*/
+PRIVATE void back_over(tp)
+register struct tty_struct *tp;
+{
+/* Backspace to previous character on screen and erase it. */
+
+  echo(tp, '\b');
+  echo(tp, ' ');
+  echo(tp, '\b');
+}
+
+
+/*==========================================================================*
+ *				in1_char				    *
+ *==========================================================================*/
+PRIVATE void in1_char(tp, ch, echoch)
+register struct tty_struct *tp;
+char ch;			/* character to be queued */
+char echoch;			/* character to be echoed */
+{
+/* Put character in terminal input queue without preprocessing, and echo. */
+
+  if (tp->tty_incount >= tp->tty_insize)
+	return;			/* no room, discard char */
+  *tp->tty_inhead++ = ch;	/* save the character in the input queue */
+  if (tp->tty_inhead == tp->tty_inbufend)
+	tp->tty_inhead = tp->tty_inbuf;	/* handle wraparound */
+  if (++tp->tty_incount == tp->tty_ihighwater && isrs232(tp))
+	rs_istop(tp->tty_line);
+  echo(tp, echoch);
+}
+
+
+/*==========================================================================*
+ *				out_process				    *
+ *==========================================================================*/
+PRIVATE int out_process(tp, ubuf, ucount)
+register struct tty_struct *tp;
+char *ubuf;			/* input buffer */
+int ucount;			/* size of input buffer */
+{
+/* Perform output processing on a buffer, translating it into tty_ramqueue.
+ * The "RAM" queue is now mis-named and has a poorly chosen type even for RAM.
+ */
+
+  unsigned char ch;
+  int spacecount;
+  register char *tbuf;
+  char *tbufend;
+  char *ubufstart;
+
+  tbuf = (char *) tp->tty_ramqueue;
+  tbufend = tbuf + (sizeof tp->tty_ramqueue - TAB_SIZE);
+  ubufstart = ubuf;
+  while (ucount-- != 0 && tbuf < tbufend) {
+	if ( (ch = *ubuf++) >= ' ') {
+		++tp->tty_column;
+		*tbuf++ = ch;
+		continue;
+	}
+	switch(ch) {
+	case '\b':
+		if (tp->tty_column != 0) --tp->tty_column;
+		break;
+	case '\r': tp->tty_column = 0;	break;
+	case LF:
+		if (tp->tty_mode & CRMOD) {
+			/* Map LF to CR+LF. */
+			tp->tty_column = 0;
+			*tbuf++ = '\r';
+		}
+		break;
+	case '\t':
+		if (tp->tty_mode & XTABS) {
+			/* Tabs must be expanded, best guess. */
+			spacecount = TAB_SIZE - (tp->tty_column & TAB_MASK);
+			tp->tty_column += spacecount;
+			do
+				*tbuf++ = ' ';
+			while (--spacecount != 0);
+			continue;
+		}
+		/* Tabs are output directly, don't need column. */
+		break;
+	default:
+		/* Can't tell if column will change. */
+		break;
+	}
+	*tbuf++ = ch;
+  }
+  tp->tty_rwords = ubuf - ubufstart;
+  return(tbuf - (char *) tp->tty_ramqueue);
+}
+
+
+/*==========================================================================*
+ *				rs_start				    *
+ *==========================================================================*/
+PRIVATE void rs_start(tp)
+register struct tty_struct *tp;
+{
+/* (*devstart)() routine for RS232. */
+
+  int count;
+
+  if (tp->tty_rwords != 0)
+	return;			/* already going - xon handled at lower level*/
+
+  if ( (count = tp->tty_etail - tp->tty_ebuf) > 0) {
+	/* Do output processing on echo buffer and write result. */
+	if (tp->tty_mode & RAW)
+		memcpy((char *) tp->tty_ramqueue, tp->tty_ebuf, count);
+	else
+		count = out_process(tp, tp->tty_ebuf, count);
+	rs_write(tp->tty_line, (char *) tp->tty_ramqueue, count);
+	tp->tty_etail = tp->tty_ebuf;	/* small ebuf all fitted */
+	tp->tty_rwords = -1;	/* kludge echo flag */
+  } else if ( (count = tp->tty_outleft) != 0) {
+	/* Do output processing on user buffer and write result. */
+	if (tp->tty_mode & RAW) {
+		if (count > sizeof tp->tty_ramqueue)
+			count = sizeof tp->tty_ramqueue;
+		phys_copy(tp->tty_phys, tp->tty_outphys, (phys_bytes) count);
+		tp->tty_rwords = count;
+	} else {
+		if (count > sizeof tty_buf) count = sizeof tty_buf;
+		phys_copy(tp->tty_phys, tty_bphys, (phys_bytes) count);
+		count = out_process(tp, tty_buf, count);
+	}
+	rs_write(tp->tty_line, (char *) tp->tty_ramqueue, count);
+  }
+}
+
+
+/*==========================================================================*
+ *				tty_icancel				    *
+ *==========================================================================*/
+PRIVATE void tty_icancel(tp)
+register struct tty_struct *tp;
+{
+/* Discard all data in tty input buffer and driver buffers. */
+
+  char *buf;
+  unsigned char odone;
+
+  tp->tty_intail = tp->tty_inhead = tp->tty_inbuf;
+  if (tp->tty_incount > tp->tty_ilow_water && isrs232(tp))
+	rs_istart(tp->tty_line);
   tp->tty_incount = 0;
   tp->tty_lfct = 0;
-  if (tp >= &tty_struct[NR_CONS]) rs_sig(tp);	/* RS232 only */
-  if (tp->tty_pgrp) cause_sig(tp->tty_pgrp, sig);
+  (*tp->tty_devread)(tp->tty_line, &buf, &odone); /* read fast to discard */
+}
+
+
+/*==========================================================================*
+ *				tty_init				    *
+ *==========================================================================*/
+PRIVATE void tty_init()
+{
+/* Initialize tty structure and call driver initialization routines. */
+
+  int line;
+  register struct tty_struct *tp;
+
+  for (line = 0; line < NR_CONS + NR_RS_LINES; ++line) {
+	tp = &tty_struct[line];
+	tp->tty_line = line - NR_CONS;
+	p_tty_addr[line] = tp;
+	tty_bphys = umap(proc_ptr, D, (vir_bytes) tty_buf, sizeof tty_buf);
+	if (isconsole(tp)) {
+		tp->tty_inbuf = kb_inbuf[line];
+		tp->tty_inbufend = tp->tty_inbuf + KB_IN_BYTES;
+		tp->tty_ihighwater = KB_IN_BYTES;
+		tp->tty_ilow_water = KB_IN_BYTES;
+		tp->tty_insize = KB_IN_BYTES;
+	} else {
+		tp->tty_inbuf = rs_inbuf[tp->tty_line];
+		tp->tty_inbufend = tp->tty_inbuf + RS_IN_BYTES;
+		tp->tty_ihighwater = RS_IN_BYTES - 2 * RS_IBUFSIZE;
+		tp->tty_ilow_water = (RS_IN_BYTES - 2 * RS_IBUFSIZE) * 7 / 8;
+		tp->tty_insize = RS_IN_BYTES;
+	}
+	tp->tty_inphys = umap(proc_ptr, D, (vir_bytes) tp->tty_inbuf,
+			      tp->tty_insize);
+	tp->tty_intail = tp->tty_inhead = tp->tty_inbuf;
+	tp->tty_outphys = umap(proc_ptr, D, (vir_bytes) tp->tty_ramqueue,
+			       sizeof tp->tty_ramqueue);
+	tp->tty_etail = tp->tty_ebuf;
+	tp->tty_ebufend = tp->tty_ebuf + sizeof tp->tty_ebuf;
+	tp->tty_erase = ERASE_CHAR;
+	tp->tty_kill  = KILL_CHAR;
+	tp->tty_intr  = INTR_CHAR;
+	tp->tty_quit  = QUIT_CHAR;
+	tp->tty_xon   = XON_CHAR;
+	tp->tty_xoff  = XOFF_CHAR;
+	tp->tty_eof   = EOT_CHAR;
+	if (isconsole(tp)) {
+		tp->tty_devread = kb_read;
+		tp->tty_devstart = console;
+		tp->tty_mode = CRMOD | XTABS | ECHO;
+		tp->tty_makebreak = TWO_INTS;
+		scr_init(tp->tty_line);
+		kb_init(tp->tty_line);
+	} else {
+		tp->tty_devread = rs_read;
+		tp->tty_devstart = rs_start;
+		tp->tty_mode = RAW | BITS8;
+		tp->tty_makebreak = ONE_INT;
+		tp->tty_speed = rs_init(tp->tty_line);
+		rs_setc(tp->tty_line, tp->tty_xoff);
+	}
+  }
+}
+
+
+/*==========================================================================*
+ *				tty_ocancel				    *
+ *==========================================================================*/
+PRIVATE void tty_ocancel(tp)
+register struct tty_struct *tp;
+{
+/* Discard all data in tty output buffer and driver buffers. */
+
+  tp->tty_waiting = NOT_WAITING;
+  tp->tty_outleft = 0;
+  tp->tty_rwords = 0;
+  tp->tty_etail = tp->tty_ebuf;
+  if (isrs232(tp)) rs_ocancel(tp->tty_line);
+}
+
+
+/*==========================================================================*
+ *				tty_wakeup				    *
+ *==========================================================================*/
+PUBLIC void tty_wakeup()
+{
+/* Wake up TTY when the threshold is reached, or when there is something to
+ * do but no new events (slow typist), or after a timeout. The threshold
+ * dominates for fast terminal input and all keyboard input and output
+ * completions. The timeout smooths slow terminal input.
+ *
+ * Wakeup_timeout and previous_events are probably deadwood (always use
+ * timeout 1) but tty_awake is probably important to help avoid calling TTY
+ * too often, apart from its locking function.
+ */
+
+#define WAKEUP_TIMEOUT (HZ/60)	/* adjust to taste, 1 for fast processor */
+
+  static unsigned previous_events;
+  static unsigned wakeup_timeout = WAKEUP_TIMEOUT;
+
+  if (tty_events != 0 && !test_and_set(&tty_awake)) {
+	if (tty_events >= EVENT_THRESHOLD || tty_events == previous_events ||
+	    --wakeup_timeout == 0) {
+		wakeup_timeout = WAKEUP_TIMEOUT;
+		interrupt(TTY);
+	} else
+		tty_awake = FALSE;
+	previous_events = tty_events;
+  }
+}
+
+
+/*==========================================================================*
+ *				uninhibit				    *
+ *==========================================================================*/
+PRIVATE void uninhibit(tp)
+register struct tty_struct *tp;
+{
+/* (Re)allow terminal output. */
+
+  tp->tty_inhibited = RUNNING;
+  if (isrs232(tp)) rs_inhibit(tp->tty_line, FALSE);
 }

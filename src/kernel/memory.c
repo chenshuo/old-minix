@@ -1,10 +1,11 @@
-/* This file contains the drivers for four special files:
+/* This file contains the drivers for the following special files:
  *     /dev/null	- null device (data sink)
  *     /dev/mem		- absolute memory
  *     /dev/kmem	- kernel virtual memory
  *     /dev/ram		- RAM disk
- * It accepts three messages, for reading, for writing, and for
- * control. All use message format m2 and with these parameters:
+ *     /dev/port	- i/o ports ((CHIP == INTEL) only)
+ *
+ * The driver supports the following operations (using message format m2):
  *
  *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
  * ----------------------------------------------------------------
@@ -14,6 +15,8 @@
  * |------------+---------+---------+---------+---------+---------|
  * | DISK_IOCTL | device  |         |  blocks | ram org |         |
  * ----------------------------------------------------------------
+ * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
+ * ----------------------------------------------------------------
  *  
  *
  * The file contains one entry point:
@@ -22,37 +25,48 @@
  *
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
-#include "proc.h"
+#include "kernel.h"
+#include <minix/callnr.h>
+#include <minix/com.h>
 
-#define NR_RAMS            4	/* number of RAM-type devices */
-#define EM_ORIGIN   0x100000	/* origin of extended memory on the AT */
+#ifdef PORT_DEV
+#define NR_RAMS            5	/* number of RAM-type devices */
+#else
+#define NR_RAMS            4
+#endif
 PRIVATE message mess;		/* message buffer */
 PRIVATE phys_bytes ram_origin[NR_RAMS];	/* origin of each RAM disk  */
 PRIVATE phys_bytes ram_limit[NR_RAMS];	/* limit of RAM disk per minor dev. */
 
+FORWARD int do_mem();
+FORWARD int do_setup();
+
 /*===========================================================================*
  *				mem_task				     * 
  *===========================================================================*/
-PUBLIC mem_task()
+PUBLIC void mem_task()
 {
-/* Main program of the disk driver task. */
+/* Main program of the memory task. */
 
   int r, caller, proc_nr;
-  extern unsigned sizes[8];
-  extern phys_clicks get_base();
-
 
   /* Initialize this task. */
-  ram_origin[KMEM_DEV] = (phys_bytes) get_base() << CLICK_SHIFT;
-  ram_limit[KMEM_DEV] = (sizes[0] + sizes[1]) << CLICK_SHIFT;
+  ram_origin[KMEM_DEV] = numap(SYSTASK, (vir_bytes) 0, (vir_bytes) 1);
+  ram_limit[KMEM_DEV] = ((phys_bytes) sizes[1] << CLICK_SHIFT) +
+                        ram_origin[KMEM_DEV];
+#if (CHIP == INTEL)
+  if (!protected_mode)
+	ram_limit[MEM_DEV] = 0x100000;	/* above 1M em_xfer word count fails */
+  else
+	ram_limit[MEM_DEV] = 0x1000000;	/* above 16M not mapped on 386 */
+  ram_limit[PORT_DEV] = 0x10000;
+#else
+#if (CHIP == M68000)
   ram_limit[MEM_DEV] = MEM_BYTES;
+#else
+#error /* memory limit not set up */
+#endif
+#endif
 
   /* Here is the main loop of the memory task.  It waits for a message, carries
    * it out, and sends a reply.
@@ -69,6 +83,7 @@ PUBLIC mem_task()
 	switch(mess.m_type) {
 	    case DISK_READ:	r = do_mem(&mess);	break;
 	    case DISK_WRITE:	r = do_mem(&mess);	break;
+	    case SCATTERED_IO:	r = do_vrdwt(&mess, do_mem); break;
 	    case DISK_IOCTL:	r = do_setup(&mess);	break;
 	    default:		r = EINVAL;		break;
 	}
@@ -88,13 +103,10 @@ PUBLIC mem_task()
 PRIVATE int do_mem(m_ptr)
 register message *m_ptr;	/* pointer to read or write message */
 {
-/* Read or write /dev/null, /dev/mem, /dev/kmem, or /dev/ram. */
+/* Read or write /dev/null, /dev/mem, /dev/kmem, /dev/ram or /dev/port. */
 
-  int device, count, words, status;
+  int device, count, endport, port, portval;
   phys_bytes mem_phys, user_phys;
-  struct proc *rp;
-  extern phys_clicks get_base();
-  extern phys_bytes umap();
 
   /* Get minor device number and check for /dev/null. */
   device = m_ptr->DEVICE;
@@ -104,33 +116,38 @@ register message *m_ptr;	/* pointer to read or write message */
   /* Set up 'mem_phys' for /dev/mem, /dev/kmem, or /dev/ram. */
   if (m_ptr->POSITION < 0) return(ENXIO);
   mem_phys = ram_origin[device] + m_ptr->POSITION;
-  if (mem_phys >= ram_limit[device]) return(device == RAM_DEV ? EOF : 0);
+  if (mem_phys >= ram_limit[device]) return(0);
   count = m_ptr->COUNT;
   if(mem_phys + count > ram_limit[device]) count = ram_limit[device] - mem_phys;
 
   /* Determine address where data is to go or to come from. */
-  rp = proc_addr(m_ptr->PROC_NR);
-  user_phys = umap(rp, D, (vir_bytes) m_ptr->ADDRESS, (vir_bytes) count);
+  user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+		    (vir_bytes) count);
   if (user_phys == 0) return(E_BAD_ADDR);
 
-  /* Copy the data. Origin above EM_ORIGIN means AT extended memory */
-  if (ram_origin[device] < EM_ORIGIN) {
-	/* Ordinary case.  RAM disk is below 640K. */
-	if (m_ptr->m_type == DISK_READ)
-		phys_copy(mem_phys, user_phys, (long) count);
-	else
-		phys_copy(user_phys, mem_phys, (long) count);
-  } else {
-	/* AT with RAM disk in extended memory (above 1 MB). */
-	if (count & 1) panic("RAM disk got odd byte count\n", NO_NUM);
-	words = count >> 1;	/* # words is half # bytes */
-	if (m_ptr->m_type == DISK_READ) {
-		status = em_xfer(mem_phys, user_phys, words);
-	} else {
-		status = em_xfer(user_phys, mem_phys, words);
+#ifdef PORT_DEV
+  /* Do special case of /dev/port. */
+  if (device == PORT_DEV) {
+	port = mem_phys;
+	mem_phys = umap(proc_ptr, D, (vir_bytes) &portval, (vir_bytes) 1);
+	for (endport = port + count; port != endport; ++port) {
+		if (m_ptr->m_type == DISK_READ) {
+			portval = in_byte(port);
+			phys_copy(mem_phys, user_phys++, (phys_bytes) 1);
+		} else {
+			phys_copy(user_phys++, mem_phys, (phys_bytes) 1);
+			out_byte(port, portval);
+		}
 	}
-	if (status != 0) count = -1;
-  }	
+	return(count);
+  }
+#endif
+
+  /* Copy the data. */
+  if (m_ptr->m_type == DISK_READ)
+	phys_copy(mem_phys, user_phys, (long) count);
+  else
+	phys_copy(user_phys, mem_phys, (long) count);
   return(count);
 }
 

@@ -6,21 +6,17 @@
  *   find_filp:	find a filp slot that points to a given inode
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 
 /*===========================================================================*
  *				get_fd					     *
  *===========================================================================*/
-PUBLIC int get_fd(bits, k, fpt)
-mask_bits bits;			/* mode of the file to be created (RWX bits) */
+PUBLIC int get_fd(start, bits, k, fpt)
+int start;			/* start of search (used for F_DUPFD) */
+mode_t bits;			/* mode of the file to be created (RWX bits) */
 int *k;				/* place to return file descriptor */
 struct filp **fpt;		/* place to return filp slot */
 {
@@ -35,7 +31,7 @@ struct filp **fpt;		/* place to return filp slot */
   *k = -1;			/* we need a way to tell if file desc found */
 
   /* Search the fproc table for a free file descriptor. */
-  for (i = 0; i < NR_FDS; i++) {
+  for (i = start; i < OPEN_MAX; i++) {
 	if (fp->fp_filp[i] == NIL_FILP) {
 		/* A file descriptor has been located. */
 		*k = i;
@@ -51,6 +47,7 @@ struct filp **fpt;		/* place to return filp slot */
 	if (f->filp_count == 0) {
 		f->filp_mode = bits;
 		f->filp_pos = 0L;
+		f->filp_flags = 0;
 		*fpt = f;
 		return(OK);
 	}
@@ -70,7 +67,7 @@ int fild;			/* file descriptor */
 /* See if 'fild' refers to a valid file descr.  If so, return its filp ptr. */
 
   err_code = EBADF;
-  if (fild < 0 || fild >= NR_FDS ) return(NIL_FILP);
+  if (fild < 0 || fild >= OPEN_MAX ) return(NIL_FILP);
   return(fp->fp_filp[fild]);	/* may also be NIL_FILP */
 }
 

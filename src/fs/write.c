@@ -8,17 +8,14 @@
  *   new_block:    acquire a new block
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "super.h"
+
+FORWARD int write_map();
 
 /*===========================================================================*
  *				do_write				     *
@@ -35,7 +32,7 @@ PUBLIC int do_write()
  *===========================================================================*/
 PRIVATE int write_map(rip, position, new_zone)
 register struct inode *rip;	/* pointer to inode to be changed */
-file_pos position;		/* file address to be mapped */
+off_t position;			/* file address to be mapped */
 zone_nr new_zone;		/* zone # to be inserted */
 {
 /* Write a new zone into an inode. */
@@ -47,10 +44,6 @@ zone_nr new_zone;		/* zone # to be inserted */
   struct buf *bp;
   int new_ind, new_dbl;
 
-  extern zone_nr alloc_zone();
-  extern struct buf *get_block();
-  extern real_time clock_time();
-
   rip->i_dirt = DIRTY;		/* inode will be changed */
   bp = NIL_BUF;
   scale = scale_factor(rip);	/* for zone-block conversion */
@@ -59,7 +52,7 @@ zone_nr new_zone;		/* zone # to be inserted */
   /* Is 'position' to be found in the inode itself? */
   if (zone < NR_DZONE_NUM) {
 	rip->i_zone[(int) zone] = new_zone;
-	rip->i_modtime = clock_time();
+	rip->i_update = MTIME;	/* mark mtime for update later */
 	return(OK);
   }
 
@@ -110,7 +103,7 @@ zone_nr new_zone;		/* zone # to be inserted */
   bp = get_block(rip->i_dev, b, (new_ind ? NO_READ : NORMAL) );
   if (new_ind) zero_block(bp);
   bp->b_ind[(int) excess] = new_zone;
-  rip->i_modtime = clock_time();
+  rip->i_update = MTIME;		/* mark mtime for update later */
   bp->b_dirt = DIRTY;
   put_block(bp, INDIRECT_BLOCK);
 
@@ -120,9 +113,9 @@ zone_nr new_zone;		/* zone # to be inserted */
 /*===========================================================================*
  *				clear_zone				     *
  *===========================================================================*/
-PUBLIC clear_zone(rip, pos, flag)
+PUBLIC void clear_zone(rip, pos, flag)
 register struct inode *rip;	/* inode to clear */
-file_pos pos;			/* points to block to clear */
+off_t pos;			/* points to block to clear */
 int flag;			/* 0 if called by read_write, 1 by new_block */
 {
 /* Zero a zone, possibly starting in the middle.  The parameter 'pos' gives
@@ -132,11 +125,9 @@ int flag;			/* 0 if called by read_write, 1 by new_block */
 
   register struct buf *bp;
   register block_nr b, blo, bhi;
-  register file_pos next;
+  register off_t next;
   register int scale;
   register zone_type zone_size;
-  extern struct buf *get_block();
-  extern block_nr read_map();
 
   /* If the block size and zone size are the same, clear_zone() not needed. */
   if ( (scale = scale_factor(rip)) == 0) return;
@@ -165,7 +156,7 @@ int flag;			/* 0 if called by read_write, 1 by new_block */
  *===========================================================================*/
 PUBLIC struct buf *new_block(rip, position)
 register struct inode *rip;	/* pointer to inode */
-file_pos position;		/* file pointer */
+off_t position;			/* file pointer */
 {
 /* Acquire a new block and return a pointer to it.  Doing so may require
  * allocating a complete zone, and then returning the initial block.
@@ -178,10 +169,6 @@ file_pos position;		/* file pointer */
   zone_type zone_size;
   int scale, r;
   struct super_block *sp;
-  extern struct buf *get_block();
-  extern struct super_block *get_super();
-  extern block_nr read_map();
-  extern zone_nr alloc_zone();
 
   /* Is another block available in the current zone? */
   if ( (b = read_map(rip, position)) == NO_BLOCK) {
@@ -216,7 +203,7 @@ file_pos position;		/* file pointer */
 /*===========================================================================*
  *				zero_block				     *
  *===========================================================================*/
-PUBLIC zero_block(bp)
+PUBLIC void zero_block(bp)
 register struct buf *bp;	/* pointer to buffer to zero */
 {
 /* Zero a block. */

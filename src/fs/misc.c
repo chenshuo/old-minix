@@ -4,6 +4,7 @@
  *
  * The entry points into this file are
  *   do_dup:	perform the DUP system call
+ *   do_fcntl:	perform the FCNTL system call
  *   do_sync:	perform the SYNC system call
  *   do_fork:	adjust the tables after MM has performed a FORK system call
  *   do_exit:	a process has exited; note that in the tables
@@ -11,18 +12,14 @@
  *   do_revive:	revive a process that was waiting for something (e.g. TTY)
  */
 
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/callnr.h"
-#include "../h/com.h"
-#include "../h/error.h"
-#include "const.h"
-#include "type.h"
+#include "fs.h"
+#include <fcntl.h>
+#include <minix/callnr.h>
+#include <minix/com.h>
+#include <minix/boot.h>
 #include "buf.h"
-#include "dev.h"
 #include "file.h"
 #include "fproc.h"
-#include "glo.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
@@ -35,32 +32,79 @@ PUBLIC int do_dup()
 /* Perform the dup(fd) or dup(fd,fd2) system call. */
 
   register int rfd;
-  register struct fproc *rfp;
+  register struct filp *f;
   struct filp *dummy;
   int r;
-  extern struct filp *get_filp();
 
   /* Is the file descriptor valid? */
   rfd = fd & ~DUP_MASK;		/* kill off dup2 bit, if on */
-  rfp = fp;
-  if (get_filp(rfd) == NIL_FILP) return(err_code);
+  if ((f = get_filp(rfd)) == NIL_FILP) return(err_code);
 
   /* Distinguish between dup and dup2. */
   if (fd == rfd) {			/* bit not on */
 	/* dup(fd) */
-	if ( (r = get_fd(0, &fd2, &dummy)) != OK) return(r);
+	if ( (r = get_fd(0, 0, &fd2, &dummy)) != OK) return(r);
   } else {
 	/* dup2(fd, fd2) */
-	if (fd2 < 0 || fd2 >= NR_FDS) return(EBADF);
+	if (fd2 < 0 || fd2 >= OPEN_MAX) return(EBADF);
 	if (rfd == fd2) return(fd2);	/* ignore the call: dup2(x, x) */
 	fd = fd2;		/* prepare to close fd2 */
-	do_close();		/* cannot fail */
+	(void) do_close();	/* cannot fail */
   }
 
   /* Success. Set up new file descriptors. */
-  rfp->fp_filp[fd2] = rfp->fp_filp[rfd];
-  rfp->fp_filp[fd2]->filp_count++;
+  f->filp_count++;
+  fp->fp_filp[fd2] = f;
   return(fd2);
+}
+
+/*===========================================================================*
+ *				do_fcntl				     *
+ *===========================================================================*/
+PUBLIC int do_fcntl()
+{
+/* Perform the fcntl(fd, request, addr) system call. */
+
+  register struct filp *f;
+  int new_fd, r, fl;
+  struct filp *dummy;
+
+  /* Is the file descriptor valid? */
+  if ((f = get_filp(fd)) == NIL_FILP) return(err_code);
+
+  switch (request) {
+     case F_DUPFD: 
+	/* DUP */
+	if (addr < 0 || addr >= OPEN_MAX) break;
+	if ((r = get_fd(addr, 0, &new_fd, &dummy)) != OK) return(r);
+   	f->filp_count++;
+  	fp->fp_filp[new_fd] = f;
+  	return(new_fd);
+
+     case F_GETFD: 
+	/* Get close-on-exec flag. */
+	break;	
+
+     case F_SETFD: 
+	/* Set close-on-exec flag. */
+	break;	
+
+     case F_GETFL: 
+	/* Get file status flags. */
+	return(f->filp_flags);	
+
+     case F_SETFL: 
+	/* Set file status flags. */
+	fl = O_NONBLOCK | O_APPEND;
+	f->filp_flags = (f->filp_flags & ~fl) | (addr & fl);
+	return(OK);
+
+     case F_GETLK:
+     case F_SETLK:
+     case F_SETLKW:
+	printf("do_fcntl: flag not yet implemented\n");
+  }
+  return(EINVAL);
 }
 
 
@@ -74,9 +118,6 @@ PUBLIC int do_sync()
   register struct inode *rip;
   register struct buf *bp;
   register struct super_block *sp;
-  dev_nr d;
-  extern real_time clock_time();
-  extern struct super_block *get_super();
 
   /* The order in which the various tables are flushed is critical.  The
    * blocks must be flushed last, since rw_inode() and rw_super() leave their
@@ -98,20 +139,9 @@ PUBLIC int do_sync()
   for (sp = &super_block[0]; sp < &super_block[NR_SUPERS]; sp++)
 	if (sp->s_dev != NO_DEV && sp->s_dirt == DIRTY) rw_super(sp, WRITING);
 
-  /* Write all the dirty blocks to the disk. First do drive 0, then the rest.
-   * This avoids starting drive 0, then starting drive 1, etc.
-   */
-  for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) {
-	d = bp->b_dev;
-	if (d != NO_DEV && bp->b_dirt == DIRTY && ((d>>MINOR) & BYTE) == 0) 
-		rw_block(bp, WRITING);
-  }
-
-  for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) {
-	d = bp->b_dev;
-	if (d != NO_DEV && bp->b_dirt == DIRTY && ((d>>MINOR) & BYTE) != 0) 
-		rw_block(bp, WRITING);
-  }
+  /* Write all the dirty blocks to the disk, one drive at a time. */
+  for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++)
+	if (bp->b_dev != NO_DEV && bp->b_dirt == DIRTY) flushall(bp->b_dev);
 
   return(OK);		/* sync() can't fail */
 }
@@ -143,7 +173,7 @@ PUBLIC int do_fork()
 
   /* Increase the counters in the 'filp' table. */
   cp = &fproc[child];
-  for (i = 0; i < NR_FDS; i++)
+  for (i = 0; i < OPEN_MAX; i++)
 	if (cp->fp_filp[i] != NIL_FILP) cp->fp_filp[i]->filp_count++;
 
   /* Fill in new process id and, if necessary, process group. */
@@ -166,7 +196,7 @@ PUBLIC int do_exit()
 {
 /* Perform the file system portion of the exit(status) system call. */
 
-  register int i, exitee;
+  register int i, exitee, task;
 
   /* Only MM may do the EXIT call directly. */
   if (who != MM_PROC_NR) return(ERROR);
@@ -179,21 +209,24 @@ PUBLIC int do_exit()
   if (fp->fp_pid == fp->fp_pgrp && fp->fs_tty != 0) tty_exit();
 
   if (fp->fp_suspended == SUSPENDED) {
-	if (fp->fp_task == XPIPE) susp_count--;
+	task = -fp->fp_task;
+	if (task == XPIPE || task == XOPEN) susp_count--;
 	pro = exitee;
 	do_unpause();
 	fp->fp_suspended = NOT_SUSPENDED;
   }
 
   /* Loop on file descriptors, closing any that are open. */
-  for (i=0; i < NR_FDS; i++) {
+  for (i=0; i < OPEN_MAX; i++) {
 	fd = i;
-	do_close();
+	(void) do_close();
   }
 
   /* Release root and working directories. */
   put_inode(fp->fp_rootdir);
   put_inode(fp->fp_workdir);
+  fp->fp_rootdir = NIL_INODE;
+  fp->fp_workdir = NIL_INODE;
 
   return(OK);
 }
@@ -204,7 +237,7 @@ PUBLIC int do_exit()
  *===========================================================================*/
 PUBLIC int do_set()
 {
-/* Set uid or gid field. */
+/* Set uid_t or gid_t field. */
 
   register struct fproc *tfp;
 
@@ -213,12 +246,12 @@ PUBLIC int do_set()
 
   tfp = &fproc[slot1];
   if (fs_call == SETUID) {
-	tfp->fp_realuid = (uid) real_user_id;
-	tfp->fp_effuid =  (uid) eff_user_id;
+	tfp->fp_realuid = (uid_t) real_user_id;
+	tfp->fp_effuid =  (uid_t) eff_user_id;
   }
   if (fs_call == SETGID) {
-	tfp->fp_effgid =  (gid) eff_grp_id;
-	tfp->fp_realgid = (gid) real_grp_id;
+	tfp->fp_effgid =  (gid_t) eff_grp_id;
+	tfp->fp_realgid = (gid_t) real_grp_id;
   }
   return(OK);
 }

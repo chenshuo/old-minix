@@ -118,6 +118,7 @@ PRIVATE struct pcitab
 } pcitab[]=
 {
 	{ 0x10ec, 0x8139, 0 },		/* Realtek RTL8139 */
+	{ 0x1186, 0x1300, 0 },		/* D-Link RTL8139 */
 
 	{ 0x0000, 0x0000, 0 }
 };
@@ -395,7 +396,7 @@ message *mp;
 			rl_watchdog_f, t_arg);
 #else
 		tmr_arg(&rl_watchdog)->ta_int= 0;
-		tmr_settimer(&rl_watchdog, rl_tasknr, get_uptime()+HZ,
+		tmr_settimer(&rl_watchdog, CLOCK, get_uptime()+HZ,
 			rl_watchdog_f);
 #endif
 	}
@@ -2205,7 +2206,7 @@ timer_t *tp;
 	tmra_settimer(&rl_watchdog, get_uptime()+HZ, rl_watchdog_f, t_arg);
 #else
 	tmr_arg(&rl_watchdog)->ta_int= 0;
-	tmr_settimer(&rl_watchdog, rl_tasknr, get_uptime()+HZ, rl_watchdog_f);
+	tmr_settimer(&rl_watchdog, CLOCK, get_uptime()+HZ, rl_watchdog_f);
 #endif
 
 	for (i= 0, rep = &re_table[0]; i<RE_PORT_NR; i++, rep++)
@@ -2223,7 +2224,7 @@ timer_t *tp;
 			rep->re_tx_alive= FALSE;
 			continue;
 		}
-		printf("rl_watchdog_f: reseting port %d\n", i);
+		printf("rl_watchdog_f: resetting port %d\n", i);
 		printf(
 	"TSAD: 0x%04x, TSD: 0x%08x, 0x%08x, 0x%08x, 0x%08x\n",
 			rl_inw(rep->re_base_port, RL_TSAD),

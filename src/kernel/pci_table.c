@@ -85,6 +85,7 @@ struct pci_device pci_device_table[]=
 	{ 0x1106, 0x8305, "VIA VT8365 [KM133 AGP]" },
 	{ 0x1106, 0xB099, "VIA VT8367 [KT266 AGP]" },
 	{ 0x110A, 0x0005, "Siemens Nixdorf Tulip Cntlr., Power Management" },
+	{ 0x1186, 0x1300, "D-Link RTL8139" },
 	{ 0x125D, 0x1969, "ESS ES1969 Solo-1 Audiodrive" },
 	{ 0x1274, 0x1371, "Ensoniq ES1371 [AudioPCI-97]" },
 	{ 0x1274, 0x5000, "Ensoniq ES1370" },

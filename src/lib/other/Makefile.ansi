@@ -1,0 +1,11 @@
+CC=exec cc
+DIR=/usr/src
+CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE -I$(DIR)
+
+
+all:	
+	@$(CC) $(CFLAGS) *.c
+
+clean:	
+	@rm -rf *.o *.s *.bak
+

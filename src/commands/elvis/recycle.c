@@ -2,9 +2,9 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
@@ -12,12 +12,12 @@
  * reusable blocks.
  */
 
+#include "config.h"
 #include "vi.h"
 
 #ifndef NO_RECYCLE
 /* this whole file would have be skipped if NO_RECYCLE is defined */
 
-extern long	lseek();
 
 #define BTST(bitno, byte)	((byte) & (1 << (bitno)))
 #define BSET(bitno, byte)	((byte) |= (1 << (bitno)))
@@ -32,7 +32,7 @@ static unsigned char bitmap[512];
 #define MAXBIT	(sizeof bitmap << 3)
 
 /* this function locates all free blocks in the current tmp file */
-garbage()
+void garbage()
 {
 	int	i;
 	BLK	oldhdr;
@@ -43,8 +43,11 @@ garbage()
 		bitmap[i] = 255;
 	}
 
-	/* header block isn't free */
+	/* header blocks aren't free */
+#ifndef lint
 	CLR(0);
+	CLR(1);
+#endif
 
 	/* blocks needed for current hdr aren't free */
 	for (i = 1; i < MAXBLKS; i++)
@@ -54,7 +57,7 @@ garbage()
 
 	/* blocks needed for undo version aren't free */
 	lseek(tmpfd, 0L, 0);
-	if (read(tmpfd, &oldhdr, sizeof oldhdr) != sizeof oldhdr)
+	if (read(tmpfd, &oldhdr, (unsigned)sizeof oldhdr) != sizeof oldhdr)
 	{
 		msg("garbage() failed to read oldhdr??");
 		for (i = 0; i < sizeof bitmap; i++)
@@ -105,4 +108,76 @@ long allocate()
 	return offset;
 }
 
+#endif
+
+#ifdef DEBUG
+# include <stdio.h>
+# undef malloc
+# undef free
+# define MEMMAGIC 0x19f72cc0L
+# define MAXALLOC 800
+static char *allocated[MAXALLOC];
+static char *fromfile[MAXALLOC];
+static int  fromline[MAXALLOC]; 
+static int  sizes[MAXALLOC];
+
+char *dbmalloc(size, file, line)
+	int	size;
+	char	*file;
+	int	line;
+{
+	char	*ret;
+	int	i;
+
+	size = size + sizeof(long) - (size % sizeof(long));
+	ret = (char *)malloc(size + 2 * sizeof(long)) + sizeof(long);
+	for (i = 0; i < MAXALLOC && allocated[i]; i++)
+	{
+	}
+	if (i == MAXALLOC)
+	{
+		endwin();
+		fprintf(stderr, "\r\n%s(%d): Too many malloc calls!\n", file, line);
+		abort();
+	}
+	sizes[i] = size/sizeof(long);
+	allocated[i] = ret;
+	fromfile[i] = file;
+	fromline[i] = line;
+	((long *)ret)[-1] = MEMMAGIC;
+	((long *)ret)[sizes[i]] = MEMMAGIC;
+	return ret;
+}
+
+dbfree(ptr, file, line)
+	char	*ptr;
+	char	*file;
+	int	line;
+{
+	int	i;
+
+	for (i = 0; i < MAXALLOC && allocated[i] != ptr; i++)
+	{
+	}
+	if (i == MAXALLOC)
+	{
+		endwin();
+		fprintf(stderr, "\r\n%s(%d): attempt to free mem that wasn't allocated\n", file, line);
+		abort();
+	}
+	allocated[i] = (char *)0;
+	if (((long *)ptr)[-1] != MEMMAGIC)
+	{
+		endwin();
+		fprintf(stderr, "\r\n%s(%d): underflowed malloc space, allocated at %s(%d)\n", file, line, fromfile[i], fromline[i]);
+		abort();
+	}
+	if (((long *)ptr)[sizes[i]] != MEMMAGIC)
+	{
+		endwin();
+		fprintf(stderr, "\r\n%s(%d): overflowed malloc space, allocated at %s(%d)\n", file, line, fromfile[i], fromline[i]);
+		abort();
+	}
+	free(ptr - sizeof(long));
+}
 #endif

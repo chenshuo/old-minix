@@ -1,24 +1,21 @@
-#include <lib.h>
-/* strspn - find length of initial segment of s consisting entirely
- * of characters from accept
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: strspn.c,v 1.1 89/05/11 10:09:09 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-size_t strspn(s, accept)
-_CONST char *s;
-_CONST char *accept;
+size_t
+strspn(const char *string, const char *in)
 {
-  register _CONST char *sscan;
-  register _CONST char *ascan;
-  register size_t count;
+	register const char *s1, *s2;
 
-  count = 0;
-  for (sscan = s; *sscan != '\0'; sscan++) {
-	for (ascan = accept; *ascan != '\0'; ascan++)
-		if (*sscan == *ascan) break;
-	if (*ascan == '\0') return (count);
-	count++;
-  }
-  return(count);
+	for (s1 = string; *s1; s1++) {
+		for (s2 = in; *s2 && *s2 != *s1; s2++)
+			/* EMPTY */ ;
+		if (*s2 == '\0')
+			break;
+	}
+	return s1 - string;
 }

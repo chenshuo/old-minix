@@ -32,9 +32,14 @@ struct dirent {			/* data from getdents()/readdir() */
 #endif
 
 _PROTOTYPE( int closedir, (DIR *_dirp)					);
-_PROTOTYPE( int getdents, (int _fildes, char *_buf, unsigned _nbyte)	);
-_PROTOTYPE( DIR *opendir, (char *_dirname)				);
+_PROTOTYPE( DIR *opendir, (const char *_dirname)			);
 _PROTOTYPE( struct dirent *readdir, (DIR *_dirp)			);
 _PROTOTYPE( void rewinddir, (DIR *_dirp)				);
+
+#ifdef _MINIX
+_PROTOTYPE( int getdents, (int _fildes, char *_buf, unsigned _nbyte)	);
+_PROTOTYPE( void seekdir, (DIR *_dirp, off_t _loc)			);
+_PROTOTYPE( off_t telldir, (DIR *_dirp)					);
+#endif
 
 #endif /* _DIRENT_H */

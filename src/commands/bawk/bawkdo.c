@@ -362,7 +362,7 @@ primary()
                          * We're processing a pattern right now - perform a
                          * match of the regular expression agains input line.
                          */
-                        unparse( Fields, Fieldcount, Linebuf, Fieldsep );
+                        unparse( Fields, Fieldcount, Linebuf, findvar("FS")->vptr );
                         pushint( (INT)match( Linebuf, Value.dptr ) );
                 }
                 else
@@ -375,11 +375,6 @@ primary()
                 break;
         case T_NR:
                 pushint( (INT)Recordcount );
-                getoken();
-                break;
-        case T_FS:                         /* multiple separators allowed */
-                data.dptr = Fieldsep;
-                push( 1, ACTUAL, BYTE, &data ); /* string input, not char */
                 getoken();
                 break;
         case T_RS:
@@ -413,7 +408,7 @@ primary()
                          * Reconstitute the line buffer in case any of the
                          * fields have been changed.
                          */
-                        unparse( Fields, Fieldcount, Linebuf, Fieldsep );
+                        unparse( Fields, Fieldcount, Linebuf, findvar("FS")->vptr );
                         data.dptr = Linebuf;
                 }
                 /*

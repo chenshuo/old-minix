@@ -6,20 +6,43 @@
  *	change(frommark, tomark, text)	- delete, then add
  */
 
+#include "config.h"
 #include "vi.h"
 
+#ifdef DEBUG2
+# include <stdio.h>
+static FILE *dbg;
+
+/*VARARGS1*/
+debout(msg, arg1, arg2, arg3, arg4, arg5)
+	char	*msg, *arg1, *arg2, *arg3, *arg4, *arg5;
+{
+	if (!dbg)
+	{
+		dbg = fopen("debug.out", "w");
+		if (!dbg)
+			return;
+		setbuf(dbg, (FILE *)0);
+	}
+	fprintf(dbg, msg, arg1, arg2, arg3, arg4, arg5);
+}
+#endif /* DEBUG2 */
 
 /* delete a range of text from the file */
-delete(frommark, tomark)
+void delete(frommark, tomark)
 	MARK		frommark;	/* first char to be deleted */
 	MARK		tomark;		/* AFTER last char to be deleted */
 {
 	int		i;		/* used to move thru logical blocks */
-	register char	*scan;		/* used to scan thru text of the blk */
-	register char	*cpy;		/* used when copying chars */
+	REG char	*scan;		/* used to scan thru text of the blk */
+	REG char	*cpy;		/* used when copying chars */
 	BLK		*blk;		/* a text block */
 	long		l;		/* a line number */
 	MARK		m;		/* a traveling version of frommark */
+
+#ifdef DEBUG2
+	debout("delete(%ld.%d, %ld.%d)\n", markline(frommark), markidx(frommark), markline(tomark), markidx(tomark));
+#endif
 
 	/* if not deleting anything, quit now */
 	if (frommark == tomark)
@@ -29,13 +52,10 @@ delete(frommark, tomark)
 
 	/* This is a change */
 	changes++;
+	significant = TRUE;
 
-	/* if this is a multi-line change, then we'll have to redraw */
-	if (markline(frommark) != markline(tomark))
-	{
-		mustredraw = TRUE;
-		redrawrange(markline(frommark), markline(tomark), markline(frommark));
-	}
+	/* supply clues to the redraw module */
+	redrawrange(markline(frommark), markline(tomark), markline(frommark));
 
 	/* adjust marks 'a through 'z and '' as needed */
 	l = markline(tomark);
@@ -154,24 +174,30 @@ delete(frommark, tomark)
 }
 
 
-/* add some text a a specific place in the file */
-add(atmark, newtext)
+/* add some text at a specific place in the file */
+void add(atmark, newtext)
 	MARK		atmark;		/* where to insert the new text */
 	char		*newtext;	/* NUL-terminated string to insert */
 {
-	register char	*scan;		/* used to move through string */
-	register char	*build;		/* used while copying chars */
+	REG char	*scan;		/* used to move through string */
+	REG char	*build;		/* used while copying chars */
 	int		addlines;	/* number of lines we're adding */
 	int		lastpart;	/* size of last partial line */
 	BLK		*blk;		/* the block to be modified */
 	int		blkno;		/* the logical block# of (*blk) */
-	register char	*newptr;	/* where new text starts in blk */
+	REG char	*newptr;	/* where new text starts in blk */
 	BLK		buf;		/* holds chars from orig blk */
 	BLK		linebuf;	/* holds part of line that didn't fit */
 	BLK		*following;	/* the BLK following the last BLK */
 	int		i;
 	long		l;
 
+#ifdef DEBUG2
+	debout("add(%ld.%d, \"%s\")\n", markline(atmark), markidx(atmark), newtext);
+#endif
+#ifdef lint
+	buf.c[0] = 0;
+#endif
 	/* if not adding anything, return now */
 	if (!*newtext)
 	{
@@ -180,6 +206,7 @@ add(atmark, newtext)
 
 	/* This is a change */
 	changes++;
+	significant = TRUE;
 
 	/* count the number of lines in the new text */
 	for (scan = newtext, lastpart = addlines = 0; *scan; )
@@ -205,21 +232,17 @@ add(atmark, newtext)
 	/* extract the line# from atmark */
 	l = markline(atmark);
 
-	/* if more than 0 lines, then we'll have to redraw the screen */
-	if (addlines > 0)
+	/* supply clues to the redraw module */
+	if ((markidx(atmark) == 0 && lastpart == 0) || addlines == 0)
 	{
-		mustredraw = TRUE;
-		if (markidx(atmark) == 0)
-		{
-			redrawrange(l, l, l + addlines);
-		}
-		else
-		{
-			/* make sure the last line gets redrawn -- it was
-			 * split, so its appearance has changed
-			 */
-			redrawrange(l, l + 1L, l + addlines + 1L);
-		}
+		redrawrange(l, l, l + addlines);
+	}
+	else
+	{
+		/* make sure the last line gets redrawn -- it was
+		 * split, so its appearance has changed
+		 */
+		redrawrange(l, l + 1L, l + addlines + 1L);
 	}
 
 	/* adjust marks 'a through 'z and '' as needed */
@@ -227,15 +250,31 @@ add(atmark, newtext)
 	{
 		if (mark[i] < atmark)
 		{
+			/* earlier line, or earlier in same line: no change */
 			continue;
 		}
 		else if (markline(mark[i]) > l)
 		{
+			/* later line: move down a whole number of lines */
 			mark[i] += MARK_AT_LINE(addlines);
 		}
 		else
 		{
-			mark[i] += MARK_AT_LINE(addlines) + lastpart;
+			/* later in same line */
+			if (addlines > 0)
+			{
+				/* multi-line add, which split this line:
+				 * move down, and possibly left or right,
+				 * depending on where the split was and how
+				 * much text was inserted after the last \n
+				 */
+				mark[i] += MARK_AT_LINE(addlines) + lastpart - markidx(atmark);
+			}
+			else
+			{
+				/* totally within this line: move right */
+				mark[i] += lastpart;
+			}
 		}
 	}
 
@@ -258,7 +297,7 @@ add(atmark, newtext)
 	newptr += markidx(atmark);
 
 	/* keep start of old block */
-	build = blk->c + (newptr - buf.c);
+	build = blk->c + (int)(newptr - buf.c);
 
 	/* fill this block (or blocks) from the newtext string */
 	while (*newtext)
@@ -368,7 +407,7 @@ add(atmark, newtext)
 
 
 /* change the text of a file */
-change(frommark, tomark, newtext)
+void change(frommark, tomark, newtext)
 	MARK	frommark, tomark;
 	char	*newtext;
 {
@@ -376,6 +415,10 @@ change(frommark, tomark, newtext)
 	long	l;
 	char	*text;
 	BLK	*blk;
+
+#ifdef DEBUG2
+	debout("change(%ld.%d, %ld.%d, \"%s\")\n", markline(frommark), markidx(frommark), markline(tomark), markidx(tomark), newtext);
+#endif
 
 	/* optimize for single-character replacement */
 	if (frommark + 1 == tomark && newtext[0] && !newtext[1] && newtext[0] != '\n')
@@ -409,11 +452,13 @@ change(frommark, tomark, newtext)
 		{
 			/* This is a change */
 			changes++;
+			significant = TRUE;
 			ChangeText
 			{
 				*text = newtext[0];
 				blkdirty(blk);
 			}
+			redrawrange(markline(frommark), markline(tomark), markline(frommark));
 			return;
 		}
 		/* else it is a complex change involving newline... */

@@ -1,7 +1,13 @@
 /* cc - call the C compiler		Author: Erik Baalbergen */
 
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define SYMBOL_FILE	"symbol.out"		/* symbol table for prof */
 
@@ -10,6 +16,24 @@
 
 typedef char USTRING[USTR_SIZE];
 
+struct arglist;
+_PROTOTYPE(void trapcc, (int sig ));
+_PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(char *alloc, (unsigned u ));
+_PROTOTYPE(int append, (struct arglist *al, char *arg ));
+_PROTOTYPE(int concat, (struct arglist *al1, struct arglist *al2 ));
+char *mkstr();
+_PROTOTYPE(int basename, (char *str, char *dst ));
+_PROTOTYPE(int extension, (char *fn ));
+_PROTOTYPE(int runvec, (struct arglist *vec, char *outp ));
+_PROTOTYPE(int runvec2, (struct arglist *vec0, struct arglist *vec1 ));
+_PROTOTYPE(int panic, (char *str ));
+_PROTOTYPE(char *cindex, (char *s, int c ));
+_PROTOTYPE(int pr_vec, (struct arglist *vec ));
+_PROTOTYPE(int ex_vec, (struct arglist *vec ));
+_PROTOTYPE(int mktempname, (char nm []));
+
+
 struct arglist {
 	int al_argc;
 	char *al_argv[MAXARGC];
@@ -17,6 +41,19 @@ struct arglist {
 
 
 /* MINIX paths */
+#ifdef RAMDSK
+char *PP     = "/lib/cpp";
+char *CEM    = "/lib/cem";
+char *OPT    = "/lib/opt";
+char *CG     = "/lib/cg";
+char *ASLD   = "/bin/asld";
+char *AST    = "/bin/ast";
+char *SHELL  = "/bin/sh";
+char *LIBDIR = "/lib";
+struct arglist LD_HEAD =    {1, { "/lib/crtso.s" } };
+struct arglist M_LD_HEAD =  {1, { "/lib/mrtso.s" } };
+struct arglist LD_TAIL =    {2, { "/lib/libc.a", "/lib/end.s" } };
+#else
 char *PP     = "/usr/lib/cpp";
 char *CEM    = "/usr/lib/cem";
 char *OPT    = "/usr/lib/opt";
@@ -25,10 +62,10 @@ char *ASLD   = "/usr/bin/asld";
 char *AST    = "/usr/bin/ast";
 char *SHELL  = "/bin/sh";
 char *LIBDIR = "/usr/lib";
-
 struct arglist LD_HEAD =    {1, { "/usr/lib/crtso.s" } };
 struct arglist M_LD_HEAD =  {1, { "/usr/lib/mrtso.s" } };
 struct arglist LD_TAIL =    {2, { "/usr/lib/libc.a", "/usr/lib/end.s" } };
+#endif
 
 char *o_FILE = "a.out"; /* default name for executable file */
 
@@ -67,16 +104,13 @@ int F_flag = 0;	/* use pipes by default */
 int s_flag = 0;
 int p_flag = 0;	/* profil flag */
 
-char *mkstr();
-char *alloc();
-
 USTRING ifile, kfile, sfile, mfile, ofile;
 USTRING BASE;
 
 char *tmpdir = "/tmp";
 char tmpname[15];
 
-trapcc(sig)
+void trapcc(sig)
 	int sig;
 {
 	signal(sig, SIG_IGN);
@@ -261,7 +295,7 @@ char *argv[];
 			append(call, CG);
 			concat(call, &CG_FLAGS);
 			append(call, file);
-			f = mkstr(ldfile, BASE, ".s", 0);
+			f = mkstr(ldfile, BASE, ".s", "", 0);
 			append(call, f);
 			if (runvec(call, (char *)0) == 0)
 				continue;
@@ -355,8 +389,10 @@ concat(al1, al2)
 
 /*VARARGS1*/
 char *
-mkstr(dst, arg)
+mkstr(dst, arg, s1, s2, n)
 	char *dst, *arg;
+	char *s1, *s2;
+	int n;
 {
 	char **vec = (char **) &arg;
 	register char *p;
@@ -467,9 +503,8 @@ runvec2(vec0, vec1)
 }
 
 /*VARARGS1*/
-panic(str, argv)
+panic(str)
 	char *str;
-	int argv;
 {
 	write(2, str, strlen(str));
 	exit(1);

@@ -1,3 +1,4 @@
+int logit = 0; /*DEBUG*/
 /* Keyboard driver for PC's and AT's. */
 
 #include "kernel.h"
@@ -18,7 +19,7 @@
 #define KB_STATUS	0x64	/* I/O port for status on AT */
 
 /* PS/2 model 30 keyboard. */
-#define PS_KB_STATUS	0x72	/* I/O port for status on ps/2 (???) */
+#define PS_KB_STATUS	0x72	/* I/O port for status on ps/2 (?) */
 #define PS_KEYBD	0x68	/* I/O port for data on ps/2 */
 
 /* AT and PS/2 model 30 keyboards. */
@@ -40,6 +41,8 @@
 #define F3		  61
 #define F4		  62
 #define F5		  63
+#define F6		  64
+#define F7		  65
 #define F8		  66
 #define F9		  67
 #define F10		  68
@@ -61,6 +64,8 @@
 #define US_EXT		   4	/* U.S. extended keyboard */
 
 /* Miscellaneous. */
+#define CTRL              29	/* scan code for CTRL */
+#define CAPSLOCK          58	/* scan code for Caps lock */
 #define CTRL_S		  31	/* scan code for letter S (for CRTL-S) */
 #define CONSOLE		   0	/* line number for console */
 #define MEMCHECK_ADR   0x472	/* address to stop memory check after reboot */
@@ -199,13 +204,15 @@ struct kb_s {
 
 PRIVATE struct kb_s kb_lines[NR_CONS];
 
-FORWARD int kb_ack();
-FORWARD int kb_wait();
-FORWARD void load_dutch_table();
-FORWARD void load_olivetti();
-FORWARD void load_us_ext();
-FORWARD int scan_keyboard();
-FORWARD void set_leds();
+FORWARD _PROTOTYPE( int kb_ack, (int data_port) );
+FORWARD _PROTOTYPE( int kb_wait, (int status_port) );
+FORWARD _PROTOTYPE( void load_dutch_table, (void) );
+FORWARD _PROTOTYPE( void load_olivetti, (void) );
+FORWARD _PROTOTYPE( void load_us_ext, (void) );
+FORWARD _PROTOTYPE( int scan_keyboard, (void) );
+FORWARD _PROTOTYPE( void set_leds, (void) );
+FORWARD _PROTOTYPE( void reboot, (void) );
+FORWARD _PROTOTYPE( void waitkey, (char *prompt) );
 
 /*===========================================================================*
  *				keyboard				     *
@@ -340,6 +347,16 @@ char ch;			/* scan code of key just struck or released */
   c = ch & 0177;		/* high-order bit set on key release */
   make = (ch & 0200 ? 0 : 1);	/* 1 when key depressed, 0 when key released */
 
+  /* Until IBM invented the 101-key keyboard, the CTRL key was always to the
+   * left of the 'A'.  This fix puts it back there on the 101-key keyboard.
+   */
+#if KEYBOARD_84
+  if (c == CTRL) 
+	c = CAPSLOCK;
+  else if (c == CAPSLOCK)
+	c = CTRL;
+#endif
+
   if (alt && keyb_type == DUTCH_EXT)
 	code = alt_c[c];
   else
@@ -368,30 +385,15 @@ char ch;			/* scan code of key just struck or released */
   switch(code - 0200) {
     case 0:	shift1 = make;		break;	/* shift key on left */
     case 1:	shift2 = make;		break;	/* shift key on right */
-    case 2:
-#if KEYBOARD_84
-/* Until IBM invented the 101-key keyboard, the CTRL key was always to the
- * left of the 'A'.  This fix puts it back there on the 101-key keyboard.
- */
-		if (make && caps_off) {
-			capslock = 1 - capslock;
-			set_leds();
-		}
-		caps_off = 1 - make;    break;	/* caps lock */
-#else
-		control = make;		break;	/* control */
-#endif
+    case 2:	control = make;		break;	/* control */
     case 3:	alt = make;		break;	/* alt key */
-    case 4:	
-#if KEYBOARD_84
-		control = make;		break;	/* control */
-#else
-		if (make && caps_off) {
+
+    case 4:	if (make && caps_off) {
 			capslock = 1 - capslock;
 			set_leds();
 		}
 		caps_off = 1 - make;    break;	/* caps lock */
-#endif
+
     case 5:	if (make && num_off) {
 			numlock  = 1 - numlock;
 			set_leds();
@@ -571,13 +573,11 @@ char ch;			/* scan code for a function key */
   if (ch == F2) map_dmp();	/* print memory map */
   if (ch == F3) toggle_scroll();	/* hardware vs. software scrolling */
 
-#if AM_KERNEL
-#if !NONET
-  if (ch == F4) net_init();	/* Re-initialise the ethernet card */
+#if NETWORKING_ENABLED
+  if (ch == F5) ehw_dump();
 #endif
-  if (ch == F5) amdump();	/* Dump Amoeba statistics. */
-#endif /* AM_KERNEL */
-
+if(ch == F6) logit = 1 - logit; /*DEBUG*/
+  if (ch == F7 && control) sigchar(&tty_struct[CONSOLE], SIGQUIT);
   if (ch == F8 && control) sigchar(&tty_struct[CONSOLE], SIGINT);
   if (ch == F9 && control) sigchar(&tty_struct[CONSOLE], SIGKILL);
   return(TRUE);
@@ -616,14 +616,13 @@ PRIVATE int scan_keyboard()
 /*==========================================================================*
  *				reboot					    *
  *==========================================================================*/
-PUBLIC void reboot()
+PRIVATE void reboot()
 {
 /* Reboot the machine. */
 
   static u16_t magic = MEMCHECK_MAG;
 
-  lock();
-  eth_stp();			/* stop ethernet (may be unnecessary) */
+  soon_reboot();
 
   /* Stop BIOS memory test. */
   phys_copy(numap(TTY, (vir_bytes) &magic, sizeof magic),
@@ -641,7 +640,7 @@ PUBLIC void reboot()
 		 * is more of a problem if the fake A20 is in use, as it
 		 * would be if the keyboard reset were used for real mode.
 		 */
-		kb_wait();
+		kb_wait(ps ? PS_KB_STATUS : KB_STATUS);
 		out_byte(KB_COMMAND,
 			 KB_PULSE_OUTPUT | (0x0F & ~(KB_GATE_A20 | KB_RESET)));
 	} else {
@@ -657,23 +656,38 @@ PUBLIC void reboot()
 
 
 /*==========================================================================*
+ *				waitkey					    *
+ *==========================================================================*/
+PRIVATE void waitkey(prompt)
+char *prompt;
+{
+/* Wait for a keystroke.  Use polling, since this is only called after
+ * interrupts have been disabled.
+ */
+
+  int scancode;
+
+  milli_delay(1000);		/* pause for a second to ignore key release */
+  scan_keyboard();		/* ack any old input */
+  printf(prompt);
+  scancode = scan_keyboard();	/* quiescent value (0 on PC, last code on AT)*/
+  while(scan_keyboard() == scancode)
+	;			/* loop until new keypress or any release */
+}
+
+
+/*==========================================================================*
  *				wreboot					    *
  *==========================================================================*/
 PUBLIC void wreboot()
 {
-/* Wait for a keystroke, then reboot the machine.  Don't rely on interrupt
- * to provide the keystroke, since this is usually called after a crash,
- * and possibly before interrupts are initialized.
- */
+/* Wait for keystrokes before printing debugging info and rebooting. */
 
-  register int scancode;
-
-  lock();
-  milli_delay(1000);		/* pause for a second to ignore key release */
-  scan_keyboard();		/* ack any old input */
-  printf("Type any key to reboot\r\n");
-  scancode = scan_keyboard();	/* quiescent value (0 on PC, last code on AT)*/
-  while(scan_keyboard() == scancode)
-	;			/* loop until new keypress or any release */
+  soon_reboot();
+  waitkey("Type any key to view process table\r\n");
+  p_dmp();
+  waitkey("Type any key to view memory map\r\n");
+  map_dmp();
+  waitkey("Type any key to reboot\r\n");
   reboot();
 }

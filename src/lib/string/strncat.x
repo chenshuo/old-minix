@@ -20,13 +20,13 @@ _strncat:
 	mov	cx,#-1		/* find end of s1 */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	dec	di
 	mov	cx,6(si)
 	mov	si,4(si)
 byte_loop:			/* loop to copy bytes */
-	lodb
-	stob
+	lodsb
+	stosb
 	orb	al,al
 	loopnz	byte_loop
 	jz	exit

@@ -57,8 +57,6 @@
  */
 
 
-char *substr(), *getenv();
-
 #include <sys/types.h>
 
 #ifdef vax11c
@@ -67,11 +65,6 @@ char *substr(), *getenv();
 #include <types.h>
 #include <stat.h>
 #define LOGFILE "szlog.tmp"
-#include <stdio.h>
-#include <signal.h>
-#include <setjmp.h>
-#include <ctype.h>
-#include <errno.h>
 #define OS "VMS"
 #define READCHECK
 #define BUFWRITE
@@ -83,22 +76,25 @@ extern int errno;
 
 #else	/* vax11c */
 
-void bibi();
-
 
 #define SS_NORMAL 0
 #define LOGFILE "/tmp/szlog"
-#include <stdio.h>
+
+#define sendline(c) putchar((c) & 0377)
+#define xsendline(c) putchar(c)
+
+#endif
+
 #include <signal.h>
 #include <setjmp.h>
 #include <ctype.h>
 #include <errno.h>
-extern int errno;
-
-#define sendline(c) putchar(c & 0377)
-#define xsendline(c) putchar(c)
-
-#endif
+#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <utime.h>
+#include <stdio.h>
 
 #define PATHLEN 256
 #define OK 0
@@ -224,6 +220,37 @@ int Beenhereb4;		/* How many times we've been ZRPOS'd same place */
 jmp_buf tohere;		/* For the interrupt on RX timeout */
 jmp_buf intrjmp;	/* For the interrupt on RX CAN */
 
+_PROTOTYPE(void onintr , (int sig ));
+_PROTOTYPE(int main , (int argc , char *argv []));
+_PROTOTYPE(int wcsend , (int argc , char *argp []));
+_PROTOTYPE(int wcs , (char *oname ));
+_PROTOTYPE(int wctxpn , (char *name ));
+_PROTOTYPE(int getnak , (void));
+_PROTOTYPE(int wctx , (long flen ));
+_PROTOTYPE(int wcputsec , (char *buf , int sectnum , int cseclen ));
+_PROTOTYPE(int filbuf , (char *buf , int count ));
+_PROTOTYPE(int zfilbuf , (void));
+_PROTOTYPE(int fooseek , (FILE *fptr , long pos , int whence ));
+_PROTOTYPE(void alrm , (int sig ));
+_PROTOTYPE(int readline , (int timeout ));
+_PROTOTYPE(void flushmo , (void));
+_PROTOTYPE(void purgeline , (void));
+_PROTOTYPE(void canit , (void));
+void zperr();
+_PROTOTYPE(char *substr , (char *s , char *t ));
+_PROTOTYPE(int usage , (void));
+_PROTOTYPE(int getzrxinit , (void));
+_PROTOTYPE(int sendzsinit , (void));
+_PROTOTYPE(int zsendfile , (char *buf , int blen ));
+_PROTOTYPE(int zsendfdata , (void));
+_PROTOTYPE(int getinsync , (int flag ));
+_PROTOTYPE(void saybibi , (void));
+_PROTOTYPE(void bttyout , (int c ));
+_PROTOTYPE(int zsendcmd , (char *buf , int blen ));
+_PROTOTYPE(void chkinvok , (char *s ));
+_PROTOTYPE(void countem , (int argc , char **argv ));
+_PROTOTYPE(void chartest , (int m ));
+
 /* called by signal interrupt or terminate to clean things up */
 void bibi(n)
 int n;
@@ -252,7 +279,8 @@ int Zrwindow = 1400;	/* RX window size (controls garbage count) */
 #include "zm.c"
 
 
-main(argc, argv)
+int main(argc, argv)
+int argc;
 char *argv[];
 {
 	register char *cp;
@@ -462,10 +490,11 @@ char *argv[];
 	/*NOTREACHED*/
 }
 
-wcsend(argc, argp)
+int wcsend(argc, argp)
+int argc;
 char *argp[];
 {
-	register n;
+	register int n;
 
 	Crcflg=FALSE;
 	firstsec=TRUE;
@@ -501,7 +530,7 @@ char *argp[];
 	return OK;
 }
 
-wcs(oname)
+int wcs(oname)
 char *oname;
 {
 	register c;
@@ -564,7 +593,7 @@ char *oname;
  *  as provided by the Unix fstat call.
  *  N.B.: modifies the passed name, may extend it!
  */
-wctxpn(name)
+int wctxpn(name)
 char *name;
 {
 	register char *p, *q;
@@ -630,7 +659,7 @@ char *name;
 	return OK;
 }
 
-getnak()
+int getnak()
 {
 	register firstch;
 
@@ -666,7 +695,7 @@ getnak()
 }
 
 
-wctx(flen)
+int wctx(flen)
 long flen;
 {
 	register int thisblklen;
@@ -714,7 +743,7 @@ long flen;
 		return OK;
 }
 
-wcputsec(buf, sectnum, cseclen)
+int wcputsec(buf, sectnum, cseclen)
 char *buf;
 int sectnum;
 int cseclen;	/* data length of this sector to send */
@@ -793,8 +822,9 @@ cancan:
 }
 
 /* fill buf with count chars padding with ^Z for CPM */
-filbuf(buf, count)
+int filbuf(buf, count)
 register char *buf;
+int count;
 {
 	register c, m;
 
@@ -830,7 +860,7 @@ register char *buf;
 }
 
 /* Fill buffer with blklen chars */
-zfilbuf()
+int zfilbuf()
 {
 	int n;
 
@@ -858,7 +888,7 @@ zfilbuf()
 }
 
 #ifdef TXBSIZE
-fooseek(fptr, pos, whence)
+int fooseek(fptr, pos, whence)
 FILE *fptr;
 long pos;
 {
@@ -919,8 +949,8 @@ long pos;
 
 
 /* VARARGS1 */
-vfile(f, a, b, c)
-register char *f;
+void vfile(f, a, b, c)
+register char *f,*a,*b,*c;
 {
 	if (Verbose > 2) {
 		fprintf(stderr, f, a, b, c);
@@ -941,7 +971,8 @@ int sig;
  * readline(timeout) reads character(s) from file descriptor 0
  * timeout is in tenths of seconds
  */
-readline(timeout)
+int readline(timeout)
+int timeout;
 {
 	register int c;
 	static char byt[1];
@@ -967,13 +998,13 @@ readline(timeout)
 	return (byt[0]&0377);
 }
 
-flushmo()
+void flushmo()
 {
 	fflush(stdout);
 }
 
 
-purgeline()
+void purgeline()
 {
 #ifdef USG
 	ioctl(iofd, TCFLSH, 0);
@@ -984,7 +1015,7 @@ purgeline()
 #endif
 
 /* send cancel string to get the other end to shut up */
-canit()
+void canit()
 {
 	static char canistr[] = {
 	 24,24,24,24,24,24,24,24,24,24,8,8,8,8,8,8,8,8,8,8,0
@@ -1004,7 +1035,7 @@ canit()
  * Log an error
  */
 /*VARARGS1*/
-zperr(s,p,u)
+void zperr(s,p,u)
 char *s, *p, *u;
 {
 	if (Verbose <= 0)
@@ -1084,7 +1115,7 @@ char *babble[] = {
 	""
 };
 
-usage()
+int usage()
 {
 	char **pp;
 
@@ -1100,7 +1131,7 @@ usage()
 /*
  * Get the receiver's init parameters
  */
-getzrxinit()
+int getzrxinit()
 {
 	register n;
 	struct stat f;
@@ -1205,7 +1236,7 @@ getzrxinit()
 }
 
 /* Send send-init information */
-sendzsinit()
+int sendzsinit()
 {
 	register c;
 
@@ -1235,8 +1266,9 @@ sendzsinit()
 }
 
 /* Send file name and related info */
-zsendfile(buf, blen)
+int zsendfile(buf, blen)
 char *buf;
+int blen;
 {
 	register c;
 	register UNSL long crc;
@@ -1294,10 +1326,10 @@ again:
 }
 
 /* Send the data in the file */
-zsendfdata()
+int zsendfdata()
 {
 	register c, e, n;
-	register newcnt;
+	register int newcnt;
 	register long tcount = 0;
 	int junkcount;		/* Counts garbage chars received by TX */
 	static int tleft = 6;	/* Counter for test mode */
@@ -1498,9 +1530,10 @@ gotack:
 /*
  * Respond to receiver's complaint, get back in sync with receiver
  */
-getinsync(flag)
+int getinsync(flag)
+int flag;
 {
-	register c;
+	register int c;
 
 	for (;;) {
 		if (Test) {
@@ -1550,7 +1583,7 @@ getinsync(flag)
 
 
 /* Say "bibi" to the receiver, try to do it cleanly */
-saybibi()
+void saybibi()
 {
 	for (;;) {
 		stohdr(0L);		/* CAF Was zsbhdr - minor change */
@@ -1566,15 +1599,17 @@ saybibi()
 }
 
 /* Local screen character display function */
-bttyout(c)
+void bttyout(c)
+int c;
 {
 	if (Verbose)
 		putc(c, stderr);
 }
 
 /* Send command and related info */
-zsendcmd(buf, blen)
+int zsendcmd(buf, blen)
 char *buf;
+int blen;
 {
 	register c;
 	long cmdnum;
@@ -1628,7 +1663,7 @@ listen:
 /*
  * If called as sb use YMODEM protocol
  */
-chkinvok(s)
+void chkinvok(s)
 char *s;
 {
 #ifdef vax11c
@@ -1655,7 +1690,8 @@ char *s;
 #endif
 }
 
-countem(argc, argv)
+void countem(argc, argv)
+int argc;
 register char **argv;
 {
 	register c;
@@ -1681,9 +1717,10 @@ register char **argv;
 		  Filesleft, Totalleft);
 }
 
-chartest(m)
+void chartest(m)
+int m;
 {
-	register n;
+	register int n;
 
 	mode(m);
 	printf("\r\n\nCharacter Transparency Test Mode %d\r\n", m);

@@ -21,24 +21,30 @@
  * The valid messages and their parameters are:
  *
  *   HARD_INT:     output has been completed or input has arrived
- *   TTY_READ:     a process wants to read from a terminal
- *   TTY_WRITE:    a process wants to write on a terminal
- *   TTY_IOCTL:    a process wants to change a terminal's parameters
- *   TTY_SETPGRP:  indicate a change in a control terminal
+ *   DEV_READ:     a process wants to read from a terminal
+ *   DEV_WRITE:    a process wants to write on a terminal
+ *   DEV_IOCTL:    a process wants to change a terminal's parameters
+ *   DEV_OPEN:     a tty line has been opened
+ *   DEV_CLOSE:    a tty line has been closed
+ *   TTY_EXIT:     a process group leader has exited
  *   CANCEL:       terminate a previous incomplete system call immediately
  *
  *    m_type      TTY_LINE   PROC_NR    COUNT   TTY_SPEK  TTY_FLAGS  ADDRESS
- * |-------------+---------+---------+---------+---------+---------+---------|
+ * ---------------------------------------------------------------------------
  * | HARD_INT    |         |         |         |         |         |         |
  * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_READ    |minor dev| proc nr |  count  |         |         | buf ptr |
+ * | DEV_READ    |minor dev| proc nr |  count  |         |         | buf ptr |
  * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_WRITE   |minor dev| proc nr |  count  |         |         | buf ptr |
+ * | DEV_WRITE   |minor dev| proc nr |  count  |         |         | buf ptr |
  * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_IOCTL   |minor dev| proc nr |func code|erase etc|  flags  |         |
+ * | DEV_IOCTL   |minor dev| proc nr |func code|erase etc|  flags  |         |
  * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_SETPGRP |minor dev| proc nr |         |         |         |         |
- * |-------------+---------+---------+---------+---------+---------+---------
+ * | DEV_OPEN    |minor dev| proc nr | #links  |leaderbit|O_NOCTTY |         |
+ * |-------------+---------+---------+---------+---------+---------+---------|
+ * | DEV_CLOSE   |minor dev| proc nr | #links  |         |         |         |
+ * |-------------+---------+---------+---------+---------+---------+---------|
+ * | TTY_EXIT    |minor dev| proc nr |         |         |         |         |
+ * |-------------+---------+---------+---------+---------+---------+---------|
  * | CANCEL      |minor dev| proc nr |         |         |         |         |
  * ---------------------------------------------------------------------------
  */
@@ -46,9 +52,16 @@
 #include "kernel.h"
 #include <sgtty.h>
 #include <signal.h>
+#include <fcntl.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
+#if (CHIP == M68000)
+#include "proc.h"
+#endif
 #include "tty.h"
+
+#define O_NOCTTY   00400	/* Kludge due to compiler overflow */
+#define O_NONBLOCK 04000	/* ditto */
 
 /* Array and macros to convert line numbers to structure pointers. */
 PRIVATE struct tty_struct *p_tty_addr[NR_CONS + NR_RS_LINES];
@@ -67,32 +80,39 @@ PRIVATE struct tty_struct *p_tty_addr[NR_CONS + NR_RS_LINES];
 #define END_TTY   (ctty_addr(NR_CONS + NR_RS_LINES))
 
 /* Miscellaneous. */
-#define LF        '\012'	/* '\n' is not portablly a LF */
+#define LF        '\012'	/* '\n' is not portably a LF */
 
 /* Test-and-set flag, set during tty_wakeup().  Remains set if do_int() is
  * scheduled until do_int() is finished.
  */
+#if (CHIP == M68000)
+PRIVATE char tty_awake;
+#else
 PRIVATE int tty_awake;
+#endif
 
-FORWARD void back_over();
-FORWARD int chuck();
-FORWARD void do_cancel();
-FORWARD void do_int();
-FORWARD void do_ioctl();
-FORWARD void do_read();
-FORWARD void do_setpgrp();
-FORWARD void do_write();
-FORWARD void echo();
-FORWARD void in1_char();
-FORWARD void in_char();
-FORWARD int out_process();
-FORWARD int rd_chars();
-FORWARD void rs_start();
-FORWARD void tty_icancel();
-FORWARD void tty_init();
-FORWARD void tty_ocancel();
-FORWARD void tty_reply();
-FORWARD void uninhibit();
+FORWARD _PROTOTYPE( void back_over, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( int chuck, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( void do_cancel, (struct tty_struct *tp, message *m_ptr) );
+FORWARD _PROTOTYPE( void do_int, (void) );
+FORWARD _PROTOTYPE( void do_ioctl, (struct tty_struct *tp, message *m_ptr) );
+FORWARD _PROTOTYPE( void do_ttyopen, (struct tty_struct *tp, message *m_ptr) );
+FORWARD _PROTOTYPE( void do_ttyclose, (struct tty_struct *tp, message *m_ptr));
+FORWARD _PROTOTYPE( void do_read, (struct tty_struct *tp, message *m_ptr) );
+FORWARD _PROTOTYPE( void do_write, (struct tty_struct *tp, message *m_ptr) );
+FORWARD _PROTOTYPE( void echo, (struct tty_struct *tp, int c) );
+FORWARD _PROTOTYPE( void in1_char, (struct tty_struct *tp, int ch,int echoch));
+FORWARD _PROTOTYPE( void in_char, (struct tty_struct *tp, int ch) );
+FORWARD _PROTOTYPE( int out_process, (struct tty_struct *tp,
+		char *ubuf, int ucount) );
+FORWARD _PROTOTYPE( int rd_chars, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( void rs_start, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( void tty_icancel, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( void tty_init, (void) );
+FORWARD _PROTOTYPE( void tty_ocancel, (struct tty_struct *tp) );
+FORWARD _PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
+		int status) );
+FORWARD _PROTOTYPE( void uninhibit, (struct tty_struct *tp) );
 
 /*===========================================================================*
  *				tty_task				     *
@@ -114,10 +134,11 @@ PUBLIC void tty_task()
 	tp = tty_addr(tty_mess.TTY_LINE);
 	switch(tty_mess.m_type) {
 	    case HARD_INT:	do_int();			break;
-	    case TTY_READ:	do_read(tp, &tty_mess);		break;
-	    case TTY_WRITE:	do_write(tp, &tty_mess);	break;
-	    case TTY_IOCTL:	do_ioctl(tp, &tty_mess);	break;
-	    case TTY_SETPGRP:   do_setpgrp(tp, &tty_mess);	break;
+	    case DEV_READ:	do_read(tp, &tty_mess);		break;
+	    case DEV_WRITE:	do_write(tp, &tty_mess);	break;
+	    case DEV_IOCTL:	do_ioctl(tp, &tty_mess);	break;
+	    case DEV_OPEN:	do_ttyopen(tp, &tty_mess);	break;
+	    case DEV_CLOSE:	do_ttyclose(tp, &tty_mess);	break;
 	    case CANCEL:	do_cancel(tp, &tty_mess);	break;
 	    default:		tty_reply(TASK_REPLY, tty_mess.m_source,
 					  tty_mess.PROC_NR, EINVAL);
@@ -164,6 +185,10 @@ PRIVATE void do_int()
   unsigned remaining;
   register struct tty_struct *tp;
   unsigned wrapcount;
+
+#if (MACHINE == ATARI)
+  func_key();
+#endif
 
   tp = last_tp;
   do {
@@ -250,20 +275,27 @@ register char ch;		/* scan code for character that arrived */
 {
 /* A character has just been typed in.  Process, save, and echo it. */
 
-  int mode, sig, scode, c;
+  int mode, sig, scode;
+#if (CHIP == INTEL)
+  int c;
+#endif
 
   scode = ch;			/* save the scan code */
 
+#if (CHIP == INTEL)
   /* Function keys are temporarily being used for debug dumps. */
   if (isconsole(tp) && func_key(ch))
 	return;			/* just processed function key */
+#endif
   mode = tp->tty_mode & (RAW | CBREAK);
+#if (CHIP == INTEL)
   if (tp->tty_makebreak == TWO_INTS) {
 	c = make_break(ch);	/* console give 2 ints/ch */
 	if (c == -1) return;
 	ch = c;
-  } else if (mode != RAW)
-	ch &= 0177;		/* 7-bit chars except in raw mode */
+  } else
+#endif
+	if (mode != RAW) ch &= 0177;	/* 7-bit chars except in raw mode */
 
   /* Processing for COOKED and CBREAK mode contains special checks. */
   if (mode == COOKED || mode == CBREAK) {
@@ -281,6 +313,11 @@ register char ch;		/* scan code for character that arrived */
 
 		/* Now do kill processing (remove current line). */
 		if (ch == tp->tty_kill && tp->tty_escaped == NOT_ESCAPED) {
+			if (ch < ' ') {
+				/* Visibly erase line for a control char. */
+				while (chuck(tp) == OK) back_over(tp);
+				return;
+			}
 			while(chuck(tp) == OK)	/* keep looping */ ;
 			echo(tp, tp->tty_kill);
 			echo(tp, '\n');
@@ -345,6 +382,7 @@ register char ch;		/* scan code for character that arrived */
   if (ch == '\n' && tp->tty_incount < tp->tty_insize)
 	tp->tty_lfct++;		/* count line feeds */
 
+#if (CHIP == INTEL)
   /* The numeric pad generates ASCII escape sequences: ESC [ letter */
   if (isconsole(tp) && (scode = letter_code(scode)) != 0) {
 	/* This key is to generate a three-character escape sequence. */
@@ -352,6 +390,7 @@ register char ch;		/* scan code for character that arrived */
 	in1_char(tp, BRACKET, BRACKET);
 	ch = scode;
   }
+#endif
 
   in1_char(tp, ch, ch);
 }
@@ -367,13 +406,16 @@ register char c;		/* character to echo */
 /* Echo a character on the terminal. */
 
   if ( (tp->tty_mode & ECHO) == 0) return;	/* if no echoing, don't echo */
-/* MARKER is meaningful only in cooked mode */
+
+  /* MARKER is meaningful only in cooked mode. */
   if (c != MARKER || tp->tty_mode & (CBREAK | RAW)) {
 	if (isconsole(tp)) {
 		out_char(tp, c);	/* echo to console */
 		flush(tp);		/* force character out onto screen */
-	} else if (tp->tty_etail < tp->tty_ebufend)
-		*tp->tty_etail++ = c;	/* echo to RS232 line */
+	} else {
+		/* Echo to RS232 line. */
+		if (tp->tty_etail < tp->tty_ebufend) *tp->tty_etail++ = c;
+	}
   }
 }
 
@@ -408,10 +450,12 @@ register struct tty_struct *tp;	/* from which tty should chars be removed */
  *				do_read					     *
  *===========================================================================*/
 PRIVATE void do_read(tp, m_ptr)
-register struct tty_struct *tp;
+register struct tty_struct *tp;	/* pointer to tty struct */
 message *m_ptr;			/* pointer to message sent to the task */
 {
 /* A process wants to read from a terminal. */
+
+  int bytesread, nonblocking;
 
   if (tp->tty_inleft > 0) {	/* if someone else is hanging, give up */
 	tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EIO);
@@ -425,7 +469,20 @@ message *m_ptr;			/* pointer to message sent to the task */
   tp->tty_inleft = m_ptr->COUNT;
 
   /* Try to get chars.  This call either gets enough, or gets nothing. */
-  tty_reply(TASK_REPLY, m_ptr->m_source, (int) tp->tty_inproc, rd_chars(tp));
+  bytesread = rd_chars(tp);
+
+  /* If nonblocking mode is set, caller is *not* waiting for more characters
+   * now, even if it now got less than requested.  If this flag is not reset,
+   * the next caller gets the EIO in the if statement first in this function.
+   */
+  nonblocking = (int) m_ptr->TTY_FLAGS & O_NONBLOCK;	/* nonblocking mode */
+  if (bytesread == SUSPEND && nonblocking) {
+	tp->tty_inleft = 0;	/* Make tty free for the next caller */
+	bytesread = EAGAIN;
+  }
+
+  /* Send result to caller */
+  tty_reply(TASK_REPLY, m_ptr->m_source, (int) tp->tty_inproc, bytesread);
 }
 
 
@@ -469,21 +526,19 @@ register struct tty_struct *tp;	/* pointer to terminal to read from */
 	 */
 	user_ct = ct;
 	if (!(tp->tty_mode & (RAW | CBREAK))) {
-		/* COOKED mode.
-		 * Don't bother counting lines in CBREAK and RAW modes.
-		 */
+		/* COOKED mode.  Don't count lines in CBREAK and RAW modes. */
 		for (bufend = rtail + ct; rtail < bufend;) {
 			if (*rtail++ == '\n') {
-				user_ct =
-					tp->tty_inleft =
-					ct = rtail - tp->tty_intail;
+				user_ct = rtail - tp->tty_intail;
+				tp->tty_inleft = user_ct;
+				ct = user_ct;
 				tp->tty_lfct--;;
 				break;
 			}
 			if (rtail[-1] == MARKER) {
-				tp->tty_inleft =
-					ct = rtail - tp->tty_intail;
-					user_ct = ct - 1;
+				ct = rtail - tp->tty_intail;
+				tp->tty_inleft = ct;
+				user_ct = ct - 1;
 				tp->tty_lfct--;
 				break;
 			}
@@ -562,6 +617,10 @@ register message *m_ptr;	/* pointer to message sent to the task */
    */
   tp->tty_cum = 0;
   tp->tty_waiting = WAITING;
+
+#if (CHIP == M68000)
+  (proc_addr(tp->tty_outproc))->p_physio = 1;	/* disable (un)shadowing */
+#endif
 
   /* Copy characters from the user process to the terminal. */
   (*tp->tty_devstart)(tp);	/* copy data to queue and start I/O */
@@ -664,6 +723,12 @@ message *m_ptr;			/* pointer to message sent to task */
 	flags = (eof <<8);
 	break;
 
+#if (MACHINE == ATARI)
+     case VDU_LOADFONT:
+ 	r = vdu_loadfont(m_ptr);
+	break;
+#endif
+
 #ifdef TIOCFLUSH
      case TIOCFLUSH:
 	/* Discard current input and output. */
@@ -684,16 +749,51 @@ message *m_ptr;			/* pointer to message sent to task */
 
 
 /*===========================================================================*
- *				do_setpgrp				     *
+ *				do_ttyopen				     *
  *===========================================================================*/
-PRIVATE void do_setpgrp(tp, m_ptr)
+PRIVATE void do_ttyopen(tp, m_ptr)
 register struct tty_struct *tp;
 message *m_ptr;			/* pointer to message sent to task */
 {
-/* A control process group has changed */
+/* A tty line has been opened.  See if caller should become controlling tty. */
 
-  tp->tty_pgrp = m_ptr->TTY_PGRP;
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK);
+  int ctl, r = TRUE;
+  register struct tty_struct *rtp;
+
+  /* If caller meets the following conditions, it becomes controlling tty. */
+  if (m_ptr->TTY_SPEK == 0) r = FALSE;		/* not process group leader */
+  if (tp->tty_pgrp != 0) r = FALSE;		/* already is ctl tty */
+  if (m_ptr->TTY_FLAGS & O_NOCTTY) r = FALSE;	/* O_NOCTTY set */
+
+  for (rtp = &tty_struct[0]; rtp < &tty_struct[NR_CONS + NR_RS_LINES]; rtp++) {
+	if (rtp->tty_pgrp == m_ptr->PROC_NR) r = FALSE;
+  }
+
+  if (r) tp->tty_pgrp = m_ptr->PROC_NR;
+  ctl = (tp->tty_pgrp ? m_ptr->TTY_LINE : NO_CTL_TTY);
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, ctl);
+}
+
+
+/*===========================================================================*
+ *				do_ttyclose				     *
+ *===========================================================================*/
+PRIVATE void do_ttyclose(tp, m_ptr)
+register struct tty_struct *tp;
+message *m_ptr;			/* pointer to message sent to task */
+{
+/* A tty line has been closed.  See if it is proc grp leader's control tty. */
+
+  int ctl;
+
+  /* TTY_SPEK is now a boolean to tell if it is the last file to close */
+  if ((m_ptr->PROC_NR == tp->tty_pgrp) && (m_ptr->TTY_SPEK))
+  {
+	tp->tty_pgrp = 0;
+	sigchar(tp, SIGHUP);
+  }
+  ctl = (tp->tty_pgrp ? m_ptr->TTY_LINE : NO_CTL_TTY);
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, ctl);
 }
 
 
@@ -951,7 +1051,7 @@ PRIVATE void tty_init()
 		tp->tty_insize = RS_IN_BYTES;
 	}
 	tp->tty_inphys = umap(proc_ptr, D, (vir_bytes) tp->tty_inbuf,
-			      tp->tty_insize);
+			      (vir_bytes)tp->tty_insize);
 	tp->tty_intail = tp->tty_inhead = tp->tty_inbuf;
 	tp->tty_outphys = umap(proc_ptr, D, (vir_bytes) tp->tty_ramqueue,
 			       sizeof tp->tty_ramqueue);
@@ -969,8 +1069,14 @@ PRIVATE void tty_init()
 		tp->tty_devstart = console;
 		tp->tty_mode = CRMOD | XTABS | ECHO;
 		tp->tty_makebreak = TWO_INTS;
+#if (CHIP == INTEL)
 		scr_init(tp->tty_line);
 		kb_init(tp->tty_line);
+#endif
+#if (MACHINE == ATARI)
+		vduinit(tp);
+		kbdinit(tp->tty_line);
+#endif
 	} else {
 		tp->tty_devread = rs_read;
 		tp->tty_devstart = rs_start;
@@ -996,6 +1102,9 @@ register struct tty_struct *tp;
   tp->tty_rwords = 0;
   tp->tty_etail = tp->tty_ebuf;
   if (isrs232(tp)) rs_ocancel(tp->tty_line);
+#if (CHIP == M68000)
+  (proc_addr(tp->tty_outproc))->p_physio = 0;	/* enable (un)shadowing */
+#endif
 }
 
 

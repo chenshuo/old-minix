@@ -13,13 +13,17 @@
 #include <sys/types.h>
 #include <sys/dir.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <ctype.h>
+#include <errno.h>
+#undef ERROR			/* arrgghh, errno.h has this pollution */
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <stdio.h>
 
 #include <minix/type.h>
 #include "../../fs/const.h"
@@ -27,7 +31,15 @@
 
 #include "de.h"
 
-static char copyright[] = { "de  (c) Terrence W. Holm 1989" };
+static char copyright[] = "de  (c) Terrence W. Holm 1989";
+
+
+_PROTOTYPE(void Push , (de_state *s ));
+_PROTOTYPE(int Get_Base , (int *base ));
+_PROTOTYPE(int Get_Filename , (de_state *s ));
+_PROTOTYPE(int Get_Count , (char *units , unsigned long *result ));
+_PROTOTYPE(void Exec_Shell , (void));
+_PROTOTYPE(void Sigint , (int));
 
 
 
@@ -46,7 +58,10 @@ void main( argc, argv )
   char *argv[];
 
   {
-  de_state s;
+  static de_state s;		/* it is safer not to put it on the stack
+				 * and some things probably now rely on zero
+				 * initialization
+				 */  
   char *command_name = argv[0];
   int   recover = 0;
 
@@ -202,7 +217,10 @@ void main( argc, argv )
     Error( "Error seeking %s", s.device_name );
 
   if ( size % K != 0 )
+    {
     Warning( "Device size is not a multiple of 1024" );
+    Warning( "The (partial) last block will not be accessible" );
+    }
   }
 
 
@@ -247,7 +265,7 @@ void main( argc, argv )
       }
 
     s.address = ( (long) s.first_data - s.inode_blocks ) * K
-		      + (long) (inode - 1) * INODE_SIZE;
+		      + (long) (inode - 1) * s.inode_size;
 
     Read_Block( &s, s.buffer );
 
@@ -285,7 +303,7 @@ void main( argc, argv )
 
     else if ( rc == REDRAW_POINTERS )
       {
-      s.offset = s.address & ~ K_MASK;
+      s.offset = (unsigned) (s.address & ~ K_MASK);
       Draw_Pointers( &s );
       }
 
@@ -465,7 +483,7 @@ int Process( s, c )
     case 'g' :				/*  Goto block		*/
 
 		{
-		unsigned block;
+		unsigned long block;
 
 		if ( Get_Count( "Block?", &block ) )
 		  {
@@ -477,7 +495,7 @@ int Process( s, c )
 
 		  Push( s );
 
-		  s->address = (long) block * K;
+		  s->address = (off_t) block * K;
 
 		  return( REDRAW );
 		  }
@@ -489,8 +507,7 @@ int Process( s, c )
     case 'G' :				/*  Goto block indirect	*/
 
 		{
-		unsigned block = *( (unsigned short *)
-				    &s->buffer[ s->offset ] );
+		unsigned block = *( (word_t *) &s->buffer[ s->offset ] );
 
 		if ( s->mode != WORD )
 		  {
@@ -526,7 +543,7 @@ int Process( s, c )
     case 'i' :				/*  Goto i-node		*/
 
 		{
-		ino_t inode;
+		unsigned long inode;
 
 		if ( Get_Count( "I-node?", &inode ) )
 		  {
@@ -539,8 +556,8 @@ int Process( s, c )
 		  Push( s );
 
 		  s->mode = WORD;
-		  s->address = ( (long) s->first_data - s->inode_blocks ) * K
-				  + (long) (inode - 1) * INODE_SIZE;
+		  s->address = (off_t) (s->first_data - s->inode_blocks) * K
+				  + (off_t) (inode - 1) * s->inode_size;
 
 		  return( REDRAW );
 		  }
@@ -570,7 +587,7 @@ int Process( s, c )
 
 		  s->mode = WORD;
 		  s->address = ( (long) s->first_data - s->inode_blocks ) * K
-				  + (long) (inode - 1) * INODE_SIZE;
+				  + (long) (inode - 1) * s->inode_size;
 		  }
 
 		return( REDRAW );
@@ -717,7 +734,7 @@ int Process( s, c )
     case 's' :				/*  Store word		*/
 
 		{
-		unsigned word;
+		unsigned long word;
 
 		if ( s->mode != WORD )
 		  {
@@ -733,7 +750,12 @@ int Process( s, c )
 
 		if ( Get_Count( "Store word?", &word ) )
 		  {
-		  Write_Word( s, word );
+		  if ( word != (word_t) word )
+		    {
+		      Warning( "Word is more than 16 bits" );
+		      return( REDRAW );
+		    }
+		  Write_Word( s, (word_t) word );
 
 		  return( REDRAW );
 		  }
@@ -787,12 +809,14 @@ int Process( s, c )
 				break;
 
 		  case 'm' :	{
+				/* Assume user knows if map mode is possible
 				char *tty = ttyname( 0 );
 
 				if ( tty == NULL  ||
 				    strcmp( tty, "/dev/tty0" ) != 0 )
 				  Warning( "Must be at console" );
 				else
+				*/
 				  s->mode = MAP;
 
 				break;
@@ -881,7 +905,7 @@ int Process( s, c )
 
 		  s->mode = WORD;
 		  s->address = ( (long) s->first_data - s->inode_blocks ) * K
-				  + (long) (inode - 1) * INODE_SIZE;
+				  + (long) (inode - 1) * s->inode_size;
 		  }
 
 		return( REDRAW );
@@ -892,7 +916,6 @@ int Process( s, c )
 
 		{
 		int  rc;
-		off_t size;
 
 		if ( s->mode != WORD )
 		  {
@@ -912,7 +935,7 @@ int Process( s, c )
 		Erase_Prompt();
 		Draw_Prompt( "Recovering..." );
 
-		if ( (size = Recover_Blocks( s )) == -1L )
+		if ( Recover_Blocks( s ) == -1L )
 		  unlink( s->file_name );
 
 		/*  Force closure of output file.  */
@@ -1094,7 +1117,7 @@ int Get_Filename( s )
 
 int Get_Count( units, result )
   char *units;
-  int  *result;
+  unsigned long *result;
 
   {
   char *number;
@@ -1106,72 +1129,9 @@ int Get_Count( units, result )
   if ( number == NULL  ||  number[0] == '\0' )
     return( 0 );
 
-  return( Str_Int( number, result ) );
-  }
-
-
-
-
-
-
-/****************************************************************/
-/*								*/
-/*	Str_Int( string, &result )				*/
-/*								*/
-/*		Convert "string" to an int. Returns non-zero	*/
-/*		if successful. Format: [-][0][x]{0-9}*		*/
-/*								*/
-/****************************************************************/
-
-
-int Str_Int( str, result )
-  char *str;
-  int  *result;
-
-  {
-  int negative = 0;
-  int base = 10;
-  int total = 0;
-  char c;
-
-  while ( *str == ' ' )
-    ++str;
-
-  if ( *str == '-' )
-    {
-    ++str;
-    negative = 1;
-    }
-
-  if ( *str == '0' )
-    {
-    ++str;
-    base = 8;
-    }
-
-  if ( *str == 'x'  ||  *str == 'X' )
-    {
-    ++str;
-    base = 16;
-    }
-
-  if ( *str == '\0'  &&  base != 8 )
-    return( 0 );
-
-  while ( (c = *str++) != '\0' )
-    {
-    if ( c >= '0'  &&  c <= '7' )
-	total = total * base + c - '0';
-    else if ( isdigit( c )  &&  base >= 10 )
-        total = total * base + c - '0';
-    else if ( isxdigit( c )  &&  base == 16 )
-        total = total * base + c - 'A'  + 10;
-    else
-	return( 0 );
-    }
-
-  *result = negative ? -total : total;
-  return( 1 );
+  errno = 0;
+  *result = strtoul( number, (char **) NULL, 0 );
+  return( errno == 0 );
   }
 
 
@@ -1189,12 +1149,12 @@ int Str_Int( str, result )
 
 
 int In_Use( bit, map )
-  int bit;
-  unsigned *map;
+  bit_t bit;
+  bitchunk_t *map;
 
   {
-  return( map[(unsigned) bit / (CHAR_BIT * sizeof(int))] &
-	  (1 << ((unsigned) bit % (CHAR_BIT * sizeof(int)))) );
+  return( map[ (int) (bit / (CHAR_BIT * sizeof (bitchunk_t))) ] &
+	  (1 << ((unsigned) bit % (CHAR_BIT * sizeof (bitchunk_t)))) );
   }
 
 
@@ -1224,7 +1184,11 @@ ino_t Find_Inode( s, filename )
   if ( fstat( s->device_d, &device_stat ) == -1 )
     Error( "Can not fstat(2) file system device" );
 
+#ifdef S_IFLNK
+  if ( lstat( filename, &file_stat ) == -1 )
+#else
   if ( stat( filename, &file_stat ) == -1 )
+#endif
     {
     Warning( "Can not find file %s", filename );
     return( 0 );
@@ -1321,8 +1285,8 @@ void Exec_Shell()
 /****************************************************************/
 
 
-void Sigint()
-
+void Sigint(n)
+int n;
   {
   Reset_Term();		/*  Restore terminal characteristics	*/
 
@@ -1338,23 +1302,31 @@ void Sigint()
 
 /****************************************************************/
 /*								*/
-/*	Error( text, arg1, arg2 )				*/
+/*	Error( text, ... )					*/
 /*								*/
 /*		Print an error message on stderr.		*/
 /*								*/
 /****************************************************************/
 
 
-void Error( text, arg1, arg2 )
+#if __STDC__
+void Error( const char *text, ... )
+#else
+void Error( text )
   char *text;
-  char *arg1;
-  char *arg2;
+#endif  
 
   {
+  va_list argp;
+
   Reset_Term();
 
   fprintf( stderr, "\nde: " );
-  fprintf( stderr, text, arg1, arg2 );
+  va_start( argp, text );
+  vfprintf( stderr, text, argp );
+  va_end( argp );
+  if ( errno != 0 )
+    fprintf( stderr, ": %s", strerror( errno ) );
   fprintf( stderr, "\n" );
 
   exit( 1 );

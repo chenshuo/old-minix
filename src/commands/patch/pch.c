@@ -46,7 +46,11 @@ static LINENUM p_end = -1;		/* last line in hunk */
 static LINENUM p_max;			/* max allowed value of p_end */
 static LINENUM p_context = 3;		/* # of context lines */
 static LINENUM p_input_line = 0;	/* current line # from patch file */
+#ifdef SMALL
+static long *p_line = Null(long *);	/* the text of the hunk */
+#else
 static char **p_line = Null(char**);	/* the text of the hunk */
+#endif
 static short *p_len = Null(short*);	/* length of each line */
 static char *p_char = Nullch;		/* +, -, and ! */
 static int hunkmax = INITHUNKMAX;	/* size of above arrays to begin with */
@@ -103,8 +107,16 @@ void
 set_hunkmax()
 {
 #ifndef lint
+#ifdef SMALL
+    if (p_line == Null(long*))
+#else
     if (p_line == Null(char**))
+#endif
+#ifdef SMALL
+	p_line = (long *) malloc((MEM)hunkmax * sizeof(long));
+#else
 	p_line = (char**) malloc((MEM)hunkmax * sizeof(char *));
+#endif
     if (p_len == Null(short*))
 	p_len  = (short*) malloc((MEM)hunkmax * sizeof(short));
 #endif
@@ -123,13 +135,25 @@ grow_hunkmax()
      * since p_len can move into p_line's old space, and p_char can move into
      * p_len's old space.  Not on PDP-11's however.  But it doesn't matter.
      */
+#ifdef SMALL
+    assert(p_line != Null(long*) && p_len != Null(short*) && p_char != Nullch);
+#else
     assert(p_line != Null(char**) && p_len != Null(short*) && p_char != Nullch);
+#endif
 #ifndef lint
+#ifdef SMALL
+    p_line = (long*) realloc((char*)p_line, (MEM)hunkmax * sizeof(long));
+#else
     p_line = (char**) realloc((char*)p_line, (MEM)hunkmax * sizeof(char *));
+#endif
     p_len  = (short*) realloc((char*)p_len,  (MEM)hunkmax * sizeof(short));
     p_char = (char*)  realloc((char*)p_char, (MEM)hunkmax * sizeof(char));
 #endif
+#ifdef SMALL
+    if (p_line != Null(long*) && p_len != Null(short*) && p_char != Nullch)
+#else
     if (p_line != Null(char**) && p_len != Null(short*) && p_char != Nullch)
+#endif
 	return;
     if (!using_plan_a)
 	fatal1("patch: out of memory (grow_hunkmax)\n");
@@ -419,12 +443,21 @@ another_hunk()
     while (p_end >= 0) {
 	if (p_end == p_efake)
 	    p_end = p_bfake;		/* don't free twice */
+#ifndef SMALL
 	else
 	    free(p_line[p_end]);
+#endif
 	p_end--;
     }
     assert(p_end == -1);
     p_efake = -1;
+#ifdef SMALL
+    if (sfp != Nullfp)
+	Fclose(sfp);
+    sfp = fopen(TMPSTRNAME, "w");
+    if (sfp == Nullfp)
+	fatal2("patch: can't create %s.\n", TMPSTRNAME);
+#endif
 
     p_max = hunkmax;			/* gets reduced when --- found */
     if (diff_type == CONTEXT_DIFF || diff_type == NEW_CONTEXT_DIFF) {
@@ -473,7 +506,12 @@ another_hunk()
 #ifdef zilog
 	    p_line[(short)p_end] = Nullch;
 #else
+#ifdef SMALL
+	    p_line[p_end] = -1L;
+	    p_len[p_end] = 0;
+#else
 	    p_line[p_end] = Nullch;
+#endif
 #endif
 	    switch (*buf) {
 	    case '*':
@@ -494,11 +532,15 @@ another_hunk()
 		    fatal3("Unexpected *** at line %ld: %s", p_input_line, buf);
 		}
 		context = 0;
+#ifdef SMALL
+		p_line[p_end] = saveStr(buf, p_len+p_end);
+#else
 		p_line[p_end] = savestr(buf);
 		if (out_of_mem) {
 		    p_end--;
 		    return FALSE;
 		}
+#endif
 		for (s=buf; *s && !isdigit(*s); s++) ;
 		if (!*s)
 		    goto malformed;
@@ -559,11 +601,15 @@ another_hunk()
 		    repl_beginning = p_end;
 		    repl_backtrack_position = ftell(pfp);
 		    repl_patch_line = p_input_line;
+#ifdef SMALL
+		    p_line[p_end] = saveStr(buf, p_len+p_end);
+#else
 		    p_line[p_end] = savestr(buf);
 		    if (out_of_mem) {
 			p_end--;
 			return FALSE;
 		    }
+#endif
 		    p_char[p_end] = '=';
 		    for (s=buf; *s && !isdigit(*s); s++) ;
 		    if (!*s)
@@ -608,11 +654,15 @@ another_hunk()
 			p_context = context;
 		    context = -1000;
 		}
+#ifdef SMALL
+		p_line[p_end] = saveStr(buf+2, p_len+p_end);
+#else
 		p_line[p_end] = savestr(buf+2);
 		if (out_of_mem) {
 		    p_end--;
 		    return FALSE;
 		}
+#endif
 		break;
 	    case '\t': case '\n':	/* assume the 2 spaces got eaten */
 		if (repl_beginning && repl_could_be_missing &&
@@ -620,11 +670,15 @@ another_hunk()
 		    repl_missing = TRUE;
 		    goto hunk_done;
 		}
+#ifdef SMALL
+		p_line[p_end] = saveStr(buf, p_len+p_end);
+#else
 		p_line[p_end] = savestr(buf);
 		if (out_of_mem) {
 		    p_end--;
 		    return FALSE;
 		}
+#endif
 		if (p_end != p_ptrn_lines + 1) {
 		    ptrn_spaces_eaten |= (repl_beginning != 0);
 		    context++;
@@ -642,11 +696,15 @@ another_hunk()
 		context++;
 		if (!repl_beginning)
 		    ptrn_copiable++;
+#ifdef SMALL
+		p_line[p_end] = saveStr(buf+2, p_len+p_end);
+#else
 		p_line[p_end] = savestr(buf+2);
 		if (out_of_mem) {
 		    p_end--;
 		    return FALSE;
 		}
+#endif
 		break;
 	    default:
 		if (repl_beginning && repl_could_be_missing) {
@@ -657,10 +715,12 @@ another_hunk()
 	    }
 	    /* set up p_len for strncmp() so we don't have to */
 	    /* assume null termination */
+#ifndef SMALL
 	    if (p_line[p_end])
 		p_len[p_end] = strlen(p_line[p_end]);
 	    else
 		p_len[p_end] = 0;
+#endif
 	}
 	
     hunk_done:
@@ -671,8 +731,10 @@ another_hunk()
 	    
 	    /* reset state back to just after --- */
 	    p_input_line = repl_patch_line;
+#ifndef SMALL
 	    for (p_end--; p_end > repl_beginning; p_end--)
 		free(p_line[p_end]);
+#endif
 	    Fseek(pfp, repl_backtrack_position, 0);
 	    
 	    /* redundant 'new' context lines were omitted - set */
@@ -761,11 +823,15 @@ another_hunk()
 	p_newfirst = min;
 	p_repl_lines = max - min + 1;
 	Sprintf(buf, "*** %ld,%ld\n", p_first, p_first + p_ptrn_lines - 1);
+#ifdef SMALL
+	p_line[0] = saveStr(buf, p_len);
+#else
 	p_line[0] = savestr(buf);
 	if (out_of_mem) {
 	    p_end = -1;
 	    return FALSE;
 	}
+#endif
 	p_char[0] = '*';
 	for (i=1; i<=p_ptrn_lines; i++) {
 	    ret = pgets(buf, sizeof buf, pfp);
@@ -775,12 +841,18 @@ another_hunk()
 		  p_input_line);
 	    if (*buf != '<')
 		fatal2("< expected at line %ld of patch.\n", p_input_line);
+#ifdef SMALL
+	    p_line[i] = saveStr(buf+2, p_len+i);
+#else
 	    p_line[i] = savestr(buf+2);
 	    if (out_of_mem) {
 		p_end = i-1;
 		return FALSE;
 	    }
+#endif
+#ifndef SMALL
 	    p_len[i] = strlen(p_line[i]);
+#endif
 	    p_char[i] = '-';
 	}
 	if (hunk_type == 'c') {
@@ -793,11 +865,15 @@ another_hunk()
 		fatal2("--- expected at line %ld of patch.\n", p_input_line);
 	}
 	Sprintf(buf, "--- %ld,%ld\n", min, max);
+#ifdef SMALL
+	p_line[i] = saveStr(buf, p_len+i);
+#else
 	p_line[i] = savestr(buf);
 	if (out_of_mem) {
 	    p_end = i-1;
 	    return FALSE;
 	}
+#endif
 	p_char[i] = '=';
 	for (i++; i<=p_end; i++) {
 	    ret = pgets(buf, sizeof buf, pfp);
@@ -807,18 +883,28 @@ another_hunk()
 		    p_input_line);
 	    if (*buf != '>')
 		fatal2("> expected at line %ld of patch.\n", p_input_line);
+#ifdef SMALL
+	    p_line[i] = saveStr(buf+2, p_len+i);
+#else
 	    p_line[i] = savestr(buf+2);
 	    if (out_of_mem) {
 		p_end = i-1;
 		return FALSE;
 	    }
+#endif
+#ifndef SMALL
 	    p_len[i] = strlen(p_line[i]);
+#endif
 	    p_char[i] = '+';
 	}
     }
     if (reverse)			/* backwards patch? */
 	if (!pch_swap())
 	    say1("Not enough memory to swap next hunk!\n");
+#ifdef SMALL
+    Fclose(sfp);
+    sfp = fopen(TMPSTRNAME, "r");
+#endif
 #ifdef DEBUGGING
     if (debug & 2) {
 	int i;
@@ -829,7 +915,11 @@ another_hunk()
 		special = '^';
 	    else
 		special = ' ';
+#ifdef SMALL
+	    fprintf(stderr, "%3d %c %c %s", i, p_char[i], special, pfetch(i));
+#else
 	    fprintf(stderr, "%3d %c %c %s", i, p_char[i], special, p_line[i]);
+#endif
 	    Fflush(stderr);
 	}
     }
@@ -839,6 +929,10 @@ another_hunk()
     return TRUE;
 
 malformed:
+#ifdef SMALL
+    Fclose(sfp);
+    sfp = Nullfp;
+#endif
     fatal3("Malformed patch at line %ld: %s", p_input_line, buf);
 		/* about as informative as "Syntax error" in C */
     return FALSE;	/* for lint */
@@ -875,7 +969,11 @@ FILE *fp;
 bool
 pch_swap()
 {
+#ifdef SMALL
+    long *tp_line;		/* the text of the hunk */
+#else
     char **tp_line;		/* the text of the hunk */
+#endif
     short *tp_len;		/* length of each line */
     char *tp_char;		/* +, -, and ! */
     Reg1 LINENUM i;
@@ -892,13 +990,25 @@ pch_swap()
     tp_line = p_line;
     tp_len = p_len;
     tp_char = p_char;
+#ifdef SMALL
+    p_line = Null(long*);	/* force set_hunkmax to allocate again */
+#else
     p_line = Null(char**);	/* force set_hunkmax to allocate again */
+#endif
     p_len = Null(short*);
     p_char = Nullch;
     set_hunkmax();
+#ifdef SMALL
+    if (p_line == Null(long*) || p_len == Null(short*) || p_char == Nullch) {
+#else
     if (p_line == Null(char**) || p_len == Null(short*) || p_char == Nullch) {
+#endif
 #ifndef lint
+#ifdef SMALL
+	if (p_line == Null(long*))
+#else
 	if (p_line == Null(char**))
+#endif
 	    free((char*)p_line);
 	p_line = tp_line;
 	if (p_len == Null(short*))
@@ -942,17 +1052,25 @@ pch_swap()
     }
     assert(p_char[0] == '=');
     p_char[0] = '*';
+#ifdef SMALL
+    strEdit(p_line[0], '*', '-');
+#else
     for (s=p_line[0]; *s; s++)
 	if (*s == '-')
 	    *s = '*';
+#endif
 
     /* now turn the old into the new */
 
     assert(tp_char[0] == '*');
     tp_char[0] = '=';
+#ifdef SMALL
+    strEdit(tp_line[0], '-', '*');
+#else
     for (s=tp_line[0]; *s; s++)
 	if (*s == '*')
 	    *s = '-';
+#endif
     for (i=0; n <= p_end; i++,n++) {
 	p_line[n] = tp_line[i];
 	p_char[n] = tp_char[i];
@@ -965,7 +1083,11 @@ pch_swap()
     p_ptrn_lines = p_repl_lines;
     p_repl_lines = i;
 #ifndef lint
+#ifdef SMALL
+    if (tp_line == Null(long*))
+#else
     if (tp_line == Null(char**))
+#endif
 	free((char*)tp_line);
     if (tp_len == Null(short*))
 	free((char*)tp_len);
@@ -1043,12 +1165,69 @@ LINENUM line;
 
 /* Return a pointer to a particular patch line. */
 
+#ifdef SMALL
+long
+saveStr(str, plen)
+char *str;
+short *plen;
+{
+    long pos, ftell();
+    int len;
+
+    pos = ftell(sfp);
+    len = strlen(str);
+    fwrite(str, sizeof(char), len+1, sfp);
+    *plen = len;
+    return pos;
+}
+
+char *
+pfetch(line)
+LINENUM line;
+{
+    static char *s, strbuf[BUFSIZ];
+    int i, c;
+
+    if (p_line[line] == -1L)
+	return Nullch;
+    else {
+	Fseek(sfp, p_line[line], 0);
+	for (i = 0, s = strbuf;
+		i < BUFSIZ && (c = fgetc(sfp)) != EOF && c; i++)
+	    *s++ = c;
+	if (i == BUFSIZ)
+		fatal2("too long line (%.40s ..\n", strbuf);
+    }
+    *s = '\0';
+    return strbuf;
+}
+
+void
+strEdit(pos, to, from)
+long pos;
+int to, from;
+{
+    static char *s, strbuf[BUFSIZ];
+    int i, c;
+
+    if (pos != -1L) {
+	for (i = 0, s = strbuf;
+		i < BUFSIZ && (c = fgetc(sfp)) != EOF && c; i++)
+	    *s++ = c;
+	for (s = strbuf; *s; s++)
+	    if (*s == from)
+		*s = to;
+	fwrite(strbuf, sizeof(char), i+1, sfp);
+    }
+}
+#else
 char *
 pfetch(line)
 LINENUM line;
 {
     return p_line[line];
 }
+#endif
 
 /* Return where in the patch file this hunk began, for error messages. */
 
@@ -1067,7 +1246,6 @@ do_ed_script()
     Reg2 long beginning_of_this_line;
     Reg3 bool this_line_is_command = FALSE;
     Reg4 FILE *pipefp;
-    FILE *popen();
 
     if (!skip_rest_of_patch) {
 	Unlink(TMPOUTNAME);

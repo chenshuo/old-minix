@@ -16,11 +16,12 @@
 #include "mm.h"
 #include <minix/callnr.h>
 #include <minix/com.h>
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
-FORWARD void get_work();
-FORWARD void mm_init();
+FORWARD _PROTOTYPE( void get_work, (void)				);
+FORWARD _PROTOTYPE( void mm_init, (void)				);
 
 /*===========================================================================*
  *				main					     *
@@ -62,7 +63,7 @@ PUBLIC void main()
  *				get_work				     *
  *===========================================================================*/
 PRIVATE void get_work()
-{  
+{
 /* Wait for the next message and extract useful information from it. */
 
   if (receive(ANY, &mm_in) != OK) panic("MM receive error", NO_NUM);
@@ -84,9 +85,14 @@ char *respt;			/* result if pointer */
 
   register struct mproc *proc_ptr;
 
-  /* To make MM robust, check to see if destination is still alive. */
   proc_ptr = &mproc[proc_nr];
-  if ( (proc_ptr->mp_flags&IN_USE) == 0 || (proc_ptr->mp_flags&HANGING)) return;
+  /* 
+   * To make MM robust, check to see if destination is still alive.  This
+   * validy check must be skipped if the caller is a task.
+   */
+  if ((who >=0) && ((proc_ptr->mp_flags&IN_USE) == 0 || 
+	(proc_ptr->mp_flags&HANGING))) return;
+
   reply_type = result;
   reply_i1 = res2;
   reply_p1 = respt;
@@ -101,14 +107,29 @@ PRIVATE void mm_init()
 {
 /* Initialize the memory manager. */
 
+  static char core_sigs[] = {
+	SIGQUIT, SIGILL, SIGTRAP, SIGABRT,
+	SIGEMT, SIGFPE, SIGUSR1, SIGSEGV,
+	SIGUSR2, 0 };
+  register struct mproc *rmp;
+  register char *sig_ptr;
+
   mem_init();			/* initialize tables to all physical mem */
 
+  /* Build the set of signals which cause core dumps.
+   * (core_bits is now misnamed.  DEBUG.)
+   */
+  sigemptyset(&core_bits);
+  for (sig_ptr = core_sigs; *sig_ptr != 0; sig_ptr++)
+	sigaddset(&core_bits, *sig_ptr);
+
   /* Initialize MM's tables. */
-  mproc[MM_PROC_NR].mp_flags |= IN_USE;
-  mproc[FS_PROC_NR].mp_flags |= IN_USE;
+  for (rmp = &mproc[0]; rmp < &mproc[LOW_USER]; rmp++) rmp->mp_flags |= IN_USE;
   mproc[INIT_PROC_NR].mp_flags |= IN_USE;
   mproc[INIT_PROC_NR].mp_pid = INIT_PID;
-  procs_in_use = 3;
+  sigemptyset(&mproc[INIT_PROC_NR].mp_ignore);
+  sigemptyset(&mproc[INIT_PROC_NR].mp_catch);
+  procs_in_use = LOW_USER + 1;
 }
 
 
@@ -137,7 +158,7 @@ PUBLIC int do_brk2()
   /* Remove the memory used by MINIX from the memory map. */
   init_text_clicks = mm_in.m1_i1;	/* size of INIT in clicks */
   init_data_clicks = mm_in.m1_i2;	/* size of INIT in clicks */
-  init_org = (phys_clicks) mm_in.m1_p1;	/* addr where INIT begins in memory */
+  init_org = (phys_clicks) ((int) mm_in.m1_p1);	/* INIT's mem addr */
   init_clicks = init_text_clicks + init_data_clicks;
   minix_clicks = init_org + init_clicks;	/* size of system in clicks */
   ram_base = alloc_mem(minix_clicks);	/* remove MINIX from map */
@@ -168,17 +189,15 @@ got_base:
   mem2 = click_to_round_k(minix_clicks);
 #endif
   mem3 = click_to_round_k(ram_clicks);
-#if (CHIP == INTEL)
-  printf("%c[H%c[J",033, 033);	/* go to top of screen and clear screen */
+#if (MACHINE == IBM_PC)		/* why not for no-one or everyone? */
+  printf("\033[H\033[J");	/* go to top of screen and clear screen */
 #endif
-  printf("Memory size = %4dK     ", mem1);
-  printf("MINIX = %3dK     ", mem2);
-  printf("RAM disk = %4dK     ", mem3);
-  printf("Available = %dK\n\n", mem1 - mem2 - mem3);
-  if (mem1 - mem2 - mem3 < 32) {
-	printf("\nNot enough memory to run MINIX\n\n", NO_NUM);
-	sys_abort();
-  }
+  printf("Memory size =%5dK   ", mem1);
+  printf("MINIX =%4dK   ", mem2);
+  printf("RAM disk =%5dK   ", mem3);
+  printf("Available =%5dK\n\n", mem1 - mem2 - mem3);
+  if (mem1 - mem2 - mem3 < 32)
+	panic("not enough memory to run MINIX", NO_NUM);
 
   /* Initialize INIT's table entry. */
   rmp = &mproc[INIT_PROC_NR];
@@ -188,9 +207,15 @@ got_base:
   rmp->mp_seg[D].mem_len  = init_data_clicks;
   rmp->mp_seg[S].mem_phys = init_org + init_clicks;
 #if (CHIP == M68000)
+#if (SHADOWING == 0)
+  rmp->mp_seg[T].mem_vir  = 0;
+  rmp->mp_seg[D].mem_vir  = init_text_clicks;
+  rmp->mp_seg[S].mem_vir  = init_clicks;
+#else
   rmp->mp_seg[T].mem_vir  = rmp->mp_seg[T].mem_phys;
   rmp->mp_seg[D].mem_vir  = rmp->mp_seg[D].mem_phys;
   rmp->mp_seg[S].mem_vir  = rmp->mp_seg[S].mem_phys;
+#endif
 #else
   rmp->mp_seg[S].mem_vir  = init_clicks;
 #endif
@@ -216,7 +241,7 @@ int extflag;			/* nonzero for extended memory */
   mm_out.m_type = SYS_MEM;
   mm_out.DEVICE = extflag;
   if (sendrec(SYSTASK, &mm_out) != OK || mm_out.m_type != OK)
-	panic("Kernel didn't respond to get_mem", NO_NUM);
+	panic("kernel didn't respond to get_mem", NO_NUM);
   *pbase = (phys_clicks) mm_out.POSITION;
   return((phys_clicks) mm_out.COUNT);
 }

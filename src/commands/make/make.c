@@ -18,6 +18,7 @@
  *   7 09.09.89 tos support added                                    PHH,RAL
  *   8 17.09.89 make1 arg. fixed, N_EXEC introduced                  RAL
  * ------------ Version 2.0 released ------------------------------- RAL
+ *     18.05.90 fixed -n bug with silent rules.  (Now echos them.)   PAN
  *
  *************************************************************************/
 
@@ -64,6 +65,22 @@ char *shell;
 }
 
 
+#ifdef unix
+/*
+ *    Make a file look very outdated after an error trying to make it.
+ *    This keeps hard links intact.  (kjb)
+ */
+int makeold(name) char *name;
+{
+  struct utimbuf a;
+
+  a.actime = a.modtime = 0;	/* The epoch */
+
+  return utime(name, &a);
+}
+#endif
+
+
 /*
  *	Do commands to make a target
  */
@@ -107,20 +124,21 @@ struct line *lp;
 			ssilent = TRUE;
 		else		   /*  Specific ignore  */
 			signore = TRUE;
+		if (!domake) putchar(*q);  /* Show all characters. */
 		q++;		   /*  Not part of the command  */
 	}
 
 	for (p=q; *p; p++) {
 		if (*p == '\n' && p[1] != '\0') {
 			*p = ' ';
-			if (!ssilent)
+			if (!ssilent || !domake)
 				fputs("\\\n", stdout);
 		}
-		else if (!ssilent)
+		else if (!ssilent || !domake)
 			putchar(*p);
 	}
-	if (!ssilent)
-		printf("\n");
+	if (!ssilent || !domake)
+		putchar('\n');
 
 	if (domake || expmake) {	/*  Get the shell to execute it  */
 		if ((estat = dosh(q, shell)) != 0) {
@@ -131,9 +149,14 @@ struct line *lp;
 		    else {
 			fprintf(stderr,"%s: Error code %d\n", myname, estat);
 			if (!(np->n_flag & N_PREC))
+#ifdef unix
+			    if (makeold(np->n_name) == 0)
+				fprintf(stderr,"%s: made '%s' look old.\n", myname, np->n_name);
+#else
 			    if (unlink(np->n_name) == 0)
 				fprintf(stderr,"%s: '%s' removed.\n", myname, np->n_name);
-			if (!conterr) exit(estat);
+#endif
+			if (!conterr) exit(estat != 0);
 			np->n_flag |= N_ERROR;
 			return;
 		    }
@@ -274,7 +297,7 @@ unsigned int date, time;
           hour * 60L * 60L   +   min * 60   +    sec;
 	return (longtime);
 }
-#endif tos
+#endif /* tos */
 
 #ifdef os9
 /*
@@ -658,7 +681,7 @@ char        **pinputname;
   suff = suffix(q);
   while ( *q && (q < suff || !suff)) *p++ = *q++;
   *p = '\0';
-  if ((*pbasename = malloc(strlen(str2)+1)) == (char *)0 )
+  if ((*pbasename = (char *) malloc(strlen(str2)+1)) == (char *)0 )
      fatal("No memory for basename",(char *)0,0);
   strcpy(*pbasename,str2);
   baselen = strlen(str2);
@@ -708,6 +731,7 @@ char        *comment;
   }
   fputs(comment,stdout);
   putchar((int)'\n');
+  fflush(stdout);
   return;
 }
 

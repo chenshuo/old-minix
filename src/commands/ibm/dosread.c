@@ -11,9 +11,13 @@
  *	  a: Set ASCII bit.
  */
 
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define DRIVE		"/dev/dosX"
@@ -22,7 +26,7 @@
 #define MAX_CLUSTER_SIZE	4096
 #define MAX_ROOT_ENTRIES	512
 #define FAT_START		512L	/* After bootsector */
-#define ROOTADDR		(FAT_START + 2L * (long) fat_size)
+#define ROOTADDR		(FAT_START + 2L * fat_size)
 #define clus_add(cl_no)		((long) (((long) cl_no - 2L) \
 				* (long) cluster_size \
 				+ data_start \
@@ -54,7 +58,7 @@ typedef struct dir_entry DIRECTORY;
 #define BAD		0xFF0
 #define BAD16		0xFFF0
 
-typedef char BOOL;
+typedef int BOOL;
 
 #define TRUE	1
 #define FALSE	0
@@ -64,9 +68,6 @@ typedef char BOOL;
 
 #define READ			0
 #define WRITE			1
-#define disk_read(s, a, b)	disk_io(READ, s, a, b)
-#define disk_write(s, a, b)	disk_io(WRITE, s, a, b)
-
 #define get_fat(f, b)		buf_read(FAT_START + f, b, 1)
 
 #define put_fat(f, b)		{ disk_io(WRITE, FAT_START + f, b, 1); \
@@ -96,19 +97,50 @@ short disk;
 unsigned char fat_info;
 DIRECTORY root[MAX_ROOT_ENTRIES];
 DIRECTORY save_entry;
-char null[MAX_CLUSTER_SIZE], device[] = DRIVE, path[128];
+char null[MAX_CLUSTER_SIZE], *device = DRIVE, path[128];
 long data_start, mark;
-unsigned short total_clusters, cluster_size, fat_size, root_entries, sub_entries;
+unsigned short total_clusters, cluster_size, root_entries, sub_entries;
+unsigned long fat_size;
 
 BOOL Rflag, Lflag, Aflag, dos_read, dos_write, dos_dir, fat_16 = 0;
 
 char disk_written = 1, buf_buf[1025];
 long buf_addr = 0;
 
-DIRECTORY *directory(), *read_cluster();
-unsigned short free_cluster(), next_cluster();
-char *make_name(), *num_out(), *slash(), *brk();
-long time();
+/* Prototypes. */
+void print_string();		/* HACK.  Should be varargs */
+_PROTOTYPE(int leave, (int nr) );
+_PROTOTYPE(int usage, (char *prog_name) );
+_PROTOTYPE(unsigned c2u2, (unsigned char *ucarray) );
+_PROTOTYPE(unsigned long c4u4, (unsigned char *ucarray) );
+_PROTOTYPE(int determine, (void));
+_PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(DIRECTORY *directory, (DIRECTORY *dir, int entries, BOOL function, char *pathname) );
+_PROTOTYPE(int extract, (DIRECTORY *entry) );
+_PROTOTYPE(int print, (int fd, char *buffer, int bytes) );
+_PROTOTYPE(int make_file, (DIRECTORY *dir_ptr, int entries, char *name) );
+_PROTOTYPE(int fill_date, (DIRECTORY *entry) );
+_PROTOTYPE(char *make_name, (DIRECTORY *dir_ptr, int dir_fl) );
+_PROTOTYPE(int fill, (char *buffer) );
+_PROTOTYPE(int get_char, (void));
+_PROTOTYPE(int xmodes, (int mode) );
+_PROTOTYPE(int show, (DIRECTORY *dir_ptr, char *name) );
+_PROTOTYPE(int free_blocks, (void));
+_PROTOTYPE(char *num_out, (long number) );
+/* _PROTOTYPE(void print_string, (BOOL err_fl, char *fmt, int args) ); */
+_PROTOTYPE(DIRECTORY *read_cluster, (unsigned int cluster) );
+_PROTOTYPE(unsigned short free_cluster, (BOOL leave_fl) );
+_PROTOTYPE(int link_fat, (unsigned int cl_1, unsigned int cl_2) );
+_PROTOTYPE(unsigned short next_cluster, (unsigned int cl_no) );
+_PROTOTYPE(char *slash, (char *str) );
+_PROTOTYPE(void add_path, (char *file, BOOL slash_fl) );
+_PROTOTYPE(int b_copy, (char *src, char *dest, int bytes) );
+_PROTOTYPE(int disk_io, (BOOL op, unsigned long seek, void *address, unsigned bytes) );
+_PROTOTYPE(int bad, (void));
+_PROTOTYPE(int buf_read, (long seek, char *b, int c) );
+
+_PROTOTYPE( void perror, (const char *_s)				);
+
 
 leave(nr)
 short nr;
@@ -121,7 +153,7 @@ usage(prog_name)
 register char *prog_name;
 {
   print_string(TRUE, "Usage: %s [%s\n", prog_name,
-	     dos_dir ? "-lr] drive [dir]" : "-a] drive file");
+	     (int) (dos_dir ? "-lr] drive [dir]" : "-a] drive file"));
   exit(1);
 }
 
@@ -129,6 +161,14 @@ unsigned c2u2(ucarray)
 unsigned char *ucarray;
 {
   return ucarray[0] + (ucarray[1] << 8);	/* parens vital */
+}
+
+unsigned long c4u4(ucarray)
+unsigned char *ucarray;
+{
+  return ucarray[0] + ((unsigned long) ucarray[1] << 8) +
+		      ((unsigned long) ucarray[2] << 16) +
+		      ((unsigned long) ucarray[3] << 24);
 }
 
 determine()
@@ -148,33 +188,38 @@ determine()
 	unsigned char csecptrack[2];
 	unsigned char cheads[2];
 	unsigned char chiddensec[2];
-	/* Char    fill[482]; */
+	unsigned char dos4hidd2[2];
+	unsigned char dos4totsec[4];
+	/* Char    fill[476]; */
   } boot;
   unsigned short boot_magic;	/* last of boot block */
-  unsigned bytepers, reservsec, dirents, totsec;
+  unsigned bytepers, reservsec, dirents;
   unsigned secpfat, secptrack, heads, hiddensec;
+  unsigned long totsec;
 
   int errcount = 0;
 
   /* Read Bios-Parameterblock */
-  disk_read(0L, &boot, sizeof boot);
-  disk_read(0x1FEL, &boot_magic, sizeof boot_magic);
+  disk_io(READ, 0L, &boot, sizeof boot);
+  disk_io(READ, 0x1FEL, &boot_magic, sizeof boot_magic);
 
   /* Convert some arrays */
   bytepers = c2u2(boot.cbytepers);
   reservsec = c2u2(boot.creservsec);
   dirents = c2u2(boot.cdirents);
   totsec = c2u2(boot.ctotsec);
+  if (totsec == 0) totsec = c4u4(boot.dos4totsec);
   secpfat = c2u2(boot.csecpfat);
   secptrack = c2u2(boot.csecptrack);
   heads = c2u2(boot.cheads);
   hiddensec = c2u2(boot.chiddensec);
 
   /* Calculate everything. */
-  total_clusters = totsec / (boot.secpclus == 0 ? 1 : boot.secpclus);
+  total_clusters = (unsigned short)
+	(totsec / (boot.secpclus == 0 ? 1 : boot.secpclus));
   cluster_size = bytepers * boot.secpclus;
-  fat_size = secpfat * bytepers;
-  data_start = (long) bytepers + (long) boot.fats * (long) fat_size
+  fat_size = (unsigned long) secpfat * (unsigned long) bytepers;
+  data_start = (long) bytepers + (long) boot.fats * fat_size
 	+ (long) dirents *32L;
   root_entries = dirents;
   sub_entries = boot.secpclus * bytepers / 32;
@@ -182,7 +227,7 @@ determine()
 
   /* Safety checking */
   if (boot_magic != 0xAA55) {
-	print_string(TRUE, "magic != 0xAA55\n");
+	print_string(TRUE, "magic != 0xAA55\n", 0);
 	++errcount;
   }
 
@@ -195,27 +240,27 @@ determine()
       secptrack != 8 &&
 #endif
       secptrack != 9) {
-	print_string(TRUE, "sectors per track not supported\n");
+	print_string(TRUE, "sectors per track not supported\n", 0);
 	++errcount;
   }
   if (boot.secpclus == 0) {
-	print_string(TRUE, "sectors per cluster == 0\n");
+	print_string(TRUE, "sectors per cluster == 0\n", 0);
 	++errcount;
   }
   if (boot.fats != 2 && dos_write) {
-	print_string(TRUE, "fats != 2\n");
+	print_string(TRUE, "fats != 2\n", 0);
 	++errcount;
   }
   if (reservsec != 1) {
-	print_string(TRUE, "reserved != 1\n");
+	print_string(TRUE, "reserved != 1\n", 0);
 	++errcount;
   }
   if (cluster_size > MAX_CLUSTER_SIZE) {
-	print_string(TRUE, "cluster size too big\n");
+	print_string(TRUE, "cluster size too big\n", 0);
 	++errcount;
   }
   if (errcount != 0) {
-	print_string(TRUE, "Can't handle disk\n");
+	print_string(TRUE, "Can't handle disk\n", 0);
 	leave(2);
   }
 }
@@ -237,7 +282,7 @@ register char *argv[];
   else if (!strcmp(arg_ptr, "doswrite"))
 	dos_write = TRUE;
   else {
-	print_string(TRUE, "Program should be named dosread, doswrite or dosdir.\n");
+	print_string(TRUE, "Program should be named dosread, doswrite or dosdir.\n", 0);
 	exit(1);
   }
 
@@ -258,24 +303,28 @@ register char *argv[];
   }
   if (index == argc) usage(argv[0]);
 
-  if ((dev_nr = (0x5f & *argv[index++])) < 'A' || dev_nr > 'Z')
-	usage(argv[0]);
+  if (strncmp(argv[index], "/dev/", 5) == 0)
+	device = argv[index++];
+  else {
+	if ((dev_nr = toupper (*argv[index++])) < 'A' || dev_nr > 'Z')
+		usage(argv[0]);
 
-  device[DRIVE_NR] = dev_nr;
+	device[DRIVE_NR] = dev_nr;
+  }
 
   if ((disk = open(device, dos_write ? O_RDWR : O_RDONLY)) < 0) {
 	print_string(TRUE, "Cannot open %s\n", device);
 	exit(1);
   }
-  disk_read(FAT_START, &fat_info, 1);
+  disk_io(READ, FAT_START, &fat_info, 1);
   determine();
-  disk_read(FAT_START + (long) fat_size, &fat_check, sizeof(fat_check));
+  disk_io(READ, FAT_START + fat_size, &fat_check, sizeof(fat_check));
 
   if (fat_check != fat_info) {
-	print_string(TRUE, "Disk type in FAT copy differs from disk type in FAT original.\n");
+	print_string(TRUE, "Disk type in FAT copy differs from disk type in FAT original.\n", 0);
 	leave(1);
   }
-  disk_read(ROOTADDR, root, DIR_SIZE * root_entries);
+  disk_io(READ, ROOTADDR, root, DIR_SIZE * root_entries);
 
   if (dos_dir && Lflag) {
 	entry = label();
@@ -336,7 +385,7 @@ register char *argv[];
 
 DIRECTORY *directory(dir, entries, function, pathname)
 DIRECTORY *dir;
-short entries;
+int entries;
 BOOL function;
 register char *pathname;
 {
@@ -401,7 +450,7 @@ register char *pathname;
 			}
 			if (mem) {
 				if (dir_ptr) {
-					bcopy(dir_ptr, &save_entry, DIR_SIZE);
+					b_copy((char *)dir_ptr, (char *)&save_entry, DIR_SIZE);
 					dir_ptr = &save_entry;
 				}
 				(void) brk( (char *) mem);
@@ -432,13 +481,13 @@ register char *pathname;
       case ENTRY:
 	if (!mem) {
 		flush();
-		print_string(TRUE, "No entries left in root directory.\n");
+		print_string(TRUE, "No entries left in root directory.\n", 0);
 		leave(1);
 	}
 	cl_no = free_cluster(TRUE);
 	link_fat(last, cl_no);
 	link_fat(cl_no, LAST_CLUSTER);
-	disk_write(clus_add(cl_no), null, cluster_size);
+	disk_io(WRITE, clus_add(cl_no), null, cluster_size);
 
 	return new_entry(dir, entries);
       case FALSE:
@@ -460,20 +509,20 @@ register DIRECTORY *entry;
 	return;
 
   do {
-	disk_read(clus_add(cl_no), buffer, cluster_size);
+	disk_io(READ, clus_add(cl_no), buffer, cluster_size);
 	rest = (entry->d_size > (long) cluster_size) ? cluster_size : (short) entry->d_size;
 	print(STD_OUT, buffer, rest);
 	entry->d_size -= (long) rest;
 	cl_no = next_cluster(cl_no);
 	if (cl_no == (fat_16 ? BAD16 : BAD)) {
 		flush();
-		print_string(TRUE, "Reserved cluster value encountered.\n");
+		print_string(TRUE, "Reserved cluster value encountered.\n", 0);
 		leave(1);
 	}
   } while (entry->d_size && cl_no != LAST_CLUSTER);
 
   if (cl_no != LAST_CLUSTER)
-	print_string(TRUE, "Too many clusters allocated for file.\n");
+	print_string(TRUE, "Too many clusters allocated for file.\n", 0);
   else if (entry->d_size != 0)
 	print_string(TRUE, "Premature EOF: %L bytes left.\n",
 		     entry->d_size);
@@ -544,7 +593,7 @@ char *name;
   short i, r;
   long size = 0L;
 
-  bcopy("           ", &entry->d_name[0], 11);	/* clear entry */
+  b_copy("           ", (char *) &entry->d_name[0], 11);    /* clear entry */
   for (i = 0, ptr = name; i < 8 && *ptr != '.' && *ptr; i++)
 	entry->d_name[i] = *ptr++;
   while (*ptr != '.' && *ptr) ptr++;
@@ -558,10 +607,10 @@ char *name;
 
   while ((r = fill(buffer)) > 0) {
 	if ((next = free_cluster(FALSE)) > total_clusters) {
-		print_string(TRUE, "Diskette full. File truncated.\n");
+		print_string(TRUE, "Diskette full. File truncated.\n", 0);
 		break;
 	}
-	disk_write(clus_add(next), buffer, r);
+	disk_io(WRITE, clus_add(next), buffer, r);
 
 	if (entry->d_cluster == 0)
 		cl_no = entry->d_cluster = next;
@@ -577,7 +626,7 @@ char *name;
 
   entry->d_size = Aflag ? (size - 1) : size;	/* Strip added ^Z */
   fill_date(entry);
-  disk_write(mark, entry, DIR_SIZE);
+  disk_io(WRITE, mark, entry, DIR_SIZE);
 }
 
 
@@ -709,8 +758,8 @@ char *month[] = {
 	 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
 };
 
-modes(mode)
-register unsigned char mode;
+xmodes(mode)
+int mode;
 {
   print_string(FALSE, "\t%c%c%c%c%c", (mode & SUB_DIR) ? 'd' : '-',
 	     (mode & 02) ? 'h' : '-', (mode & 04) ? 's' : '-',
@@ -733,7 +782,7 @@ char *name;
 	print_string(FALSE, "%s\n", bname);
 	return;
   }
-  modes(dir_ptr->d_attribute);
+  xmodes( (int) dir_ptr->d_attribute);
   print_string(FALSE, "\t%s%s", bname, strlen(bname) < 8 ? "\t\t" : "\t");
   i = 1;
   if (is_dir(dir_ptr)) {
@@ -789,7 +838,7 @@ register long number;
 }
 
 /* VARARGS */
-print_string(err_fl, fmt, args)
+void print_string(err_fl, fmt, args)
 BOOL err_fl;
 char *fmt;
 int args;
@@ -847,13 +896,12 @@ DIRECTORY *read_cluster(cluster)
 register unsigned short cluster;
 {
   register DIRECTORY *sub_dir;
-  extern char *sbrk();
 
   if ((sub_dir = (DIRECTORY *) sbrk(cluster_size)) == (DIRECTORY *) -1) {
-	print_string(TRUE, "Cannot set break!\n");
+	print_string(TRUE, "Cannot set break!\n", 0);
 	leave(1);
   }
-  disk_read(clus_add(cluster), sub_dir, cluster_size);
+  disk_io(READ, clus_add(cluster), sub_dir, cluster_size);
 
   return sub_dir;
 }
@@ -868,7 +916,7 @@ BOOL leave_fl;
 
   if (leave_fl && cl_index > total_clusters) {
 	flush();
-	print_string(TRUE, "Diskette full. File not added.\n");
+	print_string(TRUE, "Diskette full. File not added.\n", 0);
 	leave(1);
   }
   return cl_index++;
@@ -891,13 +939,13 @@ register unsigned short cl_2;
   if (cl_1 & 0x01) {
 	pad = cl_2 >> 4;
 	put_fat((long) (fat_index + 1), &pad);
-	get_fat((long) fat_index, &pad);
+	get_fat((long) fat_index, (char *) &pad);
 	pad = (pad & 0x0F) | ((cl_2 & 0x0F) << 4);
 	put_fat((long) fat_index, &pad);
   } else {
 	pad = cl_2;
 	put_fat((long) (fat_index - 1), &pad);
-	get_fat((long) fat_index, &pad);
+	get_fat((long) fat_index, (char *) &pad);
 	pad = (pad & 0xF0) | (0xf & (cl_2 >> 8));
 	put_fat((long) fat_index, &pad);
   }
@@ -914,20 +962,20 @@ register unsigned short cl_no;
 
   if (!fat_16) {
 	fat_index = (cl_no >> 1) * 3 + 1;
-	get_fat((long) fat_index, &pad);
+	get_fat((long) fat_index, (char *) &pad);
 	if (cl_no & 0x01) {
 		pad16 = 0x0f & (pad >> 4);
-		get_fat((long) (fat_index + 1), &pad);
+		get_fat((long) (fat_index + 1), (char *) &pad);
 		cl_no = (((short) pad) << 4) | pad16;
 	} else {
 		pad16 = (0x0f & pad) << 8;
-		get_fat((long) (fat_index - 1), &pad);
+		get_fat((long) (fat_index - 1), (char *) &pad);
 		cl_no = (short) pad | pad16;
 	}
 	mask = MASK;
 	bad = BAD;
   } else {
-	get_fat16((long) (cl_no << 1), &pad16);
+	get_fat16((long) (cl_no << 1), (char *) &pad16);
 	cl_no = pad16;
   }
 
@@ -950,8 +998,8 @@ register char *str;
   return result;
 }
 
-add_path(file, slash_fl)
-register char *file;
+void add_path(file, slash_fl)
+char *file;
 BOOL slash_fl;
 {
   register char *ptr = path;
@@ -969,7 +1017,7 @@ BOOL slash_fl;
 	while (*ptr++ = *file++);
 }
 
-bcopy(src, dest, bytes)
+b_copy(src, dest, bytes)
 register char *src, *dest;
 short bytes;
 {
@@ -979,14 +1027,14 @@ short bytes;
 disk_io(op, seek, address, bytes)
 register BOOL op;
 unsigned long seek;
-DIRECTORY *address;
+void *address;
 register unsigned bytes;
 {
   unsigned int r;
 
   if (lseek(disk, seek, SEEK_SET) < 0L) {
 	flush();
-	print_string(TRUE, "Bad lseek\n");
+	print_string(TRUE, "Bad lseek\n", 0);
 	leave(1);
   }
   if (op == READ)

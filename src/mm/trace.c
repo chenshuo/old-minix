@@ -1,22 +1,26 @@
+/* This file header doesn't contain the usual boilerplate. */
+
 #include "mm.h"
+#include <sys/ptrace.h>
 #include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
-FORWARD struct mproc *findproc();
+#define NIL_MPROC	((struct mproc *) 0)
+
+FORWARD _PROTOTYPE( struct mproc *findproc, (pid_t lpid) );
 
 /*===========================================================================*
  *				findproc  				     *
  *===========================================================================*/
 PRIVATE struct mproc *findproc(lpid)
-int lpid;
+pid_t lpid;
 {
   register struct mproc *rmp;
 
-  for (rmp = &mproc[INIT_PROC_NR + 1]; rmp < &mproc[NR_PROCS]; rmp++ )
-	if (rmp->mp_flags & IN_USE && rmp->mp_pid == lpid) return rmp;
-
-  return 0;
+  for (rmp = &mproc[INIT_PROC_NR + 1]; rmp < &mproc[NR_PROCS]; rmp++)
+	if (rmp->mp_flags & IN_USE && rmp->mp_pid == lpid) return(rmp);
+  return(NIL_MPROC);
 }
 
 /*===========================================================================*
@@ -26,53 +30,52 @@ PUBLIC int do_trace()
 {
   register struct mproc *child;
 
-  if (request == 0) {  /* enable tracing by parent for this process */
+  if (request == T_OK) {	/* enable tracing by parent for this process */
 	mp->mp_flags |= TRACED;
 	mm_out.m2_l2 = 0;
-	return OK;
+	return(OK);
   }
-  if ((child = findproc(pid)) == 0 || (child->mp_flags & STOPPED) == 0) {
-	return ESRCH;
+  if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
+	return(ESRCH);
   }
-  if (request == 8) { /* exit */
+  if (request == T_EXIT) {	/* exit */
 	mm_exit(child, data);
 	mm_out.m2_l2 = 0;
-	return OK;
+	return(OK);
   }
-  if (request == 7) { /* resume execution */
-	if (data > _NSIG) {
-		return EIO;
-	}
-	if (data > 0) { /* issue signal */
-		child->mp_flags &= ~TRACED; /* so signal is not diverted */
-		sig_proc(child, (int)data);
+  if (request == T_RESUME || request == T_STEP) {	/* resume execution */
+	if (data < 0 || data > _NSIG) return(EIO);
+	if (data > 0) {		/* issue signal */
+		child->mp_flags &= ~TRACED;  /* so signal is not diverted */
+		sig_proc(child, (int) data);
 		child->mp_flags |= TRACED;
 	}
 	child->mp_flags &= ~STOPPED;
-  }	
-  if (sys_trace(request, (int)(child - mproc), (long)taddr, (long *)&data) != OK)
-	return -errno;
+  }
+  if (sys_trace(request, (int) (child - mproc), taddr, &data) != OK)
+	return(-errno);
   mm_out.m2_l2 = data;
-  return OK;
+  return(OK);
 }
 
 /*===========================================================================*
  *				stop_proc  				     *
  *===========================================================================*/
-PUBLIC void stop_proc(rmp, sig_nr) /* a traced process got a signal so stop */
+PUBLIC void stop_proc(rmp, signo)
 register struct mproc *rmp;
-int sig_nr;
+int signo;
 {
+/* A traced process got a signal so stop it. */
+
   register struct mproc *rpmp = mproc + rmp->mp_parent;
 
-  if (sys_trace(-1, (int)(rmp - mproc), 0L, (long *)0) != OK) return;
+  if (sys_trace(-1, (int) (rmp - mproc), 0L, (long *) 0) != OK) return;
   rmp->mp_flags |= STOPPED;
   if (rpmp->mp_flags & WAITING) {
 	rpmp->mp_flags &= ~WAITING;	/* parent is no longer waiting */
-	reply(rmp->mp_parent, rmp->mp_pid, 0177 | (sig_nr << 8), NIL_PTR);
-  }
-  else {
-	rmp->mp_sigstatus = sig_nr;
+	reply(rmp->mp_parent, rmp->mp_pid, 0177 | (signo << 8), NIL_PTR);
+  } else {
+	rmp->mp_sigstatus = signo;
   }
   return;
 }

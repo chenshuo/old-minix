@@ -17,11 +17,13 @@ EXTERN struct fproc {
   int fp_fd;			/* place to save fd if rd/wr can't finish */
   char *fp_buffer;		/* place to save buffer if rd/wr can't finish*/
   int  fp_nbytes;		/* place to save bytes if rd/wr can't finish */
+  int  fp_cum_io_partial;	/* partial byte count if rd/wr can't finish */
   char fp_suspended;		/* set to indicate process hanging */
   char fp_revived;		/* set to indicate process being revived */
   char fp_task;			/* which task is proc suspended on */
-  int fp_pid;			/* process id */
-  int fp_pgrp;			/* process group */
+  pid_t fp_pid;			/* process id */
+  pid_t fp_pgrp;		/* process group */
+  long fp_cloexec;		/* bit map for POSIX Table 6-2 FD_CLOEXEC */
 } fproc[NR_PROCS];
 
 /* Field values. */

@@ -2,74 +2,78 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains most movement functions */
 
-#include <ctype.h>
+#include "config.h"
 #include "vi.h"
+#include "ctype.h"
 
-#ifndef isascii
-# define isascii(c)	!((c) & ~0x7f)
-#endif
-
-MARK	moveup(m, cnt)
+MARK	m_updnto(m, cnt, cmd)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
+	char	cmd;	/* the command character */
 {
-	DEFAULT(1);
+	DEFAULT(cmd == 'G' ? nlines : 1L);
 
-	/* if at top already, don't move */
-	if (markline(m) - cnt < 1)
+	/* move up or down 'cnt' lines */
+	switch (cmd)
 	{
-		return MARK_UNSET;
-	}
+	  case ctrl('P'):
+	  case '-':
+	  case 'k':
+		m -= MARK_AT_LINE(cnt);
+		break;
 
-	/* else move up one line */
-	m -= MARK_AT_LINE(cnt);
-
-	return m;
-}
-
-MARK	movedown(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	DEFAULT(1);
-
-	/* if at bottom already, don't move */
-	if (markline(m) + cnt > nlines)
-	{
-		return MARK_UNSET;
-	}
-
-	/* else move down one line */
-	m += MARK_AT_LINE(cnt);
-
-	/* adjust column number */
-	if (markidx(m) >= plen)
-	{
-		m = (m & ~(BLKSIZE - 1));
-		if (plen > 0)
+	  case 'G':
+		if (cnt < 1L || cnt > nlines)
 		{
-			m += plen - 1;
+			msg("Only %ld lines", nlines);
+			return MARK_UNSET;
 		}
+		m = MARK_AT_LINE(cnt);
+		break;
+
+	  case '_':
+		cnt--;
+		/* fall through... */
+
+	  default:
+		m += MARK_AT_LINE(cnt);
+	}
+
+	/* if that left us screwed up, then fail */
+	if (m < MARK_FIRST || markline(m) > nlines)
+	{
+		return MARK_UNSET;
 	}
 
 	return m;
 }
 
-MARK	moveright(m, cnt)
+/*ARGSUSED*/
+MARK	m_right(m, cnt, key, prevkey)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
+	int	key;	/* movement keystroke */
+	int	prevkey;/* operator keystroke, or 0 if none */
 {
 	int		idx;	/* index of the new cursor position */
 
 	DEFAULT(1);
+
+	/* If used with an operator, then move 1 less character, since the 'l'
+	 * command includes the character that it moves onto.
+	 */
+	if (prevkey != '\0')
+	{
+		cnt--;
+	}
 
 	/* move to right, if that's OK */
 	pfetch(markline(m));
@@ -86,7 +90,8 @@ MARK	moveright(m, cnt)
 	return m;
 }
 
-MARK	moveleft(m, cnt)
+/*ARGSUSED*/
+MARK	m_left(m, cnt)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
 {
@@ -105,34 +110,27 @@ MARK	moveleft(m, cnt)
 	return m;
 }
 
-MARK	movetoline(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric line number */
-{
-	/* if no number specified, assume last line */
-	DEFAULT(nlines);
-
-	/* if invalid line number, don't move */
-	if (cnt > nlines)
-	{
-		msg("Line numbers range from 1 to %ld", nlines);
-		return MARK_UNSET;
-	}
-
-	/* move to first character of the selected line */
-	m = MARK_AT_LINE(cnt);
-	return m;
-}
-
-MARK	movetocol(m, cnt)
+/*ARGSUSED*/
+MARK	m_tocol(m, cnt, cmd)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
+	int	cmd;	/* either ctrl('X') or '|' */
 {
 	char	*text;	/* text of the line */
 	int	col;	/* column number */
 	int	idx;	/* index into the line */
 
-	DEFAULT(1);
+
+	/* if doing ^X, then adjust for sideways scrolling */
+	if (cmd == ctrl('X'))
+	{
+		DEFAULT(*o_columns & 0xff);
+		cnt += leftcol;
+	}
+	else
+	{
+		DEFAULT(1);
+	}
 
 	/* internally, columns are numbered 0..COLS-1, not 1..COLS */
 	cnt--;
@@ -149,16 +147,16 @@ MARK	movetocol(m, cnt)
 	text = ptext;
 	for (col = idx = 0; col < cnt && *text; text++, idx++)
 	{
-		if (*text == '\t')
+		if (*text == '\t' && !*o_list)
 		{
 			col += *o_tabstop;
 			col -= col % *o_tabstop;
 		}
-		else if (*text >= '\0' && *text < ' ' || *text == '\177')
+		else if (UCHAR(*text) < ' ' || *text == '\177')
 		{
 			col += 2;
 		}
-#ifndef SET_NOCHARATTR
+#ifndef NO_CHARATTR
 		else if (text[0] == '\\' && text[1] == 'f' && text[2] && *o_charattr)
 		{
 			text += 2; /* plus one more as part of for loop */
@@ -171,7 +169,10 @@ MARK	movetocol(m, cnt)
 	}
 	if (!*text)
 	{
-		return MARK_UNSET;
+		/* the desired column was past the end of the line, so
+		 * act like the user pressed "$" instead.
+		 */
+		return m | (BLKSIZE - 1);
 	}
 	else
 	{
@@ -180,7 +181,8 @@ MARK	movetocol(m, cnt)
 	return m;
 }
 
-MARK	movefront(m, cnt)
+/*ARGSUSED*/
+MARK	m_front(m, cnt)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument (ignored) */
 {
@@ -199,7 +201,8 @@ MARK	movefront(m, cnt)
 	return m;
 }
 
-MARK	moverear(m, cnt)
+/*ARGSUSED*/
+MARK	m_rear(m, cnt)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument (ignored) */
 {
@@ -210,347 +213,53 @@ MARK	moverear(m, cnt)
 	return m | (BLKSIZE - 1);
 }
 
-MARK	movefword(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
+#ifndef NO_SENTENCE
+static int isperiod(ptr)
+	char	*ptr;	/* pointer to possible sentence-ender */
 {
-	register long	l;
-	register char	*text;
-	register int	i;
-
-	DEFAULT(1);
-
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
+	/* if not '.', '?', or '!', then it isn't a sentence ender */
+	if (*ptr != '.' && *ptr != '?' && *ptr != '!')
 	{
-		i = *text++;
-		/* if we hit the end of the line, continue with next line */
-		if (!isascii(i) || isalnum(i) || i == '_')
-		{
-			/* include an alphanumeric word */
-			while (i && (!isascii(i) || isalnum(i) || i == '_'))
-			{
-				i = *text++;
-			}
-		}
-		else
-		{
-			/* include contiguous punctuation */
-			while (i && isascii(i) && !isalnum(i) && !isspace(i))
-			{
-				i = *text++;
-			}
-		}
-
-		/* include trailing whitespace */
-		while (!i || isascii(i) && isspace(i))
-		{
-			/* did we hit the end of this line? */
-			if (!i)
-			{
-				/* move to next line, if there is one */
-				l++;
-				if (l > nlines)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext;
-			}
-
-			i = *text++;
-		}
-		text--;
+		return FALSE;
 	}
 
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
-}
-
-
-MARK	movebword(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	register long	l;
-	register char	*text;
-
-	DEFAULT(1);
-
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
+	/* skip any intervening ')', ']', or '"' characters */
+	do
 	{
-		text--;
+		ptr++;
+	} while (*ptr == ')' || *ptr == ']' || *ptr == '"');
 
-		/* include preceding whitespace */
-		while (text < ptext || isascii(*text) && isspace(*text))
-		{
-			/* did we hit the end of this line? */
-			if (text < ptext)
-			{
-				/* move to preceding line, if there is one */
-				l--;
-				if (l <= 0)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext + plen - 1;
-			}
-			else
-			{
-				text--;
-			}
-		}
-
-		if (!isascii(*text) || isalnum(*text) || *text == '_')
-		{
-			/* include an alphanumeric word */
-			while (text >= ptext && (!isascii(*text) || isalnum(*text) || *text == '_'))
-			{
-				text--;
-			}
-		}
-		else
-		{
-			/* include contiguous punctuation */
-			while (text >= ptext && isascii(*text) && !isalnum(*text) && !isspace(*text))
-			{
-				text--;
-			}
-		}
-		text++;
-	}
-
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
-}
-
-MARK	moveeword(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	register long	l;
-	register char	*text;
-	register int	i;
-
-	DEFAULT(1);
-
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
+	/* do we have two spaces or EOL? */
+	if (!*ptr || ptr[0] == ' ' && ptr[1] == ' ')
 	{
-		text++;
-		i = *text++;
-
-		/* include preceding whitespace */
-		while (!i || isascii(i) && isspace(i))
-		{
-			/* did we hit the end of this line? */
-			if (!i)
-			{
-				/* move to next line, if there is one */
-				l++;
-				if (l > nlines)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext;
-			}
-
-			i = *text++;
-		}
-
-		if (!isascii(i) || isalnum(i) || i == '_')
-		{
-			/* include an alphanumeric word */
-			while (i && (!isascii(i) || isalnum(i) || i == '_'))
-			{
-				i = *text++;
-			}
-		}
-		else
-		{
-			/* include contiguous punctuation */
-			while (i && isascii(i) && !isalnum(i) && !isspace(i))
-			{
-				i = *text++;
-			}
-		}
-		text -= 2;
+		return TRUE;
 	}
-
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
+	return FALSE;
 }
 
-MARK	movefWord(m, cnt)
+/*ARGSUSED*/
+MARK	m_sentence(m, cnt, cmd)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
+	int	cmd;	/* either '(' or ')' */
 {
-	register long	l;
-	register char	*text;
-	register int	i;
+	REG char	*text;
+	REG long	l;
 
 	DEFAULT(1);
 
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
+	/* If '(' command, then move back one word, so that if we hit '(' at
+	 * the start of a sentence we don't simply stop at the end of the
+	 * previous sentence and bounce back to the start of this one again.
+	 */
+	if (cmd == '(')
 	{
-		i = *text++;
-		/* if we hit the end of the line, continue with next line */
-		/* include contiguous non-space characters */
-		while (i && !isspace(i))
+		m = m_bword(m, 1L, 'b');
+		if (!m)
 		{
-			i = *text++;
+			return m;
 		}
-
-		/* include trailing whitespace */
-		while (!i || isascii(i) && isspace(i))
-		{
-			/* did we hit the end of this line? */
-			if (!i)
-			{
-				/* move to next line, if there is one */
-				l++;
-				if (l > nlines)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext;
-			}
-
-			i = *text++;
-		}
-		text--;
 	}
-
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
-}
-
-
-MARK	movebWord(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	register long	l;
-	register char	*text;
-
-	DEFAULT(1);
-
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
-	{
-		text--;
-
-		/* include trailing whitespace */
-		while (text < ptext || isascii(*text) && isspace(*text))
-		{
-			/* did we hit the end of this line? */
-			if (text < ptext)
-			{
-				/* move to next line, if there is one */
-				l--;
-				if (l <= 0)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext + plen - 1;
-			}
-			else
-			{
-				text--;
-			}
-		}
-
-		/* include contiguous non-whitespace */
-		while (text >= ptext && (!isascii(*text) || !isspace(*text)))
-		{
-			text--;
-		}
-		text++;
-	}
-
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
-}
-
-MARK	moveeWord(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	register long	l;
-	register char	*text;
-	register int	i;
-
-	DEFAULT(1);
-
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-	while (cnt-- > 0) /* yes, ASSIGNMENT! */
-	{
-		text++;
-		i = *text++;
-
-		/* include preceding whitespace */
-		while (!i || isascii(i) && isspace(i))
-		{
-			/* did we hit the end of this line? */
-			if (!i)
-			{
-				/* move to next line, if there is one */
-				l++;
-				if (l > nlines)
-				{
-					return MARK_UNSET;
-				}
-				pfetch(l);
-				text = ptext;
-			}
-
-			i = *text++;
-		}
-
-		/* include contiguous non-whitespace */
-		while (i && (!isascii(i) || !isspace(i)))
-		{
-			i = *text++;
-		}
-		text -= 2;
-	}
-
-	/* construct a MARK for this place */
-	m = buildmark(text);
-	return m;
-}
-
-MARK	movefsentence(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	register char	*text;
-	register long	l;
-
-	DEFAULT(1);
 
 	/* get the current line */
 	l = markline(m);
@@ -563,273 +272,188 @@ MARK	movefsentence(m, cnt)
 		/* search forward for one of [.?!] followed by spaces or EOL */
 		do
 		{
-			/* wrap at end of line */
-			if (!text[0])
+			if (cmd == ')')
 			{
-				if (l >= nlines)
+				/* move forward, wrap at end of line */
+				if (!text[0])
 				{
-					return MARK_UNSET;
+					if (l >= nlines)
+					{
+						return MARK_UNSET;
+					}
+					l++;
+					pfetch(l);
+					text = ptext;
 				}
-				l++;
-				pfetch(l);
-				text = ptext;
+				else
+				{
+					text++;
+				}
 			}
 			else
 			{
-				text++;
+				/* move backward, wrap at beginning of line */
+				if (text == ptext)
+				{
+					do
+					{
+						if (l <= 1)
+						{
+							return MARK_FIRST;
+						}
+						l--;
+						pfetch(l);
+					} while (!*ptext);
+					text = ptext + plen - 1;
+				}
+				else
+				{
+					text--;
+				}
 			}
-		} while (text[0] != '.' && text[0] != '?' && text[0] != '!'
-			|| text[1] && (text[1] != ' ' || text[2] && text[2] != ' '));
+		} while (!isperiod(text));
 	}
 
 	/* construct a mark for this location */
 	m = buildmark(text);
 
 	/* move forward to the first word of the next sentence */
-	m = movefword(m, 1L);
+	m = m_fword(m, 1L, 'w', '\0');
 
 	return m;
 }
+#endif
 
-MARK	movebsentence(m, cnt)
+MARK	m_paragraph(m, cnt, cmd)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* a numeric argument */
+	int	cmd;	/* either '{' or '}' */
 {
-	register char	*text;	/* used to scan thru text */
-	register long	l;	/* current line number */
-	int		flag;	/* have we passed at least one word? */
+	char	*text;	/* text of the current line */
+	char	*pscn;	/* used to scan thru value of "paragraphs" option */
+	long	l, ol;	/* current line number, original line number */
+	int	dir;	/* -1 if we're moving up, or 1 if down */
+	char	col0;	/* character to expect in column 0 */
+#ifndef NO_SENTENCE
+# define SENTENCE(x)	(x)
+	char	*list;	/* either o_sections or o_paragraph */
+#else
+# define SENTENCE(x)
+#endif
 
 	DEFAULT(1);
 
-	/* get the current line */
-	l = markline(m);
-	pfetch(l);
-	text = ptext + markidx(m);
-
-	/* for each requested sentence... */
-	flag = TRUE;
-	while (cnt-- > 0)
+	/* set the direction, based on the command */
+	switch (cmd)
 	{
-		/* search backward for one of [.?!] followed by spaces or EOL */
+	  case '{':
+		dir = -1;
+		col0 = '\0';
+		SENTENCE(list = o_paragraphs); 
+		break;
+
+	  case '}':
+		dir = 1;
+		col0 = '\0';
+		SENTENCE(list = o_paragraphs); 
+		break;
+
+	  case '[':
+		if (getkey(0) != '[')
+		{
+			return MARK_UNSET;
+		}
+		dir = -1;
+		col0 = '{';
+		SENTENCE(list = o_sections); 
+		break;
+
+	  case ']':
+		if (getkey(0) != ']')
+		{
+			return MARK_UNSET;
+		}
+		dir = 1;
+		col0 = '{';
+		SENTENCE(list = o_sections); 
+		break;
+	}
+	ol = l = markline(m);
+
+	/* for each paragraph that we want to travel through... */
+	while (l > 0 && l <= nlines && cnt-- > 0)
+	{
+		/* skip blank lines between paragraphs */
+		while (l > 0 && l <= nlines && col0 == *(text = fetchline(l)))
+		{
+			l += dir;
+		}
+
+		/* skip non-blank lines that aren't paragraph separators
+		 */
 		do
 		{
-			/* wrap at beginning of line */
-			if (text == ptext)
+#ifndef NO_SENTENCE
+			if (*text == '.' && l != ol)
 			{
-				do
+				for (pscn = list; pscn[0] && pscn[1]; pscn += 2)
 				{
-					if (l <= 1)
+					if (pscn[0] == text[1] && pscn[1] == text[2])
 					{
-						return MARK_UNSET;
+						pscn = (char *)0;
+						goto BreakBreak;
 					}
-					l--;
-					pfetch(l);
-				} while (!*ptext);
-				text = ptext + plen - 1;
-			}
-			else
-			{
-				text--;
-			}
-
-			/* are we moving past a "word"? */
-			if (text[0] >= '0')
-			{
-				flag = FALSE;
-			}
-		} while (flag || text[0] != '.' && text[0] != '?' && text[0] != '!'
-			|| text[1] && (text[1] != ' ' || text[2] && text[2] != ' '));
-	}
-
-	/* construct a mark for this location */
-	m = buildmark(text);
-
-	/* move to the front of the following sentence */
-	m = movefword(m, 1L);
-
-	return m;
-}
-
-MARK	movefparagraph(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	char	*text;
-	char	*pscn;	/* used to scan thru value of "paragraphs" option */
-	long	l;
-
-	DEFAULT(1);
-
-	for (l = markline(m); cnt > 0 && l++ < nlines; )
-	{
-		text = fetchline(l);
-		if (!*text)
-		{
-			cnt--;
-		}
-		else if (*text == '.')
-		{
-			for (pscn = o_paragraphs; pscn[0] && pscn[1]; pscn += 2)
-			{
-				if (pscn[0] == text[1] && pscn[1] == text[2])
-				{
-					cnt--;
-					break;
 				}
 			}
-		}
+#endif
+			l += dir;
+		} while (l > 0 && l <= nlines && col0 != *(text = fetchline(l)));
+BreakBreak:	;
 	}
-	if (l <= nlines)
-	{
-		m = MARK_AT_LINE(l);
-	}
-	else
+
+	if (l > nlines)
 	{
 		m = MARK_LAST;
 	}
-	return m;
-}
-
-MARK	movebparagraph(m, cnt)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
-{
-	char	*text;
-	char	*pscn;	/* used to scan thru value of "paragraph" option */
-	long	l;
-
-	DEFAULT(1);
-
-	for (l = markline(m); cnt > 0 && l-- > 1; )
-	{
-		text = fetchline(l);
-		if (!*text)
-		{
-			cnt--;
-		}
-		else if (*text == '.')
-		{
-			for (pscn = o_paragraphs; pscn[0] && pscn[1]; pscn += 2)
-			{
-				if (pscn[0] == text[1] && pscn[1] == text[2])
-				{
-					cnt--;
-					break;
-				}
-			}
-		}
-	}
-	if (l >= 1)
-	{
-		m = MARK_AT_LINE(l);
-	}
-	else
+	else if (l <= 0)
 	{
 		m = MARK_FIRST;
 	}
-	return m;
-}
-
-MARK	movefsection(m, cnt, key)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* (ignored) */
-	int	key;	/* second key stroke - must be ']' */
-{
-	char	*text;
-	char	*sscn;	/* used to scan thru value of "sections" option */
-	long	l;
-
-	/* make sure second key was ']' */
-	if (key != ']')
-	{
-		return MARK_UNSET;
-	}
-
-	for (l = markline(m); l++ < nlines; )
-	{
-		text = fetchline(l);
-		if (*text == '{')
-		{
-			break;
-		}
-		if (*text == '.')
-		{
-			for (sscn = o_sections; sscn[0] && sscn[1]; sscn += 2)
-			{
-				if (sscn[0] == text[1] && sscn[1] == text[2])
-				{
-					goto BreakBreak;
-				}
-			}
-		}
-	}
-BreakBreak:
-	if (l <= nlines)
+	else
 	{
 		m = MARK_AT_LINE(l);
 	}
-	else
-	{
-		m = MARK_LAST;
-	}
-	return m;
-}
-
-MARK	movebsection(m, cnt, key)
-	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* (ignored) */
-	int	key;	/* second key stroke - must be '[' */
-{
-	char	*text;
-	char	*sscn;	/* used to scan thru value of "sections" option */
-	long	l;
-
-	/* make sure second key was '[' */
-	if (key != '[')
-	{
-		return MARK_UNSET;
-	}
-
-	for (l = markline(m); l-- > 1; )
-	{
-		text = fetchline(l);
-		if (*text == '{')
-		{
-			break;
-		}
-		if (*text == '.')
-		{
-			for (sscn = o_sections; sscn[0] && sscn[1]; sscn += 2)
-			{
-				if (sscn[0] == text[1] && sscn[1] == text[2])
-				{
-					goto BreakBreak;
-				}
-			}
-		}
-	}
-BreakBreak:
-	if (l >= 1)
-	{
-		m = MARK_AT_LINE(l);
-	}
-	else
-	{
-		m = MARK_FIRST;
-	}
 	return m;
 }
 
 
-MARK	movematch(m, cnt)
+/*ARGSUSED*/
+MARK	m_match(m, cnt)
 	MARK	m;	/* movement is relative to this mark */
-	long	cnt;	/* a numeric argument */
+	long	cnt;	/* a numeric argument (normally 0) */
 {
 	long	l;
-	register char	*text;
-	register char	match;
-	register char	nest;
-	register int	count;
+	REG char	*text;
+	REG char	match;
+	REG char	nest;
+	REG int		count;
+
+#ifndef NO_EXTENSIONS
+	/* if we're given a number, then treat it as a percentage of the file */
+	if (cnt > 0)
+	{
+		/* make sure it is a reasonable number */
+		if (cnt > 100)
+		{
+			msg("can only be from 1%% to 100%%");
+			return MARK_UNSET;
+		}
+
+		/* return the appropriate line number */
+		l = (nlines - 1L) * cnt / 100L + 1L;
+		return MARK_AT_LINE(l);
+	}
+#endif /* undef NO_EXTENSIONS */
 
 	/* get the current line */
 	l = markline(m);
@@ -926,7 +550,8 @@ MARK	movematch(m, cnt)
 	return m;
 }
 
-MARK	movetomark(m, cnt, key)
+/*ARGSUSED*/
+MARK	m_tomark(m, cnt, key)
 	MARK	m;	/* movement is relative to this mark */
 	long	cnt;	/* (ignored) */
 	int	key;	/* keystroke - the mark to move to */

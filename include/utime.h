@@ -14,6 +14,6 @@ struct utimbuf {
 #include <ansi.h>
 #endif
 
-_PROTOTYPE( int utime, (char *_path, struct utimbuf *_times)		);
+_PROTOTYPE( int utime, (const char *_path, const struct utimbuf *_times)     );
 
 #endif /* _UTIME_H */

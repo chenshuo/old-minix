@@ -1,0 +1,60 @@
+# Conv_to_asld is a filter that converts xenix assembly files to asld format
+
+sed -e '
+:start
+/^#/{
+n
+bstart
+}
+s/^[ 	][ 	]*//
+s/!/|/
+s/[ 	]*$//
+h
+s/^[_a-zA-Z][_a-zA-Z0-9]*:[ 	]*//
+s/\.data1/.byte /g
+s/\.data2/.word /g
+s/\.data4/.long /g
+#
+# Old .globl and old .extern are mapped to new .extern. Thus it is
+# not possible to simply map .extern to .globl.
+#
+#s/^\.extern[ 	][ 	]*/.globl /g
+s/(b\([xp]\)),(\([sd]\)i)/(b\1_\2i)/g
+s/^\([ecsd]\)seg$/seg \1s/g
+s/^\([ecsd]\)seg	/seg \1s/g
+s/^inb\([ 	]*\)/in\1/g
+s/^outb\([ 	]*\)/out\1/g
+s/^stosb$/stob/g
+s/^stos$/stow/g
+s/^lodsb$/lodb/g
+s/^lods$/lodw/g
+s/^scasb$/scab/g
+s/^scas$/scaw/g
+s/^stosb	/stob/g
+s/^stos	/stow/g
+s/^lodsb	/lodb/g
+s/^lods	/lodw/g
+s/^scasb	/scab/g
+s/^scas	/scaw/g
+s/^callf[ 	][ 	]*/calli /g
+s/^jmpf[ 	][ 	]*/jmpi /g
+s/^retf$/reti/
+s/^retf	/reti/
+#
+# Old bcc uses j for short jumps and does not do jump sizing on jmp.
+#
+s/^jmp[ 	][ 	]*\([_a-zA-Z]\)/j \1/g
+s/^br[ 	][ 	]*/jmp /g
+H
+g
+/^[_a-zA-Z][_a-zA-Z0-9]*:/{
+s/:.*\n/: /
+s/^/\
+/
+}
+s/^.*\n//'  >tmp.2
+
+
+sed -e 'y/$/#/' <tmp.2 | grep "."
+rm -f $$.? tmp.?
+exit 0

@@ -7,7 +7,7 @@
 #define INIT_PSW      0x0200	/* initial psw */
 #define INIT_TASK_PSW 0x1200	/* initial psw for tasks (with IOPL 1) */
 #define TRACEBIT       0x100	/* OR this with psw in proc[] for tracing */
-#define SETBITS(rp, new)	/* permits only certain bits to be set */ \
+#define SETPSW(rp, new)	/* permits only certain bits to be set */ \
 	((rp)->p_reg.psw = (rp)->p_reg.psw & ~0xCD5 | (new) & 0xCD5)
 
 /* Initial sp for mm, fs and init.
@@ -33,7 +33,6 @@
 
 #define ALIGNMENT	   4	/* align large items to a multiple of this */
 #define VECTOR_BYTES    1024	/* bytes of interrupt vectors to save (all) */
-#define VEC_TABLE_SEG      0	/* segment of vector table */
 
 /* Interrupt vectors defined/reserved by processor. */
 #define DIVIDE_VECTOR      0	/* divide error */
@@ -123,18 +122,21 @@
 
 #define K_STACK_BYTES   1024	/* how many bytes for the kernel stack */
 
+/* Sizes of memory tables. */
+#define NR_MEMS            2	/* number of chunks of memory */
+
 /* p_reg contains: d0-d7, a0-a6,   in that order. */
 #define NR_REGS           15	/* number of general regs in each proc slot */
  
 #define TRACEBIT      0x8000	/* or this with psw in proc[] for tracing */
-#define SETBITS(rp, new)	/* permits only certain bits to be set */ \
+#define SETPSW(rp, new)		/* permits only certain bits to be set */ \
 	((rp)->p_reg.psw = (rp)->p_reg.psw & ~0xFF | (new) & 0xFF)
  
-#define MEM_BYTES  0x1000000	/* memory size for /dev/mem */
+#define MEM_BYTES  0xffffffff	/* memory size for /dev/mem */
 #define ALIGNMENT	   4	/* align large items to a multiple of this */
 		/* 2 would do for an 68000, but 4 is nicer for 68020/68030 */
  
-#ifdef ACK
+#ifdef __ACK__
 #define FSTRUCOPY
 #endif
 

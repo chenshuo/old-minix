@@ -30,13 +30,13 @@ _memset:
 	movb	ah,al		/* set up second byte */
 	test	di,#1		/* align on word boundary */
 	jz	word_aligned
-	stob
+	stosb
 	dec	cx
 word_aligned:
 #ifdef i80386
 	test	di,#2		/* align on doubleword boundary */
 	jz	dword_aligned
-	stow
+	stos
 	sub	cx,*2
 dword_aligned:
 	mov	dx,ax		/* duplicate byte in all bytes of EAX */
@@ -47,18 +47,18 @@ dword_aligned:
 	SHRCX	(2)
 	rep
 	SIZE_OVERRIDE
-	stow
+	stos
 	and	dx,#3		/* set up to set leftover bytes */
 	mov	cx,dx
 #else
 	shr	cx,#1		/* set words, not bytes */
 	rep
-	stow
+	stos
 	adc	cx,cx		/* set up to set leftover byte */
 #endif
 byte_set:
 	rep
-	stob
+	stosb
 exit:
 	pop	di
 	mov	ax,bx

@@ -47,16 +47,19 @@ PRIVATE int one_con_attribute;	/* current attribute byte << 8 */
 /* Map from ANSI colors to the attributes used by the PC */
 PRIVATE int ansi_colors[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
-FORWARD void beep();
-FORWARD void do_escape();
-FORWARD void l_scr_up();
-FORWARD void l_scr_down();
-FORWARD void long_vid_copy();
-FORWARD void move_to();
-FORWARD void parse_escape();
-FORWARD void scroll_screen();
-FORWARD void set_6845();
-FORWARD void stop_beep();
+FORWARD _PROTOTYPE( void beep, (void) );
+FORWARD _PROTOTYPE( void do_escape, (struct tty_struct *tp, int c) );
+FORWARD _PROTOTYPE( void l_scr_up, (unsigned int base, int src, int dst,
+								int count) );
+FORWARD _PROTOTYPE( void l_scr_down, (unsigned int base, int src, int dst, 
+								int count) );
+FORWARD _PROTOTYPE( void long_vid_copy, (char *src, unsigned int base,
+				unsigned int offset, unsigned int count) );
+FORWARD _PROTOTYPE( void move_to, (struct tty_struct *tp, int x, int y) );
+FORWARD _PROTOTYPE( void parse_escape, (struct tty_struct *tp, int c) );
+FORWARD _PROTOTYPE( void scroll_screen, (struct tty_struct *tp, int dir) );
+FORWARD _PROTOTYPE( void set_6845, (int reg, int val) );
+FORWARD _PROTOTYPE( void stop_beep, (void) );
 
 /*===========================================================================*
  *				console					     *
@@ -202,9 +205,6 @@ char c;				/* character to be output */
 #if !LINEWRAP
 		if (tp->tty_column >= LINE_WIDTH) return;	/* long line */
 #endif
-		if (tp->tty_rwords == TTY_RAM_WORDS) flush(tp);
-		tp->tty_ramqueue[tp->tty_rwords++]=one_con_attribute|(c&BYTE);
-		tp->tty_column++;	/* next column */
 #if LINEWRAP
  		if (tp->tty_column >= LINE_WIDTH) {
  			flush(tp);
@@ -215,6 +215,9 @@ char c;				/* character to be output */
  			move_to(tp, 0, tp->tty_row);
  		}
 #endif /* LINEWRAP */
+		if (tp->tty_rwords == TTY_RAM_WORDS) flush(tp);
+		tp->tty_ramqueue[tp->tty_rwords++]=one_con_attribute|(c&BYTE);
+		tp->tty_column++;	/* next column */
 		return;
   }
 }
@@ -493,7 +496,7 @@ char c;				/* next character in escape sequence */
 			count = (SCR_LINES - n - tp->tty_row) * LINE_WIDTH;
 			l_scr_up(vid_base, src, dst, count);
 			dst = tp->tty_org + (SCR_LINES - n) * LINE_WIDTH * 2;
-			  long_vid_copy(NIL_PTR, vid_base, dst, n * LINE_WIDTH);
+			  long_vid_copy(NIL_PTR, vid_base, dst, n*LINE_WIDTH);
 			break;
 
 		    case 'P':		/* ESC [nP deletes n chars at cursor */
@@ -621,7 +624,8 @@ unsigned int base, offset, count;
  *				long_src_up				     *
  *===========================================================================*/
 PRIVATE void l_scr_up(base, src, dst, count)
-unsigned int base, src, dst, count;
+unsigned int base;
+int src, dst, count;
 {
 /* Break up a call to scr_up for machines that can only write
  * during vertical retrace.  scr_up doesn't do the wait, so we do.
@@ -648,7 +652,8 @@ unsigned int base, src, dst, count;
  *				long_scr_down				     *
  *===========================================================================*/
 PRIVATE void l_scr_down(base, src, dst, count)
-unsigned int base, src, dst, count;
+unsigned int base;
+int src, dst, count;
 {
 /* Break up a call to scr_down as for scr_up. */
 
@@ -717,7 +722,7 @@ PRIVATE void beep()
   mess.m_type = SET_ALARM;
   mess.CLOCK_PROC_NR = TTY;
   mess.DELTA_TICKS = B_TIME;
-  mess.FUNC_TO_CALL = (void (*)()) stop_beep;
+  mess.FUNC_TO_CALL = (sighandler_t) stop_beep;
   sendrec(CLOCK, &mess);
 }
 
@@ -774,10 +779,10 @@ int minor;
 }
 
 /*===========================================================================*
- *				putc					     *
+ *				putk					     *
  *===========================================================================*/
-PUBLIC void putc(c)
-char c;				/* character to print */
+PUBLIC void putk(c)
+int c;				/* character to print */
 {
 /* This procedure is used by the version of printf() that is linked with
  * the kernel itself.  The one in the library sends a message to FS, which is
@@ -785,7 +790,7 @@ char c;				/* character to print */
  * the character and starts the output.
  */
 
-  out_char(&tty_struct[0], c);
+  if (c != 0) out_char(&tty_struct[0], (int) c);
 }
 
 

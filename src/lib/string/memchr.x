@@ -17,7 +17,7 @@ _memchr:
 	mov	di,2(di)
 	cld
 	repne
-	scab
+	scasb
 	jne	exit
 #ifdef i8088
 	dec	di

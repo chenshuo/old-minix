@@ -3,10 +3,10 @@
  */
 /* $Header: mathconst.h,v 1.3 89/12/18 13:59:33 eck Exp $ */
 
-#if	!defined(_MATHCONST_H)
+#ifndef _MATHCONST_H
 #define	_MATHCONST_H
 
-/* some constants (Hart & Cheney) */
+/* Some constants (Hart & Cheney) */
 #define	M_PI		3.14159265358979323846264338327950288
 #define	M_2PI		6.28318530717958647692528676655900576
 #define	M_3PI_4		2.35619449019234492884698253745962716
@@ -26,4 +26,4 @@
 #define	M_1_SQRT2	0.70710678118654752440084436210484904
 #define	M_EULER		0.57721566490153286060651209008240243
 
-#endif	/* _MATHCONST_H */
+#endif /* _MATHCONST_H */

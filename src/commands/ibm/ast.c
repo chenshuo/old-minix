@@ -1,8 +1,10 @@
 /* ast - add symbol table.		Author: Dick van Veen */
 
 #include <sys/types.h>
-#include <fcntl.h>
 #include <a.out.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 
 /* Since the a.out file in MINIX does not contain any symbol table,
@@ -49,14 +51,22 @@ int nr_symbols;			/* number of symbols added */
 char buffer[LINE_LENGTH];	/* contains line of symbol file */
 
 char io_buf[BUFSIZ];		/* for buffered output on stderr */
-unsigned int get_value();	/* forward definition */
+
+_PROTOTYPE(int main, (int argc, char **argv));
+_PROTOTYPE(int ast, (FILE *s_fd, FILE *o_fd));
+_PROTOTYPE(int read_line, (FILE *fd, char *buffer));
+_PROTOTYPE(int transform_line, (char *buffer, struct nlist *symbol));
+_PROTOTYPE(int save_line, (FILE *fd, struct nlist *symbol));
+_PROTOTYPE(unsigned get_value, (char *string));
+_PROTOTYPE(int get_bits, (int ch));
+_PROTOTYPE(int get_name, (char *str1, char *str2));
+_PROTOTYPE(int do_header, (void));
+_PROTOTYPE(int redo_header, (FILE *fd));
 
 main(argc, argv)
 int argc;
 char **argv;
 {
-  extern FILE *fopen();
-
   argv++;
   if (*argv != NULL && **argv == '-') {
 	*argv += 1;
@@ -251,7 +261,7 @@ do_header()
   int fd;
 
   fd = open(o_file, O_RDONLY);
-  if (read(fd, &header, sizeof(struct exec)) != sizeof(struct exec)) {
+  if (read(fd, (char *) &header, sizeof(struct exec)) != sizeof(struct exec)) {
 	fprintf(stderr, "%s: no executable file\n", o_file);
 	exit(-1);
   }

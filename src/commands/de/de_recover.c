@@ -19,14 +19,20 @@
 #include <pwd.h>
 #include <string.h>
 #include <unistd.h>
-#include <stdio.h>
 
+#include <minix/const.h>
 #include <minix/type.h>
 #include <blocksize.h>
 #include "../../fs/const.h"
 #include "../../fs/type.h"
+#include "../../fs/inode.h"
+#include <minix/fslib.h>
 
 #include "de.h"
+
+_PROTOTYPE(int Indirect, (de_state *s, zone_t block, off_t *size, int dblind));
+_PROTOTYPE(int Data_Block, (de_state *s, zone_t block, off_t *file_size ));
+_PROTOTYPE(int Free_Block, (de_state *s, zone_t block ));
 
 
 
@@ -112,7 +118,7 @@ char *File_Device( file_name )
   struct stat device_stat;
   int dev_d;
   struct direct entry;
-  static char device_name[ DIRSIZ + 1 ];
+  static char device_name[ NAME_MAX + 1 ];
 
 
   if ( access( file_name, R_OK ) != 0 )
@@ -146,7 +152,7 @@ char *File_Device( file_name )
 
     strcpy( device_name, DEV );
     strcat( device_name, "/" );
-    strncat( device_name, entry.d_name, DIRSIZ );
+    strncat( device_name, entry.d_name, NAME_MAX );
 
     if ( stat( device_name, &device_stat ) == -1 )
       continue;
@@ -260,9 +266,9 @@ ino_t Find_Deleted_Entry( s, path_name )
 					      == sizeof(struct direct) )
     {
     if ( entry.d_ino == 0  &&
-	strncmp( file_name, entry.d_name, DIRSIZ - sizeof(ino_t) ) == 0 )
+	strncmp( file_name, entry.d_name, NAME_MAX - sizeof(ino_t) ) == 0 )
       {
-      ino_t inode = *( (ino_t *) &entry.d_name[ DIRSIZ - sizeof(ino_t) ] );
+      ino_t inode = *( (ino_t *) &entry.d_name[ NAME_MAX - sizeof(ino_t) ] );
 
       close( dir_d );
 
@@ -325,10 +331,17 @@ off_t Recover_Blocks( s )
   de_state *s;
 
   {
-  d_inode *inode = (d_inode *) &s->buffer[ s->offset & ~ PAGE_MASK ];
-  int node = (s->address - (s->first_data - s->inode_blocks) * K) /
-		INODE_SIZE + 1;
+  struct inode core_inode;
+  d1_inode *dip1;
+  d2_inode *dip2;
+  struct inode *inode = &core_inode;
+  bit_t node = (s->address - (s->first_data - s->inode_blocks) * K) /
+		s->inode_size + 1;
 
+  dip1 = (d1_inode *) &s->buffer[ s->offset & ~ PAGE_MASK ];
+  dip2 = (d2_inode *) &s->buffer[ s->offset & ~ PAGE_MASK
+					    & ~ (V2_INODE_SIZE-1) ];
+  conv_inode( inode, dip1, dip2, READING, s->magic );
 
   if ( s->block < s->first_data - s->inode_blocks  ||
 	    s->block >= s->first_data )
@@ -374,9 +387,9 @@ off_t Recover_Blocks( s )
   int i;
 
 
-  /*  Up to 7 block pointers are stored in the i-node.  */
+  /*  Up to inode->i_ndzones pointers are stored in the i-node.  */
 
-  for ( i = 0;  i < NR_DZONE_NUM;  ++i )
+  for ( i = 0;  i < inode->i_ndzones;  ++i )
     {
     if ( file_size == 0 )
 	return( inode->i_size );
@@ -389,18 +402,18 @@ off_t Recover_Blocks( s )
     return( inode->i_size );
 
 
-  /*  An indirect block can contain up to 512 more block pointers.  */
+  /*  An indirect block can contain up to inode->i_indirects more blk ptrs.  */
 
-  if ( ! Indirect( s, inode->i_zone[ NR_DZONE_NUM ], &file_size, 0 ) )
+  if ( ! Indirect( s, inode->i_zone[ inode->i_ndzones ], &file_size, 0 ) )
     return( -1L );
 
   if ( file_size == 0 )
     return( inode->i_size );
 
 
-  /*  A double indirect block can contain up to 512 indirect blocks.  */
+  /*  A double indirect block can contain up to inode->i_indirects blk ptrs. */
 
-  if ( ! Indirect( s, inode->i_zone[ NR_DZONE_NUM+1 ], &file_size, 1 ) )
+  if ( ! Indirect( s, inode->i_zone[ inode->i_ndzones+1 ], &file_size, 1 ) )
     return( -1L );
 
   if ( file_size == 0 )
@@ -408,6 +421,9 @@ off_t Recover_Blocks( s )
 
   Error( "Internal fault (file_size != 0)" );
   }
+
+  /* NOTREACHED */
+  return( -1L );
   }
 
 
@@ -419,8 +435,8 @@ off_t Recover_Blocks( s )
  *
  *  Recover all the blocks pointed to by the indirect block
  *  "block",  up to "file_size" bytes. If "double" is true,
- *  then "block" is a double-indirect block pointing to 512
- *  indirect blocks.
+ *  then "block" is a double-indirect block pointing to
+ *  V*_INDIRECTS indirect blocks.
  *
  *  If a "hole" is encountered, then just seek ahead in the
  *  output file.
@@ -429,19 +445,24 @@ off_t Recover_Blocks( s )
 
 int Indirect( s, block, file_size, dblind )
   de_state *s;
-  zone_nr   block;
+  zone_t   block;
   off_t    *file_size;
   int       dblind;
 
   {
-  zone_nr indirect[ NR_INDIRECTS ];
+  union
+    {
+    zone1_t ind1[ V1_INDIRECTS ];
+    zone_t  ind2[ V2_INDIRECTS ];
+    } indirect;
   int  i;
+  zone_t zone;
 
   /*  Check for a "hole".  */
 
   if ( block == NO_ZONE )
     {
-    off_t skip = (off_t) NR_INDIRECTS * K;
+    off_t skip = (off_t) s->nr_indirects * K;
 
     if ( *file_size < skip  ||  dblind )
       {
@@ -466,21 +487,22 @@ int Indirect( s, block, file_size, dblind )
     return( 0 );
 
 
-  Read_Disk( s, (long) block << K_SHIFT, indirect );
+  Read_Disk( s, (long) block << K_SHIFT, (char *) &indirect );
 
-  for ( i = 0;  i < NR_INDIRECTS;  ++i )
+  for ( i = 0;  i < s->nr_indirects;  ++i )
     {
     if ( *file_size == 0 )
 	return( 1 );
 
+    zone = (s->v1 ? indirect.ind1[ i ] : indirect.ind2[ i ]);
     if ( dblind )
       {
-      if ( ! Indirect( s, indirect[ i ], file_size, 0 ) )
+      if ( ! Indirect( s, zone, file_size, 0 ) )
 	return( 0 );
       }
     else
       {
-      if ( ! Data_Block( s, indirect[ i ], file_size ) )
+      if ( ! Data_Block( s, zone, file_size ) )
         return( 0 );
       }
     }
@@ -508,7 +530,7 @@ int Indirect( s, block, file_size, dblind )
 
 int Data_Block( s, block, file_size )
   de_state *s;
-  zone_nr   block;
+  zone_t   block;
   off_t    *file_size;
 
   {
@@ -545,7 +567,8 @@ int Data_Block( s, block, file_size )
   Read_Disk( s, (long) block << K_SHIFT, buffer );
 
 
-  if ( fwrite( buffer, 1, (int) block_size, s->file_f ) != (int) block_size )
+  if ( fwrite( buffer, 1, (size_t) block_size, s->file_f )
+       != (size_t) block_size )
     {
     Warning( "Problem writing %s", s->file_name );
     return( 0 );
@@ -569,7 +592,7 @@ int Data_Block( s, block, file_size )
 
 int Free_Block( s, block )
   de_state *s;
-  zone_nr  block;
+  zone_t  block;
 
   {
   if ( block < s->first_data  ||  block >= s->zones )
@@ -578,7 +601,7 @@ int Free_Block( s, block )
     return( 0 );
     }
 
-  if ( In_Use( block - s->first_data + 1, s->zone_map ) )
+  if ( In_Use( (bit_t) (block - (s->first_data - 1)), s->zone_map ) )
     {
     Warning( "Encountered an \"in use\" data block" );
     return( 0 );

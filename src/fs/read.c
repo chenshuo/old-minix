@@ -7,6 +7,7 @@
  *   do_read:	 perform the READ system call by calling read_write
  *   read_write: actually do the work of READ and WRITE
  *   read_map:	 given an inode and file position, look up its zone number
+ *   rd_indir:	 read an entry in an indirect block 
  *   rw_user:	 call the kernel to read and write user space
  *   read_ahead: manage the block read ahead business
  */
@@ -25,7 +26,9 @@
 
 PRIVATE message umess;		/* message for asking SYSTASK for user copy */
 
-FORWARD int rw_chunk();
+FORWARD _PROTOTYPE( int rw_chunk, (struct inode *rip, off_t position,
+			unsigned off, int chunk, unsigned left, int rw_flag,
+			char *buff, int seg, int usr)			);
 
 /*===========================================================================*
  *				do_read					     *
@@ -46,11 +49,12 @@ int rw_flag;			/* READING or WRITING */
 
   register struct inode *rip;
   register struct filp *f;
-  register off_t bytes_left, f_size;
-  register unsigned off, cum_io;
-  register int oflags;
-  off_t position;
-  int r, chunk, mode_word, usr, seg, block_spec, char_spec, regular;
+  off_t bytes_left, f_size, position;
+  unsigned int off, cum_io;
+  int op, oflags, r, chunk, usr, seg, block_spec, char_spec;
+  int regular, partial_pipe = 0, partial_cnt = 0;
+  dev_t dev;
+  mode_t mode_word;
   struct filp *wf;
 
   /* MM loads segments by putting funny things in upper 10 bits of 'fd'. */
@@ -64,34 +68,38 @@ int rw_flag;			/* READING or WRITING */
   }
 
   /* If the file descriptor is valid, get the inode, size and mode. */
-#if (CHIP == INTEL)
-  if (who != MM_PROC_NR)	/* only MM > 32K */
-#endif
-
   if (nbytes < 0) return(EINVAL);
   if ( (f = get_filp(fd)) == NIL_FILP) return(err_code);
   if ( ((f->filp_mode) & (rw_flag == READING ? R_BIT : W_BIT)) == 0)
 	return(EBADF);
   if (nbytes == 0) return(0);	/* so char special files need not check for 0*/
   position = f->filp_pos;
-  if (position < 0 || position > MAX_FILE_POS) return(EINVAL);
+  if (position > MAX_FILE_POS) return(EINVAL);
+  if (position + nbytes < position) return(EINVAL); /* unsigned overflow */
   oflags = f->filp_flags;
   rip = f->filp_ino;
   f_size = rip->i_size;
   r = OK;
-  cum_io = 0;
+  if (rip->i_pipe == I_PIPE) {
+	/* fp->fp_cum_io_partial is only nonzero when doing partial writes */
+	cum_io = fp->fp_cum_io_partial; 
+  } else {
+	cum_io = 0;
+  }
+  op = (rw_flag == READING ? DEV_READ : DEV_WRITE);
   mode_word = rip->i_mode & I_TYPE;
   regular = mode_word == I_REGULAR || mode_word == I_NAMED_PIPE;
 
   char_spec = (mode_word == I_CHAR_SPECIAL ? 1 : 0);
   block_spec = (mode_word == I_BLOCK_SPECIAL ? 1 : 0);
-  if (block_spec && f_size == 0) f_size = MAX_P_LONG;
+  if (block_spec && f_size == 0) f_size = LONG_MAX;
   rdwt_err = OK;		/* set to EIO if disk error occurs */
 
   /* Check for character special files. */
   if (char_spec) {
-	if ((r = dev_io(rw_flag, oflags & O_NONBLOCK, (dev_t) rip->i_zone[0],
-				 position, nbytes, who, buffer)) >= 0) {
+	dev = (dev_t) rip->i_zone[0];
+	r = dev_io(op, oflags & O_NONBLOCK, dev, position, nbytes, who,buffer);
+	if (r >= 0) {
 		cum_io = r;
 		position += r;
 		r = OK;
@@ -99,10 +107,9 @@ int rw_flag;			/* READING or WRITING */
   } else {
 	if (rw_flag == WRITING && block_spec == 0) {
 		/* Check in advance to see if file will grow too big. */
-		if (position > get_super(rip->i_dev)->s_max_size - nbytes )
-			return(EFBIG);
+		if (position > rip->i_sp->s_max_size - nbytes) return(EFBIG);
 
-		/* check for O_APPEND flag */
+		/* Check for O_APPEND flag. */
 		if (oflags & O_APPEND) position = f_size;
 
 		/* Clear the zone containing present EOF if hole about
@@ -113,25 +120,31 @@ int rw_flag;			/* READING or WRITING */
 	}
 
 	/* Pipes are a little different.  Check. */
-	if (rip->i_pipe &&
-	    (r = pipe_check(rip, rw_flag, oflags, nbytes, position)) <= 0)
-		return r;
+	if (rip->i_pipe == I_PIPE) {
+	       r = pipe_check(rip,rw_flag,oflags,nbytes,position,&partial_cnt);
+	       if (r <= 0) return(r);
+	}
+
+	if (partial_cnt > 0) partial_pipe = 1;
 
 	/* Split the transfer into chunks that don't span two blocks. */
 	while (nbytes != 0) {
-		off = position % BLOCK_SIZE;	/* offset within a block */
-		chunk = MIN(nbytes, BLOCK_SIZE - off);
+		off = (unsigned int) (position % BLOCK_SIZE);/* offset in blk*/
+		if (partial_pipe) {  /* pipes only */
+			chunk = MIN(partial_cnt, BLOCK_SIZE - off);
+		} else
+			chunk = MIN(nbytes, BLOCK_SIZE - off);
 		if (chunk < 0) chunk = BLOCK_SIZE - off;
 
 		if (rw_flag == READING || (block_spec && rw_flag == WRITING)) {
 			bytes_left = f_size - position;
 			if (position >= f_size) break;	/* we are beyond EOF */
-			if (chunk > bytes_left) chunk = bytes_left;
+			if (chunk > bytes_left) chunk = (int) bytes_left;
 		}
 
 		/* Read or write 'chunk' bytes. */
-		r = rw_chunk(rip, position, off, chunk, nbytes, rw_flag,
-							     buffer, seg, usr);
+		r = rw_chunk(rip, position, off, chunk, (unsigned) nbytes,
+			     rw_flag, buffer, seg, usr);
 		if (r != OK) break;	/* EOF reached */
 		if (rdwt_err < 0) break;
 
@@ -140,18 +153,31 @@ int rw_flag;			/* READING or WRITING */
 		nbytes -= chunk;	/* bytes yet to be read */
 		cum_io += chunk;	/* bytes read so far */
 		position += chunk;	/* position within the file */
+
+		if (partial_pipe) {
+			partial_cnt -= chunk;
+			if (partial_cnt <= 0)  break;
+		}
 	}
   }
 
   /* On write, update file size and access time. */
+  /* DEBUG FIXME.  Don't we have to set i_dirty after changing i_size?
+   * Probably write_map will already have changed it for the WRITING case
+   * and it doesn't matter for the case of reading from pipes.  However,
+   * it would be cleaner to set it for all cases at the start of this
+   * routine, and not in write_map, etc., now that the inode is almost
+   * always dirtied by changing some of its times.
+   *
+   * Does POSIX really say not to change i_ctime after an unsuccesful write?
+   * It is possible for part of a failed write to work and change i_size.
+   */
   if (rw_flag == WRITING) {
 	if (regular || mode_word == I_DIRECTORY) {
 		if (position > f_size) rip->i_size = position;
-		rip->i_update = MTIME; /* mark mtime for update later */
-		rip->i_dirt = DIRTY;
 	}
   } else {
-	if (rip->i_pipe && position >= rip->i_size) {
+	if (rip->i_pipe == I_PIPE && position >= rip->i_size) {
 		/* Reset pipe pointers. */
 		rip->i_size = 0;	/* no data left */
 		position = 0;		/* reset reader(s) */
@@ -169,8 +195,26 @@ int rw_flag;			/* READING or WRITING */
   rip->i_seek = NO_SEEK;
 
   if (rdwt_err != OK) r = rdwt_err;	/* check for disk error */
-  if (rdwt_err == END_OF_FILE) r = cum_io;
-  return(r == OK ? cum_io : r);
+  if (rdwt_err == END_OF_FILE) r = OK;
+  if (r == OK) {
+	if (rw_flag == READING) rip->i_update |= ATIME;
+	if (rw_flag == WRITING) rip->i_update |= CTIME | MTIME;
+	rip->i_dirt = DIRTY;		/* inode is thus now dirty */
+	if (partial_pipe) {
+		partial_pipe = 0;
+			/* partial write on pipe with */
+			/* O_NOBLOCK, return write count */
+		if (!(oflags & O_NONBLOCK)) {
+			fp->fp_cum_io_partial += cum_io;
+			suspend(XPIPE); /* partial write on pipe with */
+			return(0);	/* nbyte > PIPE_SIZE - non-atomic */
+		}
+	}
+	fp->fp_cum_io_partial = 0;
+	return(cum_io);
+  } else {
+	return(r);
+  }
 }
 
 
@@ -193,7 +237,8 @@ int usr;			/* which user process */
   register struct buf *bp;
   register int r;
   int dir, n, block_spec;
-  block_nr b;
+  vir_bytes vbuff, vchunk;
+  block_t b;
   dev_t dev;
 
   block_spec = (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL;
@@ -207,12 +252,12 @@ int usr;			/* which user process */
 
   if (!block_spec && b == NO_BLOCK) {
 	if (rw_flag == READING) {
-		/* Reading from a nonexistent block.  Must read as all zeros. */
-		bp = get_block(NO_DEV, NO_BLOCK, NORMAL);     /* get a buffer */
+		/* Reading from a nonexistent block.  Must read as all zeros.*/
+		bp = get_block(NO_DEV, NO_BLOCK, NORMAL);    /* get a buffer */
 		zero_block(bp);
 	} else {
-		/* Writing to a nonexistent block. Create and enter in inode. */
-		if ((bp = new_block(rip, position)) == NIL_BUF)return(err_code);
+		/* Writing to a nonexistent block. Create and enter in inode.*/
+		if ((bp= new_block(rip, position)) == NIL_BUF)return(err_code);
 	}
   } else if (rw_flag == READING) {
 	/* Read and read ahead if convenient. */
@@ -232,7 +277,9 @@ int usr;			/* which user process */
 					position >= rip->i_size && off == 0)
 	zero_block(bp);
   dir = (rw_flag == READING ? TO_USER : FROM_USER);
-  r = rw_user(seg, usr, (vir_bytes)buff, (vir_bytes)chunk, bp->b_data+off, dir);
+  vbuff = (vir_bytes) buff;
+  vchunk = (vir_bytes) chunk;
+  r = rw_user(seg, usr, vbuff, vchunk, bp->b_data+off,dir);
   if (rw_flag == WRITING) bp->b_dirt = DIRTY;
   n = (off + chunk == BLOCK_SIZE ? FULL_DATA_BLOCK : PARTIAL_DATA_BLOCK);
   put_block(bp, n);
@@ -243,7 +290,7 @@ int usr;			/* which user process */
 /*===========================================================================*
  *				read_map				     *
  *===========================================================================*/
-PUBLIC block_nr read_map(rip, position)
+PUBLIC block_t read_map(rip, position)
 register struct inode *rip;	/* ptr to inode to map from */
 off_t position;			/* position in file whose blk wanted */
 {
@@ -252,49 +299,88 @@ off_t position;			/* position in file whose blk wanted */
  */
 
   register struct buf *bp;
-  register zone_nr z;
-  register block_nr b;
-  register long excess, zone, block_pos;
-  register int scale, boff;
-
-  scale = scale_factor(rip);	/* for block-zone conversion */
+  register zone_t z;
+  int scale, boff, dzones, nr_indirects, index, zind, ex;
+  block_t b;
+  long excess, zone, block_pos;
+  
+  scale = rip->i_sp->s_log_zone_size;	/* for block-zone conversion */
   block_pos = position/BLOCK_SIZE;	/* relative blk # in file */
   zone = block_pos >> scale;	/* position's zone */
-  boff = block_pos - (zone << scale);	/* relative blk # within zone */
+  boff = (int) (block_pos - (zone << scale) ); /* relative blk # within zone */
+  dzones = rip->i_ndzones;
+  nr_indirects = rip->i_nindirs;
 
   /* Is 'position' to be found in the inode itself? */
-  if (zone < NR_DZONE_NUM) {
-	if ( (z = rip->i_zone[(int) zone]) == NO_ZONE) return(NO_BLOCK);
-	b = ((block_nr) z << scale) + boff;
+  if (zone < dzones) {
+	zind = (int) zone;	/* index should be an int */
+	z = rip->i_zone[zind];
+	if (z == NO_ZONE) return(NO_BLOCK);
+	b = ((block_t) z << scale) + boff;
 	return(b);
   }
 
   /* It is not in the inode, so it must be single or double indirect. */
-  excess = zone - NR_DZONE_NUM;	/* first NR_DZONE_NUM don't count */
+  excess = zone - dzones;	/* first Vx_NR_DZONES don't count */
 
-  if (excess < NR_INDIRECTS) {
+  if (excess < nr_indirects) {
 	/* 'position' can be located via the single indirect block. */
-	z = rip->i_zone[NR_DZONE_NUM];
+	z = rip->i_zone[dzones];
   } else {
 	/* 'position' can be located via the double indirect block. */
-	if ( (z = rip->i_zone[NR_DZONE_NUM+1]) == NO_ZONE) return(NO_BLOCK);
-	excess -= NR_INDIRECTS;			/* single indir doesn't count */
-	b = (block_nr) z << scale;
+	if ( (z = rip->i_zone[dzones+1]) == NO_ZONE) return(NO_BLOCK);
+	excess -= nr_indirects;			/* single indir doesn't count*/
+	b = (block_t) z << scale;
 	bp = get_block(rip->i_dev, b, NORMAL);	/* get double indirect block */
-	z = bp->b_ind[(int)(excess/NR_INDIRECTS)];/*z is zone # for single ind*/
+	index = (int) (excess/nr_indirects);
+	z = rd_indir(bp, index);		/* z= zone for single*/
 	put_block(bp, INDIRECT_BLOCK);		/* release double ind block */
-	excess = excess % NR_INDIRECTS;		/* index into single ind blk */
+	excess = excess % nr_indirects;		/* index into single ind blk */
   }
 
   /* 'z' is zone num for single indirect block; 'excess' is index into it. */
   if (z == NO_ZONE) return(NO_BLOCK);
-  b = (block_nr) z << scale;
+  b = (block_t) z << scale;			/* b is blk # for single ind */
   bp = get_block(rip->i_dev, b, NORMAL);	/* get single indirect block */
-  z = bp->b_ind[(int) excess];
+  ex = (int) excess;				/* need an integer */
+  z = rd_indir(bp, ex);				/* get block pointed to */
   put_block(bp, INDIRECT_BLOCK);		/* release single indir blk */
   if (z == NO_ZONE) return(NO_BLOCK);
-  b = ((block_nr) z << scale) + boff;
+  b = ((block_t) z << scale) + boff;
   return(b);
+}
+
+
+/*===========================================================================*
+ *				rd_indir				     *
+ *===========================================================================*/
+PUBLIC zone_t rd_indir(bp, index)
+struct buf *bp;			/* pointer to indirect block */
+int index;			/* index into *bp */
+{
+/* Given a pointer to an indirect block, read one entry.  The reason for
+ * making a separate routine out of this is that there are four cases:
+ * V1 (IBM and 68000), and V2 (IBM and 68000).
+ */
+
+  struct super_block *sp;
+  zone_t zone;			/* V2 zones are longs (shorts in V1) */
+
+  sp = get_super(bp->b_dev);	/* need super block to find file sys type */
+
+  /* read a zone from an indirect block */
+  if (sp->s_version == V1)
+	zone = (zone_t) conv2(sp->s_native, (int)  bp->b_v1_ind[index]);
+  else
+	zone = (zone_t) conv4(sp->s_native, (long) bp->b_v2_ind[index]);
+
+  if (zone != NO_ZONE &&
+		(zone < (zone_t) sp->s_firstdatazone || zone >= sp->s_zones)) {
+	printf("Illegal zone number %ld in indirect block, index %d\n",
+	       (long) zone, index);
+	panic("check file system", NO_NUM);
+  }
+  return(zone);
 }
 
 
@@ -318,7 +404,7 @@ int direction;			/* TO_USER or FROM_USER */
 	/* Write from FS space to user space. */
 	umess.SRC_SPACE  = D;
 	umess.SRC_PROC_NR = FS_PROC_NR;
-	umess.SRC_BUFFER = (long) buff;
+	umess.SRC_BUFFER = (long) (vir_bytes) buff;
 	umess.DST_SPACE  = s;
 	umess.DST_PROC_NR = u;
 	umess.DST_BUFFER = (long) vir;
@@ -329,7 +415,7 @@ int direction;			/* TO_USER or FROM_USER */
 	umess.SRC_BUFFER = (long) vir;
 	umess.DST_SPACE  = D;
 	umess.DST_PROC_NR = FS_PROC_NR;
-	umess.DST_BUFFER = (long) buff;
+	umess.DST_BUFFER = (long) (vir_bytes) buff;
   }
 
   umess.COPY_BYTES = (long) bytes;
@@ -347,7 +433,7 @@ PUBLIC void read_ahead()
 
   register struct inode *rip;
   struct buf *bp;
-  block_nr b;
+  block_t b;
 
   rip = rdahed_inode;		/* pointer to inode to read ahead from */
   rdahed_inode = NIL_INODE;	/* turn off read ahead */
@@ -362,7 +448,7 @@ PUBLIC void read_ahead()
  *===========================================================================*/
 PUBLIC struct buf *rahead(rip, baseblock, position, bytes_ahead)
 register struct inode *rip;	/* pointer to inode for file to be read */
-block_nr baseblock;		/* block at current position */
+block_t baseblock;		/* block at current position */
 off_t position;			/* position within file */
 unsigned bytes_ahead;		/* bytes beyond position for immediate use */
 {
@@ -374,21 +460,14 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
  * Rw_scattered() puts an optional flag on all reads to allow this.
  */
 
-  block_nr block;
-  unsigned blocks_ahead;
-  unsigned blocks_per_track;
-  register struct buf *bp;
-  int block_spec;
+  int block_spec, reading_ahead, read_q_size;
+  unsigned int blocks_ahead, blocks_per_track;
+  unsigned int fragment, limit_bufs_in_use, track, max_track;
+  block_t block;
   dev_t dev;
-  off_t dev_size;
-  off_t file_size;
-  unsigned fragment;
-  unsigned limit_bufs_in_use;
-  unsigned max_track;
-  int reading_ahead;
+  off_t dev_size, file_size;
+  register struct buf *bp;
   static struct buf *read_q[NR_BUFS];	/* static so it isn't on stack */
-  int read_q_size;
-  unsigned track;
 
   block_spec = (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL;
   if (block_spec)
@@ -419,7 +498,7 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
 	blocks_per_track = 18;	/* higher-density floppy */
 
   file_size = rip->i_size;
-  if (block_spec && file_size == 0) file_size = MAX_P_LONG;
+  if (block_spec && file_size == 0) file_size = LONG_MAX;
   fragment = (unsigned) (position % BLOCK_SIZE);
   position = position - fragment + BLOCK_SIZE;
   blocks_ahead = (fragment + bytes_ahead + BLOCK_SIZE - 1) / BLOCK_SIZE - 1;
@@ -433,7 +512,7 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
    */
   limit_bufs_in_use = block_spec ? NR_BUFS : NR_BUFS - 2;
 
-  max_track = bp->b_blocknr / blocks_per_track;
+  max_track = (unsigned) (bp->b_blocknr / blocks_per_track);
   reading_ahead = FALSE;
   read_q[0] = bp;		/* first buffer must be read */
   read_q_size = 1;
@@ -462,7 +541,7 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
 	else
 		block = read_map(rip, position);
 	position += BLOCK_SIZE;
-	track = block / blocks_per_track;
+	track = (unsigned) (block / blocks_per_track);
 	if (reading_ahead) {
 		if (track != max_track) continue;
 	} else {

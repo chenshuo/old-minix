@@ -15,8 +15,8 @@ struct	group {
 #include <ansi.h>
 #endif
 
-_PROTOTYPE( struct group *getgrgid,  (int _gid)  			);
-_PROTOTYPE( struct group *getgrnam, (char *_name) 			);
+_PROTOTYPE( struct group *getgrgid, (Gid_t _gid)  			);
+_PROTOTYPE( struct group *getgrnam, (const char *_name)			);
 
 #ifdef _MINIX
 _PROTOTYPE( void endgrent, (void)					);

@@ -2,18 +2,20 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains movement functions which are screen-relative */
 
+#include "config.h"
 #include "vi.h"
 
 /* This moves the cursor to a particular row on the screen */
-MARK moverow(m, cnt, key)
+/*ARGSUSED*/
+MARK m_row(m, cnt, key)
 	MARK	m;	/* the cursor position */
 	long	cnt;	/* the row we'll move to */
 	int	key;	/* the keystroke of this move - H/L/M */
@@ -43,12 +45,13 @@ MARK moverow(m, cnt, key)
 
 
 /* This function repositions the current line to show on a given row */
-MARK movez(m, cnt, key)
+MARK m_z(m, cnt, key)
 	MARK	m;	/* the cursor */
 	long	cnt;	/* the line number we're repositioning */
 	int	key;	/* key struck after the z */
 {
 	long	newtop;
+	int	i;
 
 	/* Which line are we talking about? */
 	if (cnt < 0 || cnt > nlines)
@@ -65,17 +68,30 @@ MARK movez(m, cnt, key)
 		newtop = markline(m);
 	}
 
-	/* allow a "window size" number to be entered, but ignore it */
-	while (key >= '0' && key <= '9')
+	/* allow a "window size" number to be entered */
+	for (i = 0; key >= '0' && key <= '9'; key = getkey(0))
 	{
-		key = getkey(0);
+		i = i * 10 + key - '0';
 	}
+#ifndef CRUNCH
+	if (i > 0 && i <= LINES - 1)
+	{
+		*o_window = i;
+		wset = TRUE;
+	}
+#else
+	/* the number is ignored if -DCRUNCH */
+#endif
 
 	/* figure out which line will have to be at the top of the screen */
 	switch (key)
 	{
 	  case '\n':
+#if OSK
+	  case '\l':
+#else
 	  case '\r':
+#endif
 	  case '+':
 		break;
 
@@ -93,6 +109,7 @@ MARK movez(m, cnt, key)
 	}
 
 	/* make the new topline take effect */
+	redraw(MARK_UNSET, FALSE);
 	if (newtop >= 1)
 	{
 		topline = newtop;
@@ -101,7 +118,7 @@ MARK movez(m, cnt, key)
 	{
 		topline = 1L;
 	}
-	mustredraw = TRUE;
+	redrawrange(0L, INFINITY, INFINITY);
 
 	/* The cursor doesn't move */
 	return m;
@@ -112,7 +129,8 @@ MARK movez(m, cnt, key)
  * an off-screen line as the argument.  It will move the cursor if necessary
  * so that the cursor is on the new screen.
  */
-MARK movescroll(m, cnt, key)
+/*ARGSUSED*/
+MARK m_scroll(m, cnt, key)
 	MARK	m;	/* the cursor position */
 	long	cnt;	/* for some keys: the number of lines to scroll */
 	int	key;	/* keystroke that causes this movement */
@@ -125,8 +143,8 @@ MARK movescroll(m, cnt, key)
 	  case ctrl('F'):
 	  case ctrl('B'):
 		DEFAULT(1);
-		mustredraw = TRUE;
-		cnt = cnt * (LINES - 1) - 1; /* keeps one old line on screen */
+		redrawrange(0L, INFINITY, INFINITY); /* force complete redraw */
+		cnt = cnt * (LINES - 1) - 2; /* keeps two old lines on screen */
 		break;
 
 	  case ctrl('E'):
@@ -187,12 +205,6 @@ MARK movescroll(m, cnt, key)
 			m = MARK_AT_LINE(topline);
 		}
 		break;
-	}
-
-	/* arrange for ctrl-B and ctrl-F to redraw the smart line */
-	if (key == ctrl('B') || key == ctrl('F'))
-	{
-		changes++;
 	}
 
 	return m;

@@ -2,197 +2,268 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
-#include <ctype.h>
+#include "config.h"
+#include "ctype.h"
 #include "vi.h"
 
 
 
 /* This array describes what each key does */
 #define NO_FUNC		(MARK (*)())0
+
 #define NO_ARGS		0
-#define CURSOR_COUNT	1
-#define CURSOR		2
-#define CURSOR_CNT_KEY	3
-#define CURSOR_MOVED	4
-#define CURSOR_EOL	5
-#define ZERO		6
-#define DIGIT		7
-#define CURSOR_TEXT	8
-#define CURSOR_CNT_CMD	9
-#define KEYWORD		10
-#define NO_FLAGS	0x00
-#define	MVMT		0x01	/* this is a movement command */
-#define PTMV		0x02	/* this can be *part* of a movement command */
-#define FRNT		0x04	/* after move, go to front of line */
-#define INCL		0x08	/* include last char when used with c/d/y */
-#define LNMD		0x10	/* use line mode of c/d/y */
-#define NCOL		0x20	/* this command can't change the column# */
-#define NREL		0x40	/* this is "non-relative" -- set the '' mark */
-#define SDOT		0x80	/* set the "dot" variables, for the "." cmd */
+#define CURSOR		1
+#define CURSOR_CNT_KEY	2
+#define CURSOR_MOVED	3
+#define CURSOR_EOL	4
+#define ZERO		5
+#define DIGIT		6
+#define CURSOR_TEXT	7
+#define KEYWORD		8
+#define ARGSMASK	0x0f
+#define	C_C_K_REP1	(CURSOR_CNT_KEY | 0x10)
+#define C_C_K_CUT	(CURSOR_CNT_KEY | 0x20)
+#define C_C_K_MARK	(CURSOR_CNT_KEY | 0x30)
+#define C_C_K_CHAR	(CURSOR_CNT_KEY | 0x40)
+#ifndef NO_SHOWMODE
+static int keymodes[] = {0, WHEN_REP1, WHEN_CUT, WHEN_MARK, WHEN_CHAR};
+# define KEYMODE(args) (keymodes[(args) >> 4])
+#else
+# define KEYMODE(args) 0
+#endif
+
 static struct keystru
 {
 	MARK	(*func)();	/* the function to run */
-	char	args;		/* description of the args needed */
-	char	flags;		/* other stuff */
+	uchar	args;		/* description of the args needed */
+#ifndef NO_VISIBLE
+	short	flags;
+#else
+	uchar	flags;		/* other stuff */
+#endif
 }
 	vikeys[] =
 {
 /* NUL not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#ifndef NO_EXTENSIONS
+/* ^A  find cursor word */	{m_wsrch,	KEYWORD,	MVMT|NREL|VIZ},
+#else
 /* ^A  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^B  page backward	*/	{movescroll,	CURSOR_CNT_CMD,	FRNT},
+#endif
+/* ^B  page backward	*/	{m_scroll,	CURSOR,		FRNT|VIZ},
 /* ^C  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^D  scroll dn 1/2page*/	{movescroll,	CURSOR_CNT_CMD,	NCOL},
-/* ^E  scroll up	*/	{movescroll,	CURSOR_CNT_CMD,	NCOL},
-/* ^F  page forward	*/	{movescroll,	CURSOR_CNT_CMD,	FRNT},
+/* ^D  scroll dn 1/2page*/	{m_scroll,	CURSOR,		NCOL|VIZ},
+/* ^E  scroll up	*/	{m_scroll,	CURSOR,		NCOL|VIZ},
+/* ^F  page forward	*/	{m_scroll,	CURSOR,		FRNT|VIZ},
 /* ^G  show file status	*/	{v_status,	NO_ARGS, 	NO_FLAGS},
-/* ^H  move left, like h*/	{moveleft,	CURSOR_COUNT,	MVMT},
+/* ^H  move left, like h*/	{m_left,	CURSOR,		MVMT|VIZ},
 /* ^I  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^J  move down	*/	{movedown,	CURSOR_COUNT,	MVMT|LNMD},
+/* ^J  move down	*/	{m_updnto,	CURSOR,		MVMT|LNMD|VIZ|INCL},
 /* ^K  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^L  redraw screen	*/	{v_redraw,	NO_ARGS,	NO_FLAGS},
-/* ^M  mv front next ln */	{movedown,	CURSOR_COUNT,	MVMT|FRNT|LNMD},
-/* ^N  move down	*/	{movedown,	CURSOR_COUNT,	MVMT|LNMD},
+/* ^L  redraw screen	*/	{v_redraw,	NO_ARGS,	NO_FLAGS|VIZ},
+/* ^M  mv front next ln */	{m_updnto,	CURSOR,		MVMT|FRNT|LNMD|VIZ|INCL},
+/* ^N  move down	*/	{m_updnto,	CURSOR,		MVMT|LNMD|VIZ|INCL|NCOL},
 /* ^O  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^P  not defined	*/	{moveup,	CURSOR_COUNT,	MVMT|LNMD},
+/* ^P  move up		*/	{m_updnto,	CURSOR,		MVMT|LNMD|VIZ|INCL|NCOL},
 /* ^Q  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^R  redraw screen	*/	{v_redraw,	NO_ARGS,	NO_FLAGS},
+/* ^R  redraw screen	*/	{v_redraw,	NO_ARGS,	NO_FLAGS|VIZ},
 /* ^S  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
 /* ^T  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^U  scroll up 1/2page*/	{movescroll,	CURSOR_CNT_CMD,	NCOL},
+/* ^U  scroll up 1/2page*/	{m_scroll,	CURSOR,		NCOL|VIZ},
 /* ^V  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
 /* ^W  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^X  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* ^Y  scroll down	*/	{movescroll,	CURSOR_CNT_CMD,	NCOL},
+/* ^X  move to phys col	*/	{m_tocol,	CURSOR,		MVMT|NREL|VIZ},
+/* ^Y  scroll down	*/	{m_scroll,	CURSOR,		NCOL|VIZ},
+#ifdef SIGTSTP
+/* ^Z  suspend elvis	*/	{v_suspend,	NO_ARGS,	NO_FLAGS},
+#else
 /* ^Z  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
 /* ESC not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
 /* ^\  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
 /* ^]  keyword is tag	*/	{v_tag,		KEYWORD,	NO_FLAGS},
-/* ^^  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+/* ^^  previous file	*/	{v_switch,	CURSOR,		NO_FLAGS},
 /* ^_  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/* SPC move right,like l*/	{moveright,	CURSOR_COUNT,	MVMT},
-/*  !  run thru filter	*/	{v_filter,	CURSOR_MOVED,	NO_FLAGS},
-/*  "  select cut buffer*/	{v_selcut,	CURSOR_CNT_KEY,	PTMV},
+/* SPC move right,like l*/	{m_right,	CURSOR,		MVMT|INCL|VIZ},
+/*  !  run thru filter	*/	{v_filter,	CURSOR_MOVED,	FRNT|LNMD|INCL|VIZ},
+/*  "  select cut buffer*/	{v_selcut,	C_C_K_CUT,	PTMV|VIZ},
+#ifndef NO_EXTENSIONS
+/*  #  increment number	*/	{v_increment,	KEYWORD,	SDOT},
+#else
 /*  #  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  $  move to rear	*/	{moverear,	CURSOR,		MVMT|INCL},
-/*  %  move to match	*/	{movematch,	CURSOR,		MVMT|INCL},
-/*  &  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  '  move to a mark	*/	{movetomark,	CURSOR_CNT_KEY,	MVMT|FRNT|NREL|LNMD},
-/*  (  mv back sentence	*/	{movebsentence,	CURSOR_COUNT,	MVMT},
-/*  )  mv fwd sentence	*/	{movefsentence,	CURSOR_COUNT,	MVMT},
+#endif
+/*  $  move to rear	*/	{m_rear,	CURSOR,		MVMT|INCL|VIZ},
+/*  %  move to match	*/	{m_match,	CURSOR,		MVMT|INCL|VIZ},
+/*  &  repeat subst	*/	{v_again,	CURSOR_MOVED,	SDOT|NCOL|LNMD|INCL},
+/*  '  move to a mark	*/	{m_tomark,	C_C_K_MARK,	MVMT|FRNT|NREL|LNMD|INCL|VIZ},
+#ifndef NO_SENTENCE
+/*  (  mv back sentence	*/	{m_sentence,	CURSOR,		MVMT|VIZ},
+/*  )  mv fwd sentence	*/	{m_sentence,	CURSOR,		MVMT|VIZ},
+#else
+/*  (  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+/*  )  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
+#ifndef NO_ERRLIST
+/*  *  errlist		*/	{v_errlist,	CURSOR,		FRNT|NREL},
+#else
 /*  *  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  +  mv front next ln */	{movedown,	CURSOR_COUNT,	MVMT|FRNT|LNMD},
-/*  ,  reverse [fFtT] cmd*/	{move_ch,	CURSOR_CNT_CMD,	MVMT|INCL},
-/*  -  mv front prev ln	*/	{moveup,	CURSOR_COUNT,	MVMT|FRNT|LNMD},
+#endif
+/*  +  mv front next ln */	{m_updnto,	CURSOR,		MVMT|FRNT|LNMD|VIZ|INCL},
+#ifndef NO_CHARSEARCH
+/*  ,  reverse [fFtT] cmd*/	{m__ch,		CURSOR,		MVMT|INCL|VIZ},
+#else
+/*  ,  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
+/*  -  mv front prev ln	*/	{m_updnto,	CURSOR,		MVMT|FRNT|LNMD|VIZ|INCL},
 /*  .  special...	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  /  forward search	*/	{movefsrch,	CURSOR_TEXT,	MVMT|NREL},
-/*  0  part of count?	*/	{NO_FUNC,	ZERO,		MVMT|PTMV},
-/*  1  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  2  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  3  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  4  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  5  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  6  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  7  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  8  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
-/*  9  part of count	*/	{NO_FUNC,	DIGIT,		PTMV},
+/*  /  forward search	*/	{m_fsrch,	CURSOR_TEXT,	MVMT|NREL|VIZ},
+/*  0  part of count?	*/	{NO_FUNC,	ZERO,		MVMT|PTMV|VIZ},
+/*  1  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  2  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  3  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  4  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  5  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  6  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  7  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  8  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
+/*  9  part of count	*/	{NO_FUNC,	DIGIT,		PTMV|VIZ},
 /*  :  run single EX cmd*/	{v_1ex,		CURSOR_TEXT,	NO_FLAGS},
-/*  ;  repeat [fFtT] cmd*/	{move_ch,	CURSOR_CNT_CMD,	MVMT|INCL},
-/*  <  shift text left	*/	{v_shiftl,	CURSOR_MOVED,	SDOT|FRNT},
-/*  =  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  >  shift text right	*/	{v_shiftr,	CURSOR_MOVED,	SDOT|FRNT},
-/*  ?  backward search	*/	{movebsrch,	CURSOR_TEXT,	MVMT|NREL},
+#ifndef NO_CHARSEARCH
+/*  ;  repeat [fFtT] cmd*/	{m__ch,		CURSOR,		MVMT|INCL|VIZ},
+#else
+/*  ;  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS|VIZ},
+#endif
+/*  <  shift text left	*/	{v_lshift,	CURSOR_MOVED,	SDOT|FRNT|LNMD|INCL|VIZ},
+/*  =  preset filter	*/	{v_reformat,	CURSOR_MOVED,	SDOT|FRNT|LNMD|INCL|VIZ},
+/*  >  shift text right	*/	{v_rshift,	CURSOR_MOVED,	SDOT|FRNT|LNMD|INCL|VIZ},
+/*  ?  backward search	*/	{m_bsrch,	CURSOR_TEXT,	MVMT|NREL|VIZ},
+#ifndef NO_AT
+/*  @  execute a cutbuf */	{v_at,		C_C_K_CUT,	NO_FLAGS},
+#else
 /*  @  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  A  append at EOL	*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  B  move back Word	*/	{movebWord,	CURSOR_COUNT,	MVMT},
+#endif
+/*  A  append at EOL	*/	{v_insert,	CURSOR,		SDOT},
+/*  B  move back Word	*/	{m_bword,	CURSOR,		MVMT|VIZ},
 /*  C  change to EOL	*/	{v_change,	CURSOR_EOL,	SDOT},
 /*  D  delete to EOL	*/	{v_delete,	CURSOR_EOL,	SDOT},
-/*  E  move end of Word	*/	{moveeWord,	CURSOR_COUNT,	MVMT|INCL},
-/*  F  move bk to char	*/	{moveFch,	CURSOR_CNT_KEY,	MVMT|INCL},
-/*  G  move to line #	*/	{movetoline,	CURSOR_COUNT,	MVMT|NREL|LNMD},
-/*  H  move to row	*/	{moverow,	CURSOR_CNT_CMD,	FRNT},
-/*  I  insert at front	*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  J  join lines	*/	{v_join,	CURSOR_COUNT,	SDOT},
+/*  E  move end of Word	*/	{m_eword,	CURSOR,		MVMT|INCL|VIZ},
+#ifndef NO_CHARSEARCH
+/*  F  move bk to char	*/	{m_Fch,		C_C_K_CHAR,	MVMT|INCL|VIZ},
+#else
+/*  F  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
+/*  G  move to line #	*/	{m_updnto,	CURSOR,		MVMT|NREL|LNMD|FRNT|INCL|VIZ},
+/*  H  move to row	*/	{m_row,		CURSOR,		MVMT|LNMD|FRNT|VIZ|INCL},
+/*  I  insert at front	*/	{v_insert,	CURSOR,		SDOT},
+/*  J  join lines	*/	{v_join,	CURSOR,		SDOT},
+#ifndef NO_EXTENSIONS
 /*  K  look up keyword	*/	{v_keyword,	KEYWORD,	NO_FLAGS},
-/*  L  move to last row	*/	{moverow,	CURSOR_CNT_CMD,	FRNT},
-/*  M  move to mid row	*/	{moverow,	CURSOR_CNT_CMD,	FRNT},
-/*  N  reverse prev srch*/	{moveNsrch,	CURSOR,		MVMT},
-/*  O  insert above line*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  P  paste before	*/	{v_paste,	CURSOR_CNT_CMD,	NO_FLAGS},
+#else
+/*  K  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
+/*  L  move to last row	*/	{m_row,		CURSOR,		MVMT|LNMD|FRNT|VIZ|INCL},
+/*  M  move to mid row	*/	{m_row,		CURSOR,		MVMT|LNMD|FRNT|VIZ|INCL},
+/*  N  reverse prev srch*/	{m_Nsrch,	CURSOR,		MVMT|NREL|VIZ},
+/*  O  insert above line*/	{v_insert,	CURSOR,		SDOT},
+/*  P  paste before	*/	{v_paste,	CURSOR,		SDOT},
 /*  Q  quit to EX mode	*/	{v_quit,	NO_ARGS,	NO_FLAGS},
 /*  R  overtype		*/	{v_overtype,	CURSOR,		SDOT},
-/*  S  not defined	*/	{v_change,	CURSOR_MOVED,	SDOT},
-/*  T  move bk to char	*/	{moveTch,	CURSOR_CNT_KEY,	MVMT|INCL},
-/*  U  not defined	*/	{v_undoline,	CURSOR,		FRNT},
+/*  S  change line	*/	{v_change,	CURSOR_MOVED,	SDOT},
+#ifndef NO_CHARSEARCH
+/*  T  move bk to char	*/	{m_Tch,		C_C_K_CHAR,	MVMT|INCL|VIZ},
+#else
+/*  T  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
+/*  U  undo whole line	*/	{v_undoline,	CURSOR,		FRNT},
+#ifndef NO_VISIBLE
+/*  V  start visible	*/	{v_start,	CURSOR,		INCL|LNMD|VIZ},
+#else
 /*  V  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  W  move forward Word*/	{movefWord,	CURSOR_COUNT,	MVMT},
-/*  X  delete to left	*/	{v_Xchar,	CURSOR_COUNT,	SDOT},
-/*  Y  yank text	*/	{v_yank,	CURSOR_MOVED,	NO_FLAGS},
+#endif
+/*  W  move forward Word*/	{m_fword,	CURSOR,		MVMT|INCL|VIZ},
+/*  X  delete to left	*/	{v_xchar,	CURSOR,		SDOT},
+/*  Y  yank text	*/	{v_yank,	CURSOR_MOVED,	NCOL},
 /*  Z  save file & exit	*/	{v_xit,		CURSOR_CNT_KEY,	NO_FLAGS},
-/*  [  move back section*/	{movebsection,	CURSOR_CNT_KEY,	MVMT|LNMD|NREL},
+/*  [  move back section*/	{m_paragraph,	CURSOR,		MVMT|LNMD|NREL|VIZ},
+#ifndef NO_POPUP
+/*  \  pop-up menu	*/	{v_popup,	CURSOR_MOVED,	VIZ},
+#else
 /*  \  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  ]  move fwd section */	{movefsection,	CURSOR_CNT_KEY,	MVMT|LNMD|NREL},
-/*  ^  move to front	*/	{movefront,	CURSOR,		MVMT},
-/*  _  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  `  move to mark	*/	{movetomark,	CURSOR_CNT_KEY,	MVMT|NREL},
-/*  a  append at cursor	*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  b  move back word	*/	{movebword,	CURSOR_COUNT,	MVMT},
-/*  c  change text	*/	{v_change,	CURSOR_MOVED,	SDOT},
-/*  d  delete op	*/	{v_delete,	CURSOR_MOVED,	SDOT},
-/*  e  move end word	*/	{moveeword,	CURSOR_COUNT,	MVMT|INCL},
-/*  f  move fwd for char*/	{movefch,	CURSOR_CNT_KEY,	MVMT|INCL},
+#endif
+/*  ]  move fwd section */	{m_paragraph,	CURSOR,		MVMT|LNMD|NREL|VIZ},
+/*  ^  move to front	*/	{m_front,	CURSOR,		MVMT|VIZ},
+/*  _  current line	*/	{m_updnto,	CURSOR,		MVMT|LNMD|FRNT|INCL},
+/*  `  move to mark	*/	{m_tomark,	C_C_K_MARK,	MVMT|NREL|VIZ},
+/*  a  append at cursor	*/	{v_insert,	CURSOR,		SDOT},
+/*  b  move back word	*/	{m_bword,	CURSOR,		MVMT|VIZ},
+/*  c  change text	*/	{v_change,	CURSOR_MOVED,	SDOT|VIZ},
+/*  d  delete op	*/	{v_delete,	CURSOR_MOVED,	SDOT|VIZ},
+/*  e  move end word	*/	{m_eword,	CURSOR,		MVMT|INCL|VIZ},
+#ifndef NO_CHARSEARCH
+/*  f  move fwd for char*/	{m_fch,		C_C_K_CHAR,	MVMT|INCL|VIZ},
+#else
+/*  f  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
 /*  g  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  h  move left	*/	{moveleft,	CURSOR_COUNT,	MVMT},
-/*  i  insert at cursor	*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  j  move down	*/	{movedown,	CURSOR_COUNT,	MVMT|NCOL|LNMD},
-/*  k  move up		*/	{moveup,	CURSOR_COUNT,	MVMT|NCOL|LNMD},
-/*  l  move right	*/	{moveright,	CURSOR_COUNT,	MVMT},
-/*  m  define a mark	*/	{v_mark,	CURSOR_CNT_KEY,	NO_FLAGS},
-/*  n  repeat prev srch	*/	{movensrch,	CURSOR, 	MVMT},
-/*  o  insert below line*/	{v_insert,	CURSOR_CNT_CMD,	SDOT},
-/*  p  paste after	*/	{v_paste,	CURSOR_CNT_CMD,	NO_FLAGS},
+/*  h  move left	*/	{m_left,	CURSOR,		MVMT|VIZ},
+/*  i  insert at cursor	*/	{v_insert,	CURSOR,		SDOT},
+/*  j  move down	*/	{m_updnto,	CURSOR,		MVMT|NCOL|LNMD|VIZ|INCL},
+/*  k  move up		*/	{m_updnto,	CURSOR,		MVMT|NCOL|LNMD|VIZ|INCL},
+/*  l  move right	*/	{m_right,	CURSOR,		MVMT|INCL|VIZ},
+/*  m  define a mark	*/	{v_mark,	C_C_K_MARK,	NO_FLAGS},
+/*  n  repeat prev srch	*/	{m_nsrch,	CURSOR, 	MVMT|NREL|VIZ},
+/*  o  insert below line*/	{v_insert,	CURSOR,		SDOT},
+/*  p  paste after	*/	{v_paste,	CURSOR,		SDOT},
 /*  q  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  r  replace chars	*/	{v_replace,	CURSOR_CNT_KEY,	SDOT},
-/*  s  subst N chars	*/	{v_subst,	CURSOR_COUNT,	SDOT},
-/*  t  move fwd to char	*/	{movetch,	CURSOR_CNT_KEY,	MVMT|INCL},
+/*  r  replace chars	*/	{v_replace,	C_C_K_REP1,	SDOT},
+/*  s  subst N chars	*/	{v_subst,	CURSOR,		SDOT},
+#ifndef NO_CHARSEARCH
+/*  t  move fwd to char	*/	{m_tch,		C_C_K_CHAR,	MVMT|INCL|VIZ},
+#else
+/*  t  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+#endif
 /*  u  undo		*/	{v_undo,	CURSOR,		NO_FLAGS},
+#ifndef NO_VISIBLE
+/*  v  start visible	*/	{v_start,	CURSOR,		INCL|VIZ},
+#else
 /*  v  not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
-/*  w  move fwd word	*/	{movefword,	CURSOR_COUNT,	MVMT},
-/*  x  delete character	*/	{v_xchar,	CURSOR_COUNT,	SDOT},
-/*  y  yank text	*/	{v_yank,	CURSOR_MOVED,	NO_FLAGS},
-/*  z  adjust scrn row	*/	{movez, 	CURSOR_CNT_KEY,	NCOL},
-/*  {  back paragraph	*/	{movebparagraph,CURSOR_COUNT,	MVMT|LNMD},
-/*  |  move to column	*/	{movetocol,	CURSOR_COUNT,	NREL},
-/*  }  fwd paragraph	*/	{movefparagraph,CURSOR_COUNT,	MVMT|LNMD},
+#endif
+/*  w  move fwd word	*/	{m_fword,	CURSOR,		MVMT|INCL|VIZ},
+/*  x  delete character	*/	{v_xchar,	CURSOR,		SDOT},
+/*  y  yank text	*/	{v_yank,	CURSOR_MOVED,	NCOL|VIZ},
+/*  z  adjust scrn row	*/	{m_z, 		CURSOR_CNT_KEY,	NCOL|VIZ},
+/*  {  back paragraph	*/	{m_paragraph,	CURSOR,		MVMT|LNMD|VIZ},
+/*  |  move to column	*/	{m_tocol,	CURSOR,		MVMT|NREL|VIZ},
+/*  }  fwd paragraph	*/	{m_paragraph,	CURSOR,		MVMT|LNMD|VIZ},
 /*  ~  upper/lowercase	*/	{v_ulcase,	CURSOR,		SDOT},
-/* DEL not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS},
+/* DEL not defined	*/	{NO_FUNC,	NO_ARGS,	NO_FLAGS}
 };
 
 
 
-vi()
+void vi()
 {
-	register int		key;	/* keystroke from user */
+	REG int			key;	/* keystroke from user */
 	long			count;	/* numeric argument to some functions */
-	register struct keystru	*keyptr;/* pointer to vikeys[] element */
+	REG struct keystru	*keyptr;/* pointer to vikeys[] element */
 	MARK			tcurs;	/* temporary cursor */
 	int			prevkey;/* previous key, if d/c/y/</>/! */
 	MARK			range;	/* start of range for d/c/y/</>/! */
-	char			text[100];
+	char			text[132];
 	int			dotkey;	/* last "key" of a change */
 	int			dotpkey;/* last "prevkey" of a change */
 	int			dotkey2;/* last extra "getkey()" of a change */
 	int			dotcnt;	/* last "count" of a change */
-	register int		i;
+	int			firstkey;
+	REG int			i;
 
 	/* tell the redraw() function to start from scratch */
 	redraw(MARK_UNSET, FALSE);
-	msg((char *)0);
 
 #ifdef lint
 	/* lint says that "range" might be used before it is set.  This
@@ -204,7 +275,16 @@ vi()
 #endif
 
 	/* safeguard against '.' with no previous command */
-	dotkey = 0;
+	dotkey = dotpkey = dotkey2 = dotcnt = 0;
+
+	/* go immediately into insert mode, if ":set inputmode" */
+	firstkey = 0;
+#ifndef NO_EXTENSIONS
+	if (*o_inputmode)
+	{
+		firstkey = 'i';
+	}
+#endif
 
 	/* Repeatedly handle VI commands */
 	for (count = 0, prevkey = '\0'; mode == MODE_VI; )
@@ -219,42 +299,60 @@ vi()
 		if (rptlines >= *o_report)
 		{
 			redraw(cursor, FALSE);
-			msg("%ld lines %s", rptlines, rptlabel);
+			msg("%ld line%s %s", rptlines, (rptlines==1?"":"s"), rptlabel);
 		}
 		rptlines = 0L;
 
 		/* get the next command key.  It must be ASCII */
-		do
+		if (firstkey)
 		{
-			key = getkey(WHEN_VICMD);
-		} while (key < 0 || key > 127);
-
-		/* change cw and cW commands to ce and cE, respectively */
-		/* (Why?  because the real vi does it that way!) */
-		if (prevkey == 'c')
+			key = firstkey;
+			firstkey = 0;
+		}
+		else
 		{
-			if (key == 'w')
-				key = 'e';
-			else if (key == 'W')
-				key = 'E';
-
-			/* wouldn't work right at the end of a word unless we
-			 * backspace one character before doing the move.  This
-			 * will fix most cases.
-			 */
-			if (markidx(cursor) > 0 && (key == 'e' || key == 'E'))
+			do
 			{
-				cursor--;
-			}
+				key = getkey(WHEN_VICMD);
+			} while (key < 0 || key > 127);
+		}
+
+		/* Convert a doubled-up operator such as "dd" into "d_" */
+		if (prevkey && key == prevkey)
+		{
+			key = '_';
 		}
 
 		/* look up the structure describing this command */
 		keyptr = &vikeys[key];
 
-		/* if we're in the middle of a d/c/y/</>/! command, reject
-		 * anything but movement or a doubled version like "dd".
+		/* '&' and uppercase operators always act like doubled */
+		if (!prevkey && keyptr->args == CURSOR_MOVED
+			&& (key == '&' || isupper(key)))
+		{
+			range = cursor;
+			prevkey = key;
+			key = '_';
+			keyptr = &vikeys[key];
+		}
+
+#ifndef NO_VISIBLE
+		/* if we're in the middle of a v/V command, reject commands
+		 * that aren't operators or movement commands
 		 */
-		if (prevkey && key != prevkey && !(keyptr->flags & (MVMT|PTMV)))
+		if (V_from && !(keyptr->flags & VIZ))
+		{
+			beep();
+			prevkey = 0;
+			count = 0;
+			continue;
+		}
+#endif
+
+		/* if we're in the middle of a d/c/y/</>/! command, reject
+		 * anything but movement.
+		 */
+		if (prevkey && !(keyptr->flags & (MVMT|PTMV)))
 		{
 			beep();
 			prevkey = 0;
@@ -263,8 +361,12 @@ vi()
 		}
 
 		/* set the "dot" variables, if we're supposed to */
-		if ((keyptr->flags & SDOT)
-		 || (prevkey && vikeys[prevkey].flags & SDOT))
+		if (((keyptr->flags & SDOT)
+			|| (prevkey && vikeys[prevkey].flags & SDOT))
+#ifndef NO_VISIBLE
+		    && !V_from
+#endif
+		)
 		{
 			dotkey = key;
 			dotpkey = prevkey;
@@ -309,7 +411,8 @@ vi()
 
 		/* process the key as a command */
 		tcurs = cursor;
-		switch (keyptr->args)
+		force_flags = NO_FLAGS;
+		switch (keyptr->args & ARGSMASK)
 		{
 		  case ZERO:
 			if (count == 0)
@@ -327,28 +430,29 @@ vi()
 			/* if not on a keyword, fail */
 			pfetch(markline(cursor));
 			key = markidx(cursor);
-			if (!isalnum(ptext[key]) && ptext[key] != '_')
+			if (!isalnum(ptext[key]))
 			{
 				tcurs = MARK_UNSET;
 				break;
 			}
 
 			/* find the start of the keyword */
-			while (key > 0 && (isalnum(ptext[key - 1]) || ptext[key - 1] == '_'))
+			while (key > 0 && isalnum(ptext[key - 1]))
 			{
 				key--;
 			}
+			tcurs = (cursor & ~(BLKSIZE - 1)) + key;
 
 			/* copy it into a buffer, and NUL-terminate it */
 			i = 0;
 			do
 			{
 				text[i++] = ptext[key++];
-			} while (isalnum(ptext[key]) || ptext[key] == '_');
+			} while (isalnum(ptext[key]));
 			text[i] = '\0';
 
 			/* call the function */
-			tcurs = (*keyptr->func)(text);
+			tcurs = (*keyptr->func)(text, tcurs, count);
 			count = 0L;
 			break;
 
@@ -364,13 +468,8 @@ vi()
 			count = 0L;
 			break;
 	
-		  case CURSOR_COUNT:
-			tcurs = (*keyptr->func)(cursor, count);
-			count = 0L;
-			break;
-	
 		  case CURSOR:
-			tcurs = (*keyptr->func)(cursor);
+			tcurs = (*keyptr->func)(cursor, count, key, prevkey);
 			count = 0L;
 			break;
 
@@ -379,74 +478,97 @@ vi()
 			{
 				tcurs = (*keyptr->func)(cursor, count, dotkey2);
 			}
-			else if (keyptr->flags & SDOT
-			 || (prevkey && vikeys[prevkey].flags & SDOT))
-			{
-				dotkey2 = getkey(0);
-				tcurs = (*keyptr->func)(cursor, count, dotkey2);
-			}
 			else
 			{
-				tcurs = (*keyptr->func)(cursor, count, getkey(0));
+				/* get a key */
+				i = getkey(KEYMODE(keyptr->args));
+				if (i == '\033') /* ESC */
+				{
+					count = 0;
+					tcurs = MARK_UNSET;
+					break; /* exit from "case CURSOR_CNT_KEY" */
+				}
+				else if (i == ctrl('V'))
+				{
+					i = getkey(0);
+				}
+
+				/* if part of an SDOT command, remember it */
+				 if (keyptr->flags & SDOT
+				 || (prevkey && vikeys[prevkey].flags & SDOT))
+				{
+					dotkey2 = i;
+				}
+
+				/* do it */
+				tcurs = (*keyptr->func)(cursor, count, i);
 			}
 			count = 0L;
 			break;
 	
 		  case CURSOR_MOVED:
-			/* uppercase keys always act like doubled */
-			if (isupper(key))
+#ifndef NO_VISIBLE
+			if (V_from)
 			{
-				prevkey = key;
 				range = cursor;
-			}
-
-			if (prevkey)
-			{
-				/* doubling up a command, use complete lines */
-				range &= ~(BLKSIZE - 1);
-				if (count)
-				{
-					tcurs = range + MARK_AT_LINE(count);
-					count = 0;
-				}
-				else
-				{
-					tcurs = range + BLKSIZE;
-				}
+				tcurs = V_from;
+				count = 0L;
+				prevkey = key;
+				key = (V_linemd ? 'V' : 'v');
+				keyptr = &vikeys[key];
 			}
 			else
+#endif
 			{
 				prevkey = key;
 				range = cursor;
-				key = -1; /* so we don't think we doubled yet */
+				force_flags = LNMD|INCL;
 			}
 			break;
 
 		  case CURSOR_EOL:
-			/* act like CURSOR_MOVED with '$' movement */
-			range = cursor;
-			tcurs = moverear(cursor, 1L);
-			count = 0L;
 			prevkey = key;
-			key = '$';
-			keyptr = &vikeys['$'];
+			/* a zero-length line needs special treatment */
+			pfetch(markline(cursor));
+			if (plen == 0)
+			{
+				/* act on a zero-length section of text */
+				range = tcurs = cursor;
+				key = '0';
+			}
+			else
+			{
+				/* act like CURSOR_MOVED with '$' movement */
+				range = cursor;
+				tcurs = m_rear(cursor, 1L);
+				key = '$';
+			}
+			count = 0L;
+			keyptr = &vikeys[key];
 			break;
 
 		  case CURSOR_TEXT:
-			if (vgets(key, text, sizeof text) >= 0)
-			{
-				/* reassure user that <CR> was hit */
-				qaddch('\r');
-				refresh();
+		  	do
+		  	{	
+				text[0] = key;
+				if (vgets(key, text + 1, sizeof text - 1) >= 0)
+				{
+					/* reassure user that <CR> was hit */
+					qaddch('\r');
+					refresh();
 
-				/* call the function with the text */
-				tcurs = (*keyptr->func)(cursor, text);
-			}
-			count = 0L;
-			break;
-
-		  case CURSOR_CNT_CMD:
-			tcurs = (*keyptr->func)(cursor, count, key);
+					/* call the function with the text */
+					tcurs = (*keyptr->func)(cursor, text);
+				}
+				else
+				{
+					if (exwrote || mode == MODE_COLON)
+					{
+						redraw(MARK_UNSET, FALSE);
+					}
+					mode = MODE_VI;
+				}
+			} while (mode == MODE_COLON);
 			count = 0L;
 			break;
 		}
@@ -461,26 +583,30 @@ vi()
 		}
 
 		/* now move the cursor, as appropriate */
-		if (prevkey && markline(tcurs) > nlines)
-		{
-			/* destination for operator may be nlines + 1 */
-			cursor = MARK_AT_LINE(nlines + 1);
-		}
-		else if (keyptr->args == CURSOR_MOVED)
+		if (keyptr->args == CURSOR_MOVED)
 		{
 			/* the < and > keys have FRNT,
 			 * but it shouldn't be applied yet
 			 */
-			cursor = adjmove(cursor, tcurs, 0);
+			tcurs = adjmove(cursor, tcurs, 0);
 		}
 		else
 		{
-			cursor = adjmove(cursor, tcurs, keyptr->flags);
+			tcurs = adjmove(cursor, tcurs, (int)keyptr->flags | force_flags);
 		}
 
 		/* was that the end of a d/c/y/</>/! command? */
-		if (prevkey && (prevkey == key || (keyptr->flags & MVMT)))
+		if (prevkey && ((keyptr->flags & MVMT)
+#ifndef NO_VISIBLE
+					       || V_from
+#endif
+				) && count == 0L)
 		{
+#ifndef NO_VISIBLE
+			/* turn off the hilight */
+			V_from = 0L;
+#endif
+
 			/* if the movement command failed, cancel operation */
 			if (tcurs == MARK_UNSET)
 			{
@@ -489,43 +615,62 @@ vi()
 				continue;
 			}
 
-			/* make sure range=front and tcurs=rear */
-			if (cursor < range)
+			/* make sure range=front and tcurs=rear.  Either way,
+			 * leave cursor=range since that's where we started.
+			 */
+			cursor = range;
+			if (tcurs < range)
 			{
-				tcurs = range;
-				range = cursor;
-			}
-			else
-			{
+				range = tcurs;
 				tcurs = cursor;
 			}
 
-			/* adjust for line mode */
-			if (keyptr->flags & LNMD)
+			/* The 'w' and 'W' destinations should never take us
+			 * to the front of a line.  Instead, they should take
+			 * us only to the end of the preceding line.
+			 */
+			if ((keyptr->flags & (MVMT|NREL|LNMD|FRNT|INCL)) == MVMT
+			  && markline(range) < markline(tcurs)
+			  && (markline(tcurs) > nlines || tcurs == m_front(tcurs, 0L)))
 			{
+				tcurs = (tcurs & ~(BLKSIZE - 1)) - BLKSIZE;
+				pfetch(markline(tcurs));
+				tcurs += plen;
+			}
+
+			/* adjust for line mode & inclusion of last char/line */
+			i = (keyptr->flags | vikeys[prevkey].flags);
+			switch ((i | force_flags) & (INCL|LNMD))
+			{
+			  case INCL:
+				tcurs++;
+				break;
+
+			  case INCL|LNMD:
+				tcurs += BLKSIZE;
+				/* fall through... */
+
+			  case LNMD:
 				range &= ~(BLKSIZE - 1);
 				tcurs &= ~(BLKSIZE - 1);
-				tcurs += BLKSIZE;
+				break;
 			}
-
-			/* adjust for inclusion of last char */
-			if (keyptr->flags & INCL)
-			{
-				tcurs++;
-			}
-
-			/* temporarily move the cursor to "range" so that
-			 * beforedo() remembers the cursor's real location.
-			 * This is important if the user later does undo()
-			 */
-			cursor = range;
 
 			/* run the function */
 			tcurs = (*vikeys[prevkey].func)(range, tcurs);
-			cursor = adjmove(cursor, tcurs, vikeys[prevkey].flags);
+			if (mode == MODE_VI)
+			{
+				(void)adjmove(cursor, cursor, 0);
+				cursor = adjmove(cursor, tcurs, (int)vikeys[prevkey].flags);
+			}
 
 			/* cleanup */
 			prevkey = 0;
+		}
+		else if (!prevkey)
+		{
+			if (tcurs != MARK_UNSET)
+				cursor = tcurs;
 		}
 	}
 }
@@ -536,12 +681,16 @@ vi()
  */
 MARK adjmove(old, new, flags)
 	MARK		old;	/* the cursor position before the command */
-	register MARK	new;	/* the cursor position after the command */
+	REG MARK	new;	/* the cursor position after the command */
 	int		flags;	/* various flags regarding cursor mvmt */
 {
 	static int	colno;	/* the column number that we want */
-	register char	*text;	/* used to scan through the line's text */
-	register int	i;
+	REG char	*text;	/* used to scan through the line's text */
+	REG int		i;
+
+#ifdef DEBUG
+	watch();
+#endif
 
 	/* if the command failed, bag it! */
 	if (new == MARK_UNSET)
@@ -572,7 +721,7 @@ MARK adjmove(old, new, flags)
 	/* move to the front, if we're supposed to */
 	if (flags & FRNT)
 	{
-		new = movefront(new, 1L);
+		new = m_front(new, 1L);
 	}
 
 	/* change the column#, or change the mark to suit the column# */
@@ -608,15 +757,15 @@ MARK adjmove(old, new, flags)
 		/* adjust the mark to get as close as possible to column# */
 		for (i = 0, text = ptext; i <= colno && *text; text++)
 		{
-			if (*text == '\t')
+			if (*text == '\t' && !*o_list)
 			{
 				i += *o_tabstop - (i % *o_tabstop);
 			}
-			else if (*text > 0 && *text < ' ' || *text == 127)
+			else if (UCHAR(*text) < ' ' || *text == 127)
 			{
 				i += 2;
 			}
-#ifndef SET_NOCHARATTR
+#ifndef NO_CHARATTR
 			else if (*o_charattr && text[0] == '\\' && text[1] == 'f' && text[2])
 			{
 				text += 2; /* plus one more in "for()" stmt */
@@ -636,3 +785,31 @@ MARK adjmove(old, new, flags)
 
 	return new;
 }
+
+
+#ifdef DEBUG
+watch()
+{
+	static wasset;
+
+	if (*origname)
+	{
+		wasset = TRUE;
+	}
+	else if (wasset)
+	{
+		mode = MODE_EX;
+		msg("origname was clobbered");
+		endwin();
+		abort();
+	}
+
+	if (wasset && nlines == 0)
+	{
+		mode = MODE_EX;
+		msg("nlines=0");
+		endwin();
+		abort();
+	}
+}
+#endif

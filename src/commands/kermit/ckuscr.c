@@ -26,6 +26,7 @@ char *loginv = "Script Command, V2.0(007) 3 Aug 87";
  copyright notice is retained. 
 */
 
+#include <sys/types.h>
 #include "ckcdeb.h"
 #include <stdio.h>
 #include <ctype.h>

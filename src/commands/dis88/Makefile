@@ -1,3 +1,5 @@
+# Makefile for dis
+
 # @(#) Makefile, Ver. 2.1 created 00:00:00 87/09/01
 # Makefile for 8088 symbolic disassembler
 
@@ -22,22 +24,23 @@
 # the initialization  data in the lookup tables.  It should not
 # be necessary to alter the formats of the tables.
 
-OBJ = disrel.s dismain.s distabs.s dishand.s disfp.s
+CFLAGS =-O -wo
+O=o
+OBJ = disrel.$O dismain.$O distabs.$O dishand.$O disfp.$O
 
-dis88 : $(OBJ)
-	cc -o dis88 $(OBJ)
+dis88:	$(OBJ)
+	@rm -rf dis88
+	@echo Start linking dis88
+	@cc -o dis88 $(OBJ) >/dev/null
+	@chmem =10000 dis88
 
 
-disrel.s : disrel.c
-
-dismain.s : dismain.c dis.h
-
-distabs.s : distabs.c dis.h
-
-dishand.s : dishand.c dis.h
-
-disfp.s : disfp.c dis.h
+disrel.$O:	disrel.c
+dismain.$O:	dismain.c dis.h
+distabs.$O:	distabs.c dis.h
+dishand.$O:	dishand.c dis.h
+disfp.$O:	disfp.c dis.h
 
 
 clean:	
-	@rm -f *.bak *.s dis88
+	@rm -f *.bak *.o *.s core dis88

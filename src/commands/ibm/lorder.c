@@ -23,9 +23,14 @@
  *		progname = argv[0] - should be first. 5/25/88 - mbeck
  */
 
+#include <minix/config.h>
+#include <sys/types.h>
+#include <ar.h>
 #include <ctype.h>
 #include <signal.h>
-#include <ar.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include <stdio.h>
 
 #define MAXLINE		256
@@ -50,10 +55,20 @@ struct node {
 
 struct filelist *list;
 struct node *tree, *lastnode;
-extern char *malloc(), *mktemp();
-extern FILE *popen(), *fopen();
-extern char *addfile();
-extern void user_abort();
+
+_PROTOTYPE(int main, (int argc, char **argv));
+_PROTOTYPE(void user_abort, (int s));
+_PROTOTYPE(char *xalloc, (int n));
+_PROTOTYPE(int is_liba, (char *s));
+_PROTOTYPE(char *strsave, (char *s));
+_PROTOTYPE(char *addfile, (char *s));
+_PROTOTYPE(int printtree, (struct node *t));
+_PROTOTYPE(struct node *finddef, (char *s));
+_PROTOTYPE(struct node *makedef, (char *s));
+_PROTOTYPE(void dodef, (char *s));
+_PROTOTYPE(void usedef, (char *s));
+_PROTOTYPE(int yylex, (void));
+
 
 main(argc, argv)
 int argc;
@@ -97,9 +112,11 @@ char **argv;
 	fprintf(stderr, "Usage: %s file ....\n", progname);
 	exit(1);
   }
+  exit(0);
 }
 
-void user_abort()
+void user_abort(s)
+int s;				/* for ANSI */
 {
   unlink(tempfile);
   exit(1);
@@ -110,7 +127,7 @@ int n;
 {
   char *p;
 
-  if ((p = malloc(n)) == (char *) NULL) {
+  if ((p = (char *) malloc(n)) == (char *) NULL) {
 	fprintf(stderr, "Error %s - out of memory\n", progname);
 	exit(1);
   }

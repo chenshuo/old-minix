@@ -1,10 +1,17 @@
-CFLAGS=-F -D_POSIX_SOURCE
-l=/lib
+# Makefile for sh
 
-shobj = sh1.s sh2.s sh3.s sh4.s sh5.s sh6.s
-sh:	$(shobj) sh.h
-	cc -i -o sh -T.  $(shobj)
-	@chmem =18000 sh
+CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -m -wo
+O=o
 
-clean:	
-	@rm -f *.bak *.s sh
+OBJ	= sh1.$O sh2.$O sh3.$O sh4.$O sh5.$O sh6.$O
+
+sh:	$(OBJ)
+	@rm -rf sh
+	@echo Start linking sh
+	@cc -o $@ $(OBJ) >/dev/null
+	@chmem =21000 sh
+
+$(OBJ):	sh.h
+
+clean:
+	@rm -f sh *.o *.s *.bak core

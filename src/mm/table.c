@@ -6,16 +6,16 @@
 
 #include "mm.h"
 #include <minix/callnr.h>
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
 /* Miscellaneous */
 char core_name[] = "core";	/* file name where core images are produced */
-unshort core_bits = 0x0EFC;	/* which signals cause core images */
 
 char *stackpt = &mm_stack[MM_STACK_BYTES];	/* initial stack pointer */
 
-int (*call_vec[NCALLS])() = {
+_PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	no_sys,		/*  0 = unused	*/
 	do_mm_exit,	/*  1 = exit	*/
 	do_fork,	/*  2 = fork	*/
@@ -23,11 +23,11 @@ int (*call_vec[NCALLS])() = {
 	no_sys,		/*  4 = write	*/
 	no_sys,		/*  5 = open	*/
 	no_sys,		/*  6 = close	*/
-	do_wait,	/*  7 = wait	*/
+	do_waitpid,	/*  7 = wait	*/
 	no_sys,		/*  8 = creat	*/
 	no_sys,		/*  9 = link	*/
 	no_sys,		/* 10 = unlink	*/
-	no_sys,		/* 11 = exec	*/
+	do_waitpid,	/* 11 = waitpid	*/
 	no_sys,		/* 12 = chdir	*/
 	no_sys,		/* 13 = time	*/
 	no_sys,		/* 14 = mknod	*/
@@ -86,11 +86,11 @@ int (*call_vec[NCALLS])() = {
 	do_brk2, 	/* 66 = BRK2 (used to tell MM size of FS,INIT) */
 	no_sys,		/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
-#if (CHIP == INTEL)
-#if AM_KERNEL
-	do_amoeba,	/* 69 = AMOEBA SYSTEM CALL */
-#else
 	no_sys,		/* 69 = AMOEBA SYSTEM CALL */
-#endif
-#endif
+	no_sys,		/* 70 = unused */
+	do_sigaction,	/* 71 = SIGACTION */
+	do_sigsuspend,	/* 72 = SIGSUSPEND */
+	do_sigpending,	/* 73 = SIGPENDING */
+	do_sigmask,	/* 74 = SIGMASK */
+	do_sigreturn,	/* 75 = SIGRETURN */
 };

@@ -1,5 +1,9 @@
 /* libupack - unpack a packed .s file		Author: Andy Tanenbaum */
 
+#include <sys/types.h>
+#include <stdlib.h>
+#include <unistd.h>
+
 char *table[] = {
 	 "push ax",
 	 "ret",
@@ -127,6 +131,9 @@ char *table[] = {
 #define OUTMAX (7*1024)
 
 char input[IBUFSIZE + 1], output[OBUFSIZE + 1];
+
+_PROTOTYPE(int main, (void));
+_PROTOTYPE(int unpack88, (char *inp, char *outp));
 
 main()
 {

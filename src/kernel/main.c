@@ -2,7 +2,7 @@
  * initializes the system and starts the ball rolling by setting up the proc
  * table, interrupt vectors, and scheduling each task to run to initialize
  * itself.
- * 
+ *
  * The entries into this file are:
  *   main:		MINIX main program
  *   panic:		abort MINIX due to a fatal error
@@ -18,9 +18,13 @@
 #define CMASK4          0x9E	/* mask for Planar Control Register */
 #define HIGH_INT          17	/* limit of the interrupt vectors */
 
-FORWARD void set_vec();
+typedef _PROTOTYPE( void (*vecaddr_t), (void) );
+
+FORWARD _PROTOTYPE( void set_vec, (int vec_nr, vecaddr_t addr,
+		phys_clicks base_click) );
+
 #if !INTEL_32BITS
-PRIVATE void (*int_vec[HIGH_INT])() = {
+PRIVATE vecaddr_t int_vec[HIGH_INT] = {
   int00, int01, int02, int03, int04, int05, int06, int07,
   int08, int09, int10, int11, int12, int13, int14, int15,
   int16,
@@ -28,7 +32,7 @@ PRIVATE void (*int_vec[HIGH_INT])() = {
 #endif
 
 /*===========================================================================*
- *                                   main                                    * 
+ *                                   main                                    *
  *===========================================================================*/
 PUBLIC void main()
 {
@@ -52,8 +56,8 @@ PUBLIC void main()
   /* Call the stage 2 assembler hooks to finish machine/mode-specific inits.
    * The 2 stages are needed to handle modes switches, especially 16->32 bits.
    */
-  mpx_2hook(); 
-  klib_2hook(); 
+  mpx_2hook();
+  klib_2hook();
 
   /* Clear the process table.
    * Set up mappings for proc_addr() and proc_number() macros.
@@ -61,7 +65,7 @@ PUBLIC void main()
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp < END_PROC_ADDR; ++rp, ++t) {
 	rp->p_flags = P_SLOT_FREE;
 	rp->p_nr = t;		/* proc number from ptr */
-	(pproc_addr + NR_TASKS)[t] = rp;	/* proc ptr from number */
+        (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
   }
 
 #if (CHIP == INTEL)
@@ -88,7 +92,7 @@ PUBLIC void main()
 
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp <= BEG_USER_ADDR; ++rp, ++t) {
 	if (t < 0) {
-		stack_size = tasktab[t+NR_TASKS].stksize;
+		stack_size = tasktab[t + NR_TASKS].stksize;
 		rp->p_splimit = ktsb + SAFETY;
 		ktsb += stack_size;
 		rp->p_reg.sp = ktsb;
@@ -123,7 +127,7 @@ PUBLIC void main()
   mem_init();
 
   /* Save the old interrupt vectors. */
-  phys_b = umap(cproc_addr(HARDWARE), D, (vir_bytes) vec_table, VECTOR_BYTES);
+  phys_b = umap(proc_addr(HARDWARE), D, (vir_bytes) vec_table, VECTOR_BYTES);
   phys_copy(0L, phys_b, (long) VECTOR_BYTES);	/* save all the vectors */
 
 #if !INTEL_32BITS
@@ -146,11 +150,12 @@ PUBLIC void main()
   set_vec(RS232_VECTOR, rs232_int, base_click);
   set_vec(FLOPPY_VECTOR, disk_int, base_click);
   set_vec(PRINTER_VECTOR, lpr_int, base_click);
-#if AM_KERNEL
-#if !NONET
-  set_vec(ETHER_VECTOR, eth_int, base_click);	/* overwrites RS232 port 2 */
+
+#if NETWORKING_ENABLED
+  /* Overwrite RS232 SECONDARY_VECTOR. */
+  set_vec(ETHER_VECTOR, eth_int, code_base);
 #endif
-#endif
+
   if (pc_at) {
 	set_vec(AT_WINI_VECTOR, wini_int, base_click);
   } else
@@ -159,10 +164,15 @@ PUBLIC void main()
 	set_vec(PS_KEYB_VECTOR, tty_int, base_click);
 #endif /* !INTEL_32BITS */
 
-  /* Put a ptr to proc table in a known place so it can be found in /dev/mem */
-  set_vec( (code_base - 4)/4, (void (*)()) proc, (phys_clicks) 0);
-  
-  bill_ptr = cproc_addr(IDLE);  /* it has to point somewhere */
+  /* Put a ptr to proc table in a known place so it can be found in /dev/mem.
+   * This is crufty, and fails if the address of the proc table is >= 64K
+   * (we should write a phys_bytes number, not a u16_t from half a vector!.
+   * However, we need similar hooks for the debugger.  0x600 used to be
+   * code_base - the code base is no longer fixed.
+   */
+  set_vec( (0x600 - 4)/4, (vecaddr_t) proc, (phys_bytes) 0);
+
+  bill_ptr = proc_addr(IDLE);  /* it has to point somewhere */
   lock_pick_proc();
 
   /* Finish initializing 8259 (needs machine type). */
@@ -176,10 +186,7 @@ PUBLIC void main()
   /* Set planar control registers on PS's.  Fix this.  CMASK4 is magic and
    * probably ought to be set by the individual drivers.
    */
-  if (ps) {
-	port_65 = in_byte(PCR);		/* save Planar Control Register */
-	out_byte(PCR, CMASK4);		/* set Planar Control Register */
-  }
+  if (ps) out_byte(PCR, CMASK4);
 
   /* Now go to the assembly code to start running the current process. */
   restart();
@@ -187,20 +194,21 @@ PUBLIC void main()
 
 
 /*===========================================================================*
- *                                   panic                                   * 
+ *                                   panic                                   *
  *===========================================================================*/
 PUBLIC void panic(s,n)
-char *s;
-int n; 
+_CONST char *s;
+int n;
 {
 /* The system has run aground of a fatal error.  Terminate execution.
  * If the panic originated in MM or FS, the string will be empty and the
  * file system already syncked.  If the panic originates in the kernel, we are
- * kind of stuck. 
+ * kind of stuck.
  */
 
+  soon_reboot();		/* so printf doesn't try to use sys services */
   if (*s != 0) {
-	printf("\r\nKernel panic: %s",s); 
+	printf("\r\nKernel panic: %s",s);
 	if (n != NO_NUM) printf(" %d", n);
 	printf("\r\n");
   }
@@ -213,11 +221,11 @@ int n;
 
 #if (CHIP == INTEL)
 /*===========================================================================*
- *                                   set_vec                                 * 
+ *                                   set_vec                                 *
  *===========================================================================*/
 PRIVATE void set_vec(vec_nr, addr, base_click)
 int vec_nr;			/* which vector */
-void (*addr)();			/* where to start */
+vecaddr_t addr;			/* where to start */
 phys_clicks base_click;		/* click where kernel sits in memory */
 {
 /* Set up an interrupt vector. */
@@ -226,22 +234,11 @@ phys_clicks base_click;		/* click where kernel sits in memory */
   phys_bytes phys_b;
 
   /* Build the vector in the array 'vec'. */
-  vec[0] = (unsigned) addr;
-  vec[1] = (unsigned) click_to_hclick(base_click);
+  vec[0] = (u16_t) addr;
+  vec[1] = (u16_t) click_to_hclick(base_click);
 
   /* Copy the vector into place. */
-  phys_b = umap(cproc_addr(HARDWARE), D, (vir_bytes) vec, 4);
-  phys_copy(phys_b, (phys_bytes) vec_nr*4, (phys_bytes) 4);
+  phys_b = umap(proc_addr(HARDWARE), D, (vir_bytes) vec, (vir_bytes) 4);
+  phys_copy(phys_b, (phys_bytes) (vec_nr * 4), (phys_bytes) 4);
 }
-#endif
-
-/*===========================================================================*
- *                                   networking                              * 
- *===========================================================================*/
-#if !AM_KERNEL
-/* These routines are dummies.  They are only needed when networking is
- * disabled.  They are called in mpx88.s and klib88.s.
- */
-PUBLIC void eth_stp() {}		/* stop the ethernet upon reboot */
-PUBLIC void dp8390_int(){}		/* Ethernet interrupt */
 #endif

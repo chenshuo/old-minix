@@ -1,4 +1,3 @@
-
 /*
  *      expression evaluator: performs a standard recursive
  *      descent parse to evaluate any expression permissible
@@ -44,6 +43,8 @@
  *                      Bob Harper
  */
  
+#include "mdef.h"
+
 #define TRUE    1
 #define FALSE   0
 #define EOS     (char) 0
@@ -73,7 +74,7 @@ static jmp_buf  expjump;
 #define ungetch()       nxtch--
 #define getch()         *nxtch++
  
-expr(expbuf)
+int expr(expbuf)
 char *expbuf;
 {
         register int rval;
@@ -85,13 +86,15 @@ char *expbuf;
         if (skipws() == EOS)
                 return(rval);
         experr("Ill-formed expression");
+	/* NOTREACHED */
+	return(0);
 }
  
 /*
  * query : lor | lor '?' query ':' query
  *
  */
-query()
+int query()
 {
         register int bool, true_val, false_val;
  
@@ -113,7 +116,7 @@ query()
  * lor : land { '||' land }
  *
  */
-lor()
+int lor()
 {
         register int c, vl, vr;
  
@@ -133,7 +136,7 @@ lor()
  * land : bor { '&&' bor }
  *
  */
-land()
+int land()
 {
         register int c, vl, vr;
  
@@ -153,7 +156,7 @@ land()
  * bor : bxor { '|' bxor }
  *
  */
-bor()
+int bor()
 {
         register int vl, vr, c;
  
@@ -174,7 +177,7 @@ bor()
  * bxor : band { '^' band }
  *
  */
-bxor()
+int bxor()
 {
         register int vl, vr;
  
@@ -192,7 +195,7 @@ bxor()
  * band : eql { '&' eql }
  *
  */
-band()
+int band()
 {
         register int vl, vr, c;
  
@@ -213,7 +216,7 @@ band()
  * eql : relat { eqrel relat }
  *
  */
-eql()
+int eql()
 {
         register int vl, vr, rel;
  
@@ -238,7 +241,7 @@ eql()
  * relat : shift { rel shift }
  *
  */
-relat()
+int relat()
 {
         register int vl, vr, rel;
  
@@ -269,7 +272,7 @@ relat()
  * shift : primary { shop primary }
  *
  */
-shift()
+int shift()
 {
         register int vl, vr, c;
  
@@ -293,7 +296,7 @@ shift()
  * primary : term { addop term }
  *
  */
-primary()
+int primary()
 {
         register int c, vl, vr;
  
@@ -314,7 +317,7 @@ primary()
  * <term> := <unary> { <mulop> <unary> }
  *
  */
-term()
+int term()
 {
         register int c, vl, vr;
  
@@ -342,7 +345,7 @@ term()
  * unary : factor | unop unary
  *
  */
-unary()
+int unary()
 {
         register int val, c;
  
@@ -367,7 +370,7 @@ unary()
  * factor : constant | '(' query ')'
  *
  */
-factor()
+int factor()
 {
         register int val;
  
@@ -386,7 +389,7 @@ factor()
  * constant: num | 'char'
  *
  */
-constant()
+int constant()
 {
         /*
          * Note: constant() handles multi-byte constants
@@ -451,7 +454,7 @@ constant()
  * num : digit | num digit
  *
  */
-num()
+int num()
 {
         register int rval, c, base;
         int ndig;
@@ -469,13 +472,15 @@ num()
         if (ndig)
                 return(rval);
         experr("Bad constant");
+	/* NOTREACHED */
+	return(0);
 }
  
 /*
  * eqlrel : '=' | '==' | '!='
  *
  */
-geteql()
+int geteql()
 {
         register int c1, c2;
  
@@ -507,7 +512,7 @@ geteql()
  * rel : '<' | '>' | '<=' | '>='
  *
  */
-getrel()
+int getrel()
 {
         register int c1, c2;
  
@@ -538,7 +543,7 @@ getrel()
 /*
  * Skip over any white space and return terminating char.
  */
-skipws()
+int skipws()
 {
         register char c;
  
@@ -551,7 +556,7 @@ skipws()
  * Error handler - resets environment to eval(), prints an error,
  * and returns FALSE.
  */
-experr(msg)
+int experr(msg)
 char *msg;
 {
         printf("mp: %s\n",msg);

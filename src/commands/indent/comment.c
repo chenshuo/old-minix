@@ -44,28 +44,39 @@
 
 
 #define PUBLIC extern
+#include <stdlib.h>
 #include "globs.h"
+#include "proto.h"
 
 
-pr_comment()
+void pr_comment()
 {
    int             now_col;		/* column we are in now */
+
    int             adj_max_col;		/* Adjusted max_col for when we
-					   decide to spill comments
-					   over the right margin */
+					 * decide to spill comments
+					 *  over the right margin
+					 */
+
    char           *last_bl;		/* points to the last blank in
-					   the output buffer */
+					 * the output buffer 
+					 */
+
    char           *t_ptr;		/* used for moving string */
+
    int             unix_comment;	/* tri-state variable used to
-					   decide if it is a unix-style
-					   comment. 0 means only blanks
-					   since /*, 1 means regular
-					   style comment, 2 means unix
-					   style comment */
+					 * decide if it is a unix-style
+					 * comment. 0 means only blanks
+					 * since / *, 1 means regular
+					 * style comment, 2 means unix
+					 * style comment 
+					 */
+
    int             break_delim = del_on_bl;
    int             l_just_saw_decl = ps.just_saw_decl;
-   /* int         ps.last_nl = 0;	/* true iff the last
-      significant thing weve seen is a newline */
+   /* int         ps.last_nl = 0; */	/* true iff the last
+				      	   sig thing we have seen is a nl */
+
    int             one_liner = 1;	/* true iff this comment is a
 					   one-liner */
    adj_max_col = max_col;
@@ -94,7 +105,7 @@ pr_comment()
       if (*buf_ptr == '-' || *buf_ptr == '*')
       {
 	 ps.box_com = true;		/* a comment with a '-' or '*'
-					   immediately after the /* is
+					   immediately after the / * is
 					   assumed to be a boxed
 					   comment */
 	 break_delim = 0;
@@ -139,7 +150,7 @@ pr_comment()
 	 buf_ptr++;
    }
    ps.comment_delta = 0;
-   *e_com++ = '/';			/* put '/*' into buffer */
+   *e_com++ = '/';			/* put '/ *' into buffer */
    *e_com++ = '*';
    if (*buf_ptr != ' ' && !ps.box_com)
       *e_com++ = ' ';

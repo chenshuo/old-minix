@@ -1,18 +1,22 @@
-#include <lib.h>
-/* strrchr - find last occurrence of a character in a string */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strrchr.c,v 1.3 90/08/28 13:54:21 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strrchr(s, charwanted)		/* found char, or NULL if none */
-_CONST char *s;
-register char charwanted;
+char *
+strrchr(register const char *s, int c)
 {
-  register _CONST char *scan;
-  register _CONST char *place;
+	register const char *result = NULL;
 
-  place = (char *) NULL;
-  for (scan = s; *scan != '\0'; scan++)
-	if (*scan == charwanted) place = scan;
-  if (charwanted == '\0') return ((char *) scan);
-  return((char *) place);
+	c = (char) c;
+
+	do {
+		if (c == *s)
+			result = s;
+	} while (*s++ != '\0');
+
+	return (char *)result;
 }

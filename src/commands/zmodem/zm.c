@@ -15,8 +15,8 @@
 
 #ifndef CANFDX
 #include "zmodem.h"
-int Rxtimeout = 100;		/* Tenths of seconds to wait for something */
 #endif
+int Rxtimeout = 100;		/* Tenths of seconds to wait for something */
 
 #ifndef UNSL
 #define UNSL
@@ -73,7 +73,8 @@ static char *frametypes[] = {
 static char badcrc[] = "Bad CRC";
 
 /* Send ZMODEM binary header hdr of type type */
-zsbhdr(type, hdr)
+void zsbhdr(type, hdr)
+int type;
 register char *hdr;
 {
 	register int n;
@@ -105,8 +106,9 @@ register char *hdr;
 
 
 /* Send ZMODEM binary header hdr of type type */
-zsbh32(hdr, type)
+void zsbh32(hdr, type)
 register char *hdr;
+int type;
 {
 	register int n;
 	register UNSL long crc;
@@ -126,7 +128,8 @@ register char *hdr;
 }
 
 /* Send ZMODEM HEX header hdr of type type */
-zshhdr(type, hdr)
+void zshhdr(type, hdr)
+int type;
 register char *hdr;
 {
 	register int n;
@@ -158,12 +161,15 @@ register char *hdr;
  * Send binary array buf of length length, with ending ZDLE sequence frameend
  */
 static char *Zendnames[] = { "ZCRCE", "ZCRCG", "ZCRCQ", "ZCRCW"};
-zsdata(buf, length, frameend)
+
+void zsdata(buf, length, frameend)
 register char *buf;
+int length;
+int frameend;
 {
 	register unsigned short crc;
 
-	vfile("zsdata: %d %s", length, Zendnames[frameend-ZCRCE&3]);
+	vfile("zsdata: %d %s", length, Zendnames[(frameend-ZCRCE)&3]);
 	if (Crc32t)
 		zsda32(buf, length, frameend);
 	else {
@@ -182,8 +188,10 @@ register char *buf;
 	}
 }
 
-zsda32(buf, length, frameend)
+void zsda32(buf, length, frameend)
 register char *buf;
+int length;
+int frameend;
 {
 	register int c;
 	register UNSL long crc;
@@ -211,8 +219,9 @@ register char *buf;
  *  and CRC.  Returns the ending character or error code.
  *  NB: On errors may store length+1 bytes!
  */
-zrdata(buf, length)
+int zrdata(buf, length)
 register char *buf;
+int length;
 {
 	register int c;
 	register unsigned short crc;
@@ -244,7 +253,7 @@ crcfoo:
 				}
 				Rxcount = length - (end - buf);
 				vfile("zrdata: %d  %s", Rxcount,
-				 Zendnames[d-GOTCRCE&3]);
+				 Zendnames[(d-GOTCRCE)&3]);
 				return d;
 			case GOTCAN:
 				zperr("Sender Canceled");
@@ -264,8 +273,9 @@ crcfoo:
 	return ERROR;
 }
 
-zrdat32(buf, length)
+int zrdat32(buf, length)
 register char *buf;
+int length;
 {
 	register int c;
 	register UNSL long crc;
@@ -301,7 +311,7 @@ crcfoo:
 				}
 				Rxcount = length - (end - buf);
 				vfile("zrdat32: %d %s", Rxcount,
-				 Zendnames[d-GOTCRCE&3]);
+				 Zendnames[(d-GOTCRCE)&3]);
 				return d;
 			case GOTCAN:
 				zperr("Sender Canceled");
@@ -332,8 +342,9 @@ crcfoo:
  *   Otherwise return negative on error.
  *   Return ERROR instantly if ZCRCW sequence, for fast error recovery.
  */
-zgethdr(hdr, eflag)
+int zgethdr(hdr, eflag)
 char *hdr;
+int eflag;
 {
 	register int c, n, cancount;
 
@@ -450,7 +461,7 @@ fifi:
 }
 
 /* Receive a binary style header (type and position) */
-zrbhdr(hdr)
+int zrbhdr(hdr)
 register char *hdr;
 {
 	register int c, n;
@@ -485,7 +496,7 @@ register char *hdr;
 }
 
 /* Receive a binary style header (type and position) with 32 bit FCS */
-zrbhdr32(hdr)
+int zrbhdr32(hdr)
 register char *hdr;
 {
 	register int c, n;
@@ -529,7 +540,7 @@ register char *hdr;
 
 
 /* Receive a hex style header (type and position) */
-zrhhdr(hdr)
+int zrhhdr(hdr)
 char *hdr;
 {
 	register int c;
@@ -574,7 +585,7 @@ char *hdr;
 }
 
 /* Send a byte as two hex digits */
-zputhex(c)
+void zputhex(c)
 register int c;
 {
 	static char	digits[]	= "0123456789abcdef";
@@ -589,7 +600,8 @@ register int c;
  * Send character c with ZMODEM escape sequence encoding.
  *  Escape XON, XOFF. Escape CR following @ (Telenet net escape)
  */
-zsendline(c)
+void zsendline(c)
+int c;
 {
 
 	/* Quick check for non control characters */
@@ -628,7 +640,7 @@ zsendline(c)
 }
 
 /* Decode two lower case hex digits into an 8 bit byte value */
-zgethex()
+int zgethex()
 {
 	register int c;
 
@@ -637,7 +649,7 @@ zgethex()
 		vfile("zgethex: %02X", c);
 	return c;
 }
-zgeth1()
+int zgeth1()
 {
 	register int c, n;
 
@@ -663,7 +675,7 @@ zgeth1()
  * Read a byte, checking for ZMODEM escape encoding
  *  including CAN*5 which represents a quick abort
  */
-zdlread()
+int zdlread()
 {
 	register int c;
 
@@ -728,7 +740,7 @@ again2:
  * Read a character from the modem line with timeout.
  *  Eat parity, XON and XOFF characters.
  */
-noxrd7()
+int noxrd7()
 {
 	register int c;
 
@@ -751,7 +763,7 @@ noxrd7()
 }
 
 /* Store long integer pos in Txhdr */
-stohdr(pos)
+void stohdr(pos)
 long pos;
 {
 	Txhdr[ZP0] = pos;

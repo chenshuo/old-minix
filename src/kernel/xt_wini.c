@@ -10,10 +10,14 @@
  *
  *	m_type	  DEVICE   PROC_NR	COUNT	 POSITION  ADRRESS
  * ----------------------------------------------------------------
- * |  DISK_READ | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |  DEV_OPEN  |         |         |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_WRITE | device  | proc nr |  bytes  |	 offset | buf ptr |
- * ----------------------------------------------------------------
+ * |  DEV_CLOSE |         |         |         |         |         |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_READ  | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_WRITE[D | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
  * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
  * ----------------------------------------------------------------
  *
@@ -52,10 +56,10 @@
 #define WIN_SENSE	0x03	/* command for the controller to get its status */
 #define WIN_READ	0x08	/* command for the drive to read */
 #define WIN_WRITE	0x0a	/* command for the drive to write */
-#define WIN_SPECIFY	0x0C	/* command for the controller to accept params	*/
-#define WIN_ECC_READ	0x0D	/* command for the controller to read ecc length */
+#define WIN_SPECIFY	0x0C	/* command for the controller: accept params */
+#define WIN_ECC_READ	0x0D	/* command for the controller: read ecc len */
 
-#define DMA_INT		   3 /* Command with dma and interrupt */
+#define DMA_INT		   3	/* Command with dma and interrupt */
 #define INT		   2	/* Command with interrupt, no dma */
 #define NO_DMA_INT	   0	/* Command without dma and interrupt */
 
@@ -84,10 +88,12 @@
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define MAX_WIN_RETRY  32000	/* max # times to try to output to WIN */
 #if AUTO_BIOS
-#define AUTO_PARAM     0x1AD	/* drive parameter table starts here in sect 0	*/
+#define AUTO_PARAM     0x1AD	/* drive param table starts here in sect 0 */
 #define AUTO_ENABLE	0x10	/* auto bios enabled bit from status reg */
-/* some start up parameters in order to extract the drive parameter table */
-/* from the winchester. these should not need changed. */
+
+/* Some start up parameters in order to extract the drive parameter table
+ * from the winchester. These should not need changed.
+ */
 #define AUTO_CYLS	 306	/* default number of cylinders */
 #define AUTO_HEADS	   4	/* default number of heads */
 #define AUTO_RWC	 307	/* default reduced write cylinder */
@@ -100,7 +106,7 @@
 PUBLIC int using_bios = FALSE;	/* this disk driver does not use the BIOS */
 
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
-  int wn_opcode;		/* DISK_READ or DISK_WRITE */
+  int wn_opcode;		/* DEV_READ or DEV_WRITE */
   int wn_procnr;		/* which proc wanted this operation? */
   int wn_drive;			/* drive number addressed (<< 5) */
   int wn_cylinder;		/* cylinder number addressed */
@@ -115,7 +121,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   char wn_results[MAX_RESULTS];	/* the controller can give lots of output */
 } wini[NR_DEVICES];
 
-PRIVATE int w_need_reset = FALSE;	 /* set to 1 when controller must be reset	*/
+PRIVATE int w_need_reset = FALSE; /* set to 1 when controller must be reset */
 PRIVATE int nr_drives;		 /* Number of drives */
 
 PRIVATE message w_mess;		/* message buffer for in and out */
@@ -135,26 +141,26 @@ PRIVATE struct param {
 	int ctrl_byte;		/* Copied control-byte from bios tables */
 } param0, param1;
 
-FORWARD int check_init();
-FORWARD int com_out();
-FORWARD void copy_param();
-FORWARD void copy_prt();
-FORWARD int  hd_wait();
-FORWARD void init_params();
-FORWARD int old_win_results();
-FORWARD int read_ecc();
-FORWARD void sort();
-FORWARD int w_do_rdwt();
-FORWARD void w_dma_setup();
-FORWARD int w_reset();
-FORWARD int w_transfer();
-FORWARD void w_wait_int();
-FORWARD void win_out();
-FORWARD int win_specify();
-FORWARD int win_results();
+FORWARD _PROTOTYPE( int check_init, (void) );
+FORWARD _PROTOTYPE( int com_out, (int mode) );
+FORWARD _PROTOTYPE( void copy_param, (unsigned char *src, struct param *dest));
+FORWARD _PROTOTYPE( void copy_prt, (int base_dev) );
+FORWARD _PROTOTYPE( int  hd_wait, (int bits) );
+FORWARD _PROTOTYPE( void init_params, (void) );
+FORWARD _PROTOTYPE( int old_win_results, (struct wini *wn) );
+FORWARD _PROTOTYPE( int read_ecc, (void) );
+FORWARD _PROTOTYPE( void sort, (struct wini wn[]) );
+FORWARD _PROTOTYPE( int w_do_rdwt, (message *m_ptr) );
+FORWARD _PROTOTYPE( void w_dma_setup, (struct wini *wn) );
+FORWARD _PROTOTYPE( int w_reset, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (struct wini *wn) );
+FORWARD _PROTOTYPE( void w_wait_int, (void) );
+FORWARD _PROTOTYPE( void win_out, (int val) );
+FORWARD _PROTOTYPE( int win_specify, (int drive, struct param *parmp) );
+FORWARD _PROTOTYPE( int win_results, (struct wini *wn) );
 
 /*=========================================================================*
- *							winchester_task					 			   * 
+ *				winchester_task	 			   * 
  *=========================================================================*/
 PUBLIC void winchester_task()
 {
@@ -173,7 +179,7 @@ PUBLIC void winchester_task()
 	/* First wait for a request to read or write a disk block. */
 	receive(ANY, &w_mess);	/* get a request to do some work */
 	if (w_mess.m_source < 0) {
-		printf("winchester task got message from %d ", w_mess.m_source);
+		printf("winchester task got message from %d ",w_mess.m_source);
 		continue;
 	}
 	caller = w_mess.m_source;
@@ -181,10 +187,14 @@ PUBLIC void winchester_task()
 
 	/* Now carry out the work. */
 	switch(w_mess.m_type) {
-		case DISK_READ:
-		case DISK_WRITE:	r = w_do_rdwt(&w_mess);	break;
-		case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
-		default:		r = EINVAL;		break;
+	    case DEV_OPEN:	r = OK;				  break;
+	    case DEV_CLOSE:	r = OK;				  break;
+
+	    case DEV_READ:
+	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
+
+	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
+		default:		r = EINVAL;		  break;
 	}
 
 	/* Finally, prepare and send the reply message. */
@@ -198,7 +208,7 @@ PUBLIC void winchester_task()
 
 
 /*==========================================================================*
- *								w_do_rdwt						 			* 
+ *				w_do_rdwt	 			    * 
  *==========================================================================*/
 PRIVATE int w_do_rdwt(m_ptr)
 message *m_ptr;			/* pointer to read or write w_message */
@@ -206,7 +216,7 @@ message *m_ptr;			/* pointer to read or write w_message */
 /* Carry out a read or write request from the disk. */
   register struct wini *wn;
   int r, device, errors = 0;
-  long sector;
+  long sector, s;
 
   /* Decode the w_message parameters. */
   device = m_ptr->DEVICE;
@@ -216,13 +226,13 @@ message *m_ptr;			/* pointer to read or write w_message */
 	return(EINVAL);
   wn = &wini[device];		/* 'wn' points to entry for this drive */
 
-  wn->wn_opcode = m_ptr->m_type;	/* DISK_READ or DISK_WRITE */
+  wn->wn_opcode = m_ptr->m_type;	/* DEV_READ or DEV_WRITE */
   if (m_ptr->POSITION % BLOCK_SIZE != 0)
 	return(EINVAL);
-  sector = m_ptr->POSITION/SECTOR_SIZE;
-  if ((sector+BLOCK_SIZE/SECTOR_SIZE) > wn->wn_size)
+  s = m_ptr->POSITION;
+  if (s < 0 || s > wn->wn_size * SECTOR_SIZE - BLOCK_SIZE)
 	return(0);
-  sector += wn->wn_low;
+  sector = s/SECTOR_SIZE + wn->wn_low;
   wn->wn_cylinder = sector / (wn->wn_heads * NR_SECTORS);
   wn->wn_sector =  (sector % NR_SECTORS);
   wn->wn_head = (sector % (wn->wn_heads * NR_SECTORS) )/NR_SECTORS;
@@ -253,7 +263,7 @@ message *m_ptr;			/* pointer to read or write w_message */
 
 
 /*==========================================================================*
- *								w_dma_setup					 				* 
+ *				w_dma_setup 				    * 
  *==========================================================================*/
 PRIVATE void w_dma_setup(wn)
 struct wini *wn;		/* pointer to the drive struct */
@@ -261,7 +271,7 @@ struct wini *wn;		/* pointer to the drive struct */
 /* The IBM PC can perform DMA operations by using the DMA chip.	 To use it,
  * the DMA (Direct Memory Access) chip is loaded with the 20-bit memory address
  * to by read from or written to, the byte count minus 1, and a read or write
- * opcode.	This routine sets up the DMA chip.	Note that the chip is not
+ * opcode.  This routine sets up the DMA chip.  Note that the chip is not
  * capable of doing a DMA across a 64K boundary (e.g., you can't read a 
  * 512-byte block starting at physical address 65520).
  */
@@ -270,7 +280,7 @@ struct wini *wn;		/* pointer to the drive struct */
   vir_bytes vir, ct;
   phys_bytes user_phys;
 
-  mode = (wn->wn_opcode == DISK_READ ? DMA_READ : DMA_WRITE);
+  mode = (wn->wn_opcode == DEV_READ ? DMA_READ : DMA_WRITE);
   vir = (vir_bytes) wn->wn_address;
   ct = (vir_bytes) wn->wn_count;
   user_phys = numap(wn->wn_procnr, vir, ct);
@@ -288,7 +298,7 @@ struct wini *wn;		/* pointer to the drive struct */
   if (user_phys == 0)
 	  panic("FS gave winchester disk driver bad addr", (int) vir);
   top_end = (int) (((user_phys + ct - 1) >> 16) & BYTE);
-  if (top_end != top_addr) panic("Trying to DMA across 64K boundary", top_addr);
+  if (top_end != top_addr) panic("Trying to DMA across 64K boundary",top_addr);
 
   /* Now set up the DMA registers. */
   out_byte(DMA_M2, mode);	/* set the DMA mode */
@@ -301,7 +311,7 @@ struct wini *wn;		/* pointer to the drive struct */
 }
 
 /*=========================================================================*
- *								w_transfer								   *
+ *				w_transfer				   *
  *=========================================================================*/
 PRIVATE int w_transfer(wn)
 register struct wini *wn;	/* pointer to the drive struct */
@@ -309,7 +319,7 @@ register struct wini *wn;	/* pointer to the drive struct */
 /* The drive is now on the proper cylinder.	 Read or write 1 block. */
 
   /* The command is issued by outputing 6 bytes to the controller chip. */
-  command[0] = (wn->wn_opcode == DISK_READ ? WIN_READ : WIN_WRITE);
+  command[0] = (wn->wn_opcode == DEV_READ ? WIN_READ : WIN_WRITE);
   command[1] = wn->wn_head | wn->wn_drive;
   command[2] = (((wn->wn_cylinder & 0x0300) >> 2) | wn->wn_sector);
   command[3] = (wn->wn_cylinder & 0xFF);
@@ -334,9 +344,9 @@ register struct wini *wn;	/* pointer to the drive struct */
 }
 
 
-/*===========================================================================*
- *				old_win_results					 * 
- *===========================================================================*/
+/*==========================================================================*
+ *				old_win_results				    * 
+ *==========================================================================*/
 PRIVATE int old_win_results(wn)
 register struct wini *wn;	/* pointer to the drive struct */
 {
@@ -374,12 +384,12 @@ register struct wini *wn;	/* pointer to the drive struct */
 
 
 /*===========================================================================*
- *				win_out						 * 
+ *				win_out					     * 
  *===========================================================================*/
 PRIVATE void win_out(val)
-int val;			/* write this byte to winchester disk controller */
+int val;			/* write byte to winchester disk controller */
 {
-/* Output a byte to the controller.	 This is not entirely trivial, since you
+/* Output a byte to the controller.  This is not entirely trivial, since you
  * can only write to it when it is listening, and it decides when to listen.
  * If the controller refuses to listen, the WIN chip is given a hard reset.
  */
@@ -395,7 +405,7 @@ int val;			/* write this byte to winchester disk controller */
 }
 
 /*===========================================================================*
- *				w_reset						 * 
+ *				w_reset					     * 
  *===========================================================================*/
 PRIVATE int w_reset()
 {
@@ -459,7 +469,7 @@ PRIVATE int w_reset()
 
 
 /*===========================================================================*
- *				w_wait_int					 *
+ *				w_wait_int				     *
  *===========================================================================*/
 PRIVATE void w_wait_int()
 {
@@ -477,20 +487,20 @@ PRIVATE void w_wait_int()
 		break;		/* Exit if end of int */
   }
 
-#if	 MONITOR
-   if(i > 10) {		/* Some arbitrary limit below which we don't really care */
+#if MONITOR
+   if (i > 10) {		/* arbitrary limit below which we don't care */
 	if(i == MAX_WIN_RETRY)
 		printf("wini: timeout waiting for INTERRUPT status\n");
 	else
 		printf("wini: %d loops waiting for INTERRUPT status\n", i);
    }
-#endif	/* MONITOR */
+#endif /* MONITOR */
 }
 
 
-/*============================================================================*
- *				win_specify					  *
- *============================================================================*/
+/*===========================================================================*
+ *				win_specify				     *
+ *===========================================================================*/
 PRIVATE int win_specify(drive, paramp)
 int drive;
 struct param *paramp;
@@ -533,9 +543,9 @@ struct param *paramp;
   return(OK);
 }
 
-/*============================================================================*
- *				check_init					  *
- *============================================================================*/
+/*===========================================================================*
+ *				check_init				     *
+ *===========================================================================*/
 PRIVATE int check_init()
 {
 /* Routine to check if controller accepted the parameters */
@@ -560,9 +570,9 @@ PRIVATE int check_init()
   }
 }
 
-/*============================================================================*
- *				read_ecc					  *
- *============================================================================*/
+/*===========================================================================*
+ *				read_ecc				     *
+ *===========================================================================*/
 PRIVATE int read_ecc()
 {
 /* Read the ecc burst-length and let the controller correct the data */
@@ -581,9 +591,9 @@ PRIVATE int read_ecc()
   return(ERR);
 }
 
-/*============================================================================*
- *				hd_wait						  *
- *============================================================================*/
+/*===========================================================================*
+ *				hd_wait					     *
+ *===========================================================================*/
 PRIVATE int hd_wait(bits)
 register int bits;
 {
@@ -603,9 +613,9 @@ register int bits;
 	return(OK);
 }
 
-/*============================================================================*
- *				com_out						  *
- *============================================================================*/
+/*===========================================================================*
+ *				com_out					     *
+ *===========================================================================*/
 PRIVATE int com_out(mode)
 int mode;
 {
@@ -662,7 +672,7 @@ PRIVATE void init_params()
   phys_bytes address;
 
   /* Get the number of drives from the bios */
-  phys_copy(0x475L, umap(proc_ptr, D, buf, 1), 1L);
+  phys_copy(0x475L, umap(proc_ptr, D, (vir_bytes) buf, 1), 1L);
   nr_drives = *buf & 0xFF;
   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
@@ -670,14 +680,14 @@ PRIVATE void init_params()
   i = in_byte(WIN_SELECT);
 
 #if AUTO_BIOS
-  /* Get the drive parameters from sector zero of the drive if the */
-  /* autoconfig mode of the controller has been selected */
-
+  /* Get the drive parameters from sector zero of the drive if the
+   * autoconfig mode of the controller has been selected.
+   */
   if(i & AUTO_ENABLE) {
-
-	/* set up some phoney parameters so that we can read the first sector */
-	/* from the winchester. all drives will have one cylinder and one head */
-	/* but set up initially to the mini scribe drives from ibm */
+	/* Set up some phony parameters so that we can read the first sector
+	 * from the winchester. All drives will have one cylinder and one head
+	 * but set up initially to the mini scribe drives from ibm
+	 */
 	param1.nr_cyl = param0.nr_cyl = AUTO_CYLS;
 	param1.nr_heads = param0.nr_heads = AUTO_HEADS;
 	param1.reduced_wr = param0.reduced_wr = AUTO_RWC;
@@ -695,13 +705,13 @@ PRIVATE void init_params()
 
 	if (nr_drives > 1) {
 	  
-	  /* generate the request to read the first sector from the winchester */
+	  /* Generate the request to read the first sector from the disk. */
 	  w_mess.DEVICE = DEV_PER_DRIVE;
 	  w_mess.POSITION = 0L;
 	  w_mess.COUNT = BLOCK_SIZE;
 	  w_mess.ADDRESS = (char *) buf;
 	  w_mess.PROC_NR = WINCHESTER;
-	  w_mess.m_type = DISK_READ;
+	  w_mess.m_type = DEV_READ;
 	  if(w_do_rdwt(&w_mess) != BLOCK_SIZE)
 		panic("cannot read drive parameters from winchester",DEV_PER_DRIVE);
 
@@ -716,7 +726,7 @@ PRIVATE void init_params()
 	w_mess.COUNT = BLOCK_SIZE;
 	w_mess.ADDRESS = (char *) buf;
 	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DISK_READ;
+	w_mess.m_type = DEV_READ;
 	if(w_do_rdwt(&w_mess) != BLOCK_SIZE)
 	  panic("cannot read drive parameters from winchester", 0);
 
@@ -740,7 +750,7 @@ PRIVATE void init_params()
 
   /* Calculate the address off the parameters and copy them to buf */
   address = hclick_to_physb(segment) + offset;
-  phys_copy(address, umap(proc_ptr, D, buf, 64), 64L);
+  phys_copy(address, umap(proc_ptr, D, (vir_bytes) buf, 64), 64L);
 
   /* Copy the parameters to the structures */
   copy_param(&buf[type_0 * 16], &param0);
@@ -782,7 +792,7 @@ PRIVATE void init_params()
 	w_mess.COUNT = BLOCK_SIZE;
 	w_mess.ADDRESS = (char *) buf;
 	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DISK_READ;
+	w_mess.m_type = DEV_READ;
 	if (w_do_rdwt(&w_mess) != BLOCK_SIZE) {
 		printf("Can't read partition table of winchester %d ", i);
 		continue;
@@ -792,7 +802,7 @@ PRIVATE void init_params()
 }
 
 /*==========================================================================*
- *								copy_param					 				*
+ *				copy_param 				    *
  *==========================================================================*/
 PRIVATE void copy_param(src, dest)
 register unsigned char *src;
@@ -800,7 +810,7 @@ register struct param *dest;
 {
 /* This routine copies the parameters from src to dest
  * and sets the parameters for partition 0 and DEV_PER_DRIVE
-*/
+ */
 
   dest->nr_cyl = *(u16_t *)src;
   dest->nr_heads = (int)src[2];

@@ -16,13 +16,13 @@ _strrchr:
 	mov	cx,#-1		/* find end of string */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx		/* silly trick gives length (including null) */
 	dec	di		/* point back at null character */
 	movb	al,ah		/* find last occurrence of c */
 	std
 	repne
-	scab
+	scasb
 	jne	exit
 #ifdef i8088
 	inc	di

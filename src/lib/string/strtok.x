@@ -7,7 +7,7 @@
 
 .define	_strtok
 .data
-scan:	.word	0
+scan:	.data2	0
 .text
 _strtok:
 	push	bp
@@ -16,7 +16,7 @@ _strtok:
 	push	di
 	cld
 	mov	bx,4(bp)
-	or	bx,bx		/* if s != NULL, */
+	or	bx,bx		/* if s ~= NULL, */
 	jnz	s2_length	/*   we start a new string */
 	mov	bx,scan
 	or	bx,bx		/* if old string exhausted, */
@@ -26,7 +26,7 @@ s2_length:			/* find length of s2 */
 	mov	cx,#-1
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx
 	dec	cx
 	jz	string_finished	/* if s2 has length zero, we are done */
@@ -35,24 +35,24 @@ s2_length:			/* find length of s2 */
 	mov	si,bx
 	xor	bx,bx		/* return value is NULL */
 delim_loop:			/* dispose of leading delimiters */
-	lodb
+	lodsb
 	orb	al,al
 	jz	string_finished
 	mov	di,6(bp)
 	mov	cx,dx
 	repne
-	scab
+	scasb
 	je	delim_loop
 
 	lea	bx,-1(si)	/* return value is start of token */
 token_loop:			/* find end of token */
-	lodb
+	lodsb
 	orb	al,al
 	jz	string_finished
 	mov	di,6(bp)
 	mov	cx,dx
 	repne
-	scab
+	scasb
 	jne	token_loop
 	movb	-1(si),*0	/* terminate token */
 	mov	scan,si		/* set up for next call */

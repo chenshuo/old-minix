@@ -1,16 +1,18 @@
-#include <lib.h>
-/* strlen - length of string (not including NUL) */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strlen.c,v 1.4 90/08/28 13:53:42 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-size_t strlen(s)
-_CONST char *s;
+size_t
+strlen(const char *org)
 {
-  register _CONST char *scan;
-  register size_t count;
+	register const char *s = org;
 
-  count = 0;
-  scan = s;
-  while (*scan++ != '\0') count++;
-  return(count);
+	while (*s++)
+		/* EMPTY */ ;
+
+	return --s - org;
 }

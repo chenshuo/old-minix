@@ -1,7 +1,11 @@
 #include <lib.h>
+#include <unistd.h>
 
 PUBLIC void _exit(status)
 int status;
 {
-  callm1(MM, EXIT, status, 0, 0, NIL_PTR, NIL_PTR, NIL_PTR);
+  message m;
+
+  m.m1_i1 = status;
+  _syscall(MM, EXIT, &m);
 }

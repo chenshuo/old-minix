@@ -2,15 +2,16 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains the code for reading ex commands. */
 
-#include <ctype.h>
+#include "config.h"
+#include "ctype.h"
 #include "vi.h"
 
 /* This data type is used to describe the possible argument combinations */
@@ -24,6 +25,11 @@ typedef short ARGT;
 #define	DFLALL	64		/* default file range is 1,$ */
 #define DFLNONE	128		/* no default file range */
 #define NODFL	256		/* do not default to the current file name */
+#define EXRCOK	512		/* can be in a .exrc file */
+#define NL	1024		/* if mode!=MODE_EX, then write a newline first */
+#define PLUS	2048		/* allow a line number, as in ":e +32 foo" */
+#define ZERO	4096		/* allow 0 to be given as a line number */
+#define NOBAR	8192		/* treat following '|' chars as normal */
 #define FILES	(XFILE + EXTRA)	/* multiple extra files allowed */
 #define WORD1	(EXTRA + NOSPC)	/* one extra word allowed */
 #define FILE1	(FILES + NOSPC)	/* 1 file allowed, defaults to current file */
@@ -46,62 +52,97 @@ static struct
 }
 	cmdnames[] =
 {   /*	cmd name	cmd code	function	arguments */
-	{"append",	CMD_APPEND,	cmd_append,	FROM		},
+	{"append",	CMD_APPEND,	cmd_append,	FROM+ZERO+BANG	},
 #ifdef DEBUG
-	{"bug",		CMD_DEBUG,	cmd_debug,	RANGE+BANG+EXTRA},
+	{"bug",		CMD_DEBUG,	cmd_debug,	RANGE+BANG+EXTRA+NL},
 #endif
-	{"change",	CMD_CHANGE,	cmd_append,	RANGE		},
+	{"change",	CMD_CHANGE,	cmd_append,	RANGE+BANG	},
 	{"delete",	CMD_DELETE,	cmd_delete,	RANGE+WORD1	},
-	{"edit",	CMD_EDIT,	cmd_edit,	BANG+FILE1	},
-	{"file",	CMD_FILE,	cmd_file,	NONE		},
-	{"global",	CMD_GLOBAL,	cmd_global,	RANGE+BANG+EXTRA+DFLALL},
-	{"insert",	CMD_INSERT,	cmd_append,	FROM		},
-	{"join",	CMD_INSERT,	cmd_join,	RANGE		},
+	{"edit",	CMD_EDIT,	cmd_edit,	BANG+FILE1+PLUS	},
+	{"file",	CMD_FILE,	cmd_file,	NAMEDF		},
+	{"global",	CMD_GLOBAL,	cmd_global,	RANGE+BANG+EXTRA+DFLALL+NOBAR},
+	{"insert",	CMD_INSERT,	cmd_append,	FROM+BANG	},
+	{"join",	CMD_INSERT,	cmd_join,	RANGE+BANG	},
 	{"k",		CMD_MARK,	cmd_mark,	FROM+WORD1	},
-	{"list",	CMD_LIST,	cmd_list,	RANGE		},
+	{"list",	CMD_LIST,	cmd_print,	RANGE+NL	},
 	{"move",	CMD_MOVE,	cmd_move,	RANGE+EXTRA	},
 	{"next",	CMD_NEXT,	cmd_next,	BANG+NAMEDFS	},
 	{"Next",	CMD_PREVIOUS,	cmd_next,	BANG		},
-	{"print",	CMD_PRINT,	cmd_print,	RANGE		},
-	{"quit",	CMD_QUIT,	cmd_quit,	BANG		},
-	{"read",	CMD_READ,	cmd_read,	FROM+NAMEDF	},
+	{"print",	CMD_PRINT,	cmd_print,	RANGE+NL	},
+	{"quit",	CMD_QUIT,	cmd_xit,	BANG		},
+	{"read",	CMD_READ,	cmd_read,	FROM+ZERO+NAMEDF},
 	{"substitute",	CMD_SUBSTITUTE,	cmd_substitute,	RANGE+EXTRA	},
 	{"to",		CMD_COPY,	cmd_move,	RANGE+EXTRA	},
 	{"undo",	CMD_UNDO,	cmd_undo,	NONE		},
-	{"vglobal",	CMD_VGLOBAL,	cmd_global,	RANGE+EXTRA+DFLALL},
+	{"vglobal",	CMD_VGLOBAL,	cmd_global,	RANGE+EXTRA+DFLALL+NOBAR},
 	{"write",	CMD_WRITE,	cmd_write,	RANGE+BANG+FILE1+DFLALL},
-	{"xit",		CMD_XIT,	cmd_xit,	BANG		},
+	{"xit",		CMD_XIT,	cmd_xit,	BANG+NL		},
 	{"yank",	CMD_YANK,	cmd_delete,	RANGE+WORD1	},
 
-	{"!",		CMD_BANG,	cmd_shell,	RANGE+NAMEDFS+DFLNONE},
+	{"!",		CMD_BANG,	cmd_shell,	EXRCOK+RANGE+NAMEDFS+DFLNONE+NL+NOBAR},
+	{"#",		CMD_NUMBER,	cmd_print,	RANGE+NL	},
 	{"<",		CMD_SHIFTL,	cmd_shift,	RANGE		},
 	{">",		CMD_SHIFTR,	cmd_shift,	RANGE		},
-	{"=",		CMD_FILE,	cmd_file,	RANGE		},
+	{"=",		CMD_EQUAL,	cmd_file,	RANGE		},
+	{"&",		CMD_SUBAGAIN,	cmd_substitute,	RANGE		},
+#ifndef NO_AT
+	{"@",		CMD_AT,		cmd_at,		EXTRA		},
+#endif
 
-	{"args",	CMD_ARGS,	cmd_args,	NAMEDFS		},
-	{"cd",		CMD_CD,		cmd_cd,		NAMEDF		},
+#ifndef NO_ABBR
+	{"abbreviate",	CMD_ABBR,	cmd_map,	EXRCOK+BANG+EXTRA},
+#endif
+	{"args",	CMD_ARGS,	cmd_args,	EXRCOK+NAMEDFS	},
+#ifndef NO_ERRLIST
+	{"cc",		CMD_CC,		cmd_make,	BANG+FILES	},
+#endif
+	{"cd",		CMD_CD,		cmd_cd,		EXRCOK+BANG+NAMEDF},
 	{"copy",	CMD_COPY,	cmd_move,	RANGE+EXTRA	},
+#ifndef NO_DIGRAPH
+	{"digraph",	CMD_DIGRAPH,	cmd_digraph,	EXRCOK+BANG+EXTRA},
+#endif
+#ifndef NO_ERRLIST
+	{"errlist",	CMD_ERRLIST,	cmd_errlist,	BANG+NAMEDF	},
+#endif
 	{"ex",		CMD_EDIT,	cmd_edit,	BANG+FILE1	},
-	{"map",		CMD_MAP,	cmd_map,	BANG+EXTRA	},
-	{"mkexrc",	CMD_MKEXRC,	cmd_mkexrc,	NONE		},
-	{"put",		CMD_PUT,	cmd_put,	FROM+WORD1	},
-	{"set",		CMD_SET,	cmd_set,	EXTRA		},
-	{"shell",	CMD_SHELL,	cmd_shell,	NONE		},
-	{"source",	CMD_SOURCE,	cmd_source,	NAMEDF		},
+	{"mark",	CMD_MARK,	cmd_mark,	FROM+WORD1	},
+#ifndef NO_MKEXRC
+	{"mkexrc",	CMD_MKEXRC,	cmd_mkexrc,	NAMEDF		},
+#endif
+	{"number",	CMD_NUMBER,	cmd_print,	RANGE+NL	},
+	{"put",		CMD_PUT,	cmd_put,	FROM+ZERO+WORD1	},
+	{"set",		CMD_SET,	cmd_set,	EXRCOK+EXTRA	},
+	{"shell",	CMD_SHELL,	cmd_shell,	NL		},
+	{"source",	CMD_SOURCE,	cmd_source,	EXRCOK+NAMEDF	},
+#ifdef SIGTSTP
+	{"stop",	CMD_STOP,	cmd_suspend,	NONE		},
+#endif
 	{"tag",		CMD_TAG,	cmd_tag,	BANG+WORD1	},
-	{"version",	CMD_VERSION,	cmd_version,	NONE		},
-	{"visual",	CMD_VISUAL,	cmd_visual,	NONE		},
-	{"wq",		CMD_XIT,	cmd_xit,	NONE		},
+	{"version",	CMD_VERSION,	cmd_version,	EXRCOK+NONE	},
+	{"visual",	CMD_VISUAL,	cmd_edit,	BANG+NAMEDF	},
+	{"wq",		CMD_WQUIT,	cmd_xit,	NL		},
 
 #ifdef DEBUG
-	{"debug",	CMD_DEBUG,	cmd_debug,	RANGE+BANG+EXTRA},
-	{"validate",	CMD_VALIDATE,	cmd_validate,	BANG		},
+	{"debug",	CMD_DEBUG,	cmd_debug,	RANGE+BANG+EXTRA+NL},
+	{"validate",	CMD_VALIDATE,	cmd_validate,	BANG+NL		},
 #endif
-	{"chdir",	CMD_CD,		cmd_cd,		NAMEDF		},
-	{"mark",	CMD_MARK,	cmd_mark,	FROM+WORD1	},
+	{"chdir",	CMD_CD,		cmd_cd,		EXRCOK+BANG+NAMEDF},
+#ifndef NO_COLOR
+	{"color",	CMD_COLOR,	cmd_color,	EXRCOK+EXTRA	},
+#endif
+#ifndef NO_ERRLIST
+	{"make",	CMD_MAKE,	cmd_make,	BANG+NAMEDFS	},
+#endif
+	{"map",		CMD_MAP,	cmd_map,	EXRCOK+BANG+EXTRA},
 	{"previous",	CMD_PREVIOUS,	cmd_next,	BANG		},
-	{"rewind",	CMD_REWIND,	cmd_rewind,	BANG		},
-	{"unmap",	CMD_UNMAP,	cmd_map,	BANG+EXTRA	},
+	{"rewind",	CMD_REWIND,	cmd_next,	BANG		},
+#ifdef SIGTSTP
+	{"suspend",	CMD_SUSPEND,	cmd_suspend,	NONE		},
+#endif
+	{"unmap",	CMD_UNMAP,	cmd_map,	EXRCOK+BANG+EXTRA},
+#ifndef NO_ABBR
+	{"unabbreviate",CMD_UNABBR,	cmd_map,	EXRCOK+WORD1	},
+#endif
 
 	{(char *)0}
 };
@@ -112,10 +153,9 @@ static struct
  * stuff that came after the pattern.
  */
 char	*parseptrn(ptrn)
-	register char	*ptrn;
+	REG char	*ptrn;
 {
-	register char 	*scan;
-
+	REG char 	*scan;
 
 	for (scan = ptrn + 1;
 	     *scan && *scan != *ptrn;
@@ -138,11 +178,11 @@ char	*parseptrn(ptrn)
 
 /* This function parses a line specifier for ex commands */
 char *linespec(s, markptr)
-	register char	*s;		/* start of the line specifier */
+	REG char	*s;		/* start of the line specifier */
 	MARK		*markptr;	/* where to store the mark's value */
 {
 	long		num;
-	register char	*t;
+	REG char	*t;
 
 	/* parse each ;-delimited clause of this linespec */
 	do
@@ -158,7 +198,7 @@ char *linespec(s, markptr)
 		{
 			s++;
 		}
-	
+
 		/* dot means current position */
 		if (*s == '.')
 		{
@@ -169,7 +209,7 @@ char *linespec(s, markptr)
 		else if (*s == '$')
 		{
 			s++;
-			*markptr = movetoline(cursor, nlines);
+			*markptr = MARK_LAST;
 		}
 		/* digit means an absolute line number */
 		else if (isdigit(*s))
@@ -178,13 +218,13 @@ char *linespec(s, markptr)
 			{
 				num = num * 10 + *s - '0';
 			}
-			*markptr = movetoline(cursor, num);
+			*markptr = MARK_AT_LINE(num);
 		}
 		/* appostrophe means go to a set mark */
 		else if (*s == '\'')
 		{
 			s++;
-			*markptr = movetomark(cursor, 1L, (int)*s);
+			*markptr = m_tomark(cursor, 1L, (int)*s);
 			s++;
 		}
 		/* slash means do a search */
@@ -192,35 +232,37 @@ char *linespec(s, markptr)
 		{
 			/* put a '\0' at the end of the search pattern */
 			t = parseptrn(s);
-	
+
 			/* search for the pattern */
+			*markptr &= ~(BLKSIZE - 1);
 			if (*s == '/')
 			{
 				pfetch(markline(*markptr));
-				*markptr = (*markptr & ~(BLKSIZE - 1)) + plen - 1;
-				*markptr = movefsrch(*markptr, s + 1);
+				if (plen > 0)
+					*markptr += plen - 1;
+				*markptr = m_fsrch(*markptr, s);
 			}
 			else
 			{
-				*markptr &= ~(BLKSIZE - 1);
-				*markptr = movebsrch(*markptr, s + 1);
+				*markptr = m_bsrch(*markptr, s);
 			}
-	
+
 			/* adjust command string pointer */
 			s = t;
 		}
-	
+
 		/* if linespec was faulty, quit now */
 		if (!*markptr)
 		{
 			return s;
 		}
-	
+
 		/* maybe add an offset */
-		if (*s == '-')
+		t = s;
+		if (*t == '-' || *t == '+')
 		{
 			s++;
-			for (num = 0; *s >= '0' && *s <= '9'; s++)
+			for (num = 0; isdigit(*s); s++)
 			{
 				num = num * 10 + *s - '0';
 			}
@@ -228,22 +270,17 @@ char *linespec(s, markptr)
 			{
 				num = 1;
 			}
-			*markptr = moveup(*markptr, num);
-		}
-		else if (*s == '+')
-		{
-			s++;
-			for (num = 0; *s >= '0' && *s <= '9'; s++)
-			{
-				num = num * 10 + *s - '0';
-			}
-			if (num == 0)
-			{
-				num = 1;
-			}
-			*markptr = movedown(*markptr, num);
+			*markptr = m_updnto(*markptr, num, *t);
 		}
 	} while (*s == ';' || *s == '+' || *s == '-');
+
+	/* protect against invalid line numbers */
+	num = markline(*markptr);
+	if (num < 1L || num > nlines)
+	{
+		msg("Invalid line number -- must be from 1 to %ld", nlines);
+		*markptr = MARK_UNSET;
+	}
 
 	return s;
 }
@@ -251,68 +288,103 @@ char *linespec(s, markptr)
 
 
 /* This function reads an ex command and executes it. */
-ex()
+void ex()
 {
-	char		cmdbuf[80];
-	register int	cmdlen;
+	char		cmdbuf[150];
+	REG int		cmdlen;
+	static long	oldline;
 
-	/* read a line */
-	cmdlen = vgets(':', cmdbuf, sizeof cmdbuf);
-	if (cmdlen < 0)
+	significant = FALSE;
+	oldline = markline(cursor);
+
+	while (mode == MODE_EX)
 	{
-		return;
-	}
-	addch('\n');
-	refresh();
+		/* read a line */
+#ifdef CRUNCH
+		cmdlen = vgets(':', cmdbuf, sizeof(cmdbuf));
+#else
+		cmdlen = vgets(*o_prompt ? ':' : '\0', cmdbuf, sizeof(cmdbuf));
+#endif
+		if (cmdlen < 0)
+		{
+			return;
+		}
 
-	/* if empty line, assume ".+1" */
-	if (cmdlen == 0)
-	{
-		strcpy(cmdbuf, ".+1");
-	}
+		/* if empty line, assume ".+1" */
+		if (cmdlen == 0)
+		{
+			strcpy(cmdbuf, ".+1");
+			qaddch('\r');
+			clrtoeol();
+		}
+		else
+		{
+			addch('\n');
+		}
+		refresh();
 
-	/* parse & execute the command */
-	doexcmd(cmdbuf);
+		/* parse & execute the command */
+		doexcmd(cmdbuf);
+
+		/* handle autoprint */
+		if (significant || markline(cursor) != oldline)
+		{
+			significant = FALSE;
+			oldline = markline(cursor);
+			if (*o_autoprint && mode == MODE_EX)
+			{
+				cmd_print(cursor, cursor, CMD_PRINT, FALSE, "");
+			}
+		}
+	}
 }
 
-doexcmd(cmdbuf)
+void doexcmd(cmdbuf)
 	char		*cmdbuf;	/* string containing an ex command */
 {
-	register char	*scan;		/* used to scan thru cmdbuf */
+	REG char	*scan;		/* used to scan thru cmdbuf */
 	MARK		frommark;	/* first linespec */
 	MARK		tomark;		/* second linespec */
-	register int	cmdlen;		/* length of the command name given */
+	REG int		cmdlen;		/* length of the command name given */
 	CMD		cmd;		/* what command is this? */
 	ARGT		argt;		/* argument types for this command */
 	short		forceit;	/* bang version of a command? */
-	register int	cmdidx;		/* index of command */
-	register char	*build;		/* used while copying filenames */
+	REG int		cmdidx;		/* index of command */
+	REG char	*build;		/* used while copying filenames */
 	int		iswild;		/* boolean: filenames use wildcards? */
 	int		isdfl;		/* using default line ranges? */
-
+	int		didsub;		/* did we substitute file names for % or # */
 
 	/* ex commands can't be undone via the shift-U command */
 	U_line = 0L;
 
-	/* ignore command lines that start with "#" */
-	if (*cmdbuf == '#' || *cmdbuf == '"')
+	/* permit extra colons at the start of the line */
+	for (; *cmdbuf == ':'; cmdbuf++)
+	{
+	}
+
+	/* ignore command lines that start with a double-quote */
+	if (*cmdbuf == '"')
 	{
 		return;
 	}
-
-	/* permit extra colons at the start of the line */
-	while (*cmdbuf == ':')
-	{
-		cmdbuf++;
-	}
+	scan = cmdbuf;
 
 	/* parse the line specifier */
-	scan = cmdbuf;
-	if (*scan == '%')
+	if (nlines < 1)
+	{
+		/* no file, so don't allow addresses */
+	}
+	else if (*scan == '%')
 	{
 		/* '%' means all lines */
-		frommark = movetoline(cursor, 1L);
-		tomark = movetoline(cursor, nlines);
+		frommark = MARK_FIRST;
+		tomark = MARK_LAST;
+		scan++;
+	}
+	else if (*scan == '0')
+	{
+		frommark = tomark = MARK_UNSET;
 		scan++;
 	}
 	else
@@ -344,15 +416,12 @@ doexcmd(cmdbuf)
 		scan++;
 	}
 
-	/* if no command, then just move the cursor to the mark & print */
+	/* if no command, then just move the cursor to the mark */
 	if (!*scan)
 	{
-		cursor = tomark;
-		if (mode != MODE_EX)
-		{
-			return;
-		}
-		scan = "p";
+		if (tomark != MARK_UNSET)
+			cursor = tomark;
+		return;
 	}
 
 	/* figure out how long the command name is */
@@ -383,6 +452,8 @@ doexcmd(cmdbuf)
 		return;
 	}
 
+	/* !!! if the command doesn't have NOBAR set, then replace | with \0 */
+
 	/* if the command ended with a bang, set the forceit flag */
 	scan += cmdlen;
 	if ((argt & BANG) && *scan == '!')
@@ -407,14 +478,25 @@ doexcmd(cmdbuf)
 		/* if names were given, process them */
 		if (*scan)
 		{
-			for (build = tmpblk.c, iswild = FALSE; *scan; scan++)
+			for (build = tmpblk.c, iswild = didsub = FALSE; *scan; scan++)
 			{
 				switch (*scan)
 				{
+				  case '\\':
+					if (scan[1] == '\\' || scan[1] == '%' || scan[1] == '#')
+					{
+						*build++ = *++scan;
+					}
+					else
+					{
+						*build++ = '\\';
+					}
+					break;
+
 				  case '%':
 					if (!*origname)
 					{
-						msg("No filename to substitute for %");
+						msg("No filename to substitute for %%");
 						return;
 					}
 					strcpy(build, origname);
@@ -422,8 +504,9 @@ doexcmd(cmdbuf)
 					{
 						build++;
 					}
+					didsub = TRUE;
 					break;
-	
+
 				  case '#':
 					if (!*prevorig)
 					{
@@ -435,28 +518,49 @@ doexcmd(cmdbuf)
 					{
 						build++;
 					}
+					didsub = TRUE;
 					break;
-	
+
 				  case '*':
 				  case '?':
+#if !(MSDOS || TOS)
 				  case '[':
 				  case '`':
-				  case '{':
+				  case '{': /* } */
 				  case '$':
 				  case '~':
+#endif
 					*build++ = *scan;
 					iswild = TRUE;
 					break;
-	
+
 				  default:
 					*build++ = *scan;
 				}
 			}
 			*build = '\0';
-	
-			if (iswild && cmd != CMD_BANG && tmpblk.c[0] != '>')
+
+			if (cmd == CMD_BANG
+			 || cmd == CMD_READ && tmpblk.c[0] == '!'
+			 || cmd == CMD_WRITE && tmpblk.c[0] == '!')
 			{
-				scan = wildcard(tmpblk.c);
+				if (didsub)
+				{
+					if (mode != MODE_EX)
+					{
+						addch('\n');
+					}
+					addstr(tmpblk.c);
+					addch('\n');
+					exrefresh();
+				}
+			}
+			else
+			{
+				if (iswild && tmpblk.c[0] != '>')
+				{
+					scan = wildcard(tmpblk.c);
+				}
 			}
 		}
 		else /* no names given, maybe assume origname */
@@ -475,12 +579,22 @@ doexcmd(cmdbuf)
 	}
 
 	/* bad arguments? */
-	if (!(argt & FROM) && frommark != cursor)
+	if (!(argt & EXRCOK) && nlines < 1L)
+	{
+		msg("Can't use the \"%s\" command in a %s file", cmdnames[cmdidx].name, EXRC);
+		return;
+	}
+	if (!(argt & (ZERO | EXRCOK)) && frommark == MARK_UNSET)
+	{
+		msg("Can't use address 0 with \"%s\" command.", cmdnames[cmdidx].name);
+		return;
+	}
+	if (!(argt & FROM) && frommark != cursor && nlines >= 1L)
 	{
 		msg("Can't use address with \"%s\" command.", cmdnames[cmdidx].name);
 		return;
 	}
-	if (!(argt & TO) && tomark != frommark)
+	if (!(argt & TO) && tomark != frommark && nlines >= 1L)
 	{
 		msg("Can't use a range with \"%s\" command.", cmdnames[cmdidx].name);
 		return;
@@ -490,9 +604,23 @@ doexcmd(cmdbuf)
 		msg("Extra characters after \"%s\" command.", cmdnames[cmdidx].name);
 		return;
 	}
-	if (argt & NOSPC)
+	if ((argt & NOSPC) && !(cmd == CMD_READ && (forceit || *scan == '!')))
 	{
-		for (build = scan; *build; build++)
+		build = scan;
+#ifndef CRUNCH
+		if ((argt & PLUS) && *build == '+')
+		{
+			while (*build && !isspace(*build))
+			{
+				build++;
+			}
+			while (*build && isspace(*build))
+			{
+				build++;
+			}
+		}
+#endif /* not CRUNCH */
+		for (; *build; build++)
 		{
 			if (isspace(*build))
 			{
@@ -515,6 +643,13 @@ doexcmd(cmdbuf)
 		frommark = tomark = 0L;
 	}
 
+	/* write a newline if called from visual mode */
+	if ((argt & NL) && mode != MODE_EX && !exwrote)
+	{
+		addch('\n');
+		exrefresh();
+	}
+
 	/* act on the command */
 	(*cmdnames[cmdidx].fn)(frommark, tomark, cmd, forceit, scan);
 }
@@ -528,9 +663,11 @@ int doexrc(filename)
 {
 	int	fd;		/* file descriptor */
 	int	len;		/* length of the ".exrc" file */
-	char	*cmd;		/* start of a command */
-	char	*end;		/* used to search for the end of cmd */
-	char	buf[MAXRCLEN];	/* buffer, holds the entire .exrc file */
+
+	/* !!! kludge: we use U_text as the buffer.  This has the side-effect
+	 * of interfering with the shift-U visual command.  Disable shift-U.
+	 */
+	U_line = 0L;
 
 	/* open the file, read it, and close */
 	fd = open(filename, O_RDONLY);
@@ -538,21 +675,48 @@ int doexrc(filename)
 	{
 		return 0;
 	}
-	len = read(fd, buf, MAXRCLEN);
+	len = tread(fd, U_text, BLKSIZE);
 	close(fd);
 
-	/* find & do each command */
-	for (cmd = buf; cmd < &buf[len]; cmd = end + 1)
-	{
-		/* find the end of the command */
-		for (end = cmd; *end != '\n'; end++)
-		{
-		}
-		*end = '\0';
-
-		/* do it */
-		doexcmd(cmd);
-	}
+	/* execute the string */
+	exstring(U_text, len, ctrl('V'));
 
 	return 1;
+}
+
+/* This function executes EX commands from a string.  The commands may be
+ * separated by newlines or by | characters.  It also handles quoting.
+ * Each individual command is limited to 132 bytes, but the total string
+ * may be longer.
+ */
+void exstring(buf, len, qchar)
+	char	*buf;	/* the commands to execute */
+	int	len;	/* the length of the string */
+	int	qchar;	/* the quote character -- ^V for file, or \ for kbd */
+{
+	char	single[133];	/* a single command */
+	char	*src, *dest;
+	int	i;
+
+	/* find & do each command */
+	for (src = buf; src < &buf[len]; src++)
+	{
+		/* Copy a single command into single[].  Convert any quoted |
+		 * into a normal |, and stop at a newline or unquoted |.
+		 */
+		for (dest = single, i = 0;
+		     i < 132 && src < &buf[len] && *src != '\n' && *src != '|';
+		     src++, i++)
+		{
+			if (src[0] == qchar && src[1] == '|')
+			{
+				src++;
+			}
+			*dest++ = *src;
+		}
+		*dest = '\0';
+
+		/* do it */
+		doexcmd(single);
+	}
 }

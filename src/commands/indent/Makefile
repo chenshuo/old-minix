@@ -1,15 +1,17 @@
-# makefile for the 'indent' command
+# Makefile for indent
 
-CFLAGS = -F -T. -Dlint
+CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE
+O=o
 
-OBJS = indent.s io.s lexi.s parse.s comment.s args.s
+OBJ = args.$O comment.$O lexi.$O indent.$O parse.$O io.$O
 
-indent: ${OBJS}
-	$(CC) -i -T. -o indent ${OBJS}
-	chmem =60000 indent
+indent: ${OBJ}
+	@rm -rf indent
+	@echo Start linking indent
+	@$(CC) -o indent -i ${OBJ} >/dev/null
+	@chmem =60000 indent
 
-$(OBJS): globs.h codes.h
+$(OBJ): globs.h codes.h
 
-
-clean:	
-	@rm -f *.bak *.s indent
+clean:
+	@rm -f *.bak *.o *.s core indent

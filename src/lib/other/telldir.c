@@ -9,6 +9,8 @@
 #include	<dirent.h>
 #include 	<unistd.h>
 
+_PROTOTYPE( off_t telldir, (DIR *dirp));
+
 #define DULL (DIR *) 0
 
 #ifndef SEEK_CUR

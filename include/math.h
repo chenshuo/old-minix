@@ -3,13 +3,16 @@
 #ifndef _MATH_H
 #define _MATH_H
 
-#define HUGE_VAL	9.9e+999	/* though it will generate a warning */
+#define HUGE_VAL	(__huge_val())		/* may be infinity */
 
 /* Function Prototypes. */
 #ifndef _ANSI_H
 #include <ansi.h>
 #endif
-	
+
+_PROTOTYPE( double __huge_val,	(void)					);
+_PROTOTYPE( int __IsNan,	(double _x)				);
+
 _PROTOTYPE( double acos,  (double _x)					);
 _PROTOTYPE( double asin,  (double _x)					);
 _PROTOTYPE( double atan,  (double _x)					);

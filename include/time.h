@@ -12,7 +12,7 @@
 #define CLOCKS_PER_SEC    60	/* MINIX always uses 60 Hz, even in Europe */
 
 #ifdef _POSIX_SOURCE
-#define CLK_TCK CLOCKS_PER_SEC	/* obsolete name for CLOCKS_PER_SEC */
+#define CLK_TCK CLOCKS_PER_SEC	/* obsolescent mame for CLOCKS_PER_SEC */
 #endif
 
 #define NULL    ((void *)0)
@@ -44,6 +44,8 @@ struct tm {
   int tm_isdst;			/* Daylight Saving Time flag */
 };
 
+extern char *tzname[];
+
 /* Function Prototypes. */
 #ifndef _ANSI_H
 #include <ansi.h>
@@ -62,6 +64,10 @@ _PROTOTYPE( size_t strftime, (char *_s, size_t _max, const char *_fmt,
 
 #ifdef _POSIX_SOURCE
 _PROTOTYPE( void tzset, (void)						);
+#endif
+
+#ifdef _MINIX
+_PROTOTYPE( int stime, (time_t *_top)					);
 #endif
 
 #endif /* _TIME_H */

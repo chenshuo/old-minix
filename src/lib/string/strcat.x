@@ -20,21 +20,21 @@ _strcat:
 	mov	cx,#-1		/* find end of s1 */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	dec	di		/* point back at null character */
 	test	si,#1		/* align source on word boundary */
 	jz	word_copy
 	movb
 word_copy:			/* loop to copy words */
-	lodw
+	lods
 	orb	al,al
 	jz	move_last_byte	/* exit if low byte == 0 */
-	stow
+	stos
 	orb	ah,ah
 	jnz	word_copy
 	jmp	exit
 move_last_byte:
-	stob			/* add odd zero byte */
+	stosb			/* add odd zero byte */
 exit:
 	mov	si,bx
 	mov	di,dx

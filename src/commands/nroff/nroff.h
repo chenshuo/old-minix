@@ -1,8 +1,3 @@
-#ifndef NRO_H
-#define NRO_H
-
-#include "config.h"			/* os/compiler options */
-
 /*
  *	nroff.h - stuff for nroff
  *
@@ -36,20 +31,16 @@
  *	- Heavily hacked up to conform to "real" nroff by Bill Rosenkranz
  */
 
-#include <ctype.h>
+#ifndef NRO_H
+#define NRO_H
 
-#ifdef _MINIX
-# ifdef tolower
-#  undef tolower
-# endif
-# define tolower(x) (isupper(x)?((x)-'A'+'a'):(x))
-#endif
-#ifdef UNIX
-# ifdef tolower
-#  undef tolower
-# endif
-# define tolower(x) (isupper(x)?((x)-'A'+'a'):(x))
-#endif
+#undef NULL
+#include "config.h"		/* os/compiler options */
+#include <ctype.h>
+#include <termcap.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 /*
  *	default prefix of macro files. files will be of the form "tmac.an"
@@ -57,53 +48,21 @@
  *	checks environment for TMACDIR which would be path (e.g. "c:\lib\tmac"
  *	or ".", no trailing slash char!).
  */
-#ifdef tmacfull
-# define TMACFULL	tmacfull
-#endif
-#ifdef tmacpre
-# define TMACPRE	tmacpre
-#endif
 
-#ifdef GEMDOS
-# ifndef TMACFULL
-#  define TMACFULL	"c:\\lib\\tmac\\tmac."
-# endif
-# ifndef TMACPRE
-#  define TMACPRE	"\\tmac."
-# endif
-#endif
+#define TMACFULL	"/usr/lib/tmac/tmac."
+#define TMACPRE		"/tmac."
 
-#ifdef _MINIX
-# ifndef TMACFULL
-#  define TMACFULL	"/usr/lib/tmac/tmac."
-# endif
-# ifndef TMACPRE
-#  define TMACPRE	"/tmac."
-# endif
-#endif
-
-#ifdef UNIX
-# ifndef TMACFULL
-#  define TMACFULL	"/usr/lib/tmac/tmac."
-# endif
-# ifndef TMACPRE
-#  define TMACPRE	"/tmac."
-# endif
-#endif
-
-/*
- *	command codes. indented defines are commands not yet implemented
- */
+/* Command codes. Indented defines are commands not yet implemented.  */
 #undef PI
 #define MACRO		0	/* macro definition */
 #define BP	 	1	/* begin page */
 #define BR	 	2	/* break */
 #define CE	 	3	/* center */
-#define FI	 	4	/* fill	*/
+#define FI	 	4	/* fill	 */
 #define FO	 	5	/* footer */
 #define HE	 	6	/* header */
 #define IN	 	7	/* indent */
-#define LS	 	8	/* line spacing	*/
+#define LS	 	8	/* line spacing	 */
 #define NF	 	9	/* no fill */
 #define PL		10	/* page length */
 #define RM		11	/* remove macro */
@@ -127,9 +86,9 @@
 #define EF		29	/* footer for even numbered pages */
 #define OF		30	/* footer for odd numbered pages */
 #define SO		31	/* source file */
-#define CU		32	/* continuous underline	*/
-#define DE		33	/* define macro	*/
-#define EN		34	/* end macro definition	*/
+#define CU		32	/* continuous underline	 */
+#define DE		33	/* define macro	 */
+#define EN		34	/* end macro definition	 */
 #define NR		35	/* set number register */
 #define EC		36	/* escape character (\) */
 #define FT		37	/* font change (R,B,I,S,P) */
@@ -235,9 +194,7 @@
 #undef OK
 #define OK 		!ERR
 
-/*
- *	a rational way of dealing with the NULL thing...
- */
+/* A rational way of dealing with the NULL thing... */
 #define NULL_CPTR	(char *) 0
 #define NULL_FPTR	(FILE *) 0
 #define NULL_IPTR	(int *) 0
@@ -247,9 +204,7 @@
 #define NULLP(type)	(type *) 0
 
 
-/*
- *	for justification during line fill
- */
+/* For justification during line fill */
 #define ADJ_OFF		0
 #define ADJ_LEFT	1
 #define ADJ_RIGHT	2
@@ -268,13 +223,13 @@
  *
  *		char_spaces = (int)(inches * (float) BU_INCH) / BU_EM;
  */
-#define BU_INCH		240		/* 1.0i = 240 b.u. */
-#define BU_CM		945/10		/* 1.0c = 240*50/127 b.u. */
-#define BU_PICA		40		/* 1P   = 240/6 b.u. */
-#define BU_EM		24		/* 1m   = 240/10 b.u. (10 char/inch) */
-#define BU_EN		24		/* 1n   = 240/10 b.u. */
-#define BU_POINT	240/72		/* 1p   = 240/72 b.u. */
-#define BU_BU		1		/* 1    = 1 b.u. */
+#define BU_INCH		240	/* 1.0i = 240 b.u. */
+#define BU_CM		945/10	/* 1.0c = 240*50/127 b.u. */
+#define BU_PICA		40	/* 1P   = 240/6 b.u. */
+#define BU_EM		24	/* 1m   = 240/10 b.u. (10 char/inch) */
+#define BU_EN		24	/* 1n   = 240/10 b.u. */
+#define BU_POINT	240/72	/* 1p   = 240/72 b.u. */
+#define BU_BU		1	/* 1    = 1 b.u. */
 
 
 /*
@@ -294,287 +249,229 @@
 #define MNLEN		10	/* max length of macro name */
 #define MAXREGS		100	/* max number of registers (2-char) */
 
-struct macros
-{
-	char   *mnames[MXMDEF];	/* table of ptrs to macro names */
-	int	lastp;		/* index to last mname	*/
-	char   *emb;		/* next char avail in macro defn buf */
-	char 	mb[MACBUF];	/* table of macro definitions */
-	char   *ppb;		/* pointer into push back buffer */
-	char 	pbb[MAXLINE];	/* push back buffer */
+struct macros {
+  char *mnames[MXMDEF];		/* table of ptrs to macro names */
+  int lastp;			/* index to last mname	 */
+  char *emb;			/* next char avail in macro defn buf */
+  char mb[MACBUF];		/* table of macro definitions */
+  char *ppb;			/* pointer into push back buffer */
+  char pbb[MAXLINE];		/* push back buffer */
 };
 
 
-/*
- *	number registers
- */
+/* Number registers */
 #define RF_READ		0x0001	/* register flags */
 #define RF_WRITE	0x0002
 
-struct regs
-{
-	char	rname[4];	/* 2-char register name */
-	int	rauto;		/* autoincrement value */
-	int	rval;		/* current value of the register */
-	int	rflag;		/* register flags */
-	char	rfmt;		/* register format (1,a,A,i,I,...) */
+struct regs {
+  char rname[4];		/* 2-char register name */
+  int rauto;			/* autoincrement value */
+  int rval;			/* current value of the register */
+  int rflag;			/* register flags */
+  char rfmt;			/* register format (1,a,A,i,I,...) */
 };
 
-
-
-/*
- *	control parameters for nroff
- */
-struct docctl
-{
-	int	fill;		/* fill if YES, init = YES */
-	int	dofnt;		/* handle font change, init = YES */
-	int	lsval;		/* current line spacing, init = 1 */
-	int	inval;		/* current indent, >= 0, init = 0 */
-	int	rmval;		/* current right margin, init = 60 */
-	int	llval;		/* current line length, init = 60 */
-	int	ltval;		/* current title length, init = 60 */
-	int	tival;		/* current temp indent, init = 0 */
-	int	ceval;		/* number of lines to center, init = 0 */
-	int	ulval;		/* number of lines to underline, init = 0 */
-	int	cuval;		/* no lines to continuously uline, init = 0 */
-	int	juval;		/* justify if YES, init = YES */
-	int	adjval;		/* adjust type, init = ADJ_BOTH */
-	int	boval;		/* number of lines to bold face, init = 0 */
-	int	bsflg;		/* can output contain '\b', init = FALSE */
-	int	prflg;		/* print on or off, init = TRUE */
-	int	sprdir;		/* direction for spread(), init = 0 */
-	int	flevel;		/* nesting depth for source cmd, init = 0 */
-	int	lastfnt;	/* previous used font */
-	int	thisfnt;	/* current font, init = 1 (1=R,2=I,3=B,4=S) */
-	int	escon;		/* whether esc parsing is on, init = YES */
-	int	nr[26];		/* number registers */
-	int	nrauto[26];	/* number registers auto increment */
-	char	nrfmt[26];	/* number registers formats, init = '1' */
-				/* input code how printed */
-				/* 1     '1'  1,2,3,... */
-				/* a     'a'  a,b,c,...,aa,bb,cc,... */
-				/* A     'A'  A,B,C,...,AA,BB,CC,... */
-				/* i     'i'  i,ii,iii,iv,v... */
-				/* I     'I'  I,II,III,IV,V... */
-				/* 01     2   01,02,03,... */
-				/* 001    3   001,002,003,... */
-				/* 0..1   8   00000001,00000002,... */
-	char	pgchr;		/* page number character, init = '%' */
-	char	cmdchr;		/* command character, init = '.' */
-	char	escchr;		/* escape char, init = '\' */
-	char	nobrchr;	/* nobreak char, init = '\'' */
+/* Control parameters for nroff */
+struct docctl {
+  int fill;			/* fill if YES, init = YES */
+  int dofnt;			/* handle font change, init = YES */
+  int lsval;			/* current line spacing, init = 1 */
+  int inval;			/* current indent, >= 0, init = 0 */
+  int rmval;			/* current right margin, init = 60 */
+  int llval;			/* current line length, init = 60 */
+  int ltval;			/* current title length, init = 60 */
+  int tival;			/* current temp indent, init = 0 */
+  int ceval;			/* number of lines to center, init = 0 */
+  int ulval;			/* number of lines to underline, init = 0 */
+  int cuval;			/* no lines to continuously uline, init = 0 */
+  int juval;			/* justify if YES, init = YES */
+  int adjval;			/* adjust type, init = ADJ_BOTH */
+  int boval;			/* number of lines to bold face, init = 0 */
+  int bsflg;			/* can output contain '\b', init = FALSE */
+  int prflg;			/* print on or off, init = TRUE */
+  int sprdir;			/* direction for spread(), init = 0 */
+  int flevel;			/* nesting depth for source cmd, init = 0 */
+  int lastfnt;			/* previous used font */
+  int thisfnt;			/* current font, init = 1 (1=R,2=I,3=B,4=S) */
+  int escon;			/* whether esc parsing is on, init = YES */
+  int nr[26];			/* number registers */
+  int nrauto[26];		/* number registers auto increment */
+  char nrfmt[26];		/* number registers formats, init = '1' */
+  /* Input code how printed */
+  /* 1     '1'  1,2,3,... */
+  /* A     'a'  a,b,c,...,aa,bb,cc,... */
+  /* A     'A'  A,B,C,...,AA,BB,CC,... */
+  /* I     'i'  i,ii,iii,iv,v... */
+  /* I     'I'  I,II,III,IV,V... */
+  /* 01     2   01,02,03,... */
+  /* 001    3   001,002,003,... */
+  /* 0..1   8   00000001,00000002,... */
+  char pgchr;			/* page number character, init = '%' */
+  char cmdchr;			/* command character, init = '.' */
+  char escchr;			/* escape char, init = '\' */
+  char nobrchr;			/* nobreak char, init = '\'' */
 };
 
-
-/*
- *	output buffer control parameters
- */
-struct cout
-{
-	int	outp;		/* next avail char pos in outbuf, init = 0 */
-	int	outw;		/* width of text currently in buffer */
-	int	outwds;		/* number of words in buffer, init = 0 */
-	int	lpr;		/* output to printer, init = FALSE */
-	int	outesc;		/* number of escape char on this line */
-	char	outbuf[MAXLINE];/* output of filled text */
+/* Output buffer control parameters */
+struct cout {
+  int outp;			/* next avail char pos in outbuf, init = 0 */
+  int outw;			/* width of text currently in buffer */
+  int outwds;			/* number of words in buffer, init = 0 */
+  int lpr;			/* output to printer, init = FALSE */
+  int outesc;			/* number of escape char on this line */
+  char outbuf[MAXLINE];		/* output of filled text */
 };
 
-
-/*
- *	page control parameters
- */
-struct page
-{
-	int	curpag;		/* current output page number, init =0 */
-	int	newpag;		/* next output page number, init = 1 */
-	int	lineno;		/* next line to be printed, init = 0 */
-	int	plval;		/* page length in lines, init = 66 */
-	int	m1val;		/* margin before and including header */
-	int	m2val;		/* margin after header */
-	int	m3val;		/* margin after last text line */
-	int	m4val;		/* bottom margin, including footer */
-	int	bottom;		/* last live line on page
-					= plval - m3val - m4val	*/
-	int	offset;		/* page offset from left, init = 0 */
-	int	frstpg;		/* first page to print, init = 0 */
-	int	lastpg;		/* last page to print, init = 30000 */
-	int	ehlim[2];	/* left/right margins for headers/footers */
-	int	ohlim[2];	/* init = 0 and PAGEWIDTH */
-	int	eflim[2];
-	int	oflim[2];
-	char	ehead[MAXLINE];	/* top of page title, init = '\n' */
-	char	ohead[MAXLINE];
-	char	efoot[MAXLINE];	/* bottom of page title, init = '\n' */
-	char	ofoot[MAXLINE];
+/* Page control parameters */
+struct page {
+  int curpag;			/* current output page number, init =0 */
+  int newpag;			/* next output page number, init = 1 */
+  int lineno;			/* next line to be printed, init = 0 */
+  int plval;			/* page length in lines, init = 66 */
+  int m1val;			/* margin before and including header */
+  int m2val;			/* margin after header */
+  int m3val;			/* margin after last text line */
+  int m4val;			/* bottom margin, including footer */
+  int bottom;			/* last live line on page: plval-m3val-m4val */
+  int offset;			/* page offset from left, init = 0 */
+  int frstpg;			/* first page to print, init = 0 */
+  int lastpg;			/* last page to print, init = 30000 */
+  int ehlim[2];			/* left/right margins for headers/footers */
+  int ohlim[2];			/* init = 0 and PAGEWIDTH */
+  int eflim[2];
+  int oflim[2];
+  char ehead[MAXLINE];		/* top of page title, init = '\n' */
+  char ohead[MAXLINE];
+  char efoot[MAXLINE];		/* bottom of page title, init = '\n' */
+  char ofoot[MAXLINE];
 };
 
+/* Forward refs from nroff */
 
+/* Command.c */
+_PROTOTYPE(void comand, (char *p));
+_PROTOTYPE(int comtyp, (char *p, char *m));
+_PROTOTYPE(void gettl, (char *p, char *q, int *limit));
+_PROTOTYPE(int getval, (char *p, char *p_argt));
+_PROTOTYPE(int set_ireg, (char *name, int val, int opt));
+_PROTOTYPE(void set, (int *param, int val, int type, int defval, int minval, 
+								 int maxval));
 
-/*
- *	forward refs from libc
- */
-char   *getenv ();
-char   *ctime ();
-long	time ();
-#ifdef UNIX
-char   *tgetstr ();			/* from termcap/terminfo */
-#endif
-#ifdef MINIX_ST
-char   *tgetstr ();
-#endif
-#ifdef MINIX_PC
-char   *tgetstr ();
-#endif
+/* Escape.c */
+_PROTOTYPE(void expesc, (char *p, char *q));
+_PROTOTYPE(int specialchar, (char *s, char *c));
+_PROTOTYPE(void fontchange, (int fnt, char *s));
+_PROTOTYPE(int findreg, (char *name));
 
+/* Io.c */
+_PROTOTYPE(int getlin, (char *p, FILE * in_buf));
+_PROTOTYPE(int ngetc, (FILE * infp));
+_PROTOTYPE(void pbstr, (char *p));
+_PROTOTYPE(void putbak, (int c));
+_PROTOTYPE(void prchar, (int c, FILE * fp));
+_PROTOTYPE(void put, (char *p));
+_PROTOTYPE(void putlin, (char *p, FILE * pbuf));
+_PROTOTYPE(void putc_lpr, (int c, FILE * fp));
 
-/*
- *	forward refs from nroff
- */
-char   *getmac ();
-char   *getstr ();
-char   *skipwd ();
-char   *skipbl ();
-char   *getfield ();
+/* Low.c */
+_PROTOTYPE(int atod, (int c));
+_PROTOTYPE(void robrk, (void));
+_PROTOTYPE(int ctod, (char *p));
+_PROTOTYPE(void inptobu, (char *ps));
+_PROTOTYPE(void butochar, (char *ps));
+_PROTOTYPE(char *skipbl, (char *p));
+_PROTOTYPE(char *skipwd, (char *p));
+_PROTOTYPE(void space, (int n));
+_PROTOTYPE(char *getfield, (char *p, char *q, int delim));
+_PROTOTYPE(int getwrd, (char *p0, char *p1));
+_PROTOTYPE(int countesc, (char *p));
+_PROTOTYPE(int itoda, (int value, char *p, int size));
+_PROTOTYPE(int itoROMAN, (int value, char *p, int size));
+_PROTOTYPE(int itoroman, (int value, char *p, int size));
+_PROTOTYPE(int itoLETTER, (int value, char *p, int size));
+_PROTOTYPE(int itoletter, (int value, char *p, int size));
+_PROTOTYPE(int min, (int v1, int v2));
+_PROTOTYPE(int max, (int v1, int v2));
+_PROTOTYPE(void err_exit, (int code));
+_PROTOTYPE(void wait_for_char, (void));
 
-int	comand ();
-int	comtyp ();
-int	gettl ();
-int	getval ();
-int	set ();
-int	expesc ();
-int	specialchar ();
-int	fontchange ();
-int	getlin ();
-int	ngetc ();
-int	pbstr ();
-int	putbak ();
-int	prchar ();
-int	put ();
-int	putlin ();
-int	atod ();
-int	robrk ();
-int	ctod ();
-int	space ();
-int	getwrd ();
-int	countesc ();
-int	itoda ();
-int	itoROMAN ();
-int	itoroman ();
-int	itoLETTER ();
-int	itoletter ();
-int	min ();
-int	max ();
-int	defmac ();
-int	colmac ();
-int	putmac ();
-int	maceval ();
-int	main ();
-int	usage ();
-int	init ();
-int	pswitch ();
-int	profile ();
-int	text ();
-int	bold ();
-int	center ();
-int	expand ();
-int	justcntr ();
-int	justleft ();
-int	justrite ();
-int	leadbl ();
-int	pfoot ();
-int	phead ();
-int	puttl ();
-int	putwrd ();
-int	skip ();
-int	spread ();
-int	strkovr ();
-int	underl ();
-int	width ();
-int	inptobu ();		/* convert input units to b.u. */
-int	butochar ();		/* convert b.u. to char spaces */
+/* Macros.c */
+_PROTOTYPE(void defmac, (char *p, FILE * infp));
+_PROTOTYPE(int colmac, (char *p, char *d, int i));
+_PROTOTYPE(int putmac, (char *name, char *p));
+_PROTOTYPE(char *getmac, (char *name));
+_PROTOTYPE(void maceval, (char *p, char *m));
+_PROTOTYPE(void printmac, (int opt));
 
-int	findreg ();
-int	set_ireg ();
+/* Main.c */
+_PROTOTYPE(int main, (int argc, char *argv[]));
+_PROTOTYPE(void usage, (void));
+_PROTOTYPE(void init, (void));
+_PROTOTYPE(int pswitch, (char *p, char *p2, int *q));
+_PROTOTYPE(void profile, (void));
 
+/* Strings.c */
+_PROTOTYPE(void defstr, (char *p));
+_PROTOTYPE(int colstr, (char *p, char *d));
+_PROTOTYPE(int putstr, (char *name, char *p));
+_PROTOTYPE(char *getstr, (char *name));
 
+/* Text.c */
+_PROTOTYPE(void text, (char *p));
+_PROTOTYPE(void bold, (char *p0, char *p1, int size));
+_PROTOTYPE(void center, (char *p));
+_PROTOTYPE(void expand, (char *p0, int c, char *s));
+_PROTOTYPE(void justcntr, (char *p, char *q, int *limit));
+_PROTOTYPE(void justleft, (char *p, char *q, int limit));
+_PROTOTYPE(void justrite, (char *p, char *q, int limit));
+_PROTOTYPE(void leadbl, (char *p));
+_PROTOTYPE(void pfoot, (void));
+_PROTOTYPE(void phead, (void));
+_PROTOTYPE(void puttl, (char *p, int *lim, int pgno));
+_PROTOTYPE(void putwrd, (char *wrdbuf));
+_PROTOTYPE(void skip, (int n));
+_PROTOTYPE(void spread,(char *p, int outp, int nextra,int outwds,int escapes));
+_PROTOTYPE(int strkovr, (char *p, char *q));
+_PROTOTYPE(void underl, (char *p0, char *p1, int size));
+_PROTOTYPE(int width, (char *s));
 
-/*
- *	globals. define NRO_MAIN in main.c to define globals there. else
- *	you get extern.
- */
+/* Globals. Define NRO_MAIN in main.c to define globals, else you get extern */
+#define EXTERN extern		/* true in all files except main.c */
+
 #ifdef NRO_MAIN
+#undef EXTERN
+#define EXTERN
+#endif
 
-struct docctl		dc;
-struct page		pg;
-struct cout		co;
-struct macros		mac;
-struct regs		rg[MAXREGS];
-FILE		       *out_stream;
-FILE		       *err_stream;
-FILE		       *dbg_stream;
-FILE		       *sofile[Nfiles+1];
-int			ignoring;		/* .ig vs .de */
-int			hold_screen;
-int			debugging;
-int			stepping;		/* paging */
-char			tmpdir[256];
-char			termcap[1030];
-char			s_standout[20];
-char			e_standout[20];
-char			s_italic[20];
-char			e_italic[20];
-char			s_bold[20];
-char			e_bold[20];
-char		       *dbgfile = "nroff.dbg";
-#ifdef GEMDOS
-char		       *printer = "prn:";	/* this WON'T work!!! */
+EXTERN struct docctl dc;
+EXTERN struct page pg;
+EXTERN struct cout co;
+EXTERN struct macros mac;
+EXTERN struct regs rg[MAXREGS];
+EXTERN FILE *out_stream;
+EXTERN FILE *err_stream;
+EXTERN FILE *dbg_stream;
+EXTERN FILE *sofile[Nfiles + 1];
+EXTERN int ignoring;			/* .ig vs .de */
+EXTERN int hold_screen;
+EXTERN int debugging;
+EXTERN int stepping;			/* paging */
+EXTERN char tmpdir[256];
+EXTERN char termcap[1030];
+EXTERN char s_standout[20];
+EXTERN char e_standout[20];
+EXTERN char s_italic[20];
+EXTERN char e_italic[20];
+EXTERN char s_bold[20];
+EXTERN char e_bold[20];
+
+#ifdef NRO_MAIN
+char *myname = "nroff";
+char *dbgfile = "nroff.dbg";
+char *printer = "/dev/lp";	/* this probably won't */
+char *version = "nroff v0.99 BETA 02/25/90 wjr";
 #else
-char		       *printer = "/dev/lp";	/* this probably won't */
+extern char *myname, *dbgfile, *printer, *version;
 #endif
 
-
-#include "version.h"				/* for myname and version */
-
-
-#ifdef ALCYON
-/*
- *	this SHOULD be big enough for most needs. only used by startup
- *	code (gemstart.o or crt0.o)
- */
-long			_STKSIZ = 16384L;
-#endif
-
-
-#else /*NRO_MAIN*/
-
-extern struct docctl	dc;
-extern struct page	pg;
-extern struct cout	co;
-extern struct macros	mac;
-extern struct regs	rg[MAXREGS];
-extern FILE	       *out_stream;
-extern FILE	       *err_stream;
-extern FILE	       *dbg_stream;
-extern FILE	       *sofile[Nfiles+1];
-extern int		ignoring;
-extern int		hold_screen;
-extern int		debugging;
-extern int		stepping;
-extern char		tmpdir[];
-extern char		termcap[];
-extern char		s_standout[];
-extern char		e_standout[];
-extern char		s_italic[];
-extern char		e_italic[];
-extern char		s_bold[];
-extern char		e_bold[];
-extern char	       *dbgfile;
-extern char	       *printer;
-extern char	       *myname;
-extern char	       *version;
-
-#endif /*NRO_MAIN*/
- 
-#endif /*NRO_H*/
-
+#endif				/* NRO_H */

@@ -1,11 +1,18 @@
-/* The <ansi.h> header checks whether the compiler claims conformance to ANSI
- * Standard C. If so, the symbol _ANSI is defined as 1, otherwise it is 
- * defined as 0.  Based on the result, a macro
+/* The <ansi.h> header attempts to decide whether the compiler has enough
+ * conformance to Standard C for Minix to take advantage of.  If so, the
+ * symbol _ANSI is defined (as 31415).  Otherwise _ANSI is not defined
+ * here, but it may be defined by applications that want to bend the rules.
+ * The magic number in the definition is to inhibit unnecessary bending
+ * of the rules.  (For consistency with the new '#ifdef _ANSI" tests in
+ * the headers, _ANSI should really be defined as nothing, but that would
+ * break many library routines that use "#if _ANSI".)
+
+ * If _ANSI ends up being defined, a macro
  *
  *	_PROTOTYPE(function, params)
  *
  * is defined.  This macro expands in different ways, generating either
- * ANSI Standard C prototypes or old-style K&R (Kernighan & Ritchie) 
+ * ANSI Standard C prototypes or old-style K&R (Kernighan & Ritchie)
  * prototypes, as needed.  Finally, some programs use _CONST, _VOIDSTAR etc
  * in such a way that they are portable over both ANSI and K&R compilers.
  * The appropriate macros are defined here.
@@ -14,26 +21,19 @@
 #ifndef _ANSI_H
 #define _ANSI_H
 
-/* ANSI C requires __STDC__ to be defined as 1 for an ANSI C compiler.
- * Some half-ANSI compilers define it as 0.  Get around this here.
- */
-
-#define _ANSI              0	/* 0 if compiler is not ANSI C, 1 if it is */
-
-#ifdef __STDC__			/* __STDC__ defined for (near) ANSI compilers*/
-#if __STDC__ == 1		/* __STDC__ == 1 for conformant compilers */
-#undef _ANSI			/* get rid of above definition */
-#define _ANSI              1	/* _ANSI = 1 for ANSI C compilers */
-#endif
+#if __STDC__ == 1
+#define _ANSI		31459	/* compiler claims full ANSI conformance */
 #endif
 
-/* At this point, _ANSI has been set correctly to 0 or 1. Define the
- * _PROTOTYPE macro to either expand both of its arguments (ANSI prototypes),
- * only the function name (K&R prototypes).
- */
+#ifdef __GNUC__
+#define _ANSI		31459	/* gcc conforms enough even in non-ANSI mode */
+#endif
 
-#if _ANSI
+#ifdef _ANSI
+
+/* Keep everything for ANSI prototypes. */
 #define	_PROTOTYPE(function, params)	function params
+
 #define	_VOIDSTAR	void *
 #define	_VOID		void
 #define	_CONST		const
@@ -42,7 +42,9 @@
 
 #else
 
+/* Throw away the parameters for K&R prototypes. */
 #define	_PROTOTYPE(function, params)	function()
+
 #define	_VOIDSTAR	void *
 #define	_VOID		void
 #define	_CONST

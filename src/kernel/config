@@ -1,6 +1,7 @@
 prog=`basename $0`
 
 case $1 in
+
 	at)	cpu=88
 		wini=at_wini
 		what_bits=16
@@ -25,17 +26,23 @@ case $1 in
 		what_cpu=80386
 		what_wini=AT;;
 
-	ps)     cpu=88
+	ps2)    cpu=88
 		wini=ps_wini.c
 		what_bits=16
 		what_cpu=8088
 		what_wini="PS/2";;
 
+	esdi) cpu=88
+		wini=esdi_wini.c
+		what_bits=16
+		what_cpu=8088
+		what_wini=ESDI;;
+
 	clean)	echo "rm -f klib.x mpx.x wini.c"
 		rm -f klib.x mpx.x wini.c
 		exit 0;;
 	*)	
-		echo "$prog: usage: $prog [at, bios, xt, 386, ps2]"
+		echo "$prog: usage: $prog [at, bios, xt, 386, ps2, esdi]"
 		exit 1;;
 esac
 

@@ -1,19 +1,20 @@
-#include <lib.h>
-/*  rand(3)
- *
- *  Changed to return high order bits. Terrence W. Holm, Nov. 1988
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: rand.c,v 1.3 90/06/30 20:02:45 ceriel Exp $ */
 
-PRIVATE long _seed = 1L;
+#include	<stdlib.h>
 
-void srand(x)
-unsigned x;
+static unsigned long int next = 1;
+
+int rand(void)
 {
-  _seed = (long) x;
+	next = next * 1103515245 + 12345;
+	return (unsigned int)(next/(2 * (RAND_MAX +1L)) % (RAND_MAX+1L));
 }
 
-int rand()
+void srand(unsigned int seed)
 {
-  _seed = 1103515245L * _seed + 12345;
-  return((int) ((_seed >> 16) & 0x7fff));
+	next = seed;
 }

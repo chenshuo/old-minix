@@ -20,11 +20,12 @@ EXTERN int err_code;		/* temporary storage for error number */
 EXTERN int result2;		/* secondary result */
 EXTERN char *res_ptr;		/* result, if pointer */
 
-extern int (*call_vec[])();	/* functions to handle system calls */
+extern _PROTOTYPE (int (*call_vec[]), (void) );	/* system call handlers */
 extern char core_name[];	/* file name where core images are produced */
-extern unshort core_bits;	/* which signals cause core images */
+EXTERN sigset_t core_bits;	/* which signals cause core images */
 EXTERN char mm_stack[MM_STACK_BYTES];	/* MM's stack */
 
-/* Library variables. */
-extern int errno;
-
+/* DEBUG.  There is nothing to force this stack to be aligned.  char variables
+ * do not require alignment on most systems.  The rounding of MM_STACK_BYTES
+ * in const.h is not sufficient.
+ */

@@ -6,6 +6,8 @@
  *   fetch_name:  go get a path name from user space
  *   no_sys:      reject a system call that FS does not handle
  *   panic:       something awful has occurred;  MINIX cannot continue
+ *   conv2:	  do byte swapping on a 16-bit int
+ *   conv4:	  do byte swapping on a 32-bit long
  */
 
 #include "fs.h"
@@ -16,7 +18,6 @@
 #include "fproc.h"
 #include "inode.h"
 #include "param.h"
-#include "super.h"
 
 PRIVATE int panicking;		/* inhibits recursive panics during sync */
 PRIVATE message clock_mess;
@@ -32,60 +33,11 @@ PUBLIC time_t clock_time()
  */
 
   register int k;
-  register struct super_block *sp;
 
   clock_mess.m_type = GET_TIME;
   if ( (k = sendrec(CLOCK, &clock_mess)) != OK) panic("clock_time err", k);
 
-  /* Since we now have the time, update the super block.  It is almost free. */
-  sp = get_super(ROOT_DEV);
-  if (sp) {
-	sp->s_time = clock_mess.NEW_TIME;	/* update super block time */
-	if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
-  }
-
-  return (time_t) clock_mess.NEW_TIME;
-}
-
-
-/*===========================================================================*
- *				copy					     *
- *===========================================================================*/
-PUBLIC void copy(dest, source, bytes)
-char *dest;			/* destination pointer */
-char *source;			/* source pointer */
-int bytes;			/* how much data to move */
-{
-/* Copy a byte string of length 'bytes' from 'source' to 'dest'.
- * If all three parameters are exactly divisible by the integer size, copy them
- * an integer at a time.  Otherwise copy character-by-character.
- */
-
-  int src, dst;
-
-  if (bytes <= 0) return;	/* makes test-at-the-end possible */
-  src = (int) source;		/* only low-order bits needed */	
-  dst = (int) dest;		/* only low-order bits needed */
-
-  if (bytes % sizeof(int) == 0 && src % sizeof(int) == 0 &&
-						dst % sizeof(int) == 0) {
-	/* Copy the string an integer at a time. */
-	register int n = bytes/sizeof(int);
-	register int *dpi = (int *) dest;
-	register int *spi = (int *) source;
-
-	do { *dpi++ = *spi++; } while (--n);
-
-  } else {
-
-	/* Copy the string character-by-character. */
-	register int n = bytes;
-	register char *dpc = (char *) dest;
-	register char *spc = (char *) source;
-
-	do { *dpc++ = *spc++; } while (--n);
-
-  }
+  return( (time_t) clock_mess.NEW_TIME);
 }
 
 
@@ -103,28 +55,51 @@ int flag;			/* M3 means path may be in message */
  */
 
   register char *rpu, *rpm;
+  int r, n;
   vir_bytes vpath;
 
+  /* Check name length for validity. */
   if (len <= 0) {
 	err_code = EINVAL;
 	return(ERROR);
   }
+
+  if (len > PATH_MAX) {
+	err_code = ENAMETOOLONG;
+	return(ERROR);
+  }
+
+  n = len - 1;			/* # chars not including 0 byte */
   if (flag == M3 && len <= M3_STRING) {
 	/* Just copy the path from the message to 'user_path'. */
 	rpu = &user_path[0];
 	rpm = pathname;		/* contained in input message */
 	do { *rpu++ = *rpm++; } while (--len);
-	return(OK);
+	r = OK;
+  } else {
+	/* String is not contained in the message.  Get it from user space. */
+	vpath = (vir_bytes) path;
+	r = rw_user(D, who, vpath, (vir_bytes) len, user_path, FROM_USER);
   }
 
-  /* String is not contained in the message.  Go get it from user space. */
-  if (len > PATH_MAX) {
-	err_code = ENAMETOOLONG;
-	return(ERROR);
+  /* Paths that end in "/." like "/a/b/." or "/" are a pain. Get rid of them */
+  if (r == OK) {
+	rpu = &user_path[n - 1]; /* points to last char */
+	while (n > 2) {
+		if (*rpu == '/') 
+		{
+		    *rpu = '\0';	 /* remove the "/" */
+		    n -= 1;
+		    rpu -= 1;
+		} else
+		if (*rpu == '.' && *(--rpu) == '/') {
+			*rpu = '\0';	 /* remove the "/." */
+			n -= 2;
+			rpu -= 1;
+		} else break;
+	}
   }
-  vpath = (vir_bytes) path;
-  err_code = rw_user(D, who, vpath, (vir_bytes) len, user_path, FROM_USER);
-  return(err_code);
+  return(r);
 }
 
 
@@ -156,6 +131,76 @@ int num;			/* number to go with format string */
   printf("File system panic: %s ", format);
   if (num != NO_NUM) printf("%d",num); 
   printf("\n");
-  (void) do_sync();			/* flush everything to the disk */
+  (void) do_sync();		/* flush everything to the disk */
   sys_abort();
 }
+
+
+
+/*===========================================================================*
+ *				conv2					     *
+ *===========================================================================*/
+PUBLIC unsigned conv2(norm, w)
+int norm;			/* TRUE if no swap, FALSE for byte swap */
+int w;				/* promotion of 16-bit word to be swapped */
+{
+/* Possibly swap a 16-bit word between 8086 and 68000 byte order. */
+
+  if (norm) return( (unsigned) w & 0xFFFF);
+  return( ((w&BYTE) << 8) | ( (w>>8) & BYTE));
+}
+
+/*===========================================================================*
+ *				conv4					     *
+ *===========================================================================*/
+PUBLIC long conv4(norm, x)
+int norm;			/* TRUE if no swap, FALSE for byte swap */
+long x;				/* 32-bit long to be byte swapped */
+{
+/* Possibly swap a 32-bit long between 8086 and 68000 byte order. */
+
+  unsigned lo, hi;
+  long l;
+  
+  if (norm) return(x);			/* byte order was already ok */
+  lo = conv2(FALSE, (int) x & 0xFFFF);	/* low-order half, byte swapped */
+  hi = conv2(FALSE, (int) (x>>16) & 0xFFFF);	/* high-order half, swapped */
+  l = ( (long) lo <<16) | hi;
+  return(l);
+}
+
+/*===========================================================================*
+ *				sys_times				     *
+ *===========================================================================*/
+PUBLIC void sys_times(proc, ptr)
+int proc;			/* proc whose times are needed */
+clock_t ptr[5];			/* pointer to time buffer */
+{
+/* Fetch the accounting info for a proc. */
+  message m;
+
+  m.m1_i1 = proc;
+  m.m1_p1 = (char *)ptr;
+  (void) _taskcall(SYSTASK, SYS_TIMES, &m);
+  ptr[0] = m.USER_TIME;
+  ptr[1] = m.SYSTEM_TIME;
+  ptr[2] = m.CHILD_UTIME;
+  ptr[3] = m.CHILD_STIME;
+  ptr[4] = m.BOOT_TICKS;
+}
+
+/*===========================================================================*
+ *				sys_kill				     *
+ *===========================================================================*/
+PUBLIC void sys_kill(proc, signr)
+int proc;			/* which proc has exited */
+int signr;			/* signal number: 1 - 16 */
+{
+/* A proc has to be signaled via MM.  Tell the kernel. */
+  message m;
+
+  m.m6_i1 = proc;
+  m.m6_i2 = signr;
+  (void) _taskcall(SYSTASK, SYS_KILL, &m);
+}
+

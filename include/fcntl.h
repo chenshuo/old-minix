@@ -24,9 +24,9 @@
 #define FD_CLOEXEC         1	/* close on exec flag for third arg of fcntl */
 
 /* L_type values for record locking with fcntl().  POSIX Table 6-3. */
-#define F_RDLCK            0	/* shared or read lock */
-#define F_WRLCK            1	/* exclusive or write lock */
-#define F_UNLCK            2	/* unlock */
+#define F_RDLCK            1	/* shared or read lock */
+#define F_WRLCK            2	/* exclusive or write lock */
+#define F_UNLCK            3	/* unlock */
 
 /* Oflag values for open().  POSIX Table 6-4. */
 #define O_CREAT        00100	/* creat file if it doesn't exist */
@@ -61,7 +61,7 @@ struct flock {
 #include <ansi.h>
 #endif
 
-_PROTOTYPE( int creat, (const char *_path, /* mode_t */ unsigned _mode)	);
+_PROTOTYPE( int creat, (const char *_path, Mode_t _mode)		);
 _PROTOTYPE( int fcntl, (int _filedes, int _cmd, ...)	  		);
 _PROTOTYPE( int open,  (const char *_path, int _oflag, ...) 		);
 

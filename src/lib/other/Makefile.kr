@@ -1,0 +1,22 @@
+CC=exec cc
+DIR=/usr/src
+CFLAGS= -c -O -LIB -D_MINIX -D_POSIX_SOURCE -D_EM_PSIZE=2 -I$(DIR)
+
+# Other files have problems.  Use 1.5 versions
+SRC=_longjerr.c bcmp.c bcopy.c bzero.c closedir.c crypt.c ctermid.c \
+    cuserid.c environ.c errno.c execlp.c ffs.c fprintk.c \
+    fputk.c fslib.c fsversion.c getdents.c getgrent.c getgroups.c \
+    getlogin.c getopt.c getpass.c getpw.c getpwent.c getw.c hypot.c \
+    index.c itoa.c loadname.c lock.c lrand.c lsearch.c memccpy.c \
+    mktemp.c mtab.c nlist.c opendir.c popen.c printk.c putenv.c putk.c \
+    putw.c readdir.c regexp.c regsub.c rewinddir.c rindex.c seekdir.c \
+    stderr.c swab.c syscall.c sysconf.c syslib.c taskcall.c telldir.c \
+    termcap.c ttyname.c
+ 
+ 
+all:	 
+	@$(CC) $(CFLAGS) $(SRC) 
+ 
+clean:	 
+	@rm -rf *.o *.s *.bak 
+ 

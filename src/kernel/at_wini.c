@@ -5,10 +5,14 @@
  *
  *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
  * ----------------------------------------------------------------
- * |  DISK_READ | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |  DEV_OPEN  |         |         |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
- * ----------------------------------------------------------------
+ * |  DEV_CLOSE |         |         |         |         |         |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_READ  | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
  * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
  * ----------------------------------------------------------------
  *
@@ -40,7 +44,7 @@
 #define WIN_RECALIBRATE	0x10	/* command for the drive to recalibrate */
 #define WIN_READ        0x20	/* command for the drive to read */
 #define WIN_WRITE       0x30	/* command for the drive to write */
-#define WIN_SPECIFY     0x91	/* command for the controller to accept params */
+#define WIN_SPECIFY     0x91	/* command for the controller: accept params */
 
 /* Parameters for the disk drive. */
 #define SECTOR_SIZE      512	/* physical sector size in bytes */
@@ -57,7 +61,7 @@
 
 /* Variables. */
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
-  int wn_opcode;		/* DISK_READ or DISK_WRITE */
+  int wn_opcode;		/* DEV_READ or DEV_WRITE */
   int wn_procnr;		/* which proc wanted this operation? */
   int wn_drive;			/* drive number addressed */
   int wn_cylinder;		/* cylinder number addressed */
@@ -84,18 +88,18 @@ PRIVATE int command[8];		/* Common command block */
 
 PRIVATE unsigned char buf[BLOCK_SIZE]; /* Buffer used by the startup routine */
 
-FORWARD int com_out();
-FORWARD int controller_ready();
-FORWARD void copy_params();
-FORWARD void copy_prt();
-FORWARD int drive_busy();
-FORWARD void init_params();
-FORWARD void sort();
-FORWARD int w_do_rdwt();
-FORWARD int w_reset();
-FORWARD int w_transfer();
-FORWARD int win_init();
-FORWARD int win_results();
+FORWARD _PROTOTYPE( int com_out, (void) );
+FORWARD _PROTOTYPE( int controller_ready, (void) );
+FORWARD _PROTOTYPE( void copy_params, (unsigned char *src, struct wini *dest));
+FORWARD _PROTOTYPE( void copy_prt, (int base_dev) );
+FORWARD _PROTOTYPE( int drive_busy, (void) );
+FORWARD _PROTOTYPE( void init_params, (void) );
+FORWARD _PROTOTYPE( void sort, (struct wini wn[]) );
+FORWARD _PROTOTYPE( int w_do_rdwt, (message *m_ptr) );
+FORWARD _PROTOTYPE( int w_reset, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (struct wini *wn) );
+FORWARD _PROTOTYPE( int win_init, (void) );
+FORWARD _PROTOTYPE( int win_results, (void) );
 
 /*===========================================================================*
  *				winchester_task				     * 
@@ -117,7 +121,7 @@ PUBLIC void winchester_task()
 	/* First wait for a request to read or write a disk block. */
 	receive(ANY, &w_mess);	/* get a request to do some work */
 	if (w_mess.m_source < 0) {
-		printf("winchester task got message from %d ", w_mess.m_source);
+		printf("winchester task got message from %d ",w_mess.m_source);
 		continue;
 	}
 	caller = w_mess.m_source;
@@ -125,10 +129,14 @@ PUBLIC void winchester_task()
 
 	/* Now carry out the work. */
 	switch(w_mess.m_type) {
-	    case DISK_READ:
-	    case DISK_WRITE:	r = w_do_rdwt(&w_mess);	break;
+	    case DEV_OPEN:	r = OK;				  break;
+	    case DEV_CLOSE:	r = OK;				  break;
+
+	    case DEV_READ:
+	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
+
 	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
-	    default:		r = EINVAL;		break;
+	    default:		r = EINVAL;			  break;
 	}
 
 	/* Finally, prepare and send the reply message. */
@@ -142,7 +150,7 @@ PUBLIC void winchester_task()
 
 
 /*===========================================================================*
- *				w_do_rdwt					     * 
+ *				w_do_rdwt				     * 
  *===========================================================================*/
 PRIVATE int w_do_rdwt(m_ptr)
 message *m_ptr;			/* pointer to read or write w_message */
@@ -150,7 +158,7 @@ message *m_ptr;			/* pointer to read or write w_message */
 /* Carry out a read or write request from the disk. */
   register struct wini *wn;
   int r, device, errors = 0;
-  long sector;
+  long sector, s;
 
   /* Decode the w_message parameters. */
   device = m_ptr->DEVICE;
@@ -162,13 +170,13 @@ message *m_ptr;			/* pointer to read or write w_message */
   wn->wn_drive = device/DEV_PER_DRIVE;	/* save drive number */
   if (wn->wn_drive >= nr_drives)
 	return(EIO);
-  wn->wn_opcode = m_ptr->m_type;	/* DISK_READ or DISK_WRITE */
+  wn->wn_opcode = m_ptr->m_type;	/* DEV_READ or DEV_WRITE */
   if (m_ptr->POSITION % BLOCK_SIZE != 0)
 	return(EINVAL);
-  sector = m_ptr->POSITION/SECTOR_SIZE;
-  if ((sector+BLOCK_SIZE/SECTOR_SIZE) > wn->wn_size)
+  s = m_ptr->POSITION;
+  if (s < 0 || s > wn->wn_size * SECTOR_SIZE - BLOCK_SIZE)
 	return(0);
-  sector += wn->wn_low;
+  sector = s/SECTOR_SIZE + wn->wn_low;
   wn->wn_cylinder = sector / (wn->wn_heads * wn->wn_maxsec);
   wn->wn_sector =  (sector % wn->wn_maxsec) + 1;
   wn->wn_head = (sector % (wn->wn_heads * wn->wn_maxsec) )/wn->wn_maxsec;
@@ -216,13 +224,13 @@ register struct wini *wn;	/* pointer to the drive struct */
   command[4] = wn->wn_cylinder & 0xFF;
   command[5] = (wn->wn_cylinder >> 8) & BYTE;
   command[6] = (wn->wn_drive << 4) | wn->wn_head | 0xA0;
-  command[7] = (wn->wn_opcode == DISK_READ ? WIN_READ : WIN_WRITE);
+  command[7] = (wn->wn_opcode == DEV_READ ? WIN_READ : WIN_WRITE);
 
   if (com_out() != OK)
 	return(ERR);
 
   /* Block, waiting for disk interrupt. */
-  if (wn->wn_opcode == DISK_READ) {
+  if (wn->wn_opcode == DEV_READ) {
 	for (i=0; i<BLOCK_SIZE/SECTOR_SIZE; i++) {
 		receive(HARDWARE, &w_mess);
 		if (win_results() != OK) {
@@ -357,9 +365,9 @@ PRIVATE int win_init()
   return(OK);
 }
 
-/*============================================================================*
- *				win_results				      *
- *============================================================================*/
+/*===========================================================================*
+ *				win_results				     *
+ *===========================================================================*/
 PRIVATE int win_results()
 {
 /* Extract results from the controller after an operation, then allow wini
@@ -394,14 +402,14 @@ PRIVATE int controller_ready()
 
   retries = MAX_CONTROLLER_READY_RETRIES + 1;
   while (--retries != 0 &&
-	 (in_byte(WIN_STATUS) & (WIN_BUSY | WIN_OUTREADY)) != WIN_OUTREADY)
+	 (in_byte(WIN_STATUS) & WIN_BUSY) == WIN_BUSY)
 	;			/* wait until not busy */
   return(retries);		/* nonzero if ready */
 }
 
-/*============================================================================*
- *				drive_busy				      *
- *============================================================================*/
+/*===========================================================================*
+ *				drive_busy				     *
+ *===========================================================================*/
 PRIVATE int drive_busy()
 {
 /* Wait until the controller is ready to receive a command or send status */
@@ -414,9 +422,9 @@ PRIVATE int drive_busy()
   return(OK);
 }
 
-/*============================================================================*
- *				com_out					      *
- *============================================================================*/
+/*===========================================================================*
+ *				com_out					     *
+ *===========================================================================*/
 PRIVATE int com_out()
 {
 /* Output the command block to the winchester controller and return status */
@@ -435,14 +443,14 @@ PRIVATE int com_out()
   return(OK);
 }
 
-/*============================================================================*
- *				init_params				      *
- *============================================================================*/
+/*===========================================================================*
+ *				init_params				     *
+ *===========================================================================*/
 PRIVATE void init_params()
 {
 /* This routine is called at startup to initialize the partition table,
  * the number of drives and the controller
-*/
+ */
   unsigned int i, segment, offset;
   phys_bytes address;
 
@@ -487,7 +495,7 @@ PRIVATE void init_params()
 	w_mess.COUNT = BLOCK_SIZE;
 	w_mess.ADDRESS = (char *) buf;
 	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DISK_READ;
+	w_mess.m_type = DEV_READ;
 	if (w_do_rdwt(&w_mess) != BLOCK_SIZE) {
 		printf("Can't read partition table on winchester %d\n",i);
 		milli_delay(20000);
@@ -502,9 +510,9 @@ PRIVATE void init_params()
   }
 }
 
-/*============================================================================*
- *				copy_params				      *
- *============================================================================*/
+/*===========================================================================*
+ *				copy_params				     *
+ *===========================================================================*/
 PRIVATE void copy_params(src, dest)
 register unsigned char *src;
 register struct wini *dest;

@@ -1,147 +1,160 @@
 /* Function prototypes. */
 
+/* Structs used in prototypes must be declared as such first. */
+struct buf;
+struct filp;		
+struct inode;
+struct super_block;
+
 /* cache.c */
-zone_nr alloc_zone();
-void flushall();
-void free_zone();
-struct buf *get_block();
-void invalidate();
-void put_block();
-void rw_block();
-void rw_scattered();
+_PROTOTYPE( zone_t alloc_zone, (Dev_t dev, zone_t z)			);
+_PROTOTYPE( void flushall, (Dev_t dev)					);
+_PROTOTYPE( void free_zone, (Dev_t dev, zone_t numb)			);
+_PROTOTYPE( struct buf *get_block, (Dev_t dev, block_t block,int only_search));
+_PROTOTYPE( void invalidate, (Dev_t device)				);
+_PROTOTYPE( void put_block, (struct buf *bp, int block_type)		);
+_PROTOTYPE( void rm_lru, (struct buf *bp)				);
+_PROTOTYPE( void rw_block, (struct buf *bp, int rw_flag)		);
+_PROTOTYPE( void rw_scattered, (Dev_t dev,
+			struct buf **bufq, int bufqsize, int rw_flag)	);
 
 /* device.c */
-void dev_close();
-int dev_io();
-int do_ioctl();
-int dev_open();
-void no_call();
-void rw_dev();
-void rw_dev2();
-int tty_exit();
-void tty_open();
+_PROTOTYPE( void call_task, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void dev_opcl, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( int dev_io, (int rw_flag, int nonblock, Dev_t dev,
+			off_t pos, int bytes, int proc, char *buff)	);
+_PROTOTYPE( int do_ioctl, (void)					);
+_PROTOTYPE( void no_call, (int task_nr, message *m_ptr)			);
+_PROTOTYPE( void rw_dev2, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void tty_close, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void tty_open, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void ctty_close, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void ctty_open, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void net_open, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void net_rw, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void net_close, (int task_nr, message *mess_ptr)		);
 
 /* filedes.c */
-struct filp *find_filp();
-int get_fd();
-struct filp *get_filp();
+_PROTOTYPE( struct filp *find_filp, (struct inode *rip, Mode_t bits)	);
+_PROTOTYPE( int get_fd, (int start, Mode_t bits, int *k, struct filp **fpt) );
+_PROTOTYPE( struct filp *get_filp, (int fild)				);
 
 /* inode.c */
-struct inode *alloc_inode();
-void dup_inode();
-void free_inode();
-struct inode *get_inode();
-void put_inode();
-void update_times();
-void rw_inode();
-void wipe_inode();
+_PROTOTYPE( struct inode *alloc_inode, (Dev_t dev, Mode_t bits)		);
+_PROTOTYPE( void dup_inode, (struct inode *ip)				);
+_PROTOTYPE( void free_inode, (Dev_t dev, int numb)			);
+_PROTOTYPE( struct inode *get_inode, (Dev_t dev, int numb)		);
+_PROTOTYPE( void put_inode, (struct inode *rip)				);
+_PROTOTYPE( void update_times, (struct inode *rip)			);
+_PROTOTYPE( void rw_inode, (struct inode *rip, int rw_flag)		);
+_PROTOTYPE( void wipe_inode, (struct inode *rip)			);
 
 /* link.c */
-int do_link();
-int do_unlink();
-int do_rename();
-void truncate();
+_PROTOTYPE( int do_link, (void)						);
+_PROTOTYPE( int do_unlink, (void)					);
+_PROTOTYPE( int do_rename, (void)					);
+_PROTOTYPE( void truncate, (struct inode *rip)				);
 
 /* main.c */
-void main();
-void reply();
+_PROTOTYPE( void main, (void)						);
+_PROTOTYPE( void reply, (int whom, int result)				);
 
 /* misc.c */
-int do_dup();
-int do_exit();
-int do_fcntl();
-int do_fork();
-int do_revive();
-int do_set();
-int do_sync();
+_PROTOTYPE( int do_dup, (void)						);
+_PROTOTYPE( int do_exit, (void)						);
+_PROTOTYPE( int do_fcntl, (void)					);
+_PROTOTYPE( int do_fork, (void)						);
+_PROTOTYPE( int do_exec, (void)						);
+_PROTOTYPE( int do_revive, (void)					);
+_PROTOTYPE( int do_set, (void)						);
+_PROTOTYPE( int do_sync, (void)						);
+_PROTOTYPE( void lock_revive, (void)					);
 
 /* mount.c */
-int do_mount();
-int do_umount();
+_PROTOTYPE( int do_mount, (void)					);
+_PROTOTYPE( int do_umount, (void)					);
 
 /* open.c */
-int do_close();
-int do_creat();
-int do_lseek();
-int do_mknod();
-int do_mkdir();
-int do_open();
+_PROTOTYPE( int do_close, (void)					);
+_PROTOTYPE( int do_creat, (void)					);
+_PROTOTYPE( int do_lseek, (void)					);
+_PROTOTYPE( int do_mknod, (void)					);
+_PROTOTYPE( int do_mkdir, (void)					);
+_PROTOTYPE( int do_open, (void)						);
 
 /* path.c */
-struct inode *advance();
-int search_dir();
-struct inode *eat_path();
-struct inode *last_dir();
+_PROTOTYPE( struct inode *advance,(struct inode *dirp, char string[NAME_MAX]));
+_PROTOTYPE( int search_dir, (struct inode *ldir_ptr,
+			char string [NAME_MAX], ino_t *numb, int flag)	);
+_PROTOTYPE( struct inode *eat_path, (char *path)			);
+_PROTOTYPE( struct inode *last_dir, (char *path, char string [NAME_MAX]));
 
 /* pipe.c */
-int do_pipe();
-int do_unpause();
-int pipe_check();
-void release();
-void revive();
-void suspend();
+_PROTOTYPE( int do_pipe, (void)						);
+_PROTOTYPE( int do_unpause, (void)					);
+_PROTOTYPE( int pipe_check, (struct inode *rip, int rw_flag,
+			int oflags, int bytes, off_t position, int *canwrite));
+_PROTOTYPE( void release, (struct inode *ip, int call_nr, int count)	);
+_PROTOTYPE( void revive, (int proc_nr, int bytes)			);
+_PROTOTYPE( void suspend, (int task)					);
 
 /* protect.c */
-int do_access();
-int do_chmod();
-int do_chown();
-int do_umask();
-int forbidden();
-int read_only();
+_PROTOTYPE( int do_access, (void)					);
+_PROTOTYPE( int do_chmod, (void)					);
+_PROTOTYPE( int do_chown, (void)					);
+_PROTOTYPE( int do_umask, (void)					);
+_PROTOTYPE( int forbidden, (struct inode *rip,
+			Mode_t access_desired, int real_uid)		);
+_PROTOTYPE( int read_only, (struct inode *ip)				);
 
-/* putc.c */
-void putc();
+/* putk.c */
+_PROTOTYPE( void putk, (int c)						);
 
 /* read.c */
-int do_read();
-struct buf *rahead();
-void read_ahead();
-block_nr read_map();
-int read_write();
-int rw_user();
+_PROTOTYPE( int do_read, (void)						);
+_PROTOTYPE( struct buf *rahead, (struct inode *rip, block_t baseblock,
+			off_t position, unsigned bytes_ahead)		);
+_PROTOTYPE( void read_ahead, (void)					);
+_PROTOTYPE( block_t read_map, (struct inode *rip, off_t position)	);
+_PROTOTYPE( int read_write, (int rw_flag)				);
+_PROTOTYPE( zone_t rd_indir, (struct buf *bp, int index)		);
+_PROTOTYPE( int rw_user, (int s, int u, vir_bytes vir,
+			vir_bytes bytes, char *buff, int direction)	);
 
 /* stadir.c */
-int do_chdir();
-int do_chroot();
-int do_fstat();
-int do_stat();
+_PROTOTYPE( int do_chdir, (void)					);
+_PROTOTYPE( int do_chroot, (void)					);
+_PROTOTYPE( int do_fstat, (void)					);
+_PROTOTYPE( int do_stat, (void)						);
 
 /* super.c */
-bit_nr alloc_bit();
-void free_bit();
-struct super_block *get_super();
-int load_bit_maps();
-int mounted();
-void rw_super();
-int scale_factor();
-int unload_bit_maps();
+_PROTOTYPE( bit_t alloc_bit, (struct buf *map_ptr [], bit_t map_bits,
+				int bit_blocks, bit_t origin)		);
+_PROTOTYPE( void free_bit, (struct buf *map_ptr [], bit_t bit_returned));
+_PROTOTYPE( struct super_block *get_super, (Dev_t dev)			);
+_PROTOTYPE( int load_bit_maps, (Dev_t dev)				);
+_PROTOTYPE( int mounted, (struct inode *rip)				);
+_PROTOTYPE( void read_super, (struct super_block *sp, block_t offset)	);
+_PROTOTYPE( int unload_bit_maps, (Dev_t dev)				);
 
 /* time.c */
-int do_stime();
-int do_time();
-int do_tims();
-int do_utime();
+_PROTOTYPE( int do_stime, (void)					);
+_PROTOTYPE( int do_time, (void)						);
+_PROTOTYPE( int do_tims, (void)						);
+_PROTOTYPE( int do_utime, (void)					);
 
 /* utility.c */
-time_t clock_time();
-int cmp_string();
-void copy();
-int fetch_name();
-int no_sys();
-void panic();
+_PROTOTYPE( time_t clock_time, (void)					);
+_PROTOTYPE( unsigned conv2, (int norm, int w)				);
+_PROTOTYPE( long conv4, (int norm, long x)				);
+_PROTOTYPE( int fetch_name, (char *path, int len, int flag)		);
+_PROTOTYPE( int no_sys, (void)						);
+_PROTOTYPE( void panic, (char *format, int num)				);
+_PROTOTYPE( void sys_kill, (int proc, int sig)				);
+_PROTOTYPE( void sys_times, (int proc, clock_t ptr[5])			);
 
 /* write.c */
-void clear_zone();
-int do_write();
-struct buf *new_block();
-void zero_block();
-
-/* library */
-void printk();
-int receive();
-int send();
-int sendrec();
-void sys_abort();
-void sys_copy();
-void sys_kill();
-void sys_times();
+_PROTOTYPE( void clear_zone, (struct inode *rip, off_t pos, int flag)	);
+_PROTOTYPE( int do_write, (void)					);
+_PROTOTYPE( struct buf *new_block, (struct inode *rip, off_t position)	);
+_PROTOTYPE( void zero_block, (struct buf *bp)				);

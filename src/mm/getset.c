@@ -5,6 +5,7 @@
 
 #include "mm.h"
 #include <minix/callnr.h>
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -54,6 +55,9 @@ PUBLIC int do_getset()
 		tell_fs(SETGID, who, grpid, grpid);
 		r = OK;
 		break;
+	default:
+		r = EINVAL;
+		break;	
   }
 
   return(r);

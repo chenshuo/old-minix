@@ -1,22 +1,18 @@
+#ifndef TYPE_H
+#define TYPE_H
+
 struct tasktab {
-  void (*initial_pc)();
+  _PROTOTYPE( void (*initial_pc), (void) );
   int stksize;
   char name[8];
 };
 
-#if (CHIP == INTEL || CHIP == M68000)
-
-/* The u.._t types and their derivatives are used when the precise size
- * must be specified for some reason, e.g., to match descriptor table
- * layouts.
- */
-typedef unsigned char u8_t;	/* unsigned 8 bits */
-typedef unsigned short u16_t;	/* unsigned 16 bits */
-typedef unsigned long u32_t;	/* unsigned 32 bits */
-
-#endif
+typedef _PROTOTYPE( int (*rdwt_t), (message *m_ptr) );
+typedef _PROTOTYPE( void (*watchdog_t), (void) );
 
 #if (CHIP == INTEL)
+typedef unsigned port_t;
+typedef unsigned segm_t;
 
 /* The register type is usually the natural 'unsigned', but not during 386
  * initialization, when it has to be unsigned long!
@@ -44,7 +40,7 @@ struct stackframe_s {
   u16_t ds;
   reg_t di;			/* di through cx are not accessed in C */
   reg_t si;			/* order is to match pusha/popa */
-  reg_t bp;
+  reg_t fp;			/* bp */
   reg_t st;			/* hole for another copy of sp */
   reg_t bx;
   reg_t dx;
@@ -78,14 +74,14 @@ struct farptr_s {		/* far pointer for debugger hooks */
   u16_t pad;
 #endif
 };
-
 #endif /* (CHIP == INTEL) */
 
 #if (CHIP == M68000)
+typedef _PROTOTYPE( void (*dmaint_t), (void) );
+
 typedef u32_t reg_t;		/* machine register */
 
-/* the name of the following struct and some of the fields are
-   chosen for PC compatibility */
+/* The name and fields of this struct were chosen for PC compatibility. */
 struct stackframe_s {
   reg_t retreg;			/* d0 */
   reg_t d1;
@@ -101,10 +97,36 @@ struct stackframe_s {
   reg_t a3;
   reg_t a4;
   reg_t a5;
-  reg_t a6;
+  reg_t fp;			/* also known as a6 */
   reg_t sp;			/* also known as a7 */
   reg_t pc;
   u16_t psw;
   u16_t dummy;			/* make size multiple of reg_t for system.c */
 };
+
+struct fsave {
+  struct cpu_state {
+	u16_t i_format;
+	u32_t i_addr;
+	u16_t i_state[4];
+  } cpu_state;
+  struct state_frame {
+	u8_t frame_type;
+	u8_t frame_size;
+	u16_t reserved;
+	u8_t frame[212];
+  } state_frame;
+  struct fpp_model {
+	u32_t fpcr;
+	u32_t fpsr;
+	u32_t fpiar;
+	struct fpN {
+		u32_t high;
+		u32_t low;
+		u32_t mid;
+	} fpN[8];
+  } fpp_model;
+};
 #endif /* (CHIP == M68000) */
+
+#endif /* TYPE_H */

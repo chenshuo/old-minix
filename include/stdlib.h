@@ -32,7 +32,7 @@ typedef char wchar_t;		/* type expanded character set */
 
 _PROTOTYPE( void abort, (void)						);
 _PROTOTYPE( int abs, (int _j)						);
-_PROTOTYPE( int atexit, (void (*func)(void))				);
+_PROTOTYPE( int atexit, (void (*_func)(void))				);
 _PROTOTYPE( double atof, (const char *_nptr)				);
 _PROTOTYPE( int atoi, (const char *_nptr)				);
 _PROTOTYPE( long atol, (const char *_nptr)				);
@@ -54,13 +54,17 @@ _PROTOTYPE( double strtod, (const char *_nptr, char **_endptr)		);
 _PROTOTYPE( long strtol, (const char *_nptr, char **_endptr, int _base)	);
 _PROTOTYPE( int system, (const char *_string)				);
 _PROTOTYPE( size_t wcstombs, (char *_s, const wchar_t *_pwcs, size_t _n));
-_PROTOTYPE( int wctomb, (char *_s, int _wchar)				);
-_PROTOTYPE( void *bsearch,
-	(const void *_key, const void *_base, size_t _nmemb,
-	size_t _size, int (*_compar) (const void *, const void *))	);
+_PROTOTYPE( int wctomb, (char *_s, wchar_t _wchar)			);
+_PROTOTYPE( void *bsearch, (const void *_key, const void *_base, 
+	size_t _nmemb, size_t _size, 
+	int (*compar) (const void *, const void *))			);
 _PROTOTYPE( void qsort, (void *_base, size_t _nmemb, size_t _size,
-	int (*_compar) (const void *, const void *))			);
+	int (*compar) (const void *, const void *))			);
 _PROTOTYPE( unsigned long int strtoul,
 			(const char *_nptr, char **_endptr, int _base)	);
+
+#ifdef _MINIX
+_PROTOTYPE(int getopt, (int _argc, char **_argv, char *_opts));
+#endif /* _MINIX */
 
 #endif /* STDLIB_H */

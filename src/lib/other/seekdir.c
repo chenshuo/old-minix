@@ -9,6 +9,8 @@
 #include	<dirent.h>
 #include	<unistd.h>
 
+_PROTOTYPE( void seekdir, (DIR *dirp, off_t loc));
+
 #define DULL (DIR *) 0
 #define DE_NULL (struct dirent *) 0
 

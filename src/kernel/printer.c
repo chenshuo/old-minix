@@ -5,14 +5,14 @@
  * The valid messages and their parameters are:
  *
  *   HARD_INT:     interrupt handler has finished current chunk of output
- *   TTY_WRITE:    a process wants to write on a terminal
+ *   DEV_WRITE:    a process wants to write on a terminal
  *   CANCEL:       terminate a previous incomplete system call immediately
  *
  *    m_type      TTY_LINE   PROC_NR    COUNT    ADDRESS
  * -------------------------------------------------------
  * | HARD_INT    |         |         |         |         |
  * |-------------+---------+---------+---------+---------|
- * | TTY_WRITE   |minor dev| proc nr |  count  | buf ptr |
+ * | DEV_WRITE   |minor dev| proc nr |  count  | buf ptr |
  * |-------------+---------+---------+---------+---------|
  * | CANCEL      |minor dev| proc nr |         |         |
  * -------------------------------------------------------
@@ -87,13 +87,14 @@ PRIVATE int user_left;		/* bytes of output left in user buf */
 PRIVATE phys_bytes user_phys;	/* physical address of remainder of user buf */
 PRIVATE int writing;		/* nonzero while write is in progress */
 
-FORWARD void do_cancel();
-FORWARD void do_done();
-FORWARD void do_write();
-FORWARD void pr_error();
-FORWARD void pr_start();
-FORWARD void print_init();
-FORWARD void reply();
+FORWARD _PROTOTYPE( void do_cancel, (message *m_ptr) );
+FORWARD _PROTOTYPE( void do_done, (void) );
+FORWARD _PROTOTYPE( void do_write, (message *m_ptr) );
+FORWARD _PROTOTYPE( void pr_error, (int status) );
+FORWARD _PROTOTYPE( void pr_start, (void) );
+FORWARD _PROTOTYPE( void print_init, (void) );
+FORWARD _PROTOTYPE( void reply, (int code, int replyee, int process,
+		int status) );
 
 /*===========================================================================*
  *				printer_task				     *
@@ -109,7 +110,7 @@ PUBLIC void printer_task()
   while (TRUE) {
 	receive(ANY, &print_mess);
 	switch(print_mess.m_type) {
-	    case TTY_WRITE:	do_write(&print_mess);	break;
+	    case DEV_WRITE:	do_write(&print_mess);	break;
 	    case CANCEL   :	do_cancel(&print_mess);	break;
 	    case HARD_INT :	do_done();		break;
 	    default:		reply(TASK_REPLY, print_mess.m_source,
@@ -126,7 +127,7 @@ PUBLIC void printer_task()
 PRIVATE void do_write(m_ptr)
 register message *m_ptr;	/* pointer to the newly arrived message */
 {
-/* The printer is used by sending TTY_WRITE messages to it. Process one. */
+/* The printer is used by sending DEV_WRITE messages to it. Process one. */
 
   register int r;
 
@@ -252,8 +253,8 @@ PRIVATE void print_init()
  * BIOS and initialize the printer.
  */
 
-  obuf_phys = umap(proc_ptr, D, obuf, sizeof obuf);
-  phys_copy(0x408L, umap(proc_ptr, D, &port_base, 2), 2L);
+  obuf_phys = umap(proc_ptr, D, (vir_bytes)obuf, (vir_bytes)sizeof obuf);
+  phys_copy(0x408L, umap(proc_ptr, D, (vir_bytes)&port_base, (vir_bytes)2),2L);
   out_byte(port_base + 2, INIT_PRINTER);
   milli_delay(2);		/* easily satisfies Centronics minimum */
   out_byte(port_base + 2, SELECT);

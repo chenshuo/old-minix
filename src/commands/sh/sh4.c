@@ -20,14 +20,24 @@
  * glob
  */
 
-static	char	*blank();
-static	int	grave();
-static	int	expand();
-static	int	dollar();
+_PROTOTYPE(static int expand, (char *cp, struct wdblock **wbp, int f ));
+_PROTOTYPE(static char *blank, (int f ));
+_PROTOTYPE(static int dollar, (int quoted ));
+_PROTOTYPE(static int grave, (int quoted ));
+_PROTOTYPE(void globname, (char *we, char *pp ));
+_PROTOTYPE(static char *generate, (char *start1, char *end1, char *middle, char *end ));
+_PROTOTYPE(static int anyspcl, (struct wdblock *wb ));
+_PROTOTYPE(static int xstrcmp, (char *p1, char *p2 ));
+_PROTOTYPE(void glob0, (char *a0, unsigned int a1, int a2, int (*a3)(char *, char *)));
+_PROTOTYPE(void glob1, (char *base, char *lim ));
+_PROTOTYPE(void glob2, (char *i, char *j ));
+_PROTOTYPE(void glob3, (char *i, char *j, char *k ));
+_PROTOTYPE(char *memcopy, (char *ato, char *from, int nb ));
 
 char **
 eval(ap, f)
 register char **ap;
+int f;
 {
 	struct wdblock *wb;
 	char **wp;
@@ -99,6 +109,7 @@ static int
 expand(cp, wbp, f)
 register char *cp;
 register struct wdblock **wbp;
+int f;
 {
 	jmp_buf ev;
 
@@ -138,6 +149,7 @@ register struct wdblock **wbp;
  */
 static char *
 blank(f)
+int f;
 {
 	register c, c1;
 	register char *sp;
@@ -180,8 +192,8 @@ loop:
 	for (;;) {
 		c = subgetc('"', foundequals);
 		if (c == 0 ||
-		    f & DOBLANK && any(c, ifs->value) ||
-		    !INSUB() && any(c, "\"'")) {
+		    f & (DOBLANK && any(c, ifs->value)) ||
+		    (!INSUB() && any(c, "\"'"))) {
 		        scanequals = 0;
 			unget(c);
 			if (any(c, "\"'"))
@@ -407,9 +419,6 @@ register char *as;
 
 static	struct wdblock	*cl, *nl;
 static	char	spcl[] = "[?*";
-static	int	xstrcmp();
-static	char	*generate();
-static	int	anyspcl();
 
 struct wdblock *
 glob(cp, wb)
@@ -457,6 +466,7 @@ struct wdblock *wb;
 	return(wb);
 }
 
+void
 globname(we, pp)
 char *we;
 register char *pp;
@@ -563,13 +573,12 @@ char *p1, *p2;
 /* -------- word.c -------- */
 /* #include "sh.h" */
 /* #include "word.h" */
-char *memcpy();
 
 #define	NSTART	16	/* default number of words to allow for initially */
 
 struct wdblock *
 newword(nw)
-register nw;
+register int nw;
 {
 	register struct wdblock *wb;
 
@@ -591,7 +600,7 @@ register struct wdblock *wb;
 		wb = newword(NSTART);
 	if ((nw = wb->w_nword) >= wb->w_bsize) {
 		wb2 = newword(nw * 2);
-		memcpy((char *)wb2->w_words, (char *)wb->w_words, nw*sizeof(char *));
+		memcopy((char *)wb2->w_words, (char *)wb->w_words, nw*sizeof(char *));
 		wb2->w_nword = nw;
 		DELETE(wb);
 		wb = wb2;
@@ -614,31 +623,32 @@ register struct wdblock *wb;
 		return((char **)NULL);
 	}
 	wd = (char **) space(nb = sizeof(*wd) * wb->w_nword);
-	memcpy((char *)wd, (char *)wb->w_words, nb);
+	memcopy((char *)wd, (char *)wb->w_words, nb);
 	DELETE(wb);	/* perhaps should done by caller */
 	return(wd);
 }
 
-int	(*func)();
+_PROTOTYPE(int (*func), (char *, char *));
 int	globv;
 
+void
 glob0(a0, a1, a2, a3)
 char *a0;
 unsigned a1;
 int a2;
-int (*a3)();
+_PROTOTYPE(int (*a3), (char *, char *));
 {
 	func = a3;
 	globv = a2;
 	glob1(a0, a0 + a1 * a2);
 }
 
+void
 glob1(base, lim)
 char *base, *lim;
 {
 	register char *i, *j;
 	int v2;
-	char **k;
 	char *lptr, *hptr;
 	int c;
 	unsigned n;
@@ -704,6 +714,7 @@ begin:
 	}
 }
 
+void
 glob2(i, j)
 char *i, *j;
 {
@@ -720,6 +731,7 @@ char *i, *j;
 	} while(--m);
 }
 
+void
 glob3(i, j, k)
 char *i, *j, *k;
 {
@@ -740,7 +752,7 @@ char *i, *j, *k;
 }
 
 char *
-memcpy(ato, from, nb)
+memcopy(ato, from, nb)
 register char *ato, *from;
 register int nb;
 {

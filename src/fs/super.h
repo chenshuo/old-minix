@@ -11,9 +11,9 @@
  *    super block     1
  *    inode map     s_imap_blocks
  *    zone map      s_zmap_blocks
- *    inodes        (s_ninodes + 1 + INODES_PER_BLOCK - 1)/INODES_PER_BLOCK
+ *    inodes        (s_ninodes + 'inodes per block' - 1)/'inodes per block'
  *    unused        whatever is needed to fill out the current zone
- *    data zones    (s_nzones - s_firstdatazone) << s_log_zone_size
+ *    data zones    (s_zones - s_firstdatazone) << s_log_zone_size
  *
  * A super_block slot is free if s_dev == NO_DEV. 
  */
@@ -21,23 +21,30 @@
 
 EXTERN struct super_block {
   ino_t s_ninodes;		/* # usable inodes on the minor device */
-  zone_nr s_nzones;		/* total device size, including bit maps etc */
-  unshort s_imap_blocks;	/* # of blocks used by inode bit map */
-  unshort s_zmap_blocks;	/* # of blocks used by zone bit map */
-  zone_nr s_firstdatazone;	/* number of first data zone */
-  short int s_log_zone_size;	/* log2 of blocks/zone */
+  zone1_t  s_nzones;		/* total device size, including bit maps etc */
+  short s_imap_blocks;		/* # of blocks used by inode bit map */
+  short s_zmap_blocks;		/* # of blocks used by zone bit map */
+  zone1_t s_firstdatazone;	/* number of first data zone */
+  short s_log_zone_size;	/* log2 of blocks/zone */
   off_t s_max_size;		/* maximum file size on this device */
   short s_magic;		/* magic number to recognize super-blocks */
+  short s_pad;			/* try to avoid compiler-dependent padding */
+  zone_t s_zones;		/* number of zones (replaces s_nzones in V2) */
 
   /* The following items are only used when the super_block is in memory. */
   struct buf *s_imap[I_MAP_SLOTS]; /* pointers to the in-core inode bit map */
-  struct buf *s_zmap[ZMAP_SLOTS]; /* pointers to the in-core zone bit map */
-  dev_t s_dev;			/* whose super block is this? */
+  struct buf *s_zmap[Z_MAP_SLOTS]; /* pointers to the in-core zone bit map */
   struct inode *s_isup;		/* inode for root dir of mounted file sys */
   struct inode *s_imount;	/* inode mounted on */
-  time_t s_time;		/* time of last update */
-  char s_rd_only;		/* set to 1 iff file sys mounted read only */
-  char s_dirt;			/* CLEAN or DIRTY */
+  unsigned s_inodes_per_block;	/* precalculated from magic number */
+  dev_t s_dev;			/* whose super block is this? */
+  int s_rd_only;		/* set to 1 iff file sys mounted read only */
+  int s_native;			/* set to 1 iff not byte swapped file system */
+  int s_version;		/* file system version, zero means bad magic */
+  int s_ndzones;		/* # direct zones in an inode */
+  int s_nindirs;		/* # indirect zones per indirect block */
+  bit_t s_isearch;		/* inodes below this bit number are in use */
+  bit_t s_zsearch;		/* all zones below this bit number are in use*/
 } super_block[NR_SUPERS];
 
 #define NIL_SUPER (struct super_block *) 0

@@ -62,13 +62,13 @@
 
 EXT char serrbuf[BUFSIZ];		/* buffer for stderr */
 
-char *fetchname();
-int move_file();
-void copy_file();
+_PROTOTYPE(int move_file , (char *from , char *to ));
+_PROTOTYPE(void copy_file , (char *from , char *to ));
+_PROTOTYPE(char *savestr , (Reg1 char *s ));
 void say();
 void fatal();
 void ask();
-char *savestr();
-void set_signals();
-void ignore_signals();
-void makedirs();
+_PROTOTYPE(void set_signals , (int reset ));
+_PROTOTYPE(void ignore_signals , (void));
+_PROTOTYPE(void makedirs , (Reg1 char *filename , bool striplast ));
+_PROTOTYPE(char *fetchname , (char *at , int strip_leading , int assume_exists ));

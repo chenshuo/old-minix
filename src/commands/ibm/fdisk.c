@@ -27,8 +27,12 @@
  * (everyone should convert to use fcntl.h).
  */
 
+#include <sys/types.h>
 #include <minix/partition.h>
+#include <fcntl.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 
 #ifdef DOS
@@ -65,18 +69,32 @@ int nhead;
 int nsec;
 int readonly;
 
-static void adj_base();
-static void adj_size();
-static struct part_entry *ask_partition();
-static int chk_table();
-static void footnotes();
-static int get_an_int();
-static void list_part_types();
-static void mark_npartition();
-static int mygets();
-static char *systype();
-static void toggle_active();
-static void usage();
+_PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(int getboot, (char *buffer));
+_PROTOTYPE(int putboot, (char *buffer));
+_PROTOTYPE(int load_from_file, (void));
+_PROTOTYPE(int save_to_file, (void));
+_PROTOTYPE(int dpl_partitions, (int rawflag));
+_PROTOTYPE(int chk_table, (void));
+_PROTOTYPE(int sec_to_hst, (long logsec, unsigned char *hd, unsigned char *sec,
+							 unsigned char *cyl));
+_PROTOTYPE(int mark_partition, (struct part_entry *pe));
+_PROTOTYPE(int change_partition, (struct part_entry *entry));
+_PROTOTYPE(int get_a_char, (void));
+_PROTOTYPE(int print_menu, (void));
+_PROTOTYPE(int getboot, (char *buffer));
+_PROTOTYPE(int putboot, (char *buffer));
+_PROTOTYPE(void adj_base, (struct part_entry *pe));
+_PROTOTYPE(void adj_size, (struct part_entry *pe));
+_PROTOTYPE(struct part_entry *ask_partition, (void));
+_PROTOTYPE(void footnotes, (void));
+_PROTOTYPE(int get_an_int, (char *prompt, int *intptr));
+_PROTOTYPE(void list_part_types, (void));
+_PROTOTYPE(void mark_npartition, (struct part_entry *pe));
+_PROTOTYPE(int mygets, (char *buf, int length));
+_PROTOTYPE(char *systype, (int type));
+_PROTOTYPE(void toggle_active, (struct part_entry *pe));
+_PROTOTYPE(void usage, (void));
 
 main(argc, argv)
 int argc;
@@ -350,7 +368,7 @@ int rawflag;
 }
 
 
-static int chk_table()
+int chk_table()
 {
 /* Check partition table */
 
@@ -552,7 +570,7 @@ struct part_entry *entry;
 		printf("Leaving partition inactive\n");
 		break;
 	} else if (ch == 'y') {
-		toggle_active();
+		toggle_active((struct part_entry *)0);
 		break;
 	}
   }
@@ -655,7 +673,7 @@ char *buffer;
 
 #endif
 
-static void adj_base(pe)
+void adj_base(pe)
 struct part_entry *pe;
 {
 /* Adjust base sector of partition, usually to make it even. */
@@ -683,7 +701,7 @@ struct part_entry *pe;
 	 pe->lowsec, pe->size);
 }
 
-static void adj_size(pe)
+void adj_size(pe)
 struct part_entry *pe;
 {
 /* Adjust size of partition by reducing high sector. */
@@ -704,7 +722,7 @@ struct part_entry *pe;
   printf("Size of partition adjusted to %ld\n", pe->size);
 }
 
-static struct part_entry *ask_partition()
+struct part_entry *ask_partition()
 {
 /* Ask for a valid partition number and return its entry. */
 
@@ -721,7 +739,7 @@ static struct part_entry *ask_partition()
   return((struct part_entry *) &secbuf[PART_TABLE_OFF] + (num - 1));
 }
 
-static void footnotes()
+void footnotes()
 {
 /* Explain the footnotes. */
 
@@ -763,7 +781,7 @@ static void footnotes()
   }
 }
 
-static int get_an_int(prompt, intptr)
+int get_an_int(prompt, intptr)
 char *prompt;
 int *intptr;
 {
@@ -779,7 +797,7 @@ int *intptr;
   }
 }
 
-static void list_part_types()
+void list_part_types()
 {
 /* Print all known partition types. */
 
@@ -800,7 +818,7 @@ static void list_part_types()
   if (column != 0) putchar('\n');
 }
 
-static void mark_npartition(pe)
+void mark_npartition(pe)
 struct part_entry *pe;
 {
 /* Mark a partition with arbitrary type. */
@@ -825,7 +843,7 @@ struct part_entry *pe;
   printf("Partition type changed to 0x%02x (%s)\n", type, systype(type));
 }
 
-static int mygets(buf, length)
+int mygets(buf, length)
 char *buf;
 int length;			/* as for fgets(), but must be >= 2 */
 {
@@ -844,7 +862,7 @@ int length;			/* as for fgets(), but must be >= 2 */
   }
 }
 
-static char *systype(type)
+char *systype(type)
 int type;
 {
 /* Convert system indicator into system name. */
@@ -872,7 +890,7 @@ int type;
   }
 }
 
-static void toggle_active(pe)
+void toggle_active(pe)
 struct part_entry *pe;
 {
 /* Toggle active flag of a partition. */
@@ -882,7 +900,7 @@ struct part_entry *pe;
   printf("Partition changed to %sactive\n", pe->bootind ? "" : "in");
 }
 
-static void usage()
+void usage()
 {
 /* Print usage message and exit. */
 

@@ -1,50 +1,111 @@
-/* readclock - read the AT real time clock	Authors: T. Holm & E. Froese */
+/* readclock - read the real time clock		Authors: T. Holm & E. Froese */
 
 /************************************************************************/
 /*									*/
 /*   readclock.c							*/
 /*									*/
-/*		Read the AT real time clock, write the time to		*/
-/*		standard output in a form usable by date(1).		*/
-/*		If the system is an AT then the time is read		*/
-/*		from the built-in clock, and written to standard	*/
-/*		output in the form:					*/
+/*		Read from the 64 byte CMOS RAM area, then write		*/
+/*		the time to standard output in a form usable by		*/
+/*		date(1).						*/
+/*									*/
+/*		If the machine ID byte is 0xFC or 0xF8, the device	*/
+/*		/dev/port exists and is a character special file,	*/
+/*		and no errors in the CMOS RAM are reported by the	*/
+/*		RTC, then the time is read from the clock RAM		*/
+/*		area maintained by the RTC.				*/
+/*									*/
+/*		The clock RAM values are decoded and written to		*/
+/*		standard output in the form:				*/
 /*									*/
 /*			mmddyyhhmmss					*/
 /*									*/
-/*		If the system is not an AT then ``-q'' is written 	*/
-/*		to standard output. This is useful for placement in	*/
+/*		If the machine ID does not match 0xFC or 0xF8,		*/
+/*		then ``-q'' is written to standard output.		*/
+/*									*/
+/*		If the machine ID is 0xFC or 0xF8 and /dev/port		*/
+/*		is missing, or is not a character special file,		*/
+/*		then an error message is written to stderr,		*/
+/*		and ``-q'' is written to stdout.			*/
+/*									*/
+/*		If the RTC reports errors in the CMOS RAM,		*/
+/*		then an error message is written to stderr,		*/
+/*		and ``-q'' is written to stdout.			*/
+/*									*/
+/*		Readclock is used as follows when placed		*/
 /*		the ``/etc/rc'' script:					*/
 /*									*/
 /*	 	  /usr/bin/date `/usr/bin/readclock` </dev/tty  	*/
 /*									*/
+/*		It is best if this program is owned by bin and NOT	*/
+/*		SUID because of the peculiar method of reading from	*/
+/*		RTC.  When someone makes a /dev/clock driver, this	*/
+/*		warning may be removed.					*/
+/*									*/
 /************************************************************************/
 /*    origination          1987-Dec-29              efth                */
+/*    robustness	   1990-Oct-06		    C. Sylvain		*/
+/* incorp. B. Evans ideas  1991-Jul-06		    C. Sylvain		*/
 /************************************************************************/
 
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
 
-#define CPU_TYPE_SEGMENT   0xFFFF	/* BIOS segment for CPU type 	 */
-#define CPU_TYPE_OFFSET    0x000E	/* BIOS offset for CPU type 	 */
-#define PC_AT              0xFC	/* IBM code for PC-AT (0xFFFFE) */
-#define PS_386		0xF8 /* IBM code for 386 PS/2's */	
+#define CPU_TYPE_SEGMENT   0xFFFF	/* Segment for Machine ID in BIOS */
+#define CPU_TYPE_OFFSET    0x000E	/* Offset for Machine ID	  */
 
+#define PC_AT		   0xFC		/* Machine ID byte for PC/AT,
+					   PC/XT286, and PS/2 Models 50, 60 */
+#define PS_386		   0xF8		/* Machine ID byte for PS/2 Model 80 */
 
-#define CLK_ELE 0x70		/* ptr corresponding to element of time to be*/
-#define CLK_IO 0x71		/* read or written is written to port clk_ele*/
-/* The element can then be read or written by */
-/* Reading or writing port clk_io.            */
+/* Manufacturers usually use the ID value of the IBM model they emulate.
+ * However some manufacturers, notably HP and COMPAQ, have had different
+ * ideas in the past.
+ *
+ * Machine ID byte information source:
+ *	_The Programmer's PC Sourcebook_ by Thom Hogan,
+ *	published by Microsoft Press
+ */
 
-#define  YEAR             9	/* Clock register addresses	 */
+#define CLK_ELE		0x70	/* CMOS RAM address register port (write only)
+				 * Bit 7 = 1  NMI disable
+				 *	   0  NMI enable
+				 * Bits 6-0 = RAM address
+				 */
+
+#define CLK_IO		0x71	/* CMOS RAM data register port (read/write) */
+
+#define  YEAR             9	/* Clock register addresses in CMOS RAM	*/
 #define  MONTH            8
 #define  DAY              7
 #define  HOUR             4
 #define  MINUTE           2
 #define  SECOND           0
-#define  STATUS           0x0b
+#define  STATUS        0x0B	/* Status register B: RTC configuration	*/
+#define  HEALTH	       0x0E	/* Diagnostic status: (should be set by Power
+				 * On Self-Test [POST])
+				 * Bit  7 = RTC lost power
+				 *	6 = Checksum (for addr 0x10-0x2d) bad
+				 *	5 = Config. Info. bad at POST
+				 *	4 = Mem. size error at POST
+				 *	3 = I/O board failed initialization
+				 *	2 = CMOS time invalid
+				 *    1-0 =    reserved
+				 */
+#define  DIAG_BADBATT       0x80
+#define  DIAG_MEMDIRT       0x40
+#define  DIAG_BADTIME       0x04
 
-#define  BCD_TO_DEC(x)	  ( (x>>4) * 10 + (x & 0x0f) )
+/* CMOS RAM and RTC information source:
+ *	_System BIOS for PC/XT/AT Computers and Compatibles_
+ *	by Phoenix Technologies Ltd., published by Addison-Wesley
+ */
 
+#define  BCD_TO_DEC(x)      ( (x >> 4) * 10 + (x & 0x0f) )
+#define  errmsg(s)          fputs( s, stderr )
 
 struct time {
   unsigned year;
@@ -55,17 +116,56 @@ struct time {
   unsigned second;
 };
 
+_PROTOTYPE(int main, (void));
+_PROTOTYPE(void get_time, (struct time *t));
+_PROTOTYPE(int read_register, (int reg_addr));
 
+/* These little fellers are written in assembler :-(  */
+_PROTOTYPE(int port_out, (int port, int value));
+_PROTOTYPE(int port_in, (int port, int *value));
+_PROTOTYPE(int peek, (int a, int b));
 
-main()
+int main()
 {
+  struct stat pdev;
   struct time time1;
   struct time time2;
   int i;
-  int cpu_type;	
+  int cpu_type, cmos_state;
 
   cpu_type = peek(CPU_TYPE_SEGMENT, CPU_TYPE_OFFSET);
   if (cpu_type != PS_386 && cpu_type != PC_AT) {
+	errmsg( "Machine ID unknown.\n" );
+	fprintf( stderr, "Machine ID byte = %x\n", cpu_type );
+
+	printf("-q\n");
+	exit(1);
+  }
+  if (stat( "/dev/port", &pdev ) != 0) {
+	errmsg( "/dev/port not found.\n" );
+
+	printf("-q\n");
+	exit(1);
+  }
+  if (!S_ISCHR(pdev.st_mode)) {
+	errmsg( "/dev/port not a character special file.\n" );
+
+	printf("-q\n");
+	exit(1);
+  }
+  cmos_state = read_register(HEALTH);
+  if (cmos_state & (DIAG_BADBATT | DIAG_MEMDIRT | DIAG_BADTIME)) {
+	errmsg( "\nCMOS RAM error(s) found...   " );
+	fprintf( stderr, "CMOS state = 0x%02x\n", cmos_state );
+
+	if (cmos_state & DIAG_BADBATT)
+	    errmsg( "RTC lost power. Reset CMOS RAM with SETUP.\n" );
+	if (cmos_state & DIAG_MEMDIRT)
+	    errmsg( "CMOS RAM checksum is bad. Run SETUP.\n" );
+	if (cmos_state & DIAG_BADTIME)
+	    errmsg( "Time invalid in CMOS RAM. Reset clock with setclock.\n" );
+	errmsg( "\n" );
+
 	printf("-q\n");
 	exit(1);
   }
@@ -97,13 +197,13 @@ main()
 /*    get_time( time )                                                 */
 /*                                                                     */
 /*    Update the structure pointed to by time with the current time    */
-/*    as read from the hardware real-time clock of the AT.             */
+/*    as read from CMOS RAM of the RTC.				       */
 /*    If necessary, the time is converted into a binary format before  */
 /*    being stored in the structure.                                   */
 /*                                                                     */
 /***********************************************************************/
 
-get_time(t)
+void get_time(t)
 struct time *t;
 {
   t->year = read_register(YEAR);
@@ -116,7 +216,7 @@ struct time *t;
 
 
   if ((read_register(STATUS) & 0x04) == 0) {
-	/* Convert BCD to binary if necessary */
+	/* Convert BCD to binary (default RTC mode) */
 	t->year = BCD_TO_DEC(t->year);
 	t->month = BCD_TO_DEC(t->month);
 	t->day = BCD_TO_DEC(t->day);
@@ -127,7 +227,7 @@ struct time *t;
 }
 
 
-read_register(reg_addr)
+int read_register(reg_addr)
 char reg_addr;
 {
   int val;

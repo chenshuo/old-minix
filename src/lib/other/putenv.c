@@ -1,43 +1,80 @@
-#include <lib.h>
-/*  putenv(3)
- *
- *  Author: Ronald Lamprecht          Sep. 1989
+/*
+ * (c) copyright 1989 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: putenv.c,v 1.3 90/05/14 12:30:18 ceriel Exp $ */
 
-#include <stdlib.h>
+#include	<stdlib.h>
+#include	<string.h>
 
-extern char **environ;
+_PROTOTYPE(int putenv, (char *name ));
 
-int putenv(name)
-register char *name;
+#define	ENTRY_INC	10
+#define	rounded(x)	(((x / ENTRY_INC) + 1) * ENTRY_INC)
+
+extern _CONST char **environ;
+
+int
+putenv(name)
+char *name;
 {
-  char **v, **nv, **newenv;
-  register char *n;
-  register char *p;
-  register int i = 0;
+	register _CONST char **v = environ;
+	register char *r;
+	static int size = 0;
+	/* When size != 0, it contains the number of entries in the
+	 * table (including the final NULL pointer). This means that the
+	 * last non-null entry  is environ[size - 2].
+	 */
 
-  if (name == (char *)NULL) return(1);
-  if (environ != (char **) NULL) {
-	for (v = environ; *v != (char *)NULL; v++, i++) {
-		n = name;
-		p = *v;
+	if (!name) return 0;
+	if (r = strchr(name, '=')) {
+		register _CONST char *p, *q;
 
-		while (*n == *p && *n != '=' && *n != '\0') ++n, ++p;
+		*r = '\0';
 
-		if (*n == '=' && *p == '=') {
-			*v = name;
-			return(1);
+		if (v != NULL) {
+			while ((p = *v) != NULL) {
+				q = name;
+				while (*q && (*q++ == *p++))
+					/* EMPTY */ ;
+				if (*q || (*p != '=')) {
+					v++;
+				} else {
+					/* The name was already in the
+					 * environment.
+					 */
+					*r = '=';
+					*v = name;
+					return 0;
+				}
+			}
 		}
+		*r = '=';
+		v = environ;
 	}
-  }
 
-  /* Realloc environment ptr. array (original array may not be
-   * mallocated !) */
-  if ((newenv = (char **) malloc((i + 2) * sizeof(char *))) == (char **) 0)
-	return(0);
-  for (v = environ, nv = newenv; i > 0; i--, v++, nv++) *nv = *v;
-  *(nv++) = name;
-  *nv = (char *)NULL;
-  environ = newenv;
-  return(1);
+	if (!size) {
+		register _CONST char **p;
+		register int i = 0;
+
+		if (v)
+			do {
+				i++;
+			} while (*v++);
+		if (!(v = malloc(rounded(i) * sizeof(char **))))
+			return 1;
+		size = i;
+		p = environ;
+		environ = v;
+		while (*v++ = *p++);		/* copy the environment */
+		v = environ;
+	} else if (!(size % ENTRY_INC)) {
+		if (!(v = realloc(environ, rounded(size) * sizeof(char **))))
+			return 1;
+		environ = v;
+	}
+	v[size - 1] = name;
+	v[size] = NULL;
+	size++;
+	return 0;
 }

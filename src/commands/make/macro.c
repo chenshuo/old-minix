@@ -73,13 +73,13 @@ char *val;
 		macrohead = rp;
 		rp->m_flag = FALSE;
 
-		if ((cp = malloc(strlen(name)+1)) == (char *)0)
+		if ((cp = (char *) malloc(strlen(name)+1)) == (char *)0)
 			fatal("No memory for macro",(char *)0,0);
 		strcpy(cp, name);
 		rp->m_name = cp;
 	}
 
-	if ((cp = malloc(strlen(val)+1)) == (char *)0)
+	if ((cp = (char *) malloc(strlen(val)+1)) == (char *)0)
 		fatal("No memory for macro",(char *)0,0);
 	strcpy(cp, val);		/*  Copy in new value  */
 	rp->m_val = cp;
@@ -113,7 +113,7 @@ char *val;
   }
   setmacro(filename,c+1);
   len = c - val + 1;
-  if((tmp = malloc(len + 1)) == (char *) 0)
+  if((tmp = (char *) malloc(len + 1)) == (char *) 0)
      fatal("No memory for tmp",(char *)0,0);
   strncpy(tmp,val,len);
   tmp[len] = '\0';
@@ -191,7 +191,7 @@ struct str *strs;
 {
   char  *a;
 
-  if ((a = malloc(strlen(*strs->ptr)+1)) == (char *)0)
+  if ((a = (char *) malloc(strlen(*strs->ptr)+1)) == (char *)0)
      fatal("No memory for temporary string",(char *)0,0);
   strcpy(a, *strs->ptr);
   strs->pos = 0;

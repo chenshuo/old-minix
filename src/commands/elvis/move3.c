@@ -2,21 +2,23 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains movement functions that perform character searches */
 
+#include "config.h"
 #include "vi.h"
 
+#ifndef NO_CHARSEARCH
 static MARK	(*prevfwdfn)();	/* function to search in same direction */
 static MARK	(*prevrevfn)();	/* function to search in opposite direction */
 static char	prev_key;	/* sought cvhar from previous [fFtT] */
 
-MARK	move_ch(m, cnt, cmd)
+MARK	m__ch(m, cnt, cmd)
 	MARK	m;	/* current position */
 	long	cnt;
 	char	cmd;	/* command: either ',' or ';' */
@@ -47,17 +49,17 @@ MARK	move_ch(m, cnt, cmd)
 }
 
 /* move forward within this line to next occurrence of key */
-MARK	movefch(m, cnt, key)
+MARK	m_fch(m, cnt, key)
 	MARK	m;	/* where to search from */
 	long	cnt;
 	char	key;	/* what to search for */
 {
-	register char	*text;
+	REG char	*text;
 
 	DEFAULT(1);
 
-	prevfwdfn = movefch;
-	prevrevfn = moveFch;
+	prevfwdfn = m_fch;
+	prevrevfn = m_Fch;
 	prev_key = key;
 
 	pfetch(markline(m));
@@ -78,17 +80,17 @@ MARK	movefch(m, cnt, key)
 }
 
 /* move backward within this line to previous occurrence of key */
-MARK	moveFch(m, cnt, key)
+MARK	m_Fch(m, cnt, key)
 	MARK	m;	/* where to search from */
 	long	cnt;
 	char	key;	/* what to search for */
 {
-	register char	*text;
+	REG char	*text;
 
 	DEFAULT(1);
 
-	prevfwdfn = moveFch;
-	prevrevfn = movefch;
+	prevfwdfn = m_Fch;
+	prevrevfn = m_fch;
 	prev_key = key;
 
 	pfetch(markline(m));
@@ -109,7 +111,7 @@ MARK	moveFch(m, cnt, key)
 }
 
 /* move forward within this line almost to next occurrence of key */
-MARK	movetch(m, cnt, key)
+MARK	m_tch(m, cnt, key)
 	MARK	m;	/* where to search from */
 	long	cnt;
 	char	key;	/* what to search for */
@@ -122,20 +124,20 @@ MARK	movetch(m, cnt, key)
 	}
 	m++;
 
-	m = movefch(m, cnt, key);
+	m = m_fch(m, cnt, key);
 	if (m == MARK_UNSET)
 	{
 		return MARK_UNSET;
 	}
 
-	prevfwdfn = movetch;
-	prevrevfn = moveTch;
+	prevfwdfn = m_tch;
+	prevrevfn = m_Tch;
 
 	return m - 1;
 }
 
 /* move backward within this line almost to previous occurrence of key */
-MARK	moveTch(m, cnt, key)
+MARK	m_Tch(m, cnt, key)
 	MARK	m;	/* where to search from */
 	long	cnt;
 	char	key;	/* what to search for */
@@ -147,14 +149,15 @@ MARK	moveTch(m, cnt, key)
 	}
 	m--;
 
-	m = moveFch(m, cnt, key);
+	m = m_Fch(m, cnt, key);
 	if (m == MARK_UNSET)
 	{
 		return MARK_UNSET;
 	}
 
-	prevfwdfn = moveTch;
-	prevrevfn = movetch;
+	prevfwdfn = m_Tch;
+	prevrevfn = m_tch;
 
 	return m + 1;
 }
+#endif

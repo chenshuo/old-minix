@@ -10,6 +10,7 @@
  *   free_zone:	  release a zone (when a file is removed)
  *   rw_block:	  read or write a block from the disk itself
  *   invalidate:  remove all the cache blocks on some device
+ *   rm_lru:	  remove a block from its LRU chain
  */
 
 #include "fs.h"
@@ -18,7 +19,6 @@
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
-#include "inode.h"
 #include "super.h"
 
 /*===========================================================================*
@@ -26,12 +26,12 @@
  *===========================================================================*/
 PUBLIC struct buf *get_block(dev, block, only_search)
 register dev_t dev;		/* on which device is the block? */
-register block_nr block;	/* which block is wanted? */
+register block_t block;		/* which block is wanted? */
 int only_search;		/* if NO_READ, don't read, else act normal */
 {
 /* Check to see if the requested block is in the block cache.  If so, return
  * a pointer to it.  If not, evict some other block and fetch it (unless
- * 'only_search' is 1).  All blocks in the cache, whether in use or not,
+ * 'only_search' is 1).  All the blocks in the cache that are not in use
  * are linked together in a chain, with 'front' pointing to the least recently
  * used block and 'rear' to the most recently used block.  If 'only_search' is
  * 1, the block being requested will be overwritten in its entirety, so it is
@@ -44,16 +44,18 @@ int only_search;		/* if NO_READ, don't read, else act normal */
  * blocks whose block numbers end with the same bit strings, for fast lookup.
  */
 
+  int b;
   register struct buf *bp, *prev_ptr;
 
   /* Search the hash chain for (dev, block). */
   if (dev != NO_DEV) {
 	/* ??? DEBUG What if dev == NO_DEV ??? */
-	bp = buf_hash[block & (NR_BUF_HASH - 1)];
+	b = (int) block & HASH_MASK;
+	bp = buf_hash[b];
 	while (bp != NIL_BUF) {
 		if (bp->b_blocknr == block && bp->b_dev == dev) {
 			/* Block needed has been found. */
-			if (bp->b_count == 0) bufs_in_use++;
+			if (bp->b_count == 0) rm_lru(bp);
 			bp->b_count++;	/* record that block is in use */
 			return(bp);
 		} else {
@@ -63,21 +65,15 @@ int only_search;		/* if NO_READ, don't read, else act normal */
 	}
   }
 
-  /* Desired block is not on available chain.  Take oldest block ('front').
-   * However, a block that is already in use (b_count != 0) may not be taken.
-   */
-  if (bufs_in_use == NR_BUFS) panic("All buffers in use", NR_BUFS);
-  bp = front;
-  while (bp->b_count != 0) {
-	bp = bp->b_next;
-	if (bp == NIL_BUF) panic("No free buffer", NO_NUM);
-  }
-  bufs_in_use++;		/* one more buffer in use now */
+  /* Desired block is not on available chain.  Take oldest block ('front'). */
+  if ((bp = front) == NIL_BUF) panic("all buffers in use", NR_BUFS);
+  rm_lru(bp);
 
   /* Remove the block that was just taken from its hash chain. */
-  prev_ptr = buf_hash[bp->b_blocknr & (NR_BUF_HASH - 1)];
+  b = (int) bp->b_blocknr & HASH_MASK;
+  prev_ptr = buf_hash[b];
   if (prev_ptr == bp) {
-	buf_hash[bp->b_blocknr & (NR_BUF_HASH - 1)] = bp->b_hash;
+	buf_hash[b] = bp->b_hash;
   } else {
 	/* The block just taken is not on the front of its hash chain. */
 	while (prev_ptr->b_hash != NIL_BUF)
@@ -99,8 +95,9 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   if (only_search == PREFETCH) bp->b_dev = NO_DEV;
   bp->b_blocknr = block;	/* fill in block number */
   bp->b_count++;		/* record that block is being used */
-  bp->b_hash = buf_hash[bp->b_blocknr & (NR_BUF_HASH - 1)];
-  buf_hash[bp->b_blocknr & (NR_BUF_HASH - 1)] = bp;	/* add to hash list */
+  b = (int) bp->b_blocknr & HASH_MASK;
+  bp->b_hash = buf_hash[b];
+  buf_hash[b] = bp;		/* add to hash list */
 
   /* Go get the requested block unless searching or prefetching. */
   if (dev != NO_DEV && only_search == NORMAL) rw_block(bp, READING);
@@ -121,29 +118,15 @@ int block_type;			/* INODE_BLOCK, DIRECTORY_BLOCK, or whatever */
  * go on the rear; blocks that are unlikely to be needed again shortly
  * (e.g., full data blocks) go on the front.  Blocks whose loss can hurt
  * the integrity of the file system (e.g., inode blocks) are written to
- * disk immediately if they are dirty.  
+ * disk immediately if they are dirty.
  */
-
-  register struct buf *next_ptr, *prev_ptr;
 
   if (bp == NIL_BUF) return;	/* it is easier to check here than in caller */
 
-  /* If block is no longer in use, first remove it from LRU chain. */
   bp->b_count--;		/* there is one use fewer now */
   if (bp->b_count != 0) return;	/* block is still in use */
 
   bufs_in_use--;		/* one fewer block buffers in use */
-  next_ptr = bp->b_next;	/* successor on LRU chain */
-  prev_ptr = bp->b_prev;	/* predecessor on LRU chain */
-  if (prev_ptr != NIL_BUF)
-	prev_ptr->b_next = next_ptr;
-  else
-	front = next_ptr;	/* this block was at front of chain */
-
-  if (next_ptr != NIL_BUF)
-	next_ptr->b_prev = prev_ptr;
-  else
-	rear = prev_ptr;	/* this block was at rear of chain */
 
   /* Put this block back on the LRU chain.  If the ONE_SHOT bit is set in
    * 'block_type', the block is not likely to be needed again shortly, so put
@@ -189,15 +172,15 @@ int block_type;			/* INODE_BLOCK, DIRECTORY_BLOCK, or whatever */
 /*===========================================================================*
  *				alloc_zone				     *
  *===========================================================================*/
-PUBLIC zone_nr alloc_zone(dev, z)
+PUBLIC zone_t alloc_zone(dev, z)
 dev_t dev;			/* device where zone wanted */
-zone_nr z;			/* try to allocate new zone near this one */
+zone_t z;			/* try to allocate new zone near this one */
 {
 /* Allocate a new zone on the indicated device and return its number. */
 
-  bit_nr b, bit;
+  int major, minor, bit_blocks;
+  bit_t b, bit, mapbits;
   struct super_block *sp;
-  int major, minor;
 
   /* Note that the routine alloc_bit() returns 1 for the lowest possible
    * zone, which corresponds to sp->s_firstdatazone.  To convert a value
@@ -207,9 +190,16 @@ zone_nr z;			/* try to allocate new zone near this one */
    * Alloc_bit() never returns 0, since this is used for NO_BIT (failure).
    */
   sp = get_super(dev);		/* find the super_block for this device */
-  bit = (bit_nr) z - (sp->s_firstdatazone - 1);
-  b = alloc_bit(sp->s_zmap, (bit_nr) sp->s_nzones - sp->s_firstdatazone + 1,
-						sp->s_zmap_blocks, bit);
+  mapbits =  (bit_t) (sp->s_zones - (sp->s_firstdatazone - 1) );
+  bit_blocks = (int) sp->s_zmap_blocks;	/* # blocks in the bit map */
+
+  /* If z is 0, skip initial part of the map known to be fully in use. */
+  if (z == sp->s_firstdatazone) {
+	bit = sp->s_zsearch;
+  }  else
+	bit = (bit_t) z - (sp->s_firstdatazone - 1);
+
+  b = alloc_bit(sp->s_zmap, mapbits, bit_blocks, bit);
   if (b == NO_BIT) {
 	err_code = ENOSPC;
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
@@ -218,7 +208,8 @@ zone_nr z;			/* try to allocate new zone near this one */
 		sp->s_dev == ROOT_DEV ? "root " : "", major, minor);
 	return(NO_ZONE);
   }
-  return(sp->s_firstdatazone - 1 + (zone_nr) b);
+  if (z == sp->s_firstdatazone) sp->s_zsearch = b;	/* for next time */
+  return(sp->s_firstdatazone - 1 + (zone_t) b);
 }
 
 
@@ -227,17 +218,19 @@ zone_nr z;			/* try to allocate new zone near this one */
  *===========================================================================*/
 PUBLIC void free_zone(dev, numb)
 dev_t dev;				/* device where zone located */
-zone_nr numb;				/* zone to be returned */
+zone_t numb;				/* zone to be returned */
 {
 /* Return a zone. */
 
   register struct super_block *sp;
-
-  if (numb == NO_ZONE) return;	/* checking here easier than in caller */
+  bit_t bit;
 
   /* Locate the appropriate super_block and return bit. */
   sp = get_super(dev);
-  free_bit(sp->s_zmap, (bit_nr) numb - (sp->s_firstdatazone - 1) );
+  bit = (bit_t) (numb - (sp->s_firstdatazone - 1));
+  if (bit <= 0 || numb >= sp->s_zones) return;	/* zone out of range */
+  free_bit(sp->s_zmap, bit);
+  if (bit < sp->s_zsearch) sp->s_zsearch = bit;
 }
 
 
@@ -254,18 +247,18 @@ int rw_flag;			/* READING or WRITING */
  * from the cache, it is not clear what the caller could do about it anyway.
  */
 
-  int r;
+  int r, op;
   off_t pos;
   dev_t dev;
 
   if ( (dev = bp->b_dev) != NO_DEV) {
 	pos = (off_t) bp->b_blocknr * BLOCK_SIZE;
-	r = dev_io(rw_flag, FALSE, dev, pos, BLOCK_SIZE, FS_PROC_NR,
-		   bp->b_data);
+	op = (rw_flag == READING ? DEV_READ : DEV_WRITE);
+	r = dev_io(op, FALSE, dev, pos, BLOCK_SIZE, FS_PROC_NR, bp->b_data);
 	if (r != BLOCK_SIZE) {
-		if (r >= 0) r = END_OF_FILE;
-		if (r != END_OF_FILE)
-		 printf("Unrecoverable disk error on device %d/%d, block %u\n",
+	    if (r >= 0) r = END_OF_FILE;
+	    if (r != END_OF_FILE)
+	      printf("Unrecoverable disk error on device %d/%d, block %ld\n",
 			(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE, bp->b_blocknr);
 		bp->b_dev = NO_DEV;	/* invalidate block */
 
@@ -312,6 +305,31 @@ dev_t dev;			/* device to flush */
 
 
 /*===========================================================================*
+ *				rm_lru					     *
+ *===========================================================================*/
+PUBLIC void rm_lru(bp)
+struct buf *bp;
+{
+/* Remove a block from its LRU chain. */
+
+  struct buf *next_ptr, *prev_ptr;
+
+  bufs_in_use++;
+  next_ptr = bp->b_next;	/* successor on LRU chain */
+  prev_ptr = bp->b_prev;	/* predecessor on LRU chain */
+  if (prev_ptr != NIL_BUF)
+	prev_ptr->b_next = next_ptr;
+  else
+	front = next_ptr;	/* this block was at front of chain */
+
+  if (next_ptr != NIL_BUF)
+	next_ptr->b_prev = prev_ptr;
+  else
+	rear = prev_ptr;	/* this block was at rear of chain */
+}
+
+
+/*===========================================================================*
  *				rw_scattered				     *
  *===========================================================================*/
 PUBLIC void rw_scattered(dev, bufq, bufqsize, rw_flag)
@@ -336,7 +354,7 @@ int rw_flag;			/* READING or WRITING */
   if (bufqsize <= 0) return;
   if (bufqsize > NR_BUFS) panic("Too much scattered i/o", NO_NUM);
 
-  /* (Shell) sort buffers on block_nr. */
+  /* (Shell) sort buffers on b_blocknr. */
   gap = 1;
   do
 	gap = 3 * gap + 1;
@@ -355,16 +373,20 @@ int rw_flag;			/* READING or WRITING */
   }
 
 #if HAVE_SCATTERED_IO
-  /* Set up i/o vector and do i/o. */
+  /* Set up i/o vector and do i/o.  The result of dev_io is discarded because
+   * all results are returned in the vector.  If dev_io fails completely, the
+   * vector is unchanged and all results are taken as errors.
+   */  
   for (i = 0, iop = iovec; i < bufqsize; i++, iop++) {
 	bp = bufq[i];
 	iop->io_position = (off_t) bp->b_blocknr * BLOCK_SIZE;
 	iop->io_buf = bp->b_data;
 	iop->io_nbytes = BLOCK_SIZE;
 	iop->io_request = rw_flag == WRITING ?
-			  DISK_WRITE : DISK_READ | OPTIONAL_IO;
+			  DEV_WRITE : DEV_READ | OPTIONAL_IO;
   }
-  dev_io(SCATTERED_IO, 0, dev, (off_t) 0, bufqsize, FS_PROC_NR, (char *)iovec);
+  (void) dev_io(SCATTERED_IO, 0, dev, (off_t) 0, bufqsize, FS_PROC_NR,
+		(char *)iovec);
 
   /* Harvest the results.  Leave read errors for rw_block() to complain. */
   for (i = 0, iop = iovec; i < bufqsize; i++, iop++) {
@@ -375,9 +397,9 @@ int rw_flag;			/* READING or WRITING */
 	    put_block(bp, PARTIAL_DATA_BLOCK);
   	} else {
 	    if (iop->io_nbytes != 0) {
-		printf("Unrecoverable write error on device %d/%d, block %d\n",
+	     printf("Unrecoverable write error on device %d/%d, block %ld\n",
 			(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE, bp->b_blocknr);
-	 		bp->b_dev = NO_DEV;	/* invalidate block */
+	 	bp->b_dev = NO_DEV;	/* invalidate block */
 	    }
 	    bp->b_dirt = CLEAN;
 	}

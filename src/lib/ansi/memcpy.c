@@ -1,28 +1,23 @@
-#include <lib.h>
-/* memcpy - copy bytes */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: memcpy.c,v 1.4 90/08/28 13:52:31 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-void *memcpy(dst, src, size)
-_VOIDSTAR dst;
-_CONST _VOIDSTAR src;
-size_t size;
+void *
+memcpy(void *s1, const void *s2, register size_t n)
 {
-  register char *d;
-  register _CONST char *s;
-  register size_t n;
+	register char *p1 = s1;
+	register const char *p2 = s2;
 
-  if (size <= 0) return(dst);
 
-  s = (char *) src;
-  d = (char *) dst;
-  if (s <= d && s + (size - 1) >= d) {
-	/* Overlap, must copy right-to-left. */
-	s += size - 1;
-	d += size - 1;
-	for (n = size; n > 0; n--) *d-- = *s--;
-  } else
-	for (n = size; n > 0; n--) *d++ = *s++;
-
-  return(dst);
+	if (n) {
+		n++;
+		while (--n > 0) {
+			*p1++ = *p2++;
+		}
+	}
+	return s1;
 }

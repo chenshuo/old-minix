@@ -25,7 +25,7 @@ char *from, *to;
 	if (fromfd < 0)
 	    fatal2("patch: internal error, can't reopen %s\n", from);
 	while ((i=read(fromfd, buf, sizeof buf)) > 0)
-	    if (write(1, buf, i) != 1)
+	    if (write(1, buf, i) != i)
 		fatal1("patch: write failed\n");
 	Close(fromfd);
 	return 0;
@@ -173,8 +173,6 @@ fatal(pat,arg1,arg2,arg3)
 char *pat;
 long arg1,arg2,arg3;
 {
-    void my_exit();
-
     say(pat, arg1, arg2, arg3);
     my_exit(1);
 }
@@ -231,7 +229,6 @@ void
 set_signals(reset)
 int reset;
 {
-    void my_exit();
 #ifndef lint
 #ifdef VOIDSIG
     static void (*hupval)(),(*intval)();

@@ -13,11 +13,16 @@
 #include <sys/types.h>
 #include <sgtty.h>
 #include <signal.h>
+#include <unistd.h>
 #include <stdio.h>
 
 #include "../../fs/const.h"
 
 #include "de.h"
+
+FORWARD _PROTOTYPE(int Timed_Get_Char , (int time ));
+FORWARD _PROTOTYPE(void Timed_Out , (int n));
+
 
 
 
@@ -42,7 +47,6 @@
 
 static struct sgttyb saved_mode;
 static struct tchars saved_chars;
-void Timed_Out();
 
 
 void Save_Term()
@@ -67,7 +71,7 @@ void Set_Term()
 
   /*  No tab expansion, no echo, don't map ^M to ^J, cbreak mode  */
 
-  mode.sg_flags = mode.sg_flags & ~XTABS & ~ECHO & ~CRMOD  |  CBREAK;
+  mode.sg_flags = (mode.sg_flags & ~XTABS & ~ECHO & ~CRMOD)  |  CBREAK;
 
 
   /*  Change the interrupt character to ^C  */
@@ -239,6 +243,9 @@ char *Get_Line()
     }
 
   Error( "Internal fault (line buffer overflow)" );
+
+  /* NOTREACHED */
+  return( NULL );
   }
 
 
@@ -284,7 +291,8 @@ int Arrow_Esc( c )
   return( c );
   }
 
-void Timed_Out()
+void Timed_Out(n)
+int n;
   {}
 
 

@@ -1,13 +1,19 @@
-/* strcoll.c */
-/* Compares the strings s1 and s2 in light of the current locale setting */
-/* WARNING: This is a bogus implementation, since I have no idea what	 */
-/*          ANSI is prattling about with respect to locale.              */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strcoll.c,v 1.2 90/08/28 13:53:23 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
+#include	<locale.h>
 
-int strcoll(s1, s2)
-_CONST char *s1;
-_CONST char *s2;
+int
+strcoll(register const char *s1, register const char *s2)
 {
-  return strcmp(s1, s2);
+	while (*s1 == *s2++) {
+		if (*s1++ == '\0') {
+			return 0;
+		}
+	}
+	return *s1 - *--s2;
 }

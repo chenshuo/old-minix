@@ -1,16 +1,18 @@
-#include <lib.h>
-/* strchr - find first occurrence of a character in a string */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strchr.c,v 1.3 90/08/28 13:53:00 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strchr(s, charwanted) 	/* found char, or NULL if none */
-_CONST char *s;
-register char charwanted;
+char *
+strchr(register const char *s, register int c)
 {
-  register _CONST char *scan;
+	c = (char) c;
 
-  /* The odd placement of the two tests is so NUL is findable. */
-  for (scan = s; *scan != charwanted;)	/* ++ moved down for opt. */
-	if (*scan++ == '\0') return((char *) NULL);
-  return((char *) scan);
+	while (c != *s) {
+		if (*s++ == '\0') return NULL;
+	}
+	return (char *)s;
 }

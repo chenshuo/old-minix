@@ -1,5 +1,4 @@
-static char *sccsid =
-   "@(#) dismain.c, Ver. 2.1 created 00:00:00 87/09/01";
+static char *sccsid =  "@(#) dismain.c, Ver. 2.1 created 00:00:00 87/09/01";
 
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
@@ -33,15 +32,10 @@ static char *sccsid =
 #include "dis.h"              /* Disassembler declarations  */
 
 extern char *release;         /* Contains release string    */
-
 static char *IFILE = NULL;    /* Points to input file name  */
-
 static char *OFILE = NULL;    /* Points to output file name */
-
 static char *PRG;             /* Name of invoking program   */
-
 static unsigned long zcount;  /* Consecutive "0" byte count */
-
 int objflg = 0;               /* Flag: output object bytes  */
 
 #define unix 1
@@ -53,7 +47,20 @@ static int cpuid = 1;
 #else
 static int cpuid = 0;
 #endif
-
+
+_PROTOTYPE(static void usage, (char *s ));
+_PROTOTYPE(static void fatal, (char *s, char *t ));
+_PROTOTYPE(static void zdump, (unsigned long beg ));
+_PROTOTYPE(static void prolog, (void));
+_PROTOTYPE(static void distext, (void));
+_PROTOTYPE(static void disdata, (void));
+_PROTOTYPE(static void disbss, (void));
+
+_PROTOTYPE(static char *invoker, (char *s));
+_PROTOTYPE(static int objdump, (char *c));
+_PROTOTYPE(static char *getlab, (int type));
+_PROTOTYPE(static void prolog, (void));
+
  /* * * * * * * MISCELLANEOUS UTILITY FUNCTIONS * * * * * * */
 
 static void
@@ -101,7 +108,7 @@ invoker(s)
 
    return (s);
 }
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This rather tricky routine supports the disdata() func- *
@@ -173,7 +180,7 @@ objdump(c)
    return (retval);
 
 }/* * * * * * * * * *  END OF  objdump()  * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This  routine,  called  at the  beginning  of the input *
@@ -189,9 +196,7 @@ objdump(c)
 
 static char *
 getlab(type)
-
-   register int type;
-
+register int type;
 {/* * * * * * * * * *  START OF getlab()  * * * * * * * * * */
 
    register int k;
@@ -224,7 +229,7 @@ getlab(type)
    return (NULL);
 
 }/* * * * * * * * * * * END OF getlab() * * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This routine  performs a preliminary scan of the symbol *
@@ -310,7 +315,7 @@ prolog()
       putchar('\n');
 
 }/* * * * * * * * * * * END OF prolog() * * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This function is  responsible  for  disassembly  of the *
@@ -372,7 +377,7 @@ distext()
       }
 
 }/* * * * * * * * * *  END OF  distext()  * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This  function  handles the object file's data segment. *
@@ -433,7 +438,7 @@ disdata()
    objdump("");
 
 }/* * * * * * * * * *  END OF  disdata()  * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This  function  handles the object  file's bss segment. *
@@ -442,8 +447,7 @@ disdata()
   *                                                         *
   * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-static void
-disbss()
+static void disbss()
 
 {/* * * * * * * * * *  START OF disbss()  * * * * * * * * * */
 
@@ -478,7 +482,7 @@ disbss()
       zdump(beg);
 
 }/* * * * * * * * * * * END OF disbss() * * * * * * * * * * */
-
+
  /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
   *                                                         *
   * This is the program  entry  point.  The command line is *
@@ -625,5 +629,3 @@ main(argc,argv)
    exit(0);
 
 }/* * * * * * * * * * *  END OF main()  * * * * * * * * * * */
-
-

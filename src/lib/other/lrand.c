@@ -1,4 +1,3 @@
-#include <lib.h>
 /*  lrand(3)
  *
  *  Author: Terrence W. Holm          Nov. 1988
@@ -21,6 +20,10 @@
  *	3)  Has a known implementation by E. L. Schrage.
  */
 
+#include <lib.h>
+
+_PROTOTYPE( long seed, (long lseed));
+_PROTOTYPE( long lrand, (void));
 
 #define  A	  16807L	/* A "good" multiplier	  */
 #define  M   2147483647L	/* Modulus: 2^31 - 1	  */

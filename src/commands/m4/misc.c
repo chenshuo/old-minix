@@ -7,13 +7,11 @@
 #include "mdef.h"
 #include "extr.h" 
  
-extern char *malloc();
- 
 /*
  * indx - find the index of second str in the
  *        first str.
  */
-indx(s1, s2)
+int indx(s1, s2)
 char *s1;
 char *s2;
 {
@@ -34,7 +32,7 @@ char *s2;
  *  putback - push character back onto input
  *
  */
-putback (c)
+void putback (c)
 char c;
 {
         if (bp < endpbb)
@@ -49,7 +47,7 @@ char c;
  *          performance.
  *
  */
-pbstr(s)
+void pbstr(s)
 register char *s;
 {
         register char *es;
@@ -72,7 +70,7 @@ register char *s;
  *  pbnum - convert number to string, push back on input.
  *
  */
-pbnum (n)
+void pbnum (n)
 int n;
 {
         register int num;
@@ -90,7 +88,7 @@ int n;
  *  chrsave - put single char on string space
  *
  */
-chrsave (c)
+void chrsave (c)
 char c;
 {
 /***        if (sp < 0)
@@ -105,7 +103,9 @@ char c;
  * getdiv - read in a diversion file, and
  *          trash it.
  */
-getdiv(ind) {
+void getdiv(ind)
+int ind;
+{
         register int c;
         register FILE *dfil;
  
@@ -133,7 +133,7 @@ getdiv(ind) {
  * Very fatal error. Close all files
  * and die hard.
  */
-error(s)
+void error(s)
 char *s;
 {
         killdiv();
@@ -146,7 +146,9 @@ char *s;
  */
 static char *msg = "\ninterrupted.";
  
-onintr() {
+void onintr(s) 
+int s;				/* ANSI requires the parameter */
+{
         error(msg);
 }
  
@@ -154,7 +156,7 @@ onintr() {
  * killdiv - get rid of the diversion files
  *
  */
-killdiv() {
+void killdiv() {
         register int n;
  
         for (n = 0; n < MAXOUT; n++)
@@ -179,12 +181,13 @@ char *s;
 	register int n;
         char *p;
 
-        if ((p = malloc (n = strlen(s)+1)) != NULL)
-                (void) memcpy(p, s, n);
+	n = strlen(s)+1;
+	p = (char *) malloc(n);
+        if (p != NULL) (void) memcpy(p, s, n);
         return (p);
 }
  
-usage() {
+void usage() {
         fprintf(stderr, "Usage: m4 [-Dname[=val]] [-Uname]\n");
         exit(1);
 }
@@ -202,8 +205,6 @@ char	*optarg;	/* Global argument pointer. */
 int	optind = 0;	/* Global argv index. */
 
 static char	*scan = NULL;	/* Private scan pointer. */
-
-extern char	*index();
 
 int
 getopt(argc, argv, optstring)
@@ -265,7 +266,7 @@ char *optstring;
 
 #define COPYBYTE 	*to++ = *from++
 
-memcpy(to, from, count)
+void memcpy(to, from, count)
 register char *from, *to;
 register int count;
 {

@@ -1,22 +1,29 @@
 /* This file contains the code and data for the clock task.  The clock task
- * has a single entry point, clock_task().  It accepts four message types:
+ * accepts six message types:
  *
  *   HARD_INT:    a clock interrupt has occurred
- *   GET_TIME:    a process wants the real time
- *   SET_TIME:    a process wants to set the real time
+ *   GET_TIME:    a process wants the real time in seconds
+ *   SET_TIME:    a process wants to set the real time in seconds
  *   SET_ALARM:   a process wants to be alerted after a specified interval
+ *   GET_UPTIME:  get the time since boot in ticks
+ *   SET_SYN_AL:  set the sync alarm
+ *   
  *
  * The input message is format m6.  The parameters are as follows:
  *
  *     m_type    CLOCK_PROC   FUNC    NEW_TIME
  * ---------------------------------------------
- * | SET_ALARM  | proc_nr  |f to call|  delta  |
- * |------------+----------+---------+---------|
  * | HARD_INT   |          |         |         |
  * |------------+----------+---------+---------|
  * | GET_TIME   |          |         |         |
  * |------------+----------+---------+---------|
  * | SET_TIME   |          |         | newtime |
+ * |------------+----------+---------+---------|
+ * | SET_ALARM  | proc_nr  |f to call|  delta  |
+ * |------------+----------+---------+---------|
+ * | GET_UPTIME |          |         |         |
+ * |------------+----------+---------+---------|
+ * | SET_SYN_AL |          |         |  delta  |
  * ---------------------------------------------
  *
  * When an alarm goes off, if the caller is a user process, a SIGALRM signal
@@ -42,29 +49,38 @@
 #define SQUARE_WAVE     0x36	/* ccaammmb, a = access, m = mode, b = BCD */
 				/*   11x11, 11 = LSB then MSB, x11 = sq wave */
 #define TIMER_COUNT ((unsigned) (TIMER_FREQ/HZ)) /* initial value for counter*/
-#define TIMER_FREQ   1193182L	/* clock frequency for timer in PC and AT */
+#define TIMER_FREQ  1193182L	/* clock frequency for timer in PC and AT */
 #endif
 
 #if (CHIP == M68000)
-#define FLUSH_MASK      0x07	/* bit mask used for flushing RS232 input */
-#define TIMER_FREQ   2457600L	/* timer 3 input clock frequency */
+#define TIMER_FREQ  2457600L	/* timer 3 input clock frequency */
 #endif
 
 /* Clock task variables. */
 PRIVATE time_t boot_time;	/* time in seconds of system boot */
-PRIVATE time_t next_alarm;	/* probable time of next alarm */
-PRIVATE time_t pending_ticks;	/* ticks seen by low level only */
-PRIVATE time_t realtime;	/* real time clock */
-PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
+PRIVATE clock_t next_alarm;	/* probable time of next alarm */
+PRIVATE clock_t pending_ticks;	/* ticks seen by low level only */
+PRIVATE clock_t realtime;	/* real time clock */
 PRIVATE struct proc *prev_ptr;	/* last user process run by clock task */
 PRIVATE message mc;		/* message buffer for both input and output */
-PRIVATE void (*watch_dog[NR_TASKS+1])();  /* watch_dog functions to call */
+PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
 
-FORWARD void do_clocktick();
-FORWARD void do_get_time();
-FORWARD void do_set_time();
-FORWARD void do_setalarm();
-FORWARD void init_clock();
+PRIVATE int syn_al_alive= TRUE; /* don't wake syn_alrm_task before inited*/
+PRIVATE int watchdog_proc;	/* contains proc_nr at call of *watch_dog[]*/
+PRIVATE int syn_table[NR_TASKS+NR_PROCS]; /* which tasks get CLOCK_INT*/
+
+PRIVATE watchdog_t watch_dog[NR_TASKS+NR_PROCS];
+
+FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
+		long delta_ticks, watchdog_t fuction) );
+FORWARD _PROTOTYPE( void do_clocktick, (void) );
+FORWARD _PROTOTYPE( void do_get_time, (void) );
+FORWARD _PROTOTYPE( void do_getuptime, (void) );
+FORWARD _PROTOTYPE( void do_set_time, (message *m_ptr) );
+FORWARD _PROTOTYPE( void do_setalarm, (message *m_ptr) );
+FORWARD _PROTOTYPE( void init_clock, (void) );
+FORWARD _PROTOTYPE( void cause_alarm, (void) );
+FORWARD _PROTOTYPE( void do_setsyn_alrm, (message *m_ptr) );
 
 /*===========================================================================*
  *				clock_task				     *
@@ -86,14 +102,16 @@ PUBLIC void clock_task()
 
      lock();
      realtime += pending_ticks;	/* transfer ticks from low level handler */
-     pending_ticks = 0;
+     pending_ticks = 0;		/* so we don't have to worry about them */
      unlock();
 
      switch (opcode) {
-	case SET_ALARM:	 do_setalarm(&mc);	break;
+	case HARD_INT:   do_clocktick();	break;
 	case GET_TIME:	 do_get_time();		break;
 	case SET_TIME:	 do_set_time(&mc);	break;
-	case HARD_INT:   do_clocktick();	break;
+	case SET_ALARM:	 do_setalarm(&mc);	break;
+	case GET_UPTIME: do_getuptime();	break;
+	case SET_SYNC_AL:do_setsyn_alrm(&mc);	break;
 	default: panic("clock task got bad message", mc.m_type);
      }
 
@@ -105,35 +123,52 @@ PUBLIC void clock_task()
 
 
 /*===========================================================================*
- *				do_setalarm				     *
+ *				do_clocktick				     *
  *===========================================================================*/
-PRIVATE void do_setalarm(m_ptr)
-message *m_ptr;			/* pointer to request message */
+PRIVATE void do_clocktick()
 {
-/* A process wants an alarm signal or a task wants a given watch_dog function
- * called after a specified interval.  Record the request and check to see
- * it is the very next alarm needed.
- */
+/* This routine called on clock ticks when a lot of work needs to be done. */
 
   register struct proc *rp;
-  int proc_nr;			/* which process wants the alarm */
-  long delta_ticks;		/* in how many clock ticks does he want it? */
-  void (*function)();		/* function to call (tasks only) */
+  register int proc_nr;
 
-  /* Extract the parameters from the message. */
-  proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
-  delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
-  function = m_ptr->FUNC_TO_CALL;	/* function to call (tasks only) */
-  rp = proc_addr(proc_nr);
-  mc.SECONDS_LEFT = (rp->p_alarm == 0L ? 0 : (rp->p_alarm - realtime)/HZ );
-  rp->p_alarm = (delta_ticks == 0L ? 0L : realtime + delta_ticks);
-  if (istaskp(rp)) watch_dog[-proc_nr] = function;
+  if (next_alarm <= realtime) {
+	/* An alarm may have gone off, but proc may have exited, so check. */
+	next_alarm = LONG_MAX;	/* start computing next alarm */
+	for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
+		if (rp->p_alarm != 0) {
+			/* See if this alarm time has been reached. */
+			if (rp->p_alarm <= realtime) {
+				/* A timer has gone off.  If it is a user proc,
+				 * send it a signal.  If it is a task, call the
+				 * function previously specified by the task.
+				 */
+				proc_nr = proc_number(rp);
+				if (watch_dog[proc_nr+NR_TASKS]) {
+					watchdog_proc= proc_nr;
+					(*watch_dog[proc_nr+NR_TASKS])();
+				}
+				else
+					cause_sig(proc_nr, SIGALRM);
+				rp->p_alarm = 0;
+			}
 
-  /* Which alarm is next? */
-  next_alarm = MAX_P_LONG;
-  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++)
-	if(rp->p_alarm != 0 && rp->p_alarm < next_alarm)next_alarm=rp->p_alarm;
+			/* Work on determining which alarm is next. */
+			if (rp->p_alarm != 0 && rp->p_alarm < next_alarm)
+				next_alarm = rp->p_alarm;
+		}
+	}
+  }
 
+  /* If a user process has been running too long, pick another one. */
+  if (--sched_ticks == 0) {
+	if (bill_ptr == prev_ptr) lock_sched();	/* process has run too long */
+	sched_ticks = SCHED_RATE;		/* reset quantum */
+	prev_ptr = bill_ptr;			/* new previous process */
+  }
+#if (SHADOWING == 1)
+  if (rdy_head[SHADOW_Q]) unshadow(rdy_head[SHADOW_Q]);
+#endif
 }
 
 
@@ -142,9 +177,8 @@ message *m_ptr;			/* pointer to request message */
  *===========================================================================*/
 PRIVATE void do_get_time()
 {
-/* Get and return the current clock time in ticks. */
+/* Get and return the current clock time in seconds. */
 
-  mc.m_type = REAL_TIME;	/* set message type for reply */
   mc.NEW_TIME = boot_time + realtime/HZ;	/* current real time */
 }
 
@@ -162,53 +196,161 @@ message *m_ptr;			/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_clocktick				     *
+ *				do_setalarm				     *
  *===========================================================================*/
-PRIVATE void do_clocktick()
+PRIVATE void do_setalarm(m_ptr)
+message *m_ptr;			/* pointer to request message */
 {
-/* This routine called on clock ticks when a lot of work needs to be done. */
+/* A process wants an alarm signal or a task wants a given watch_dog function
+ * called after a specified interval.
+ */
 
   register struct proc *rp;
-  register int proc_nr;
+  int proc_nr;			/* which process wants the alarm */
+  long delta_ticks;		/* in how many clock ticks does he want it? */
+  watchdog_t function;		/* function to call (tasks only) */
 
-  if (next_alarm <= realtime) {
-	/* An alarm may have gone off, but proc may have exited, so check. */
-	next_alarm = MAX_P_LONG;	/* start computing next alarm */
-	for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
-		if (rp->p_alarm != (time_t) 0) {
-			/* See if this alarm time has been reached. */
-			if (rp->p_alarm <= realtime) {
-				/* A timer has gone off.  If it is a user proc,
-				 * send it a signal.  If it is a task, call the
-				 * function previously specified by the task.
-				 */
-				if ( (proc_nr = proc_number(rp)) >= 0)
-					cause_sig(proc_nr, SIGALRM);
-				else
-					(*watch_dog[-proc_nr])();
-				rp->p_alarm = 0;
-			}
-
-			/* Work on determining which alarm is next. */
-			if (rp->p_alarm != 0 && rp->p_alarm < next_alarm)
-				next_alarm = rp->p_alarm;
-		}
-	}
-  }
-
-  /* If a user process has been running too long, pick another one. */
-  if (--sched_ticks == 0) {
-	if (bill_ptr == prev_ptr) lock_sched();	/* process has run too long */
-	sched_ticks = SCHED_RATE;		/* reset quantum */
-	prev_ptr = bill_ptr;			/* new previous process */
-  }
-#if (CHIP == M68000)
-  if (rdy_head[SHADOW_Q]) unshadow(rdy_head[SHADOW_Q]);
-#endif
+  /* Extract the parameters from the message. */
+  proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
+  delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
+  function = (watchdog_t) m_ptr->FUNC_TO_CALL;
+  					/* function to call (tasks only) */
+  rp = proc_addr(proc_nr);
+  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm - realtime)/HZ );
+  if (!istaskp(rp)) function= 0;	/* user processes get signaled */
+  common_setalarm(proc_nr, delta_ticks, function);
 }
 
 
+/*===========================================================================*
+ *				do_setsyn_alrm				     *
+ *===========================================================================*/
+PRIVATE void do_setsyn_alrm(m_ptr)
+message *m_ptr;			/* pointer to request message */
+{
+/* A process wants an synchronous alarm. 
+ */
+
+  register struct proc *rp;
+  int proc_nr;			/* which process wants the alarm */
+  long delta_ticks;		/* in how many clock ticks does he want it? */
+
+  /* Extract the parameters from the message. */
+  proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
+  delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
+  rp = proc_addr(proc_nr);
+  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm - realtime)/HZ );
+  common_setalarm(proc_nr, delta_ticks, cause_alarm);
+}
+
+
+/*===========================================================================*
+ *				do_getuptime				     *
+ *===========================================================================*/
+PRIVATE void do_getuptime()
+{
+/* Get and return the current clock uptime in ticks. */
+
+  mc.NEW_TIME = realtime;	/* current uptime */
+}
+
+
+/*===========================================================================*
+ *				common_setalarm				     *
+ *===========================================================================*/
+PRIVATE void common_setalarm(proc_nr, delta_ticks, function)
+int proc_nr;			/* which process wants the alarm */
+long delta_ticks;		/* in how many clock ticks does he want it? */
+watchdog_t function;		/* function to call (0 if cause_sig is
+				 * to be called */
+{
+/* Record an alarm request and check to see it is the next alarm needed.  */
+
+  register struct proc *rp;
+
+  rp = proc_addr(proc_nr);
+  rp->p_alarm = (delta_ticks == 0 ? 0 : realtime + delta_ticks);
+  watch_dog[proc_nr+NR_TASKS] = function;
+
+  /* Which alarm is next? */
+  next_alarm = LONG_MAX;
+  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++)
+	if(rp->p_alarm != 0 && rp->p_alarm < next_alarm)next_alarm=rp->p_alarm;
+
+}
+
+
+/*===========================================================================*
+ *				get_uptime				     *
+ *===========================================================================*/
+PUBLIC clock_t get_uptime()
+{
+/* Get and return the current clock uptime in ticks.  This function is
+ * designed to be called from other tasks, so it has to be careful about
+ * pending_ticks.
+ */
+
+  clock_t uptime;
+
+  lock();
+  uptime = realtime + pending_ticks;
+  unlock();
+  return(uptime);
+}
+
+
+/*===========================================================================*
+ *				syn_alrm_task				     *
+ *===========================================================================*/
+PUBLIC void syn_alrm_task()
+{
+/* Main program of syn_alrm task.  It sends CLOCK_INT messages to process that
+ * requested a syn_alrm.
+ */
+ 
+  message mess;
+  int work_done;	/* ready to sleep ? */
+  int *al_ptr;		/* pointer in syn_table */
+  int i;
+
+  syn_al_alive= TRUE;
+  for (i= 0, al_ptr= syn_table; i<NR_TASKS+NR_PROCS; i++, al_ptr++)
+	*al_ptr= FALSE;
+
+  while (TRUE) {
+	work_done= TRUE;
+	for (i= 0, al_ptr= syn_table; i<NR_TASKS+NR_PROCS; i++, al_ptr++)
+		if (*al_ptr) {
+			*al_ptr= FALSE;
+			mess.m_type= CLOCK_INT;
+			send (i-NR_TASKS, &mess); 
+			work_done= FALSE;
+		}
+	if (work_done) {
+		syn_al_alive= FALSE;
+		receive (CLOCK, &mess);
+		syn_al_alive= TRUE;
+	}
+  }
+}
+
+
+/*===========================================================================*
+ *				cause_alarm				     *
+ *===========================================================================*/
+PRIVATE void cause_alarm()
+{
+/* Routine called if a timer goes off and the process requested a synchronous
+ * alarm. The process number is in the global variable watchdog_proc (HACK).
+ */
+  message mess;
+
+  syn_table[watchdog_proc + NR_TASKS]= TRUE;
+  if (!syn_al_alive) send (SYN_ALRM_TASK, &mess);
+}
 #if (CHIP == INTEL)
+
+
 /*===========================================================================*
  *				init_clock				     *
  *===========================================================================*/
@@ -219,7 +361,7 @@ PRIVATE void init_clock()
   out_byte(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
   out_byte(TIMER0, TIMER_COUNT);	/* load timer low byte */
   out_byte(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
-  enable_irq(CLOCK_IRQ);	/* ready for clock interrupts */
+  enable_irq(CLOCK_IRQ);		/* ready for clock interrupts */
 }
 
 
@@ -286,9 +428,9 @@ PRIVATE void init_clock()
  * rate is further reduced by software with a factor of 4.
  * Note that the expression below works for both HZ=50 and HZ=60.
  */
-  do
+  do {
 	MFP->mf_tcdr = TIMER_FREQ/(64*4*HZ);
-  while ((MFP->mf_tcdr & 0xFF) != TIMER_FREQ/(64*4*HZ));
+  } while ((MFP->mf_tcdr & 0xFF) != TIMER_FREQ/(64*4*HZ));
   MFP->mf_tcdcr |= (T_Q064<<4);
 }
 #endif
@@ -326,7 +468,7 @@ PUBLIC void clock_handler()
  *		not properly protected in dmp.c (the increment here is not
  *		atomic) but that hardly matters.
  *	pending_ticks:
- *		This is protected by an explicit lock in clock.c.  Don't
+ *		This is protected by explicit locks in clock.c.  Don't
  *		update realtime directly, since there are too many
  *		references to it to guard conveniently.
  *	sched_ticks, prev_ptr:
@@ -350,32 +492,26 @@ PUBLIC void clock_handler()
    * Thus the unbillable tasks' user time is the billable users' system time.
    */
   if (k_reenter != 0)
-	rp = cproc_addr(HARDWARE);
+	rp = proc_addr(HARDWARE);
   else
 	rp = proc_ptr;
   ++rp->user_time;
-  if (rp != bill_ptr) ++bill_ptr->sys_time;
+  if (rp != bill_ptr && rp != proc_addr(IDLE)) ++bill_ptr->sys_time;
 
   ++pending_ticks;
-#if (CHIP != M68000)
   tty_wakeup();			/* possibly wake up TTY */
+#if (CHIP != M68000)
   pr_restart();			/* possibly restart printer */
 #endif
 #if (CHIP == M68000)
   kb_timer();			/* keyboard repeat */
   if (sched_ticks == 1) fd_timer();	/* floppy deselect */
-
-  /* If input characters are accumulating on an RS232 line, process them. */
-  if (flush_flag) {
-	if ( (((int)(realtime+pending_ticks)) & FLUSH_MASK) == 0) rs_flush();
-		 		/* only low-order bits of realtime mattered */
-  }
 #endif
 
   if (next_alarm <= realtime + pending_ticks ||
       sched_ticks == 1 &&
       bill_ptr == prev_ptr &&
-#if (CHIP != M68000)
+#if (SHADOWING == 0)
       rdy_head[USER_Q] != NIL_PROC) {
 #else
       (rdy_head[USER_Q] != NIL_PROC || rdy_head[SHADOW_Q] != NIL_PROC)) {

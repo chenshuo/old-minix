@@ -29,9 +29,15 @@ extern	char	**environ;	/* environment pointer */
 char	shellname[] = "/bin/sh";
 char	search[] = ":/bin:/usr/bin";
 
-void	(*qflag)() = SIG_IGN;
+_PROTOTYPE(void (*qflag), (int)) = SIG_IGN;
 
-main(argc, argv)
+_PROTOTYPE(int main, (int argc, char **argv ));
+_PROTOTYPE(int newfile, (char *s ));
+_PROTOTYPE(static char *findeq, (char *cp ));
+_PROTOTYPE(static char *cclass, (char *p, int sub ));
+_PROTOTYPE(void initarea, (void));
+
+int main(argc, argv)
 int argc;
 register char **argv;
 {
@@ -79,6 +85,7 @@ register char **argv;
 #else
 		setval(prompt, "% ");
 #endif
+
 	if (geteuid() == 0) {
 		setval(prompt, "# ");
 		prompt->status &= ~EXPORT;
@@ -173,6 +180,7 @@ register char **argv;
 	}
 }
 
+void
 setdash()
 {
 	register char *cp, c;
@@ -186,6 +194,7 @@ setdash()
 	setval(lookup("-"), m);
 }
 
+int
 newfile(s)
 register char *s;
 {
@@ -204,6 +213,7 @@ register char *s;
 	return(0);
 }
 
+void
 onecommand()
 {
 	register i;
@@ -270,6 +280,7 @@ leave()
 	/* NOTREACHED */
 }
 
+void
 warn(s)
 register char *s;
 {
@@ -282,6 +293,7 @@ register char *s;
 		leave();
 }
 
+void
 err(s)
 char *s;
 {
@@ -296,7 +308,9 @@ char *s;
 	e.iop = e.iobase = iostack;
 }
 
+int
 newenv(f)
+int f;
 {
 	register struct env *ep;
 
@@ -316,6 +330,7 @@ newenv(f)
 	return(0);
 }
 
+void
 quitenv()
 {
 	register struct env *ep;
@@ -360,7 +375,7 @@ register char *s;
 
 char *
 putn(n)
-register n;
+register int n;
 {
 	return(itoa(n, -1));
 }
@@ -368,6 +383,7 @@ register n;
 char *
 itoa(u, n)
 register unsigned u;
+int n;
 {
 	register char *cp;
 	static char s[20];
@@ -389,12 +405,16 @@ register unsigned u;
 	return(cp);
 }
 
+void
 next(f)
+int f;
 {
 	PUSHIO(afile, f, filechar);
 }
 
-void onintr()
+void
+onintr(s)
+int s;				/* ANSI C requires a parameter */
 {
 	signal(SIGINT, onintr);
 	intr = 1;
@@ -410,18 +430,21 @@ void onintr()
 	}
 }
 
+int
 letter(c)
 register c;
 {
-	return(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_');
+	return((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_');
 }
 
+int
 digit(c)
 register c;
 {
 	return(c >= '0' && c <= '9');
 }
 
+int
 letnum(c)
 register c;
 {
@@ -442,6 +465,7 @@ int n;
 char *
 strsave(s, a)
 register char *s;
+int a;
 {
 	register char *cp, *xp;
 
@@ -454,6 +478,7 @@ register char *s;
 	return("");
 }
 
+void
 xfree(s)
 register char *s;
 {
@@ -463,14 +488,16 @@ register char *s;
 /*
  * trap handling
  */
-void sig(i)
-register i;
+void
+sig(i)
+register int i;
 {
 	trapset = i;
 	signal(i, sig);
 }
 
-runtrap(i)
+void runtrap(i)
+int i;
 {
 	char *trapstr;
 
@@ -483,8 +510,6 @@ runtrap(i)
 
 /* -------- var.c -------- */
 /* #include "sh.h" */
-
-static	char	*findeq();
 
 /*
  * Find the given name in the dictionary
@@ -609,7 +634,7 @@ int
 isassign(s)
 register char *s;
 {
-	if (!letter(*s))
+	if (!letter((int)*s))
 		return(0);
 	for (; *s != '='; s++)
 		if (*s == 0 || !letnum(*s))
@@ -693,13 +718,10 @@ register char *cp;
  * Match a pattern as in sh(1).
  */
 
-#define	NULL	0
 #define	CMASK	0377
 #define	QUOTE	0200
 #define	QMASK	(CMASK&~QUOTE)
 #define	NOT	'!'	/* might use ^ */
-
-static	char	*cclass();
 
 int
 gmatch(s, p)
@@ -757,7 +779,7 @@ register int sub;
 			p++;
 		} else
 			d = c;
-		if (c == sub || c <= sub && sub <= d)
+		if (c == sub || (c <= sub && sub <= d))
 			found = !not;
 	} while (*++p != ']');
 	return(found? p+1: (char *)NULL);
@@ -772,7 +794,6 @@ register int sub;
 #define	ALIGN (sizeof(int)-1)
 
 /* #include "area.h" */
-#define	NULL	0
 
 struct region {
 	struct	region *next;
@@ -787,9 +808,8 @@ struct region {
 static	struct region *areabot;		/* bottom of area */
 static	struct region *areatop;		/* top of area */
 static	struct region *areanxt;		/* starting point of scan */
-char	*sbrk();
-char	*brk();
 
+void
 initarea()
 {
 	while ((int)sbrk(0) & ALIGN)

@@ -1,14 +1,13 @@
-/* This file contains code for initialization of protected mode.
- *
- * The code must run in 16-bit mode (and be compiled with a 16-bit
- * compiler!) even for a 32-bit kernel.
+/* This file contains code for initialization of protected mode, to initialize
+ * code and data segment descriptors, and to initialize global descriptors
+ * for local descriptors in the process table.
  */
 
 #include "kernel.h"
+#include "proc.h"
 #include "protect.h"
 
 #if INTEL_32BITS
-#include "protect1.c"		/* local 16-bit versions of some functions */
 #define INT_GATE_TYPE (INT_286_GATE | DESC_386_BIT)
 #define TSS_TYPE      (AVL_286_TSS  | DESC_386_BIT)
 #else
@@ -17,8 +16,8 @@
 #endif
 
 struct desctableptr_s {
-  u16_t limit;
-  u32_t base;			/* really u24_t + pad for 286 */
+  char limit[sizeof(u16_t)];
+  char base[sizeof(u32_t)];		/* really u24_t + pad for 286 */
 };
 
 struct gatedesc_s {
@@ -74,7 +73,10 @@ PUBLIC struct segdesc_s gdt[GDT_SIZE];
 PRIVATE struct gatedesc_s idt[IDT_SIZE];	/* zero-init so none present */
 PUBLIC struct tss_s tss;	/* zero init */
 
-FORWARD void int_gate();
+FORWARD _PROTOTYPE( void int_gate, (unsigned vec_nr, phys_bytes base,
+		unsigned dpl_type) );
+FORWARD _PROTOTYPE( void sdesc, (struct segdesc_s *segdp, phys_bytes base,
+		phys_bytes size) );
 
 /*=========================================================================*
  *				int_gate				   *
@@ -109,9 +111,10 @@ PUBLIC void prot_init()
   phys_bytes code_bytes;
   phys_bytes data_bytes;
   struct gate_table_s *gtp;
+  struct desctableptr_s *dtp;
 
   static struct gate_table_s {
-	void (*gate)();
+	_PROTOTYPE( void (*gate), (void) );
 	unsigned char vec_nr;
 	unsigned char privilege;
   }
@@ -137,10 +140,8 @@ PUBLIC void prot_init()
 	clock_int, CLOCK_VECTOR, INTR_PRIVILEGE,
 	tty_int, KEYBOARD_VECTOR, INTR_PRIVILEGE,
 	psecondary_int, SECONDARY_VECTOR, INTR_PRIVILEGE,
-#if AM_KERNEL
-#if !NONET 
+#if NETWORKING_ENABLED
 	eth_int, ETHER_VECTOR, INTR_PRIVILEGE,
-#endif
 #endif
 	prs232_int, RS232_VECTOR, INTR_PRIVILEGE,
 	disk_int, FLOPPY_VECTOR, INTR_PRIVILEGE,
@@ -156,12 +157,13 @@ PUBLIC void prot_init()
 	code_bytes = (phys_bytes) sizes[0] << CLICK_SHIFT;
 
   /* Build temporary gdt and idt pointers in GDT where BIOS needs them. */
-  ((struct desctableptr_s *) &gdt[BIOS_GDT_INDEX])->limit = sizeof gdt - 1;
-  ((struct desctableptr_s *) &gdt[BIOS_GDT_INDEX])->base =
-	data_base + (phys_bytes) (vir_bytes) gdt;
-  ((struct desctableptr_s *) &gdt[BIOS_IDT_INDEX])->limit = sizeof idt - 1;
-  ((struct desctableptr_s *) &gdt[BIOS_IDT_INDEX])->base =
-	data_base + (phys_bytes) (vir_bytes) idt;
+  dtp= (struct desctableptr_s *) &gdt[BIOS_GDT_INDEX];
+  * (u16_t *) dtp->limit = sizeof gdt - 1;
+  * (u32_t *) dtp->base = data_base + (phys_bytes) (vir_bytes) gdt;
+
+  dtp= (struct desctableptr_s *) &gdt[BIOS_IDT_INDEX];
+  * (u16_t *) dtp->limit = sizeof idt - 1;
+  * (u32_t *) dtp->base = data_base + (phys_bytes) (vir_bytes) idt;
 
   /* Build segment descriptors for tasks and interrupt handlers. */
   init_dataseg(&gdt[DS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
@@ -189,13 +191,9 @@ PUBLIC void prot_init()
   init_dataseg(&gdt[MONO_INDEX], (phys_bytes) MONO_BASE,
 	       (phys_bytes) MONO_SIZE, TASK_PRIVILEGE);
 
-#if AM_KERNEL
-#if !NONET
 /* Build descriptor for Western Digital Etherplus card buffer. */
   init_dataseg(&gdt[EPLUS_INDEX], (phys_bytes) EPLUS_BASE,
 		(phys_bytes) EPLUS_SIZE, TASK_PRIVILEGE);
-#endif /* !NONET */
-#endif /* AM_KERNEL */
 
   /* Build main TSS.
    * This is used only to record the stack pointer to be used after an
@@ -241,4 +239,89 @@ PUBLIC void prot_init()
   /* Fix up debugger selectors, now the real-mode values are finished with. */
   break_vector.selector = DB_CS_SELECTOR;
   sstep_vector.selector = DB_CS_SELECTOR;
+}
+
+/*=========================================================================*
+ *				init_codeseg				   *
+ *=========================================================================*/
+PUBLIC void init_codeseg(segdp, base, size, privilege)
+register struct segdesc_s *segdp;
+phys_bytes base;
+phys_bytes size;
+int privilege;
+{
+/* Build descriptor for a code segment. */
+
+  sdesc(segdp, base, size);
+  segdp->access = (privilege << DPL_SHIFT)
+	        | (PRESENT | SEGMENT | EXECUTABLE | READABLE);
+		/* CONFORMING = 0, ACCESSED = 0 */
+}
+
+/*=========================================================================*
+ *				init_dataseg				   *
+ *=========================================================================*/
+PUBLIC void init_dataseg(segdp, base, size, privilege)
+register struct segdesc_s *segdp;
+phys_bytes base;
+phys_bytes size;
+int privilege;
+{
+/* Build descriptor for a data segment. */
+
+  sdesc(segdp, base, size);
+  segdp->access = (privilege << DPL_SHIFT) | (PRESENT | SEGMENT | WRITEABLE);
+		/* EXECUTABLE = 0, EXPAND_DOWN = 0, ACCESSED = 0 */
+}
+
+/*=========================================================================*
+ *				ldt_init				   *
+ *=========================================================================*/
+PUBLIC void ldt_init()
+{
+/* Build local descriptors in GDT for LDT's in process table.
+ * The LDT's are allocated at compile time in the process table, and
+ * initialized whenever a process' map is initialized or changed.
+ */
+
+  unsigned ldt_selector;
+  register struct proc *rp;
+
+  for (rp = BEG_PROC_ADDR, ldt_selector = FIRST_LDT_INDEX * DESC_SIZE;
+       rp < END_PROC_ADDR; ++rp, ldt_selector += DESC_SIZE) {
+	init_dataseg(&gdt[ldt_selector / DESC_SIZE],
+		     data_base + (phys_bytes) (vir_bytes) rp->p_ldt,
+		     (phys_bytes) sizeof rp->p_ldt, INTR_PRIVILEGE);
+	gdt[ldt_selector / DESC_SIZE].access = PRESENT | LDT;
+	rp->p_ldt_sel = ldt_selector;
+  }
+}
+
+/*=========================================================================*
+ *				sdesc					   *
+ *=========================================================================*/
+PRIVATE void sdesc(segdp, base, size)
+register struct segdesc_s *segdp;
+phys_bytes base;
+phys_bytes size;
+{
+/* Fill in the size fields (base, limit and granularity) of a descriptor. */
+
+  segdp->base_low = base;
+  segdp->base_middle = base >> BASE_MIDDLE_SHIFT;
+#if INTEL_32BITS
+  segdp->base_high = base >> BASE_HIGH_SHIFT;
+  --size;			/* convert to a limit, 0 size means 4G */
+  if (size > BYTE_GRAN_MAX) {
+	segdp->limit_low = size >> PAGE_GRAN_SHIFT;
+	segdp->granularity = GRANULAR | (size >>
+				     (PAGE_GRAN_SHIFT + GRANULARITY_SHIFT));
+  } else {
+	segdp->limit_low = size;
+	segdp->granularity = size >> GRANULARITY_SHIFT;
+  }
+  segdp->granularity |= DEFAULT;	/* means BIG for data seg */
+#else
+  segdp->limit_low = size - 1;
+#endif
 }

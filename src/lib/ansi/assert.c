@@ -1,27 +1,14 @@
-/* assert.c - diagnostics */
+/*
+ * assert.c - diagnostics
+ */
+/* $Header: assert.c,v 1.3 90/04/03 15:01:58 eck Exp $ */
 
-#include <lib.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <stdio.h>
+#include	<assert.h>
+#include	<stdio.h>
+#include	<stdlib.h>
 
-/* ANSI version */
-void __bad_assertion(expr, file, line)
-char *expr;
-char *file;
-int line;
-{
-  fprintf(stderr,"Assertion \"%s\" failed, file \"%s\", line %d\n", 
-							expr, file, line);
-  abort();
+void __bad_assertion(const char *mess) {
+
+	fputs(mess, stderr);
+	abort();
 }
-
-/* Non-ANSI version */
-void __assert(file, line)
-char *file;
-int line;
-{
-  fprintf(stderr, "Assertion error in file \"%s\" on line %u\n", file, line);
-  abort();
-}
-

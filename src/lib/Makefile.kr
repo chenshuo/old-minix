@@ -1,0 +1,34 @@
+l=`pwd`
+ibm=__sigreturn.s _sendrec.s brksize.s peekpoke.s portio.s setjmp.s
+
+all:	
+	cp /usr/lib/libc.a .
+	cd $l/ansi;	     make signal.s; ar r ../libc.a signal.s
+	cd $l/curses;	     make -k;	ar r ../libcurses.a *.s
+#	cd $l/em;	     make -k;	ar r ../libe.a *.s
+#	cd $l/end;	     make -k;	ar r ../end.a *.s
+#	cd $l/float;	     make -k;	ar r ../libfp.a *.s
+	cd $l/ibm;	     make -k;	ar r ../libc.a $(ibm)
+#	cd $l/math;	     make -k;	ar r ../libc.a *.s
+	cd $l/other;	     make -k;	ar r ../libc.a *.s
+	cd $l/posix;	     make -k;	ar r ../libc.a *.s
+	cd $l/syscall; 	     make -k;	ar r ../libc.a *.s
+#	cd $l/rts;	     make -k;	ar r ../libd.a fphook.s
+#	cd $l/stdio;	     make -k;	ar r ../libc.a *.s
+#	cd $l/string;	     make -k;	ar r ../libc.a *.s
+
+
+clean:
+	@rm -rf *.a
+	@cd $l/ansi;	  make -k clean
+	@cd $l/posix;	  make -k clean
+	@cd $l/other;	  make -k clean
+	@cd $l/stdio;	  make -k clean
+	@cd $l/float;	  make -k clean
+	@cd $l/string;    make -k clean
+	@cd $l/ibm;	  make -k clean
+	@cd $l/end;	  make -k clean
+	@cd $l/rts;	  make -k clean
+	@cd $l/math;	  make -k clean
+	@cd $l/em;	  make -k clean
+	@cd $l/syscall;	  make -k clean

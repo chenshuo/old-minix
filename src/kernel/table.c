@@ -30,22 +30,43 @@
 #include "proc.h"
 #include "tty.h"
 
+FORWARD _PROTOTYPE( void ___dummy, (void) );
+
 /* The startup routine of each task is given below, from -NR_TASKS upwards.
  * The order of the names here MUST agree with the numerical values assigned to
  * the tasks in <minix/com.h>.
  */
 #define SMALL_STACK	(128 * sizeof (char *))
 
-#if (MACHINE == ATARI)
-#define	TTY_STACK	(2 * SMALL_STACK)
-#define IDLE_STACK	SMALL_STACK
+#define	TTY_STACK	(3 * SMALL_STACK)
+#define SYN_ALRM_STACK	SMALL_STACK
+
+#if NETWORKING_ENABLED
+#define EHW_STACK	SMALL_STACK
 #else
-#define	TTY_STACK	SMALL_STACK
-#define	IDLE_STACK	(3 * 2 + 3 * 2 + 4 * 2)	/* 3 intr, 3 temps, 4 db */
+#define EHW_STACK	0
 #endif
+
+#if (CHIP == INTEL)
+#define	IDLE_STACK	(3 * 2 + 3 * 2 + 4 * 2)	/* 3 intr, 3 temps, 4 db */
+#else
+#define IDLE_STACK	SMALL_STACK
+#endif
+
 #define	PRINTER_STACK	SMALL_STACK
+
+#if (CHIP == INTEL)
 #define	WINCH_STACK	SMALL_STACK
-#define	FLOP_STACK	(3*SMALL_STACK/2)
+#else
+#define	WINCH_STACK	(2 * SMALL_STACK)
+#endif
+#if (MACHINE == ATARI)
+#define	SCSI_STACK	(2 * SMALL_STACK)
+#else
+#define	SCSI_STACK	0
+#endif
+
+#define	FLOP_STACK	(3 * SMALL_STACK)
 #define	MEM_STACK	SMALL_STACK
 #define	CLOCK_STACK	SMALL_STACK
 #define	SYS_STACK	SMALL_STACK
@@ -53,38 +74,29 @@
 
 
 
-#if AM_KERNEL
-#	define	AMINT_STACK		(SMALL_STACK*4)
-#	define	AMOEBA_STACK		1532
-#	define	AMOEBA_STACK_SPACE	(AM_NTASKS*AMOEBA_STACK + AMINT_STACK)
-#else
-#	define	AMOEBA_STACK_SPACE	0
-#endif
-
-#define	TOT_STACK_SPACE		(TTY_STACK + AMOEBA_STACK_SPACE + \
-				 IDLE_STACK + HARDWARE_STACK + \
-				 PRINTER_STACK + WINCH_STACK + FLOP_STACK + \
-				 MEM_STACK + CLOCK_STACK + SYS_STACK)
+#define	TOT_STACK_SPACE		(TTY_STACK + EHW_STACK + \
+	SYN_ALRM_STACK + IDLE_STACK + HARDWARE_STACK + PRINTER_STACK + \
+	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK + \
+	SCSI_STACK)
 
 /*
-** some notes about the following table:
-**  1) The tty_task should always be first so that other tasks can use printf
-**     if their initialisation has problems.
-**  2) If you add a new kernel task, add it after the amoeba_tasks and before
-**     the printer task.
-**  3) The task name is used for process status (F1 key) and must be six (6)
-**     characters in length.  Pad it with blanks if it is too short.
-*/
+ * Some notes about the following table:
+ *  1) The tty_task should always be first so that other tasks can use printf
+ *     if their initialisation has problems.
+ *  2) If you add a new kernel task, add it before the printer task.
+ *  3) The task name is used for process status (F1 key) and must be six (6)
+ *     characters in length.  Pad it with blanks if it is too short.
+ */
 
 PUBLIC struct tasktab tasktab[] = {
 	tty_task,		TTY_STACK,	"TTY   ",
-#if AM_KERNEL
-	amint_task,		AMINT_STACK,	"AMINT ",
-	amoeba_task,		AMOEBA_STACK,	"AMTASK",
-	amoeba_task,		AMOEBA_STACK,	"AMTASK",
-	amoeba_task,		AMOEBA_STACK,	"AMTASK",
-	amoeba_task,		AMOEBA_STACK,	"AMTASK",
+#if (MACHINE == ATARI)
+	scsi_task,		SCSI_STACK,	"SCSI  ",
 #endif
+#if NETWORKING_ENABLED
+	ehw_task,		EHW_STACK,	"DL_ETH",
+#endif
+	syn_alrm_task,		SYN_ALRM_STACK, "SYN_AL",
 	idle_task,		IDLE_STACK,	"IDLE  ",
 	printer_task,		PRINTER_STACK,	"PRINTR",
 	winchester_task,	WINCH_STACK,	"WINCHE",
@@ -95,20 +107,23 @@ PUBLIC struct tasktab tasktab[] = {
 	0,			HARDWARE_STACK,	"HARDWA",
 	0,			0,		"MM    ",
 	0,			0,		"FS    ",
+#if NETWORKING_ENABLED
+	0,			0,		"NW_TSK",
+#endif
 	0,			0,		"INIT  "
 };
 
 PUBLIC char t_stack[TOT_STACK_SPACE + ALIGNMENT - 1];	/* to be aligned */
 
 /*
-** The number of kernel tasks must be the same as NR_TASKS.
-** If NR_TASKS is not correct then you will get the compile error:
-**   multiple case entry for value 0
-** The function ___dummy is never called.
-*/
+ * The number of kernel tasks must be the same as NR_TASKS.
+ * If NR_TASKS is not correct then you will get the compile error:
+ *   multiple case entry for value 0
+ * The function ___dummy is never called.
+ */
 
 #define NKT (sizeof tasktab / sizeof (struct tasktab) - (INIT_PROC_NR + 1))
-PUBLIC void ___dummy()
+PRIVATE void ___dummy()
 {
 	switch(0)
 	{

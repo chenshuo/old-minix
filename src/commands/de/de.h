@@ -61,7 +61,8 @@
 /*	fs/link.c and fs/open.c were changed for 'X'.		*/
 /*								*/
 /****************************************************************/
-
+#undef printf
+#include <stdio.h>
 
 /*  General constants  */
 
@@ -88,6 +89,10 @@
 #define   SPLIT	   0x0B20
 #endif
 
+#if (CHIP == SPARC)
+#define   A_OUT    0x0301
+#define   SPLIT    0x0B20
+#endif
 
 /*  Each buffer is 1k.  In WORD mode 16 words (32 bytes) can be	*/
 /*  displayed at once. In BLOCK mode 1K bytes can be displayed.	*/
@@ -147,6 +152,13 @@
 #define   BOX_BOT	'_'		/*  Filled lower half   */
 #endif
 
+#if (CHIP == SPARC)
+/*  Please change these.  */
+#define   BOX_CLR	' '		/*  Empty box		*/
+#define   BOX_ALL	'='		/*  Filled box		*/
+#define   BOX_TOP	'-'		/*  Filled upper half	*/
+#define   BOX_BOT	'_'		/*  Filled lower half   */
+#endif
 
 /*  Move positions for the output display.  */
 
@@ -158,7 +170,7 @@
 #define   INFO_LINE	 BLOCK_LINE
 #define   PROMPT_COLUMN	 0
 #define   PROMPT_LINE	 23
-#define   WARNING_COLUMN 10
+#define   WARNING_COLUMN 5
 #define   WARNING_LINE   10
 
 
@@ -177,31 +189,45 @@
 #define   BLOCK    2
 #define   MAP	   3
 
+typedef  unsigned int word_t;		/*  For most user i/o	*/
 
 typedef  struct  de_state		/*  State of disk ed.	*/
   {
   /*  Information from super block  */
+  /*  The types here are mostly promoted types for simplicity	*/
+  /*  and efficiency.						*/
 
   unsigned inodes;			/*  Number of i-nodes	*/
-  unsigned zones;			/*  Total # of blocks	*/
+  zone_t zones;				/*  Total # of blocks	*/
   unsigned inode_maps;			/*  I-node map blocks	*/
   unsigned zone_maps;			/*  Zone map blocks	*/
   unsigned inode_blocks;		/*  I-node blocks	*/
   unsigned first_data;			/*  Total non-data blks	*/
+  int magic;				/*  Magic number	*/
 
-  unsigned inodes_in_map;		/*  Bits in i-node map	*/
-  unsigned zones_in_map;		/*  Bits in zone map	*/
+  /* Numbers derived from the magic number */  
+  
+  unsigned char is_fs;			/*  Nonzero for good fs	*/
+  unsigned char v1;			/*  Nonzero for V1 fs	*/
+  unsigned inode_size;			/*  Size of disk inode	*/
+  unsigned nr_indirects;		/*  # indirect blocks	*/
+  unsigned zone_num_size;		/*  Size of disk z num	*/
+
+  /* Other derived numbers */  
+  
+  bit_t inodes_in_map;			/*  Bits in i-node map	*/
+  bit_t zones_in_map;			/*  Bits in zone map	*/
 
   /*  Information from map blocks  */
 
-  char inode_map[ I_MAP_SLOTS * K ];
-  char zone_map[ ZMAP_SLOTS * K ];
+  bitchunk_t inode_map[ I_MAP_SLOTS * K / sizeof (bitchunk_t) ];
+  bitchunk_t zone_map[ Z_MAP_SLOTS * K / sizeof (bitchunk_t) ];
 
   /*  Information for current block  */
 
   off_t address;			/*  Current address	*/
   off_t last_addr;			/*  For erasing ptrs	*/
-  unsigned block;			/*  Current block (1K)	*/
+  zone_t block;				/*  Current block (1K)	*/
   unsigned offset;			/*  Offset within block	*/
 
   char buffer[ K ];
@@ -222,7 +248,7 @@ typedef  struct  de_state		/*  State of disk ed.	*/
   char *device_name;			/*  From command line	*/
   int   device_d;
   int   device_mode;			/*  O_RDONLY or O_RDWR	*/
-  unsigned device_size;			/*  Number of blocks	*/
+  zone_t device_size;			/*  Number of blocks	*/
 
   char  file_name[ MAX_STRING + 1 ];	/*  For 'w' and 'W'	*/
   FILE *file_f;
@@ -234,90 +260,88 @@ typedef  struct  de_state		/*  State of disk ed.	*/
 
 /*  Forward references for external routines  */
 
-/*  libc.a  */
-
-struct passwd *getpwuid();
-struct group *getgrgid();
-char *ctime();
-char *getenv();
-char *tgetstr();
-char *tgoto();
-char *ttyname();
-FILE *fopen();
-off_t lseek();
-
-
 /*  de.c  */
 
-void  main();
-int   Process();
+_PROTOTYPE(void main , (int argc , char *argv []));
+_PROTOTYPE(int Process , (de_state *s , int c ));
 
-void  Push();
-int   Get_Filename();
-int   Get_Count();
-int   Str_Int();
-int   In_Use();
-ino_t Find_Inode();
-void  Exec_Shell();
-void  Sigint();
+#if __STDC__
+void  Error( const char *text, ... );
+#else
 void  Error();
+#endif
+
+_PROTOTYPE(int In_Use , (bit_t bit , bitchunk_t *map ));
+_PROTOTYPE(ino_t Find_Inode , (de_state *s , char *filename ));
 
 
 /*  de_stdin.c  */
 
-void  Save_Term();
-void  Set_Term();
-void  Reset_Term();
-int   Get_Char();
-char *Get_Line();
-int   Arrow_Esc();
-
+_PROTOTYPE(void Save_Term , (void));
+_PROTOTYPE(void Set_Term , (void));
+_PROTOTYPE(void Reset_Term , (void));
+_PROTOTYPE(int Get_Char , (void));
+_PROTOTYPE(char *Get_Line , (void));
+_PROTOTYPE(int Arrow_Esc , (int c ));
 
 /*  de_stdout.c  */
 
-int   Init_Termcap();
-void  Goto();
-void  Draw_Help_Screen();
-void  Wait_For_Key();
-void  Draw_Prompt();
-void  Erase_Prompt();
+_PROTOTYPE(int Init_Termcap , (void));
+_PROTOTYPE(void Draw_Help_Screen , (de_state *s ));
+_PROTOTYPE(void Wait_For_Key , (void));
+_PROTOTYPE(void Draw_Prompt , (char *string ));
+_PROTOTYPE(void Erase_Prompt , (void));
 
-void  Draw_Screen();
-void  Draw_Strings();
-void  Block_Type();
-void  Draw_Words();
-void  Draw_Info();
-void  Draw_Block();
-void  Draw_Map();
+_PROTOTYPE(void Draw_Screen , (de_state *s ));
+_PROTOTYPE(void Draw_Strings , (de_state *s ));
+_PROTOTYPE(void Draw_Pointers , (de_state *s ));
+_PROTOTYPE(void Print_Ascii , (int c ));
 
-void  Draw_Pointers();
-void  Draw_Offset();
-void  Word_Pointers();
-void  Block_Pointers();
-void  Map_Pointers();
+_PROTOTYPE(void Goto , (int column , int line ));
+_PROTOTYPE(void Block_Type , (de_state *s ));
+_PROTOTYPE(void Draw_Words , (de_state *s ));
+_PROTOTYPE(void Draw_Info , (de_state *s ));
+_PROTOTYPE(void Draw_Block , (char *block ));
+_PROTOTYPE(void Draw_Map , (char *block , int max_bits ));
+_PROTOTYPE(void Draw_Offset , (de_state *s ));
+_PROTOTYPE(void Word_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Block_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Map_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Print_Number , (word_t number , int output_base ));
+_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode , int zindex , int zrow ));
 
-void  Print_Number();
-void  Print_Ascii();
+#if __STDC__
+void  Warning( const char *text, ... );
+#else
 void  Warning();
+#endif
 
 
 /*  de_diskio.c  */
 
-void  Read_Disk();
-void  Read_Block();
-void  Read_Super_Block();
-void  Read_Bit_Maps();
-off_t Search();
-void  Write_Word();
+_PROTOTYPE(void Read_Disk , (de_state *s , off_t block_addr , char *buffer ));
+_PROTOTYPE(void Read_Block , (de_state *s , char *buffer ));
+_PROTOTYPE(void Read_Super_Block , (de_state *s ));
+_PROTOTYPE(void Read_Bit_Maps , (de_state *s ));
+_PROTOTYPE(off_t Search , (de_state *s , char *string ));
+_PROTOTYPE(void Write_Word , (de_state *s , word_t word ));
 
 
 /*  de_recover.c  */
 
-int   Path_Dir_File();
-char *File_Device();
-ino_t Find_Deleted_Entry();
-off_t Recover_Blocks();
+_PROTOTYPE(int Path_Dir_File , (char *path_name , char **dir_name , char **file_name ));
+_PROTOTYPE(char *File_Device , (char *file_name ));
+_PROTOTYPE(ino_t Find_Deleted_Entry , (de_state *s , char *path_name ));
+_PROTOTYPE(off_t Recover_Blocks , (de_state *s ));
 
 
 #undef    printf			/*  Because fs/const.h	*/
 					/*  defines it.		*/
+
+
+/*  Static functions are all pre-declared FORWARD but none are	*/
+/*  declared static yet - this can wait until all functions are	*/
+/*  declared with prototypes.					*/
+
+#undef FORWARD
+#define FORWARD /* static */

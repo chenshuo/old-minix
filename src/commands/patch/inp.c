@@ -45,7 +45,9 @@ re_input()
 	i_ptr = Null(char **);
     }
     else {
+#ifndef SMALL
 	using_plan_a = TRUE;		/* maybe the next one is smaller */
+#endif
 	Close(tifd);
 	tifd = -1;
 	free(tibuf[0]);
@@ -62,7 +64,9 @@ void
 scan_input(filename)
 char *filename;
 {
+#ifndef SMALL
     if (!plan_a(filename))
+#endif
 	plan_b(filename);
     if (verbose) {
 	say3("Patching file %s using Plan %s...\n", filename,
@@ -70,6 +74,7 @@ char *filename;
     }
 }
 
+#ifndef SMALL
 /* Try keeping everything in memory. */
 
 bool
@@ -193,6 +198,7 @@ char *filename;
     }
     return TRUE;			/* plan a will work */
 }
+#endif
 
 /* Keep (virtually) nothing in memory. */
 

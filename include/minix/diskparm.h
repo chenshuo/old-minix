@@ -2,6 +2,8 @@
  * used mainly for formatting.
  */
 
+#ifndef _DISKPARM_H
+#define _DISKPARM_H
 struct disk_parameter_s {
   char spec1;
   char spec2;
@@ -15,3 +17,4 @@ struct disk_parameter_s {
   char head_settle_msec;
   char motor_start_eigth_sec;
 };
+#endif /* _DISKPARM_H */

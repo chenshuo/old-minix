@@ -6,15 +6,21 @@
  */
 
 #include "fs.h"
+#include <fcntl.h>
+#include <minix/com.h>
 #include <sys/stat.h>
 #include "buf.h"
+#include "dev.h"
+#include "fcntl.h"
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
 
-FORWARD dev_t name_to_dev();
+PRIVATE message dev_mess;
+
+FORWARD _PROTOTYPE( dev_t name_to_dev, (char *path)			);
 
 /*===========================================================================*
  *				do_mount				     *
@@ -27,7 +33,8 @@ PUBLIC int do_mount()
   struct super_block *xp, *sp;
   dev_t dev;
   mode_t bits;
-  int r, found, loaded;
+  int rdir, mdir;		/* TRUE iff {root|mount} file is dir */
+  int r, found, loaded, major, task;
 
   /* Only the super-user may do MOUNT. */
   if (!super_user) return(EPERM);
@@ -46,25 +53,44 @@ PUBLIC int do_mount()
   if (found) return(EBUSY);	/* already mounted */
   if (sp == NIL_SUPER) return(ENFILE);	/* no super block available */
 
+  dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
+  dev_mess.DEVICE = dev;		/* Touch the device. */  
+  if (rd_only) dev_mess.TTY_FLAGS = O_RDONLY;
+  else  dev_mess.TTY_FLAGS = O_RDWR;
+
+  major = (dev >> MAJOR) & BYTE;
+  if (major <= 0 || major >= max_major) return(ENODEV);
+  task = dmap[major].dmap_task;		/* device task nr */
+  (*dmap[major].dmap_open)(task, &dev_mess);
+  if (dev_mess.REP_STATUS != OK) return(EINVAL);
+
   /* Fill in the super block. */
-  sp->s_dev = dev;		/* rw_super() needs to know which dev */
-  rw_super(sp, READING);
-  sp->s_dev = dev;		/* however, rw_super() overwrites s_dev */
+  sp->s_dev = dev;		/* read_super() needs to know which dev */
+  read_super(sp, (block_t) 0);
 
   /* Make a few basic checks to see if super block looks reasonable. */
-  if (sp->s_magic != SUPER_MAGIC || sp->s_ninodes < 1 || sp->s_nzones < 1 || 
-			sp->s_imap_blocks < 1 || sp->s_zmap_blocks < 1) {
+  if (sp->s_version == 0 || sp->s_imap_blocks < 1 || sp->s_zmap_blocks < 1 ||
+				sp->s_ninodes < 1 || sp->s_zones < 1 ) {
 	sp->s_dev = NO_DEV;
+	dev_mess.m_type = DEV_CLOSE;
+	dev_mess.DEVICE = dev;
+	(*dmap[major].dmap_close)(task, &dev_mess);
 	return(EINVAL);
   }
 
   /* Now get the inode of the file to be mounted on. */
   if (fetch_name(name2, name2_length, M1) != OK) {
 	sp->s_dev = NO_DEV;
+	dev_mess.m_type = DEV_CLOSE;
+	dev_mess.DEVICE = dev;
+	(*dmap[major].dmap_close)(task, &dev_mess);
 	return(err_code);
   }
   if ( (rip = eat_path(user_path)) == NIL_INODE) {
 	sp->s_dev = NO_DEV;
+	dev_mess.m_type = DEV_CLOSE;
+	dev_mess.DEVICE = dev;
+	(*dmap[major].dmap_close)(task, &dev_mess);
 	return(err_code);
   }
 
@@ -87,12 +113,15 @@ PUBLIC int do_mount()
   loaded = FALSE;
   if (r == OK) {
 	if (load_bit_maps(dev) != OK) r = ENFILE;	/* load bit maps */
-	loaded = TRUE;
+	if (r == OK) loaded = TRUE;
   }
 
   /* File types of 'rip' and 'root_ip' may not conflict. */
-  if ( (r == OK) && ((rip->i_mode & I_TYPE) == I_DIRECTORY) &&
-	((root_ip->i_mode & I_TYPE) != I_DIRECTORY)) r = ENOTDIR;
+  if (r == OK) {
+	mdir = ((rip->i_mode & I_TYPE) == I_DIRECTORY);  /* TRUE iff dir */
+	rdir = ((root_ip->i_mode & I_TYPE) == I_DIRECTORY);
+	if (!mdir && rdir) r = EISDIR;
+  }
 
   /* If error, return the super block and both inodes; release the maps. */
   if (r != OK) {
@@ -101,7 +130,11 @@ PUBLIC int do_mount()
 	if (loaded) (void) unload_bit_maps(dev);
 	(void) do_sync();
 	invalidate(dev);
+
 	sp->s_dev = NO_DEV;
+	dev_mess.m_type = DEV_CLOSE;
+	dev_mess.DEVICE = dev;
+	(*dmap[major].dmap_close)(task, &dev_mess);
 	return(r);
   }
 
@@ -125,6 +158,7 @@ PUBLIC int do_umount()
   struct super_block *sp, *sp1;
   dev_t dev;
   int count;
+  int major, task;
 
   /* Only the super-user may do UMOUNT. */
   if (!super_user) return(EPERM);
@@ -156,6 +190,12 @@ PUBLIC int do_umount()
   (void) do_sync();		/* force any cached blocks out of memory */
   invalidate(dev);		/* invalidate cache entries for this dev */
   if (sp == NIL_SUPER) return(EINVAL);
+
+  major = (dev >> MAJOR) & BYTE;	/* major device nr */
+  task = dmap[major].dmap_task;	/* device task nr */
+  dev_mess.m_type = DEV_CLOSE;		/* distinguish from open */
+  dev_mess.DEVICE = dev;
+  (*dmap[major].dmap_close)(task, &dev_mess);
 
   /* Finish off the unmount. */
   sp->s_imount->i_mount = NO_MOUNT;	/* inode returns to normal */

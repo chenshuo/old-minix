@@ -1,10 +1,36 @@
-#include <lib.h>
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: exit.c,v 1.3 90/01/22 13:00:04 eck Exp $ */
 
-PUBLIC void (*__cleanup) ();
+#include	<stdio.h>
+#include	<stdlib.h>
 
-PUBLIC void exit(status)
-int status;
+#define	NEXITS	32
+
+void (*__functab[NEXITS])(void);
+int __funccnt = 0;
+
+extern void _exit(int);
+
+/* only flush output buffers when necessary */
+int (*_clean)(void) = NULL;
+
+static void
+_calls(void)
 {
-  if (__cleanup) (*__cleanup) ();
-  callm1(MM, EXIT, status, 0, 0, NIL_PTR, NIL_PTR, NIL_PTR);
+	register int i = __funccnt;
+	
+	/* "Called in reversed order of their registration" */
+	while (--i >= 0)
+		(*__functab[i])();
+}
+
+void
+exit(int status)
+{
+	_calls();
+	if (_clean) _clean();
+	_exit(status) ;
 }

@@ -1,0 +1,215 @@
+Nroff is a primitive version of the UNIX nroff program.
+It supports some nroff commands, but not all.  The following things need to be
+done to it:
+
+  - Add more commands (see below for supported/unsupported commands)
+  - Add the 4-character nroff escape sequences (see below).  Device dependent.
+  - Add more of the \ characters, especially the useful ones like:
+    \\, \|, \0, \^, \&, \", \$n, \%, \*, \c, \f, \n, \o, \{, \}
+  - Add the more useful number registers
+  - Write a proper -ms package
+  - Change command line options to be nroff-like
+  - Write drivers for -Tdj (deskjet), -Tepson, -Tlp.  The default way to
+    handle bold should be overprinting, and italics overstriking with _ .
+  - Remove lots of nonstandard stuff where standard mechanisms work better
+  - Support the following command flags.  Delete the current nonstandard ones:
+    -o, -n, -m, -r, -T, 
+
+Note: just adding more commands may cause command() to get so big the compiler
+can no longer handle it.  Probably it should be split up into a separate
+routine for each command.  Other routines also need to be cleaned up.
+
+
+The following commands are supported
+------------------------------------
+.ad [mode]	Adjust
+.af R {1,a,A,i,I,0...1}		Assign format to number reg
+.bo [N]		Bold face
+.bp [+/-N]	Begin page
+.br		Break (page)
+.bs [N]		Backspace in output
+.c2 [c=']	Nobreak char
+.cc [c=.]	Command character
+.ce [N]		Center
+.cu [N]		Continuous underline
+.de name [end]	Define macro
+.ds name string	Define string
+.ec [c=\]	Escape char
+.ef "a" "b" "c"	Even footer
+.eh "a" "b" "c"	Even header
+.en or ..	End macro def (should not get one here...)
+.eo		Escape off
+.fi		Fill
+.fl		Flush NOW
+.fo "a" "b" "c"	Footer
+.ft {R,I,B,S,P}	Font change
+.ig name	Ignore input lines
+.in [+/-N]	Indenting
+.ju		Justify
+.ll [+/-N] .rm [+/-N]		Line length
+.ls [+/-N=+1]	Line spacing
+.lt N		Title length
+.m1 N		Topmost margin
+.m2 N		Second top margin
+.m3 N		1st bottom margin
+.m4 N		Bottom-most margin
+.na		No adjust
+.ne N		Need n lines
+.nf		No fill
+.nj		No justify
+.nr R +/-N M	Set number reg
+.of "a" "b" "c"	Odd footer
+.oh "a" "b" "c"	Odd header
+.pc [c=NULL]	Page number char
+.pl N		Page length
+.pm [t]		Print macro names and sizes
+.pn N		Page number
+.po N		Page offset
+.rr R		Unset number reg
+.so name	Source file
+.sp [N=1]	Space
+.ti [+/-N]	Temporary indent
+.tr ab...	Translate
+.ul [N]		Underline
+
+
+The following commands are not supported, but should be, if possible:
+--------------------------------------------------------
+.bd	embolden
+.ch	change trap
+.el	else
+.em	end macro
+.fp	font position
+.hy	hyphenation control
+.ie	if-else
+.if	if
+.hc	hyphenation char
+.ns	no space mode
+.ps	point size
+.rm	remove definition
+.rn	rename
+.rs	restore spacing
+.ss	set space size
+.ta	tab
+.tl	titles
+.tm	comment
+.vs	vertical spacing
+.wh	trap where
+
+
+The  following lines show how the 4-character nroff escape sequences can be 
+built up using overstriking.  Each line has 3 entries: escape name, length of 
+sequence, codes to output, where \b is backspace.  These are device dependent,
+and should come from the files invoked by the -T option.  The choices below are
+for a printer with backspace and overstrike.
+-------------------------------------------------------------------------------
+\(!= 1 /\b=
+\(& 0
+\(** 1 *
+\(*C 1 _\b-\b~
+\(*D 2 _\b/_\b\\
+\(*F 1 |\bO
+\(*G 2 ~\b|~
+\(*H 1 -\bO
+\(*L 2 /\\
+\(*P 2 ~\b|~\b|
+\(*Q 1 |\bU
+\(*S 1 ~\b_\b>
+\(*U 1 Y
+\(*W 2 _\b(_\b)
+\(*a 1 <\ba
+\(*b 1 ,\bB
+\(*c 1 ,\b3
+\(*d 1 S\bo
+\(*e 1 -\bc
+\(*f 1 /\bo
+\(*g 1 ,\by
+\(*h 1 -\b0
+\(*i 1 ,\bi
+\(*k 1 <\bK
+\(*l 1 \\\b>
+\(*m 1 ,\bu
+\(*n 1 ,\bv
+\(*o 1 o
+\(*p 1 -\bn
+\(*q 1 |\bu
+\(*r 1 p
+\(*s 1 -\bo
+\(*t 1 ~\bt
+\(*u 1 u
+\(*w 1 u\bw
+\(*x 1 /\b\\
+\(*y 1 ,\bn
+\(*z 1 ,\bL
+\(+- 1 _\b+
+\(-> 2 ->
+\(0 1 " 
+\(12 3 1/2
+\(14 3 1/4
+\(34 3 3/4
+\(<- 2 <-
+\(<= 1 _\b<
+\(== 1 _\b=
+\(>= 1 _\b>
+\(^ 0
+\(aa 1 '
+\(ap 1 ~
+\(br 1 |
+\(bs 4 (:-)
+\(bu 1 +\bo
+\(bv 1 |
+\(ca 3 (^)
+\(ci 1 O
+\(co 3 (c)
+\(ct 1 /\bc
+\(cu 1 U
+\(da 1 |\bv
+\(dd 1 I\b|
+\(de 1 '\b`
+\(dg 1 -\b!
+\(di 1 -\b:
+\(em 2 --
+\(eq 1 =
+\(es 1 /\bO
+\(fm 1 '
+\(ga 1 `
+\(gr 1 ~\bV
+\(hy 1 -
+\(ib 2 (~\b_\b=
+\(if 2 oo
+\(ip 2 ~\b_\b=)
+\(is 1 '\b,\bI
+\(lb 1 _\b(
+\(lc 1 ~\b[
+\(lf 1 _\b[
+\(lh 1 =\b<
+\(lk 1 -\b(
+\(lt 1 ~\b(
+\(mi 1 -
+\(mo 1 -\bC
+\(mu 1 x
+\(no 1 -
+\(or 1 |
+\(pd 1 3\bo
+\(pl 1 +
+\(pt 2 oc
+\(rb 1 _\b)
+\(rc 1 ~\b]
+\(rf 1 _\b]
+\(rg 3 (R)
+\(rh 1 =\b>
+\(rk 1 -\b)
+\(rn 1 ~
+\(rt 1 ~\b)
+\(ru 1 _
+\(sb 2 (_\b~
+\(sc 1 j\bf
+\(sl 1 /
+\(sp 2 _\b~)
+\(sq 2 []
+\(sr 2 \\/
+\(ts 1 s
+\(ua 1 |\b^
+\(ul 1 _
+\(| 0
+\(~= 1 ~\b=

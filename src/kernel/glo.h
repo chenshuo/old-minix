@@ -21,10 +21,16 @@ EXTERN struct proc *proc_ptr;	/* pointer to currently running process */
 /* Signals. */
 EXTERN int sig_procs;		/* number of procs with p_pending != 0 */
 
+/* Memory sizes. */
+EXTERN phys_clicks mem_base[NR_MEMS];	/* bases of chunks of memory */
+EXTERN phys_clicks mem_size[NR_MEMS];	/* sizes of chunks of memory */
+EXTERN unsigned char mem_type[NR_MEMS];	/* types of chunks of memory */
+
 /* Miscellaneous. */
+EXTERN int rebooting;		/* nonzero while rebooting */
 extern u16_t sizes[8];		/* table filled in by build */
-extern struct tasktab tasktab[];	/* see table.c */
-extern char t_stack[];		/* see table.c */
+extern struct tasktab tasktab[];/* initialized in table.c, so extern here */
+extern char t_stack[];		/* initialized in table.c, so extern here */
 
 #if (CHIP == INTEL)
 
@@ -32,39 +38,43 @@ extern char t_stack[];		/* see table.c */
 EXTERN int pc_at;		/* PC-AT compatible hardware interface */
 EXTERN int ps;			/* PS/2 */
 EXTERN int ps_mca;		/* PS/2 with Micro Channel */
-EXTERN int port_65;		/* saved contents of Planar Control Register */
-EXTERN unsigned processor;	/* 86, 186, 286, 386, ... */
+EXTERN unsigned int processor;	/* 86, 186, 286, 386, ... */
 EXTERN int protected_mode;	/* nonzero if running in Intel protected mode*/
-extern int using_bios;		/* nonzero to force real mode (for bios_wini)*/
+
+/* Debugger control. */
+EXTERN struct farptr_s break_vector;	/* debugger breakpoint hook */
+EXTERN int db_enabled;		/* nonzero if external debugger is enabled */
+EXTERN int db_exists;		/* nonzero if external debugger exists */
+EXTERN struct farptr_s sstep_vector;	/* debugger single-step hook */
 
 /* Video cards and keyboard types. */
 EXTERN int color;		/* nonzero if console is color, 0 if mono */
-EXTERN int ega;			/* nonzero if console is EGA */
+EXTERN int ega;			/* nonzero if console is supports EGA */
+EXTERN int vga;			/* nonzero if console is supports VGA */
 EXTERN int scan_code;		/* scan code of key pressed to start minix */
 EXTERN int snow;		/* nonzero if screen needs snow removal */
 
 /* Memory sizes. */
 EXTERN unsigned ext_memsize;	/* initialized by assembler startup code */
 EXTERN unsigned low_memsize;
-EXTERN phys_clicks mem_base[NR_MEMS];	/* bases of chunks of memory */
-EXTERN phys_clicks mem_size[NR_MEMS];	/* sizes of chunks of memory */
-EXTERN unsigned char mem_type[NR_MEMS];	/* types of chunks of memory */
 
 /* Miscellaneous. */
 EXTERN u16_t Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
-EXTERN struct farptr_s break_vector;	/* debugger breakpoint hook */
-EXTERN int db_enabled;		/* nonzero if external debugger is enabled */
-EXTERN int db_exists;		/* nonzero if external debugger exists */
-extern struct segdesc_s gdt[];	/* global descriptor table for protected mode*/
-EXTERN struct farptr_s sstep_vector;	/* debugger single-step hook */
 EXTERN u16_t vec_table[VECTOR_BYTES / sizeof(u16_t)]; /* copy of BIOS vectors*/
+
+/* Variables that are initialized elsewhere are just extern here. */
+extern int using_bios;		/* nonzero to force real mode (for bios_wini)*/
+extern struct segdesc_s gdt[];	/* global descriptor table for protected mode*/
 
 #endif /* (CHIP == INTEL) */
 
 #if (CHIP == M68000)
-EXTERN int flush_flag;		/* tells clock when to flush the tty buf */
-extern unsigned char font8[];	/* 8 pixel wide font table */
-extern unsigned char font16[];	/* 16 pixel wide font table */
+/* Variables that are initialized elsewhere are just extern here. */
 extern int keypad;		/* Flag for keypad mode */
 extern int app_mode;		/* Flag for arrow key application mode */
+extern int STdebKey;		/* nonzero if ctl-alt-Fx detected */
+extern struct tty_struct *cur_cons; /* virtual cons currently displayed */
+extern unsigned char font8[];	/* 8 pixel wide font table (initialized) */
+extern unsigned char font12[];	/* 12 pixel wide font table (initialized) */
+extern unsigned char font16[];	/* 16 pixel wide font table (initialized) */
 #endif

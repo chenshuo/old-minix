@@ -2,21 +2,35 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains the functions that handle VI commands */
 
 
+#include "config.h"
+#include "ctype.h"
 #include "vi.h"
+#if MSDOS
+# include <process.h>
+# include <string.h>
+#endif
+#if TOS
+# include <osbind.h>
+# include <string.h>
+#endif
+#if OSK
+# include <stdio.h>
+#endif
 
 
 /* This function puts the editor in EX mode */
 MARK v_quit()
 {
+	move(LINES - 1, 0);
 	mode = MODE_EX;
 	return cursor;
 }
@@ -28,60 +42,69 @@ MARK v_redraw()
 	return cursor;
 }
 
-/* This function executes a single EX command, and waits for a user keystroke
+/* This function executes a string of EX commands, and waits for a user keystroke
  * before returning to the VI screen.  If that keystroke is another ':', then
  * another EX command is read and executed.
  */
+/*ARGSUSED*/
 MARK v_1ex(m, text)
 	MARK	m;	/* the current line */
 	char	*text;	/* the first command to execute */
 {
-	/* scroll up, so we don't overwrite the command */
-	addch('\n');
-	refresh();
-
 	/* run the command.  be careful about modes & output */
-	exwrote = FALSE;
-	mode = MODE_COLON;
+	exwrote = (mode == MODE_COLON);
 	doexcmd(text);
 	exrefresh();
-	if (mode == MODE_COLON)
-		mode = MODE_VI;
 
 	/* if mode is no longer MODE_VI, then we should quit right away! */
-	if (mode != MODE_VI)
+	if (mode != MODE_VI && mode != MODE_COLON)
 		return cursor;
 
 	/* The command did some output.  Wait for a keystoke. */
 	if (exwrote)
 	{
-		msg("[Hit any key to continue]");
+		mode = MODE_VI;	
+		msg("[Hit <RETURN> to continue]");
 		if (getkey(0) == ':')
-		{
-			ungetkey(':');
+		{	mode = MODE_COLON;
+			addch('\n');
 		}
+		else
+			redraw(MARK_UNSET, FALSE);
 	}
 
-	redraw(MARK_UNSET, FALSE);
 	return cursor;
 }
 
 /* This function undoes the last change */
+/*ARGSUSED*/
 MARK v_undo(m)
 	MARK	m;	/* (ignored) */
 {
-	undo();
-	redraw(MARK_UNSET, FALSE);
+	if (undo())
+	{
+		redraw(MARK_UNSET, FALSE);
+	}
 	return cursor;
 }
 
 /* This function deletes the character(s) that the cursor is on */
-MARK v_xchar(m, cnt)
+MARK v_xchar(m, cnt, cmd)
 	MARK	m;	/* where to start deletions */
 	long	cnt;	/* number of chars to delete */
+	int	cmd;	/* either 'x' or 'X' */
 {
 	DEFAULT(1);
 
+	/* for 'X', adjust so chars are deleted *BEFORE* cursor */
+	if (cmd == 'X')
+	{
+		if (markidx(m) < cnt)
+			return MARK_UNSET;
+		m -= cnt;
+	}
+
+	/* make sure we don't try to delete more thars than there are */
 	pfetch(markline(m));
 	if (markidx(m + cnt) > plen)
 	{
@@ -91,6 +114,8 @@ MARK v_xchar(m, cnt)
 	{
 		return MARK_UNSET;
 	}
+
+	/* do it */
 	ChangeText
 	{
 		cut(m, m + cnt);
@@ -99,36 +124,8 @@ MARK v_xchar(m, cnt)
 	return m;
 }
 
-/* This function deletes character to the left of the cursor */
-MARK v_Xchar(m, cnt)
-	MARK	m;	/* where deletions end */
-	long	cnt;	/* number of chars to delete */
-{
-	DEFAULT(1);
-
-	/* if we're at the first char of the line, error! */
-	if (markidx(m) == 0)
-	{
-		return MARK_UNSET;
-	}
-
-	/* make sure we don't try to delete more chars than there are */
-	if (cnt > markidx(m))
-	{
-		cnt = markidx(m);
-	}
-
-	/* delete 'em */
-	ChangeText
-	{
-		cut(m - cnt, m);
-		delete(m - cnt, m);
-	}
-
-	return m - cnt;
-}
-
 /* This function defines a mark */
+/*ARGSUSED*/
 MARK v_mark(m, count, key)
 	MARK	m;	/* where the mark will be */
 	long	count;	/* (ignored) */
@@ -146,30 +143,42 @@ MARK v_mark(m, count, key)
 }
 
 /* This function toggles upper & lower case letters */
-MARK v_ulcase(m)
+MARK v_ulcase(m, cnt)
 	MARK	m;	/* where to make the change */
+	long	cnt;	/* number of chars to flip */
 {
-	char	new[2];
+	REG char 	*pos;
+	REG int		j;
 
-	/* extract the char that's there now */
+	DEFAULT(1);
+
+	/* fetch the current version of the line */
 	pfetch(markline(m));
-	new[0] = ptext[markidx(m)];
-	new[1] = '\0';
 
-	/* change it if necessary */
-	if (new[0] >= 'a' && new[0] <= 'z' || new[0] >= 'A' && new[0] <= 'Z')
+	/* for each position in the line */
+	for (j = 0, pos = &ptext[markidx(m)]; j < cnt && *pos; j++, pos++)
 	{
-		new[0] ^= ('A' ^ 'a');
-		ChangeText
+		if (isupper(*pos))
 		{
-			change(m, m + 1, new);
+			tmpblk.c[j] = tolower(*pos);
+		}
+		else
+		{
+			tmpblk.c[j] = toupper(*pos);
 		}
 	}
-	if (new[0] && ptext[markidx(m) + 1])
+
+	/* if the new text is different from the old, then change it */
+	if (strncmp(tmpblk.c, &ptext[markidx(m)], j))
 	{
-		m++;
+		ChangeText
+		{
+			tmpblk.c[j] = '\0';
+			change(m, m + j, tmpblk.c);
+		}
 	}
-	return m;
+
+	return m + j;
 }
 
 
@@ -178,9 +187,8 @@ MARK v_replace(m, cnt, key)
 	long	cnt;	/* number of chars to replace */
 	int	key;	/* what to replace them with */
 {
-	register char	*text;
-	register int	i;
-	static int	samekey;
+	REG char	*text;
+	REG int		i;
 
 	DEFAULT(1);
 
@@ -188,20 +196,6 @@ MARK v_replace(m, cnt, key)
 	if (key == '\r')
 	{
 		key = '\n';
-	}
-	else if (key == ctrl('V'))
-	{
-		if (doingdot)
-			key = samekey;
-		else
-			key = samekey = getkey(0);
-		if (key == 0)
-			return MARK_UNSET;
-	}
-	else if (!doingdot && key == ctrl('['))
-	{
-		samekey = 0;
-		return MARK_UNSET;
 	}
 
 	/* make sure the resulting line isn't too long */
@@ -270,7 +264,7 @@ MARK v_overtype(m)
 	/* Normally, we input starting here, in replace mode */
 	ChangeText
 	{
-		end = input(m, m, WHEN_VIREP);
+		end = input(m, m, WHEN_VIREP, FALSE);
 	}
 
 	/* if we ended on the same line we started on, then this
@@ -290,6 +284,7 @@ MARK v_overtype(m)
 
 
 /* This function selects which cut buffer to use */
+/*ARGSUSED*/
 MARK v_selcut(m, cnt, key)
 	MARK	m;
 	long	cnt;
@@ -300,16 +295,34 @@ MARK v_selcut(m, cnt, key)
 }
 
 /* This function pastes text from a cut buffer */
+/*ARGSUSED*/
 MARK v_paste(m, cnt, cmd)
 	MARK	m;	/* where to paste the text */
 	long	cnt;	/* (ignored) */
 	int	cmd;	/* either 'p' or 'P' */
 {
+	MARK	dest;
+
 	ChangeText
 	{
-		m = paste(m, cmd == 'p', FALSE);
+		/* paste the text, and find out where it ends */
+		dest = paste(m, cmd == 'p', TRUE);
+
+		/* was that a line-mode paste? */
+		if (dest && markline(dest) != markline(m))
+		{
+			/* line-mode pastes leave the cursor at the front
+			 * of the first pasted line.
+			 */
+			dest = m;
+			if (cmd == 'p')
+			{
+				dest += BLKSIZE;
+			}
+			force_flags |= FRNT;
+		}
 	}
-	return m;
+	return dest;
 }
 
 /* This function yanks text into a cut buffer */
@@ -324,6 +337,13 @@ MARK v_yank(m, n)
 MARK v_delete(m, n)
 	MARK	m, n;	/* range of text to delete */
 {
+	/* illegal to try and delete nothing */
+	if (n <= m)
+	{
+		return MARK_UNSET;
+	}
+
+	/* Do it */
 	ChangeText
 	{
 		cut(m, n);
@@ -341,12 +361,14 @@ MARK v_insert(m, cnt, key)
 {
 	int	wasdot;
 	long	reps;
+	int	above;	/* boolean: new line going above old line? */
 
 	DEFAULT(1);
 
 	ChangeText
 	{
 		/* tweak the insertion point, based on command key */
+		above = FALSE;
 		switch (key)
 		{
 		  case 'i':
@@ -361,7 +383,7 @@ MARK v_insert(m, cnt, key)
 			break;
 
 		  case 'I':
-			m = movefront(m, 1L);
+			m = m_front(m, 1L);
 			break;
 
 		  case 'A':
@@ -372,6 +394,7 @@ MARK v_insert(m, cnt, key)
 		  case 'O':
 			m &= ~(BLKSIZE - 1);
 			add(m, "\n");
+			above = TRUE;
 			break;
 
 		  case 'o':
@@ -383,17 +406,24 @@ MARK v_insert(m, cnt, key)
 		/* insert the same text once or more */
 		for (reps = cnt, wasdot = doingdot; reps > 0; reps--, doingdot = TRUE)
 		{
-			m = input(m, m, WHEN_VIINP);
+			m = input(m, m, WHEN_VIINP, above) + 1;
 		}
-
-		/* compensate for inaccurate redraw clues from input() */
-		if (key == 'O' | key == 'o' && wasdot)
+		if (markidx(m) > 0)
 		{
-			redrawpost++;
+			m--;
 		}
 
-		doingdot = FALSE;
+		doingdot = wasdot;
 	}
+
+#ifndef CRUNCH
+# ifndef NO_EXTENSIONS
+	if (key == 'i' && *o_inputmode && mode == MODE_VI)
+	{
+		msg("Now in command mode!  To return to input mode, hit <i>");
+	}
+# endif
+#endif
 
 	return m;
 }
@@ -425,18 +455,7 @@ MARK v_change(m, n)
 	ChangeText
 	{
 		cut(m, n);
-		m = input(m, n, WHEN_VIINP);
-	}
-
-	/* compensate for inaccurate redraw clues from paste() */
-	if (doingdot)
-	{
-		redrawpre = markline(n);
-		if (lnmode)
-		{
-			redrawpre++;
-			redrawpost++;
-		}
+		m = input(m, n, WHEN_VIINP, FALSE);
 	}
 
 	return m;
@@ -460,7 +479,7 @@ MARK v_subst(m, cnt)
 	ChangeText
 	{
 		cut(m, m + cnt);
-		m = input(m, m + cnt, WHEN_VIINP);
+		m = input(m, m + cnt, WHEN_VIINP, FALSE);
 	}
 	return m;
 }
@@ -480,66 +499,63 @@ MARK v_join(m, cnt)
 
 	/* join the lines */
 	cmd_join(m, m + MARK_AT_LINE(cnt), CMD_JOIN, 0, "");
-	mustredraw = TRUE;
 
 	/* the cursor should be left at the joint */
 	return joint;
 }
 
-/* This calls the ex shifter command to shift some lines */
-static MARK shift_help(m, n, excmd)
+
+/* This calls the ex "<" command to shift some lines left */
+MARK v_lshift(m, n)
 	MARK	m, n;	/* range of lines to shift */
-	CMD	excmd;	/* which way do we shift? */
 {
-	/* make sure our endpoints aren't in reverse order */
-	if (m > n)
-	{
-		MARK tmp;
+	/* adjust for inclusive endmarks in ex */
+	n -= BLKSIZE;
 
-		tmp = n;
-		n = m;
-		m = tmp;
-	}
+	cmd_shift(m, n, CMD_SHIFTL, FALSE, (char *)0);
 
-	/* linemode? adjust for inclusive endmarks in ex */
-	if (markidx(m) == 0 && markidx(n) == 0)
-	{
-		n -= BLKSIZE;
-	}
-
-	cmd_shift(m, n, excmd, 0, "");
 	return m;
 }
 
-/* This calls the ex "<" command to shift some lines left */
-MARK v_shiftl(m, n)
+/* This calls the ex ">" command to shift some lines right */
+MARK v_rshift(m, n)
 	MARK	m, n;	/* range of lines to shift */
 {
-	return shift_help(m, n, CMD_SHIFTL);
+	/* adjust for inclusive endmarks in ex */
+	n -= BLKSIZE;
+
+	cmd_shift(m, n, CMD_SHIFTR, FALSE, (char *)0);
+
+	return m;
 }
 
-/* This calls the ex ">" command to shift some lines right */
-MARK v_shiftr(m, n)
+/* This filters some lines through a preset program, to reformat them */
+MARK v_reformat(m, n)
 	MARK	m, n;	/* range of lines to shift */
 {
-	return shift_help(m, n, CMD_SHIFTR);
+	/* adjust for inclusive endmarks in ex */
+	n -= BLKSIZE;
+
+	/* run the filter command */
+	filter(m, n, o_equalprg, TRUE);
+
+	redraw(MARK_UNSET, FALSE);
+	return m;
 }
+
 
 /* This runs some lines through a filter program */
 MARK v_filter(m, n)
 	MARK	m, n;	/* range of lines to shift */
 {
-	char	cmdln[100];	/* a shell command line */
+	char	cmdln[150];	/* a shell command line */
 
-	/* linemode? adjust for inclusive endmarks in ex */
-	if (markidx(m) == 0 && markidx(n) == 0)
-	{
-		n -= BLKSIZE;
-	}
+	/* adjust for inclusive endmarks in ex */
+	n -= BLKSIZE;
 
 	if (vgets('!', cmdln, sizeof(cmdln)) > 0)
 	{
-		filter(m, n, cmdln);
+		filter(m, n, cmdln, TRUE);
 	}
 
 	redraw(MARK_UNSET, FALSE);
@@ -555,52 +571,126 @@ MARK v_status()
 }
 
 
-/* This function does a tag search on a keyword */
-MARK v_tag(keyword)
-	char	*keyword;
+/* This function runs the ":&" command to repeat the previous :s// */
+MARK v_again(m, n)
+	MARK	m, n;
 {
-	cmd_tag(cursor, cursor, CMD_TAG, 0, keyword);
-	redraw(MARK_UNSET, FALSE);
+	cmd_substitute(m, n - BLKSIZE, CMD_SUBAGAIN, TRUE, "");
 	return cursor;
 }
 
-/* This function looks up a keyword by calling the helpprog program */
-MARK v_keyword(keyword)
-	char	*keyword;
+
+
+/* This function switches to the previous file, if possible */
+MARK v_switch()
 {
-	int	status;
+	if (!*prevorig)
+		msg("No previous file");
+	else
+	{	strcpy(tmpblk.c, prevorig);
+		cmd_edit(cursor, cursor, CMD_EDIT, 0, tmpblk.c);
+	}
+	return cursor;
+}
+
+/* This function does a tag search on a keyword */
+/*ARGSUSED*/
+MARK v_tag(keyword, m, cnt)
+	char	*keyword;
+	MARK	m;
+	long	cnt;
+{
+	/* move the cursor to the start of the tag name, where m is */
+	cursor = m;
+
+	/* perform the tag search */
+	cmd_tag(cursor, cursor, CMD_TAG, 0, keyword);
+
+	return cursor;
+}
+
+#ifndef NO_EXTENSIONS
+/* This function looks up a keyword by calling the helpprog program */
+/*ARGSUSED*/
+MARK v_keyword(keyword, m, cnt)
+	char	*keyword;
+	MARK	m;
+	long	cnt;
+{
+	int	waswarn;
+	char	cmdline[130];
 
 	move(LINES - 1, 0);
 	addstr("---------------------------------------------------------\n");
 	clrtoeol();
 	refresh();
+	sprintf(cmdline, "%s %s", o_keywordprg, keyword);
+	waswarn = *o_warn;
+	*o_warn = FALSE;
 	suspend_curses();
-
-	switch (fork())
+	if (system(cmdline))
 	{
-	  case -1:						/* error */
-		break;
-
-	  case 0:						/* child */
-		execl(o_keywordprg, o_keywordprg, keyword, (char *)0);
-		exit(2); /* if we get here, the exec failed */
-
-	  default:						/* parent */
-		wait(&status);
-		if (status > 0)
-		{
-			write(2, "<<< failed >>>\n", 15);
-		}
+		addstr("<<< failed >>>\n");
 	}
-
-	resume_curses(FALSE); /* "resume, but not quietly" */
+	resume_curses(FALSE);
+	mode = MODE_VI;
 	redraw(MARK_UNSET, FALSE);
-	return cursor;
+	*o_warn = waswarn;
+
+	return m;
 }
 
 
 
+MARK v_increment(keyword, m, cnt)
+	char	*keyword;
+	MARK	m;
+	long	cnt;
+{
+	static	sign;
+	char	newval[12];
+	long	atol();
+
+	DEFAULT(1);
+
+	/* get one more keystroke, unless doingdot */
+	if (!doingdot)
+	{
+		sign = getkey(0);
+	}
+
+	/* adjust the number, based on that second keystroke */
+	switch (sign)
+	{
+	  case '+':
+	  case '#':
+		cnt = atol(keyword) + cnt;
+		break;
+
+	  case '-':
+		cnt = atol(keyword) - cnt;
+		break;
+
+	  case '=':
+		break;
+
+	  default:
+		return MARK_UNSET;
+	}
+	sprintf(newval, "%ld", cnt);
+
+	ChangeText
+	{
+		change(m, m + strlen(keyword), newval);
+	}
+
+	return m;
+}
+#endif
+
+
 /* This function acts like the EX command "xit" */
+/*ARGSUSED*/
 MARK v_xit(m, cnt, key)
 	MARK	m;	/* ignored */
 	long	cnt;	/* ignored */
@@ -612,21 +702,14 @@ MARK v_xit(m, cnt, key)
 		return MARK_UNSET;
 	}
 
-	/* move the physical cursor to the end of the screen */
+	/* move the cursor to the bottom of the screen */
 	move(LINES - 1, 0);
 	clrtoeol();
-	refresh();
 
 	/* do the xit command */
 	cmd_xit(m, m, CMD_XIT, FALSE, "");
 
-	/* if we're really going to quit, then scroll the screen up 1 line */
-	if (mode == MODE_QUIT)
-	{
-		addch('\n');
-	}
-
-	/* regardless of whether we succeeded or failed, return the cursor */
+	/* return the cursor */
 	return m;
 }
 
@@ -635,14 +718,258 @@ MARK v_xit(m, cnt, key)
 MARK v_undoline(m)
 	MARK	m;	/* where we hope to undo the change */
 {
+	/* make sure we have the right line in the buffer */
 	if (markline(m) != U_line)
 	{
 		return MARK_UNSET;
 	}
 
+	/* fix it */
 	ChangeText
 	{
-		changeline(U_line, U_text);
+		strcat(U_text, "\n");
+		change(MARK_AT_LINE(U_line), MARK_AT_LINE(U_line + 1), U_text);
 	}
+
+	/* nothing in the buffer anymore */
+	U_line = -1L;
+
+	/* return, with the cursor at the front of the line */
 	return m & ~(BLKSIZE - 1);
 }
+
+
+#ifndef NO_ERRLIST
+MARK v_errlist(m)
+	MARK	m;
+{
+	cmd_errlist(m, m, CMD_ERRLIST, FALSE, "");
+	return cursor;
+}
+#endif
+
+
+#ifndef NO_AT
+/*ARGSUSED*/
+MARK v_at(m, cnt, key)
+	MARK	m;
+	long	cnt;
+	int	key;
+{
+	int	size;
+
+	size = cb2str(key, tmpblk.c, BLKSIZE);
+	if (size <= 0 || size == BLKSIZE)
+	{
+		return MARK_UNSET;
+	}
+
+	execmap(0, tmpblk.c, FALSE);
+	return cursor;
+}
+#endif
+
+
+#ifdef SIGTSTP
+MARK v_suspend()
+{
+	cmd_suspend(MARK_UNSET, MARK_UNSET, CMD_SUSPEND, FALSE, "");
+	return MARK_UNSET;
+}
+#endif
+
+
+#ifndef NO_VISIBLE
+/*ARGSUSED*/
+MARK v_start(m, cnt, cmd)
+	MARK	m;	/* starting point for a v or V command */
+	long	cnt;	/* ignored */
+	int	cmd;	/* either 'v' or 'V' */
+{
+	if (V_from)
+	{
+		V_from = MARK_UNSET;
+	}
+	else
+	{
+		V_from = m;
+		V_linemd = isupper(cmd);
+	}
+	return m;
+}
+#endif
+
+#ifndef NO_POPUP
+# define MENU_HEIGHT 11
+# define MENU_WIDTH  23
+MARK v_popup(m, n)
+	MARK		m, n;	/* the range of text to change */
+{
+	int		i;
+	int		y, x;	/* position where the window will pop up at */
+	int		key;	/* keystroke from the user */
+	int		sel;	/* index of the selected operation */
+	static int	dfltsel;/* default value of sel */
+	static char	*labels[11] =
+	{
+		"ESC cancel!         ",
+		" d  delete (cut)    ",
+		" y  yank (copy)     ",
+		" p  paste after     ",
+		" P  paste before    ",
+		" >  more indented   ",
+		" <  less indented   ",
+		" =  reformat        ",
+		" !  external filter ",
+		" ZZ save & exit     ",
+		" u  undo previous   "
+	};
+
+	/* try to position the menu near the cursor */
+	x = physcol - (MENU_WIDTH / 2);
+	if (x < 0)
+		x = 0;
+	else if (x + MENU_WIDTH + 2 > COLS)
+		x = COLS - MENU_WIDTH - 2;
+	if (markline(cursor) < topline || markline(cursor) > botline)
+		y = 0;
+	else if (markline(cursor) + 1L + MENU_HEIGHT > botline)
+		y = (int)(markline(cursor) - topline) - MENU_HEIGHT;
+	else
+		y = (int)(markline(cursor) - topline) + 1L;
+
+	/* draw the menu */
+	for (sel = 0; sel < MENU_HEIGHT; sel++)
+	{
+		move(y + sel, x);
+		do_POPUP();
+		if (sel == dfltsel)
+			qaddstr("-->");
+		else
+			qaddstr("   ");
+		qaddstr(labels[sel]);
+		do_SE();
+	}
+
+	/* get a selection */
+	move(y + dfltsel, x + 4);
+	for (sel = dfltsel; (key = getkey(WHEN_POPUP)) != '\\' && key != '\r'; )
+	{
+		/* erase the selection arrow */
+		move(y + sel, x);
+		do_POPUP();
+		qaddstr("   ");
+		qaddstr(labels[sel]);
+		do_SE();
+
+		/* process the user's keystroke */
+		if (key == 'j' && sel < MENU_HEIGHT - 1)
+		{
+			sel++;
+		}
+		else if (key == 'k' && sel > 0)
+		{
+			sel--;
+		}
+		else if (key == '\033')
+		{
+			sel = 0;
+			break;
+		}
+		else
+		{
+			for (i = 1; i < MENU_HEIGHT && labels[i][1] != key; i++)
+			{
+			}
+			if (i < MENU_HEIGHT)
+			{
+				sel = i;
+				break;
+			}
+		}
+
+		/* redraw the arrow, possibly in a new place */
+		move(y + sel, x);
+		do_POPUP();
+		qaddstr("-->");
+		qaddstr(labels[sel]);
+		do_SE();
+		move(y + sel, x + 4);
+	}
+
+	/* in most cases, the default selection is "paste after" */
+	dfltsel = 3;
+
+	/* perform the appropriate action */
+	switch (sel)
+	{
+	  case 0:
+		m = cursor;
+		dfltsel = 0;
+		break;
+
+	  case 1: /* delete (cut) */
+		m = v_delete(m, n);
+		break;
+
+	  case 2: /* yank (copy) */
+		m = v_yank(m, n);
+		break;
+
+	  case 3: /* paste after */
+		m = v_paste(n, 1L, 'P');
+		break;
+
+	  case 4: /* paste before */
+		m = v_paste(m, 1L, 'P');
+		dfltsel = 4;
+		break;
+
+	  case 5: /* more indented */
+		m = v_rshift(m, n);
+		dfltsel = 5;
+		break;
+
+	  case 6: /* less indented */
+		m = v_lshift(m, n);
+		dfltsel = 6;
+		break;
+
+	  case 7: /* reformat */
+		m = v_reformat(m, n);
+		dfltsel = 7;
+		break;
+
+	  case 8: /* external filter */
+		m = v_filter(m, n);
+		dfltsel = 0;
+		break;
+
+	  case 9: /* save & exit */
+		/* get confirmation first */
+		do
+		{
+			key = getkey(0);
+		} while (key != '\\' && key != 'Z' && key != '\r'    /* good */
+		      && key != '\033');			     /* bad  */
+		if (key != '\033')
+		{
+			m = v_xit(m, 0L, 'Z');
+		}
+		break;
+
+	  case 10: /* undo previous */
+		m = v_undo(m);
+		dfltsel = 9;
+		break;
+	}
+
+	/* arrange for the menu to be erased (except that "chg from kbd"
+	 * already erased it, and "save & exit" doesn't care)
+	 */
+	if (sel != 5 && sel != 9)
+		redraw(MARK_UNSET, FALSE);
+
+	return m;
+}
+#endif /* undef NO_POPUP */

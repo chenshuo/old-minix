@@ -77,11 +77,12 @@ int fild;			/* file descriptor */
  *===========================================================================*/
 PUBLIC struct filp *find_filp(rip, bits)
 register struct inode *rip;	/* inode referred to by the filp to be found */
-int bits;			/* mode of the filp to be found (RWX bits) */
+Mode_t bits;			/* mode of the filp to be found (RWX bits) */
 {
 /* Find a filp slot that refers to the inode 'rip' in a way as described
  * by the mode bit 'bits'. Used for determining whether somebody is still
- * interested in either end of a pipe; other applications are conceivable.
+ * interested in either end of a pipe.  Also used when opening a FIFO to
+ * find partners to share a filp field with (to shared the file position).
  * Like 'get_fd' it performs its job by linear search through the filp table.
  */
 

@@ -1,31 +1,28 @@
-#include <lib.h>
-/*  getenv(3)
- *
- *  Author: Terrence W. Holm          Aug. 1988
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: getenv.c,v 1.4 91/04/24 12:18:03 ceriel Exp $ */
 
-#include <stddef.h>
-#include <stdlib.h>
+#include	<stdlib.h>
 
-extern char **environ;
+extern const char **_penvp;
 
-char *getenv(name)
-_CONST char *name;
+char *
+getenv(const char *name)
 {
-  char **v;
-  _CONST register char *n;
-  register char *p;
+	register const char **v = _penvp;
+	register const char *p, *q;
 
-  if (environ == (char **) NULL || name == (char *)NULL) return((char *)NULL);
-
-  for (v = environ; *v != (char *)NULL; ++v) {
-	n = name;
-	p = *v;
-
-	while (*n == *p && *n != '\0') ++n, ++p;
-
-	if (*n == '\0' && *p == '=') return(p + 1);
-  }
-
-  return((char *)NULL);
+	if (v == NULL || name == NULL)
+		return (char *)NULL;
+	while ((p = *v++) != NULL) {
+		q = name;
+		while (*q && (*q == *p++))
+			q++;
+		if (*q || (*p != '='))
+			continue;
+		return (char *)p + 1;
+	}
+	return (char *)NULL;
 }

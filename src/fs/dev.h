@@ -2,10 +2,12 @@
  * the link between major device numbers and the routines that process them.
  */
 
+typedef _PROTOTYPE (void (*dmap_t), (int task, message *m_ptr) );
+
 extern struct dmap {
-  void (*dmap_open)();
-  void (*dmap_rw)();
-  void (*dmap_close)();
+  dmap_t dmap_open;
+  dmap_t dmap_rw;
+  dmap_t dmap_close;
   int dmap_task;
 } dmap[];
 

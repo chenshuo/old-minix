@@ -1,40 +1,24 @@
-/* Macros */
-#define MAX(a,b)	(a > b ? a : b)
-#define MIN(a,b)	(a < b ? a : b)
+#ifndef _TYPE_H
+#define _TYPE_H
+#ifndef _MINIX_TYPE_H
+#define _MINIX_TYPE_H
 
-/* Type definitions */
-typedef unsigned short unshort;	/* must be 16-bit unsigned */
-typedef unshort block_nr;	/* block number */
-#define NO_BLOCK (block_nr) 0	/* indicates the absence of a block number */
-#define MAX_BLOCK_NR (block_nr) 0177777
-
-#define NO_ENTRY (ino_t) 0	/* indicates the absence of a dir entry */
-#define MAX_INODE_NR (ino_t) 0177777
-
-typedef unshort zone_nr;	/* zone number */
-#define NO_ZONE   (zone_nr) 0	/* indicates the absence of a zone number */
-#define HIGHEST_ZONE (zone_nr)  0177777
-
-typedef unshort bit_nr;		/* if ino_t & zone_nr both unshort,
-				   then also unshort, else long */
-
-typedef long zone_type;		/* zone size */
-#define NO_DEV    (dev_t) ~0	/* indicates absence of a device number */
-
-#define MAX_FILE_POS 017777777777L
+/* Type definitions. */
+typedef unsigned int vir_clicks; /* virtual  addresses and lengths in clicks */
+typedef unsigned long phys_bytes;/* physical addresses and lengths in bytes */
+typedef unsigned int phys_clicks;/* physical addresses and lengths in clicks */
 
 #if (CHIP == INTEL)
-typedef unsigned vir_bytes;	/* virtual addresses and lengths in bytes */
+typedef unsigned int vir_bytes;	/* virtual addresses and lengths in bytes */
 #endif
 
 #if (CHIP == M68000)
-typedef long vir_bytes;		/* virtual addresses and lengths in bytes */
+typedef unsigned long vir_bytes;/* virtual addresses and lengths in bytes */
 #endif
 
-typedef unsigned vir_clicks;	/* virtual addresses and lengths in clicks */
-typedef long phys_bytes;	/* physical addresses and lengths in bytes */
-typedef unsigned phys_clicks;	/* physical addresses and lengths in clicks */
-typedef int signed_clicks;	/* same length as phys_clicks, but signed */
+#if (CHIP == SPARC)
+typedef unsigned long vir_bytes;/* virtual addresses and lengths in bytes */
+#endif
 
 /* Types relating to messages. */
 #define M1                 1
@@ -45,9 +29,9 @@ typedef int signed_clicks;	/* same length as phys_clicks, but signed */
 typedef struct {int m1i1, m1i2, m1i3; char *m1p1, *m1p2, *m1p3;} mess_1;
 typedef struct {int m2i1, m2i2, m2i3; long m2l1, m2l2; char *m2p1;} mess_2;
 typedef struct {int m3i1, m3i2; char *m3p1; char m3ca1[M3_STRING];} mess_3;
-typedef struct {long m4l1, m4l2, m4l3, m4l4;} mess_4;
-typedef struct {char m5c1, m5c2; int m5i1, m5i2; long m5l1, m5l2, m5l3;} mess_5;
-typedef struct {int m6i1, m6i2, m6i3; long m6l1; void (*m6f1)();} mess_6;
+typedef struct {long m4l1, m4l2, m4l3, m4l4, m4l5;} mess_4;
+typedef struct {char m5c1, m5c2; int m5i1, m5i2; long m5l1, m5l2, m5l3;}mess_5;
+typedef struct {int m6i1, m6i2, m6i3; long m6l1; sighandler_t m6f1;} mess_6;
 
 typedef struct {
   int m_source;			/* who sent the message */
@@ -61,9 +45,6 @@ typedef struct {
 	mess_6 m_m6;
   } m_u;
 } message;
-
-#define MESS_SIZE (sizeof(message))
-#define NIL_MESS (message *) 0
 
 /* The following defines provide names for useful members. */
 #define m1_i1  m_u.m_m1.m1i1
@@ -85,11 +66,11 @@ typedef struct {
 #define m3_p1  m_u.m_m3.m3p1
 #define m3_ca1 m_u.m_m3.m3ca1
 
-
 #define m4_l1  m_u.m_m4.m4l1
 #define m4_l2  m_u.m_m4.m4l2
 #define m4_l3  m_u.m_m4.m4l3
 #define m4_l4  m_u.m_m4.m4l4
+#define m4_l5  m_u.m_m4.m4l5
 
 #define m5_c1  m_u.m_m5.m5c1
 #define m5_c2  m_u.m_m5.m5c2
@@ -111,19 +92,39 @@ struct mem_map {
   vir_clicks mem_len;		/* length */
 };
 
-struct copy_info {		/* used by sys_copy(src, dst, bytes) */
-  int cp_src_proc;
-  int cp_src_space;
-  vir_bytes cp_src_vir;
-  int cp_dst_proc;
-  int cp_dst_space;
-  vir_bytes cp_dst_vir;
-  vir_bytes cp_bytes;
-};
-
 struct iorequest_s {
   long io_position;		/* position in device file (really off_t) */
   char *io_buf;			/* buffer in user space */
   unsigned short io_nbytes;	/* size of request */
   unsigned short io_request;	/* read, write (optionally) */
 };
+#endif /* _TYPE_H */
+
+typedef struct {
+  vir_bytes iov_addr;		/* address of an I/O buffer */
+  vir_bytes iov_size;		/* sizeof an I/O buffer */
+} iovec_t;
+
+typedef struct {
+  vir_bytes cpv_src;		/* src address of data */
+  vir_bytes cpv_dst;		/* dst address of data */
+  vir_bytes cpv_size;		/* size of data */
+} cpvec_t;
+
+/* MM passes the address of a structure of this type to KERNEL when
+ * do_sendsig() is invoked as part of the signal catching mechanism.
+ * The structure contain all the information that KERNEL needs to build
+ * the signal stack.
+ */
+struct sigmsg {
+  int sm_signo;			/* signal number being caught */
+  unsigned long sm_mask;	/* mask to restore when handler returns */
+  vir_bytes sm_sighandler;	/* address of handler */
+  vir_bytes sm_sigreturn;	/* address of _sigreturn in C library */
+  vir_bytes sm_stkptr;		/* user stack pointer */
+};
+
+#define MESS_SIZE (sizeof(message))	/* might need usizeof from fs here */
+#define NIL_MESS ((message *) 0)
+
+#endif /* _MINIX_TYPE_H */

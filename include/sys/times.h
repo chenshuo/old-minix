@@ -5,7 +5,7 @@
 
 #ifndef _CLOCK_T
 #define _CLOCK_T
-typedef	long clock_t;		/* time in ticks since process started */
+typedef long clock_t;		/* unit for system accounting */
 #endif
 
 struct tms {
@@ -14,7 +14,6 @@ struct tms {
   clock_t tms_cutime;
   clock_t tms_cstime;
 };
-
 
 /* Function Prototypes. */
 #ifndef _ANSI_H

@@ -1,34 +1,36 @@
-#include <lib.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
+/* $Header$ */
 
-/* Replace undef by define */
-#define	 DEBUG			/* check assertions */
-#undef	 SLOWDEBUG		/* some extra test loops (requires DEBUG) */
+/* replace undef by define */
+#undef	 DEBUG		/* check assertions */
+#undef	 SLOWDEBUG	/* some extra test loops (requires DEBUG) */
+
+#include	<stdlib.h>
+#include	<string.h>
 
 #ifdef DEBUG
-PRIVATE _PROTOTYPE( void assert_failed, (void));
 #define	ASSERT(b)	if (!(b)) assert_failed();
 #else
-#define	ASSERT(b)		/* empty */
+#define	ASSERT(b)	/* empty */
 #endif
 
-#if (CHIP == INTEL)
+#if _EM_WSIZE == _EM_PSIZE
 #define	ptrint		int
-#endif
-
-#if (CHIP == M68000)
+#else
 #define	ptrint		long
 #endif
 
+#if	_EM_PSIZE == 2
 #define BRKSIZE		1024
-#define	PTRSIZE		sizeof(char *)
-#define Align(x,a)	(((x) + (a - 1)) & ~(ptrint)(a - 1))
-#define NextSlot(p)	(* (char **) ((p) - PTRSIZE))
-#define NextFree(p)	(* (char **) (p))
+#else
+#define BRKSIZE		4096
+#endif
+#define	PTRSIZE		((int) sizeof(void *))
+#define Align(x,a)	(((x) + (a - 1)) & ~(a - 1))
+#define NextSlot(p)	(* (void **) ((p) - PTRSIZE))
+#define NextFree(p)	(* (void **) (p))
 
-/* A short explanation of the data structure and algorithms.
+/*
+ * A short explanation of the data structure and algorithms.
  * An area returned by malloc() is called a slot. Each slot
  * contains the number of bytes requested, but preceeded by
  * an extra pointer to the next the slot in memory.
@@ -41,41 +43,40 @@ PRIVATE _PROTOTYPE( void assert_failed, (void));
  * Free slots are merged together by free().
  */
 
-extern char *sbrk(), *brk();
-PRIVATE char *_bottom, *_top, *_empty;
+extern void *_sbrk(int);
+extern int _brk(void *);
+static void *_bottom, *_top, *_empty;
 
-PRIVATE _PROTOTYPE( int grow, (unsigned len));
-
-PRIVATE int grow(len)
-unsigned len;
+static int grow(size_t len)
 {
   register char *p;
 
-  ASSERT(NextSlot(_top) == 0);
-  p = (char *) Align((ptrint) _top + len, BRKSIZE);
-  if (p < _top || brk(p) != 0) return(0);
-  NextSlot(_top) = p;
+  ASSERT(NextSlot((char *)_top) == 0);
+  if ((char *) _top + len < (char *) _top
+      || (p = (char *)Align((ptrint)_top + len, BRKSIZE)) < (char *) _top 
+      || _brk(p) != 0)
+	return(0);
+  NextSlot((char *)_top) = p;
   NextSlot(p) = 0;
   free(_top);
   _top = p;
-  return(1);
+  return 1;
 }
 
-void *malloc(size)
-unsigned size;
+void *
+malloc(size_t size)
 {
   register char *prev, *p, *next, *new;
   register unsigned len, ntries;
 
-  if (size == 0) size = PTRSIZE;/* avoid slots less that 2*PTRSIZE */
+  if (size == 0) return NULL;
   for (ntries = 0; ntries < 2; ntries++) {
 	if ((len = Align(size, PTRSIZE) + PTRSIZE) < 2 * PTRSIZE)
-		return(0);	/* overflow */
+		return NULL;
 	if (_bottom == 0) {
-		if ((p = sbrk(2 * PTRSIZE)) == (char *) -1) return(0);
-		p = (char *) Align((ptrint) p, PTRSIZE);
-		ASSERT(p + PTRSIZE > p);	/* sbrk amount stops
-						 * overflow */
+		if ((p = _sbrk(2 * PTRSIZE)) == (char *) -1)
+			return NULL;
+		p = (char *) Align((ptrint)p, PTRSIZE);
 		p += PTRSIZE;
 		_top = _bottom = p;
 		NextSlot(p) = 0;
@@ -88,10 +89,10 @@ unsigned size;
 	for (prev = 0, p = _empty; p != 0; prev = p, p = NextFree(p)) {
 		next = NextSlot(p);
 		new = p + len;	/* easily overflows!! */
-		if (new > next || new <= p) continue;	/* too small */
+		if (new > next || new <= p)
+			continue;		/* too small */
 		if (new + PTRSIZE < next) {	/* too big, so split */
 			/* + PTRSIZE avoids tiny slots on free list */
-			ASSERT(new + PTRSIZE > new);	/* space above next */
 			NextSlot(new) = next;
 			NextSlot(p) = new;
 			NextFree(new) = NextFree(p);
@@ -101,29 +102,36 @@ unsigned size;
 			NextFree(prev) = NextFree(p);
 		else
 			_empty = NextFree(p);
-		return((void *)p);
+		return p;
 	}
-	if (grow(len) == 0) break;
+	if (grow(len) == 0)
+		break;
   }
   ASSERT(ntries != 2);
-  return((void *)NULL);
+  return NULL;
 }
 
-void *realloc(oldfix, size)
-void *oldfix;
-unsigned size;
+void *
+realloc(void *oldp, size_t size)
 {
   register char *prev, *p, *next, *new;
-  register unsigned len, n;
-  char *old = (char *) oldfix;
+  char *old = oldp;
+  register size_t len, n;
 
-  if (size > -2 * PTRSIZE) return(0);
+  if (!old) return malloc(size);
+  else if (!size) {
+	free(oldp);
+	return NULL;
+  }
   len = Align(size, PTRSIZE) + PTRSIZE;
   next = NextSlot(old);
-  n = (int) (next - old);	/* old length */
-  /* Extend old if there is any free space just behind it */
+  n = (int)(next - old);			/* old length */
+  /*
+   * extend old if there is any free space just behind it
+   */
   for (prev = 0, p = _empty; p != 0; prev = p, p = NextFree(p)) {
-	if (p > next) break;
+	if (p > next)
+		break;
 	if (p == next) {	/* 'next' is a free slot: merge */
 		NextSlot(old) = NextSlot(p);
 		if (prev)
@@ -134,46 +142,38 @@ unsigned size;
 		break;
 	}
   }
-  new = old + len;		/* easily overflows!! */
-  /* Can we use the old, possibly extended slot? */
-  if (new <= next && new >= old) {	/* it does fit */
-	if (new + PTRSIZE < next) {	/* too big, so split */
+  new = old + len;
+  /*
+   * Can we use the old, possibly extended slot?
+   */
+  if (new <= next && new >= old) {		/* it does fit */
+	if (new + PTRSIZE < next) {		/* too big, so split */
 		/* + PTRSIZE avoids tiny slots on free list */
-		ASSERT(new + PTRSIZE > new);
 		NextSlot(new) = next;
 		NextSlot(old) = new;
 		free(new);
 	}
-	return((void *)old);
+	return old;
   }
-  if ((new = (char *)malloc(size)) == (char *)NULL)/* it didn't fit */
-	return((void *)NULL);
-  memcpy(new, old, (size_t)n);		/* n < size */
+  if ((new = malloc(size)) == NULL)		/* it didn't fit */
+	return NULL;
+  memcpy(new, old, n);				/* n < size */
   free(old);
-  return((void *)new);
+  return new;
 }
 
-void *calloc(n, size)
-unsigned n, size;
-{
-  register char *p, *cp;
-
-  n *= size;
-  cp = (char *)malloc(n);
-  if (cp == (char *) 0) return((void *) 0);
-  for (p = cp; n-- != 0;) *p++ = '\0';
-  return((void *)cp);
-}
-
-void free(pfix)
-void *pfix;
+void
+free(void *ptr)
 {
   register char *prev, *next;
-  char *p = (char *) pfix;
+  char *p = ptr;
+
+  if (!p) return;
 
   ASSERT(NextSlot(p) > p);
   for (prev = 0, next = _empty; next != 0; prev = next, next = NextFree(next))
-	if (p < next) break;
+	if (p < next)
+		break;
   NextFree(p) = next;
   if (prev)
 	NextFree(prev) = p;
@@ -181,14 +181,14 @@ void *pfix;
 	_empty = p;
   if (next) {
 	ASSERT(NextSlot(p) <= next);
-	if (NextSlot(p) == next) {	/* merge p and next */
+	if (NextSlot(p) == next) {		/* merge p and next */
 		NextSlot(p) = NextSlot(next);
 		NextFree(p) = NextFree(next);
 	}
   }
   if (prev) {
 	ASSERT(NextSlot(prev) <= p);
-	if (NextSlot(prev) == p) {	/* merge prev and p */
+	if (NextSlot(prev) == p) {		/* merge prev and p */
 		NextSlot(prev) = NextSlot(p);
 		NextFree(prev) = NextFree(p);
 	}
@@ -196,10 +196,9 @@ void *pfix;
 }
 
 #ifdef DEBUG
-PRIVATE void assert_failed()
+static assert_failed()
 {
-  write(2, "assert failed in lib/malloc.c\n", 30);
-  abort();
+	write(2, "assert failed in lib/malloc.c\n", 30);
+	abort();
 }
-
 #endif

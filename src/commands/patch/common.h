@@ -15,6 +15,12 @@
 #define DEBUGGING
 
 #include "config.h"
+#include <sys/types.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdio.h>
 
 /* shut lint up about the following when return value ignored */
 
@@ -77,7 +83,7 @@
 
 /* typedefs */
 
-typedef char bool;
+typedef int bool;
 typedef long LINENUM;			/* must be signed */
 typedef unsigned MEM;			/* what to feed malloc */
 
@@ -114,6 +120,9 @@ EXT char TMPOUTNAME[] INIT("/tmp/patchoXXXXXX");
 EXT char TMPINNAME[] INIT("/tmp/patchiXXXXXX");	/* might want /usr/tmp here */
 EXT char TMPREJNAME[] INIT("/tmp/patchrXXXXXX");
 EXT char TMPPATNAME[] INIT("/tmp/patchpXXXXXX");
+#ifdef SMALL
+EXT char TMPSTRNAME[] INIT("/tmp/patchsXXXXXX");
+#endif
 EXT bool toutkeep INIT(FALSE);
 EXT bool trejkeep INIT(FALSE);
 
@@ -144,15 +153,4 @@ EXT char end_defined[128];		/* #endif xyzzy */
 
 EXT char *revision INIT(Nullch);	/* prerequisite revision, if any */
 
-char *malloc();
-char *realloc();
-char *strcpy();
-char *strcat();
-long atol();
-long lseek();
-char *mktemp();
-#ifdef CHARSPRINTF
-char *sprintf();
-#else
-int sprintf();
-#endif
+_PROTOTYPE(void my_exit , (int status ));

@@ -1,95 +1,96 @@
-/* strtol.c						ANSI 4.10.1.5
- *	long int strtol(const char *nptr, char **endptr, int base);
- *
- *	Converts a numeric string, in various bases, to a long integer.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: strtol.c,v 1.4 90/05/11 15:22:19 eck Exp $ */
 
-#include <lib.h>
-#include <ctype.h>
-#include <errno.h>
-#include <limits.h>
-#include <stdlib.h>
+#include	<ctype.h>
+#include	<errno.h>
+#include	<limits.h>
+#include	<stdlib.h>
 
-#ifdef strtol
-#undef strtol
-#endif
+static unsigned long
+string2long(register const char *nptr, char **endptr,
+			int base, int is_signed);
 
-PUBLIC long int strtol(nptr, endptr, base)
-_CONST char *nptr;
-char **endptr;
-int base;
+long int
+strtol(register const char *nptr, char **endptr, int base)
 {
-  register int c;
-  long int result = 0L;
-  long int limit;
-  int negative = 0;
-  int overflow = 0;
-  int saw_a_digit = 0;			/* it's not a number without a digit */
+	return (signed long)string2long(nptr, endptr, base, 1);
+}
 
-  if (endptr != (char **) NULL)		/* set up default final pointer */
-	*endptr = nptr;
+unsigned long int
+strtoul(register const char *nptr, char **endptr, int base)
+{
+	return (unsigned long)string2long(nptr, endptr, base, 0);
+}
 
-  while ((c = *nptr) && isspace(c))	/* skip leading white space */
-	++nptr;
+static unsigned long
+string2long(register const char *nptr, char ** const endptr,
+			int base, int is_signed)
+{
+	register int v;
+	register unsigned long val = 0;
+	register int c;
+	int ovfl = 0, sign = 1;
+	const char *startnptr = nptr, *nrstart;
 
-  if (c == '+' || c == '-') {		/* handle signs */
-	negative = (c == '-');
-	++nptr;
-  }
+	if (endptr) *endptr = (char *)nptr;
+	while (isspace(*nptr)) nptr++;
+	c = *nptr;
 
-  if (base == 0) {			/* determine base if unknown */
-	base = 10;
-	if (*nptr == '0') {
-		base = 8;
-		++nptr;
-		if ((c = *nptr) == 'x' || c == 'X') {
-			base = 16;
-			++nptr;
+	if (c == '-' || c == '+') {
+		if (c == '-') sign = -1;
+		nptr++;
+	}
+	nrstart = nptr;			/* start of the number */
+
+	/* When base is 0, the syntax determines the actual base */
+	if (base == 0)
+		if (*nptr == '0')
+			if (*++nptr == 'x' || *nptr == 'X') {
+				base = 16;
+				nptr++;
+			}
+			else	base = 8;
+		else	base = 10;
+	else if (base==16 && *nptr=='0' && (*++nptr =='x' || *nptr =='X'))
+		nptr++;
+
+	while (isdigit(c = *nptr) || isalpha(c)) {
+		if (!ovfl) {
+			if (isalpha(c))
+				v = 10 + (isupper(c) ? c - 'A' : c - 'a');
+			else
+				v = c - '0';
+			if (v >= base) break;
+			if (val > (ULONG_MAX - v) / base) ovfl++;
+			val = (val * base) + v;
 		}
+		nptr++;
 	}
-  }
-  else
-  if (base == 16 && *nptr == '0') {	/* discard 0x/0X prefix if hex */
-	++nptr;
-	if ((c = *nptr == 'x') || c == 'X')
-		++nptr;
-  }
-
-  limit = LONG_MAX / base;		/* ensure no overflow */
-
-  --nptr;				/* convert the number */
-  while ((c = *++nptr) != 0) {
-	if (isdigit(c))
-		c -= '0';
-	else
-		c -= isupper(c) ? ('A' - 10) : ('a' - 10);
-	if (c < 0 || c >= base)
-		break;
-	saw_a_digit = 1;
-	if (result > limit)
-		overflow = 1;
-	if (!overflow) {
-		result *= base;
-		if (c > LONG_MAX - result)
-			overflow = 1;
-		else	
-			result += c;
+	if (endptr) {
+		if (nrstart == nptr) *endptr = (char *)startnptr;
+		else *endptr = (char *)nptr;
 	}
-  }
-  if (!saw_a_digit)
-	return 0;
 
-  if (negative && !overflow)
-	result = 0L - result;
-  if (overflow) {
-	errno = ERANGE;
-	if (negative)
-		result = LONG_MIN;
-	else
-		result = LONG_MAX;
-  }
+	if (!ovfl) {
+		/* Overflow is only possible when converting a signed long.
+		 * val is unsigned long, so -LONG_MIN is converted to
+		 * unsigned long.
+		 */
+		if (is_signed
+		    && (   (sign < 0 && val > -LONG_MIN)
+			|| (sign > 0 && val > LONG_MAX)))
+		    ovfl++;
+	}
 
-  if (endptr != (char **) NULL)		/* record good final pointer */
-	*endptr = nptr;
-  return result;
+	if (ovfl) {
+		errno = ERANGE;
+		if (is_signed)
+			if (sign < 0) return LONG_MIN;
+			else return LONG_MAX;
+		else return ULONG_MAX;
+	}
+	return (long) sign * val;
 }

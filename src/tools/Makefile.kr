@@ -1,0 +1,54 @@
+# Makefile for the boot monitor package.
+
+CC=exec cc
+p=../kernel/kernel ../mm/mm ../fs/fs
+l=/usr/lib
+LIB=$l/libc.a
+s=/usr/src  # directory containing kernel, fs, mm
+
+# ACK K&R compiler
+CFLAGS=-I/usr/include -D_MINIX -D_POSIX_SOURCE -I$s
+LD=	exec asld
+LIBS=	$l/libc.a $l/end.s
+O=s
+S=s
+all:	construct bootblk monitor init
+
+# Assembly code boot block
+bootblk:	bootblk.$S
+	$(LD) bootblk.$S -o bootblk
+
+# Put kernel, mm, fs into image file (old build program)
+construct:	construct.$O rawfs.$O
+	$(CC) -s -i -o construct construct.$O rawfs.$O
+	@chmem =12288 construct >/dev/null
+
+# Display menu just after being booted (old menu program)
+monitor:	monhead.$S mon1.$O mon2.$O rawfs.$O
+	$(LD) monhead.$S -i mon1.$O mon2.$O rawfs.$O $(LIBS) -o monitor
+	@chmem =12000 monitor >/dev/null
+
+# System initialization; fork off login processes
+init:	$l/head.$O init.$O
+	asld -o init $l/head.$O init.$O $(LIB) $l/end.s
+	@echo init done.
+
+image:	all
+	construct -i image $p init
+	@getlf "Insert a blank diskette in drive 0 and hit return"
+	construct -b /dev/fd0 bootblk monitor image
+
+# Object files
+#mon1.$O:	mon1.c
+#	$(CC) $(CFLAGS) -c mon1.c
+#
+#mon2.$O:	mon2.c
+#	$(CC) $(CFLAGS) -c mon2.c
+#
+#rawfs.$O:	rawfs.c
+#	$(CC) $(CFLAGS) -c rawfs.c
+
+
+clean:
+	@rm -f *.bak bootblk.o bootblk construct construct.[so] mon?.[so] \
+	monitor rawfs rawfs.[so] init.[so] init *.out log

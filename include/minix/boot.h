@@ -1,5 +1,8 @@
 /* boot.h */
 
+#ifndef _BOOT_H
+#define _BOOT_H
+
 /* Redefine root and root image devices as variables.
  * This keeps the diffs small but may cause future confusion.
  */
@@ -12,6 +15,7 @@
 #define DEV_FD0   0x200
 #define DEV_HD0   0x300
 #define DEV_RAM   0x100
+#define DEV_SCSI  0x700	/* Atari TT only */
 
 /* Default device numbers for root and root image.
  * Root image is only used when root is /dev/ram.
@@ -41,3 +45,4 @@ struct bparam_s
 };
 
 extern struct bparam_s boot_parameters;
+#endif /* _BOOT_H */

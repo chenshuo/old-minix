@@ -86,6 +86,11 @@ char rcsid[] =
  * Initial revision
  * 
  */
+/*
+ * 1992-01-15
+ * Modified by Saeko & Kouichi Hirabayashi to fit small memory (64K+64K)
+ * system by adding "#if[n]def SMALL" parts.
+ */
 
 #include "INTERN.h"
 #include "common.h"
@@ -97,24 +102,23 @@ char rcsid[] =
 
 /* procedures */
 
-void reinitialize_almost_everything();
-void get_some_switches();
-LINENUM locate_hunk();
-void abort_hunk();
-void apply_hunk();
-void init_output();
-void init_reject();
-void copy_till();
-void spew_output();
-void dump_line();
-bool patch_match();
-bool similar();
-void re_input();
-void my_exit();
+_PROTOTYPE(int main , (int argc , char **argv ));
+_PROTOTYPE(void reinitialize_almost_everything , (void));
+_PROTOTYPE(void get_some_switches , (void));
+_PROTOTYPE(LINENUM locate_hunk , (LINENUM fuzz ));
+_PROTOTYPE(void abort_hunk , (void));
+_PROTOTYPE(void apply_hunk , (LINENUM where ));
+_PROTOTYPE(void init_output , (char *name ));
+_PROTOTYPE(void init_reject , (char *name ));
+_PROTOTYPE(void copy_till , (Reg1 LINENUM lastline ));
+_PROTOTYPE(void spew_output , (void));
+_PROTOTYPE(void dump_line , (LINENUM line ));
+_PROTOTYPE(bool patch_match , (LINENUM base , LINENUM offset , LINENUM fuzz ));
+_PROTOTYPE(bool similar , (Reg1 char *a , Reg2 char *b , Reg3 int len ));
 
 /* Apply a set of diffs as appropriate. */
 
-main(argc,argv)
+int main(argc,argv)
 int argc;
 char **argv;
 {
@@ -134,6 +138,9 @@ char **argv;
     Mktemp(TMPINNAME);
     Mktemp(TMPREJNAME);
     Mktemp(TMPPATNAME);
+#ifdef SMALL
+    Mktemp(TMPSTRNAME);
+#endif
 
     /* parse switches */
     Argc = argc;
@@ -291,7 +298,6 @@ char **argv;
 		Strcpy(rejname, outname);
 #ifndef FLEXFILENAMES
 		{
-		    char *rindex();
 		    char *s = rindex(rejname,'/');
 
 		    if (!s)
@@ -317,6 +323,9 @@ char **argv;
 	}
 	set_signals(1);
     }
+#ifdef SMALL
+    Fclose(sfp);
+#endif
     my_exit(failtotal);
 }
 
@@ -820,5 +829,8 @@ int status;
 	Unlink(TMPREJNAME);
     }
     Unlink(TMPPATNAME);
+#ifdef SMALL
+    Unlink(TMPSTRNAME);
+#endif
     exit(status);
 }

@@ -1,30 +1,21 @@
-#include <lib.h>
-/* memset - set bytes
- *
- * CHARBITS should be defined only if the compiler lacks "unsigned char".
- * It should be a mask, e.g. 0377 for an 8-bit machine.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: memset.c,v 1.3 90/08/28 13:52:54 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-#ifndef CHARBITS
-#	define	UNSCHAR(c)	((unsigned char)(c))
-#else
-#	define	UNSCHAR(c)	((c)&CHARBITS)
-#endif
-
-void *memset(s, ucharfill, size)
-_VOIDSTAR s;
-register int ucharfill;
-size_t size;
+void *
+memset(void *s, register int c, register size_t n)
 {
-  register char *scan;
-  register size_t n;
-  register int uc;
+	register char *s1 = s;
 
-  scan = (char *) s;
-  uc = UNSCHAR(ucharfill);
-  for (n = size; n > 0; n--) *scan++ = uc;
-
-  return(s);
+	if (n>0) {
+		n++;
+		while (--n > 0) {
+			*s1++ = c;
+		}
+	}
+	return s;
 }

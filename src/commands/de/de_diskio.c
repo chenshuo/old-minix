@@ -13,13 +13,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <limits.h>
-#include <stdio.h>
+#include <string.h>
 
 #include <minix/const.h>
 #include <minix/type.h>
 #include "../../fs/const.h"
 #include "../../fs/type.h"
 #include "../../fs/super.h"
+#include <minix/fslib.h>
 
 #include "de.h"
 
@@ -89,7 +90,7 @@ void Read_Block( s, buffer )
 
   block_addr = s->address & K_MASK;
 
-  s->block  = (unsigned) (block_addr >> K_SHIFT);
+  s->block  = (zone_t) (block_addr >> K_SHIFT);
   s->offset = (unsigned) (s->address - block_addr);
 
   Read_Disk( s, block_addr, buffer );
@@ -114,17 +115,78 @@ void Read_Super_Block( s )
 
   {
   struct super_block *super = (struct super_block *) s->buffer;
+  unsigned inodes_per_block;
+  off_t size;
 
   Read_Disk( s, (long) 1 * K, s->buffer );
 
+  s->magic = super->s_magic;
+  if ( s->magic == SUPER_MAGIC )
+    {
+    s->is_fs = TRUE;
+    s->v1 = TRUE;
+    s->inode_size = V1_INODE_SIZE;
+    inodes_per_block = V1_INODES_PER_BLOCK;
+    s->nr_indirects = V1_INDIRECTS;
+    s->zone_num_size = V1_ZONE_NUM_SIZE;
+    s->zones = super->s_nzones;
+    }
+  else if ( s->magic == SUPER_V2 )
+    {
+    s->is_fs = TRUE;
+    s->v1 = FALSE;
+    s->inode_size = V2_INODE_SIZE;
+    inodes_per_block = V2_INODES_PER_BLOCK;
+    s->nr_indirects = V2_INDIRECTS;
+    s->zone_num_size = V2_ZONE_NUM_SIZE;
+    s->zones = super->s_zones;
+    }
+  else  
+    {
+    if ( super->s_magic == SUPER_REV )
+      Warning( "V1-bytes-swapped file system (?)" );
+    else if ( super->s_magic == SUPER_V2_REV )
+      Warning( "V2-bytes-swapped file system (?)" );
+    else  
+      Warning( "Not a Minix file system" );
+    Warning( "The file system features will not be available" );  
+    if ( (size = lseek( s->device_d, 0L, SEEK_END )) == -1 )
+      Error( "Error seeking %s", s->device_name );
+    s->zones = s->device_size = size / K;
+    return;
+    }
+
   s->inodes = super->s_ninodes;
-  s->zones  = super->s_nzones;
+  s->inode_maps = bitmapsize( (bit_t) s->inodes + 1 );
+  if ( s->inode_maps != super->s_imap_blocks )
+    {
+    if ( s->inode_maps > super->s_imap_blocks )
+      Error( "Corrupted inode map count or inode count in super block" );
+    else  
+      Warning( "Count of inode map blocks in super block suspiciously high" );
+    s->inode_maps = super->s_imap_blocks;
+    }
 
-  s->inode_maps   = bitmapsize(1 + s->inodes);
-  s->zone_maps    = bitmapsize(s->zones);
+  s->zone_maps = bitmapsize( (bit_t) s->zones );
+  if ( s->zone_maps != super->s_zmap_blocks )
+    {
+    if ( s->zone_maps > super->s_zmap_blocks )
+      Error( "Corrupted zone map count or zone count in super block" );
+    else
+      Warning( "Count of zone map blocks in super block suspiciously high" );
+    s->zone_maps = super->s_zmap_blocks;
+    }
 
-  s->inode_blocks = (s->inodes + INODES_PER_BLOCK - 1) / INODES_PER_BLOCK;
+  s->inode_blocks = (s->inodes + inodes_per_block - 1) / inodes_per_block;
   s->first_data   = 2 + s->inode_maps + s->zone_maps + s->inode_blocks;
+  if ( s->first_data != super->s_firstdatazone )
+  {
+    if ( s->first_data > super->s_firstdatazone )
+      Error( "Corrupted first data zone offset or inode count in super block" );
+    else
+      Warning( "First data zone in super block suspiciously high" );
+    s->first_data = super->s_firstdatazone;
+  }  
 
   s->inodes_in_map = s->inodes + 1;
   s->zones_in_map  = s->zones + 1 - s->first_data;
@@ -136,20 +198,8 @@ void Read_Super_Block( s )
 
   s->device_size = s->zones;
 
-  if ( s->inode_maps != super->s_imap_blocks )
-    Warning( "Corrupted inode map count in super block" );
-
-  if ( s->zone_maps != super->s_zmap_blocks )
-    Warning( "Corrupted zone map count in super block" );
-
-  if ( s->first_data != super->s_firstdatazone )
-    Warning( "Corrupted first data zone count in super block" );
-
   if ( super->s_log_zone_size != 0 )
-    Warning( "Can not handle multiple blocks per zone" );
-
-  if ( super->s_magic != SUPER_MAGIC )
-    Warning( "Corrupted magic number in super block" );
+    Error( "Can not handle multiple blocks per zone" );
   }
 
 
@@ -173,7 +223,7 @@ void Read_Bit_Maps( s )
   {
   int i;
 
-  if ( s->inode_maps > I_MAP_SLOTS  ||  s->zone_maps > ZMAP_SLOTS )
+  if ( s->inode_maps > I_MAP_SLOTS  ||  s->zone_maps > Z_MAP_SLOTS )
     {
     Warning( "Super block specifies too many bit map blocks" );
     return;
@@ -181,12 +231,14 @@ void Read_Bit_Maps( s )
 
   for ( i = 0;  i < s->inode_maps;  ++i )
     {
-    Read_Disk( s, (long) (2 + i) * K, &s->inode_map[ i * K ] );
+    Read_Disk( s, (long) (2 + i) * K,
+	       (char *) &s->inode_map[ i * K / sizeof (bitchunk_t ) ] );
     }
 
   for ( i = 0;  i < s->zone_maps;  ++i )
     {
-    Read_Disk( s, (long) (2 + s->inode_maps + i) * K, &s->zone_map[ i * K ] );
+    Read_Disk( s, (long) (2 + s->inode_maps + i) * K,
+	       (char *) &s->zone_map[ i * K / sizeof (bitchunk_t ) ] );
     }
   }
 
@@ -277,7 +329,7 @@ off_t Search( s, string )
 
 void Write_Word( s, word )
   de_state *s;
-  unsigned word;
+  word_t word;
 
   {
   if ( s->address & 01 )
@@ -286,41 +338,6 @@ void Write_Word( s, word )
   if ( lseek( s->device_d, s->address, SEEK_SET ) == -1 )
     Error( "Error seeking %s", s->device_name );
 
-  if ( write( s->device_d, (char *) &word, 2 ) != 2 )
+  if ( write( s->device_d, (char *) &word, sizeof word ) != sizeof word )
     Error( "Error writing %s", s->device_name );
   }
-
-
-
-
-
-
-/* The next routine is copied from fsck.c and mkfs.c...  (Re)define some
- * things for consistency.  This sharing should be done better in a library
- * library routine.  In the library routine, the shifts should be replaced
- * by multiplications and divisions by MAP_BITS_PER_BLOCK since log2 of
- * this is too painful to get right.
- */
-#define BITMAPSHIFT	 13	/* = log2(MAP_BITS_PER_BLOCK) */
-#define bit_nr unsigned
-
-/* Convert from bit count to a block count. The usual expression
- *
- *	(nr_bits + (1 << BITMAPSHIFT) - 1) >> BITMAPSHIFT
- *
- * doesn't work because of overflow.
- *
- * Other overflow bugs, such as the expression for N_ILIST overflowing when
- * s_inodes is just over INODES_PER_BLOCK less than the maximum+1, are not
- * fixed yet, because that number of inodes is silly.
- */
-int bitmapsize(nr_bits)
-bit_nr nr_bits;
-{
-	int nr_blocks;
-
-	nr_blocks = nr_bits >> BITMAPSHIFT;
-	if ((nr_blocks << BITMAPSHIFT) < nr_bits)
-		++nr_blocks;
-	return(nr_blocks);
-}

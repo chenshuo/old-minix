@@ -1,21 +1,19 @@
-#include <lib.h>
-/* strstr - find first occurrence of wanted in s */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strstr.c,v 1.3 90/08/28 13:54:28 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strstr(s, wanted)		/* found string, or NULL if none */
-_CONST char *s;
-_CONST char *wanted;
+char *
+strstr(register const char *s, register const char *wanted)
 {
-  register _CONST char *scan;
-  register size_t len;
-  register char firstc;
+	register const size_t len = strlen(wanted);
 
-  /* We inline the first char for speed. */
-  if ((firstc = *wanted) == '\0') return((char *) s);
-  len = strlen(wanted);
-  for (scan = s; *scan != '\0'; scan++)
-	if (*scan == firstc && strncmp(scan, wanted, len) == 0)
-		return((char *) scan);
-  return( (char *) NULL);
+	if (len == 0) return (char *)s;
+	while (*s != *wanted || strncmp(s, wanted, len))
+		if (*s++ == '\0')
+			return (char *)NULL;
+	return (char *)s;
 }

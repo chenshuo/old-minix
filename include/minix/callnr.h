@@ -1,4 +1,4 @@
-#define NCALLS		  70	/* number of system calls allowed */
+#define NCALLS		  76	/* number of system calls allowed */
 
 #define EXIT		   1 
 #define FORK		   2 
@@ -10,6 +10,7 @@
 #define CREAT		   8 
 #define LINK		   9 
 #define UNLINK		  10 
+#define WAITPID		  11
 #define CHDIR		  12 
 #define TIME		  13
 #define MKNOD		  14 
@@ -56,3 +57,13 @@
 
 /* The following IS a system call for amoeba transactions */
 #define	AM_SYSCALL	  69
+
+/* Memory allocation function for tasks */
+#define BRK3		70
+
+/* Posix signal handling. */
+#define SIGACTION	71
+#define SIGSUSPEND	72
+#define SIGPENDING	73
+#define SIGPROCMASK	74
+#define SIGRETURN	75

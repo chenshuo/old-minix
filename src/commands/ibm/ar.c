@@ -1,5 +1,6 @@
 /* ar - archiver		Author: Michiel Huisjes */
 /* V7 upgrade			Author:	Monty Walls */
+/* ASCII upgrade		Author:	Bruce Evans */
 
 /* Usage: ar 'key' [posname] archive [file] ...
  *
@@ -38,32 +39,44 @@
  *	forgot that ar_size is a long for printing - 2/14/88 - mrw
  *	got the mode bit maps mirrored - 2/19/88 - mrw
  *	print & extract member logic fixed - 2/19/88 - mrw
+ *
+ *	On Aug 13 1991 - bde:
+ *	handle ASCII headers.
+ *	fix printing of times.
+ *	remove magic 14's (work mostly with null-terminated strings).
+ *	declare all functions and fix warnings from gcc.
+ *	clean up printing of error messages; use strerror.
  */
+
 
 /* Include files */
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <signal.h>
+#include <ar.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <ar.h>
+
+#include <errno.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <string.h>
+#include <time.h>
 #include <stdio.h>
 
+struct ar_hdr dummy_hdr;
+
 struct i_ar_hdr {		/* local version, maybe different padding */
-  char ar_name[14];
-  long ar_date;
-  char ar_uid;
-  char ar_gid;
-  int ar_mode;
-  long ar_size;
+  char ar_name[sizeof dummy_hdr.ar_name + 1];
+  time_t ar_date;
+  uid_t ar_uid;
+  gid_t ar_gid;
+  mode_t ar_mode;
+  off_t ar_size;
 };
 
-
 /* Macro functions */
-#define FOREVER		(32766)
 #define odd(nr)		(nr & 1)
 #define even(nr)	(odd(nr) ? nr + 1 : nr)
-#define quit(pid,sig)	(kill(pid,sig),sleep(FOREVER))
 #ifndef tell
 #	define tell(f)	(lseek(f, 0l, SEEK_CUR))
 #endif
@@ -103,8 +116,13 @@ struct i_ar_hdr {		/* local version, maybe different padding */
 #define BUFFERSIZE	4096
 #define WRITE		2	/* both read & write */
 #define READ		0
+#ifdef SARMAG
+#define MAGICSIZE	SARMAG
+#define SIZEOF_AR_HDR	(sizeof (struct ar_hdr))
+#else				/* sizeof (struct ar_hdr) wrong after pad */
 #define MAGICSIZE	sizeof(short)	/* size of magic number in file */
 #define SIZEOF_AR_HDR	((size_t) 26)
+#endif
 
 /* Option switches */
 char verbose = 0;
@@ -117,12 +135,12 @@ char Minor = 0;
 /* Global variables */
 char *tmp1;
 char *tmp2;
+char *outname;
 char *progname;
 char *posname = NULL;
 char *afile;
 char buffer[BUFFERSIZE];
 long pos_offset = -1;
-int mypid;
 
 /* Keep track of member moves using this struct */
 struct mov_list {
@@ -130,13 +148,31 @@ struct mov_list {
   struct mov_list *next;
 } *moves = NULL;
 
-/* Forward declarations and external references */
-extern char *malloc();
-extern char *mktemp(), *rindex();
-extern int strncmp();
-extern print_date();
-extern user_abort(), usage();
-extern char *basename();
+_PROTOTYPE(int main, (int argc, char **argv ));
+_PROTOTYPE(void usage, (void));
+_PROTOTYPE(void user_abort, (int s ));
+_PROTOTYPE(void insert_abort, (int s ));
+_PROTOTYPE(void mwrite, (int fd, char *address, int bytes ));
+_PROTOTYPE(void int_to_p2, (char *cp, int n ));
+_PROTOTYPE(void long_to_p4, (char *cp, long n ));
+_PROTOTYPE(int p2_to_int, (unsigned char *cp ));
+_PROTOTYPE(long p4_to_long, (unsigned char *cp ));
+_PROTOTYPE(void addmove, (long pos ));
+_PROTOTYPE(struct i_ar_hdr *get_member, (int fd ));
+_PROTOTYPE(int open_archive, (char *filename, int opt, int to_create ));
+_PROTOTYPE(int rebuild, (int fd, int tempfd ));
+_PROTOTYPE(void print_Mode, (int mode ));
+_PROTOTYPE(void print_header, (struct i_ar_hdr *member ));
+_PROTOTYPE(void print_member, (int fd, struct i_ar_hdr *member ));
+_PROTOTYPE(void copy_member, (int infd, int outfd, struct i_ar_hdr *member ));
+_PROTOTYPE(int insert,(int fd,char *name,char *mess,struct i_ar_hdr *oldmem ));
+_PROTOTYPE(int ar_move, (int oldfd, int arfd, struct mov_list *mov ));
+_PROTOTYPE(int ar_insert, (int oldfd, int ac, int argc, char **argv ));
+_PROTOTYPE(void ar_common, (int ac, int argc, char **argv ));
+_PROTOTYPE(void ar_members, (int ac, int argc, char **argv ));
+_PROTOTYPE(void append_members, (int ac, int argc, char **argv ));
+_PROTOTYPE(char *basename, (char *path ));
+_PROTOTYPE(void error, (char *str1, char *str2 ));
 
 int main(argc, argv)
 int argc;
@@ -215,9 +251,6 @@ char **argv;
 	ac = 3;
   }
 
-  /* Exit logic consists of doing a kill on my pid to insure that we */
-  /* Get the current clean up and exit logic */
-  mypid = getpid();
   signal(SIGINT, user_abort);
 
   switch (Major) {
@@ -241,42 +274,43 @@ char **argv;
 	}
   }
   fflush(stdout);
-  exit(rc);
+  return(rc);
 }
 
-usage()
+void usage()
 {
   fprintf(stderr, "Usage: %s [qrxdpmt][abivulc] [posname] afile name ... \n", progname);
-  exit(1);
+  exit(EXIT_FAILURE);
 }
 
-user_abort()
+void user_abort(s)
+int s;				/* ANSI requires this */
 {
   unlink(tmp1);
-  exit(1);
+  exit(EXIT_FAILURE);
 }
 
-insert_abort()
+void insert_abort(s)
+int s;				/* ANSI requires this */
 {
   unlink(tmp1);
   unlink(tmp2);
-  exit(1);
+  exit(EXIT_FAILURE);
 }
 
-mwrite(fd, address, bytes)
+void mwrite(fd, address, bytes)
 int fd;
-register char *address;
-register int bytes;
+char *address;
+int bytes;
 {
-  if (write(fd, address, bytes) != bytes) {
-	fprintf(stderr, " Error: %s - Write error\n", progname);
-	quit(mypid, SIGINT);
-  }
+  if (write(fd, address, bytes) != bytes) error("write error on", outname);
 }
+
+#ifndef SARMAG
 
 /* Convert int to pdp-11 order char array */
 
-int_to_p2(cp, n)
+void int_to_p2(cp, n)
 char *cp;
 int n;
 {
@@ -286,7 +320,7 @@ int n;
 
 /* Convert long to pdp-11 order char array */
 
-long_to_p4(cp, n)
+void long_to_p4(cp, n)
 char *cp;
 long n;
 {
@@ -313,7 +347,9 @@ unsigned char *cp;
 	0x10000L * cp[0] + 0x1000000L * cp[1]);
 }
 
-addmove(pos)
+#endif /* not SARMAG */
+
+void addmove(pos)
 long pos;
 {
   struct mov_list *newmove;
@@ -324,8 +360,7 @@ long pos;
   moves = newmove;
 }
 
-struct i_ar_hdr *
- get_member(fd)
+struct i_ar_hdr *get_member(fd)
 int fd;
 {
   int ret;
@@ -334,28 +369,43 @@ int fd;
 
   if ((ret = read(fd, (char *) &xmember, (unsigned) SIZEOF_AR_HDR)) <= 0)
 	return((struct i_ar_hdr *) NULL);
-  if (ret != SIZEOF_AR_HDR) {
-	fprintf(stderr, "Error: ar corrupted archive %s\n", afile);
-	quit(mypid, SIGINT);
-  }
+  errno = 0;
+  if (ret != SIZEOF_AR_HDR) error("corrupted archive", afile);
 
   /* The archive long format is pdp11 not intel therefore we must
    * reformat them for our internal use */
 
   strncpy(member.ar_name, xmember.ar_name, sizeof member.ar_name);
+  member.ar_name[sizeof member.ar_name - 1] = '\0';
+#ifdef SARMAG
+  /* XXX - It is possible for fields to be joined.  Another stupid format.
+   * The bounds checking could be improved.
+   */
+  member.ar_date = (time_t) strtol(xmember.ar_date, (char **) NULL, 10);
+  member.ar_uid = (uid_t) strtol(xmember.ar_uid, (char **) NULL, 10);
+  member.ar_gid = (gid_t) strtol(xmember.ar_gid, (char **) NULL, 10);
+  member.ar_mode = (mode_t) strtol(xmember.ar_mode, (char **) NULL, 8);
+  member.ar_size = (off_t) strtol(xmember.ar_size, (char **) NULL, 10);
+#else
   member.ar_date = p4_to_long(xmember.ar_date);
   member.ar_uid = xmember.ar_uid;
   member.ar_gid = xmember.ar_gid;
   member.ar_mode = p2_to_int(xmember.ar_mode);
   member.ar_size = p4_to_long(xmember.ar_size);
+#endif
   return(&member);
 }
 
 int open_archive(filename, opt, to_create)
 char *filename;
 int opt;
+int to_create;
 {
-  static unsigned short magic;
+#ifdef SARMAG
+  char magic[SARMAG];
+#else
+  unsigned short magic;
+#endif
   int fd, omode;
 
   /* To_create can have values of 0,1,2 */
@@ -364,33 +414,39 @@ int opt;
   /* 2 - create file but don't talk about it */
 
   if (to_create) {
-	if ((fd = creat(filename, 0644)) < 0) {
-		fprintf(stderr, "Error: %s can not create %s\n", progname, filename);
-		quit(mypid, SIGINT);
-	}
+	if ((fd = creat(filename, 0644)) < 0)
+		error("can not create archive", filename);
 	if (!create && to_create == 1)
 		fprintf(stderr, "%s:%s created\n", progname, filename);
+	outname = filename;
+#ifdef SARMAG
+	mwrite(fd, ARMAG, MAGICSIZE);
+#else
 	magic = ARMAG;
 	mwrite(fd, &magic, MAGICSIZE);
+#endif
 	return(fd);
   } else {
 	omode = (opt == READ ? O_RDONLY : O_RDWR);
 	if ((fd = open(filename, omode)) < 0) {
 		if (opt == WRITE)
 			return(open_archive(filename, opt, 1));
-		else {
-			fprintf(stderr, "Error: %s can not open %s\n", progname, filename);
-			quit(mypid, SIGINT);
-		}
+		else
+			error("can not open archive", filename);
 	}
 
-	/* Now check the magic number for ar V7 file */
+	/* Check the magic number */
+	errno = 0;
 	lseek(fd, 0l, SEEK_SET);
-	read(fd, (char *) &magic, MAGICSIZE);
-	if (magic != ARMAG) {
-		fprintf(stderr, "Error: not %s V7 format - %s\n", progname, filename);
-		quit(mypid, SIGINT);
-	}
+#ifdef SARMAG
+	if (read(fd, magic, MAGICSIZE) != MAGICSIZE
+	    || strncmp(magic, ARMAG, MAGICSIZE) != 0)
+		error(filename, "not in ASCII format");
+#else
+	if (read(fd, (char *) &magic, MAGICSIZE) != MAGICSIZE
+	    || magic != ARMAG)
+		error(filename, "not in V7 format");
+#endif
 	if (Major & APPEND)
 		lseek(fd, 0l, SEEK_END);	/* seek eof position */
 
@@ -413,19 +469,22 @@ register int fd, tempfd;
   close(tempfd);
   fd = open_archive(afile, WRITE, 2);
   tempfd = open_archive(tmp1, WRITE, 0);
+  outname = afile;
   while ((n = read(tempfd, buffer, BUFFERSIZE)) > 0) mwrite(fd, buffer, n);
   close(tempfd);
   unlink(tmp1);
   return(fd);
 }
 
-print_mode(mode)
-short mode;
+void print_Mode(mowed)
+int mowed;
 {
+  mode_t mode; 		      /* avoid promotion problems by using int param */
   char g_ex, o_ex, all_ex;
   char g_rd, o_rd, all_rd;
   char g_wr, o_wr, all_wr;
 
+  mode = mowed;
   g_ex = EXEC_GROUP & mode ? 'x' : '-';
   o_ex = EXEC_OWNER & mode ? 'x' : '-';
   all_ex = EXEC_ALL & mode ? 'x' : '-';
@@ -441,45 +500,46 @@ short mode;
   o_wr = WRITE_OWNER & mode ? 'w' : '-';
   all_wr = WRITE_ALL & mode ? 'w' : '-';
 
-  fprintf(stdout, "%c%c%c", o_rd, o_wr, o_ex);
-  fprintf(stdout, "%c%c%c", g_rd, g_wr, g_ex);
-  fprintf(stdout, "%c%c%c", all_rd, all_wr, all_ex);
+  printf("%c%c%c", o_rd, o_wr, o_ex);
+  printf("%c%c%c", g_rd, g_wr, g_ex);
+  printf("%c%c%c", all_rd, all_wr, all_ex);
 }
 
-print_header(member)
+void print_header(member)
 struct i_ar_hdr *member;
 {
+  char *ctime_string;
+
   if (verbose) {
-	print_mode(member->ar_mode);
-	fprintf(stdout, "%3.3d", member->ar_uid);
-	fprintf(stdout, "/%-3.3d ", member->ar_gid);
-	fprintf(stdout, "%5.5D", member->ar_size);	/* oops is long - mrw */
-	print_date(member->ar_date);
+	print_Mode((int) member->ar_mode);
+	ctime_string = ctime(&member->ar_date);
+	printf(" %3u/%-3u %6ld %12.12s %4.4s ",
+	       member->ar_uid, member->ar_gid, member->ar_size,
+	       ctime_string + 4, ctime_string + 20);
   }
-  fprintf(stdout, "%-14.14s\n", member->ar_name);
+  puts(member->ar_name);
 }
 
-print(fd, member)
+void print_member(fd, member)
 int fd;
 struct i_ar_hdr *member;
 {
   int outfd;
   long size;
   register int cnt, ret;
-  int do_align;
 
   if (Major & EXTRACT) {
-	if ((outfd = creat(member->ar_name, 0666)) < 0) {
-		fprintf(stderr, "Error: %s could not creat %-14.14s\n", progname, member->ar_name);
-		quit(mypid, SIGINT);
-	}
-	if (verbose) fprintf(stdout, "x - %-14.14s\n", member->ar_name);
+	if ((outfd = creat(member->ar_name, 0666)) < 0)
+		error("can not create file", member->ar_name);
+	if (verbose) printf("x - %s\n", member->ar_name);
+	outname = member->ar_name;
   } else {
 	if (verbose) {
-		fprintf(stdout, "p - %-14.14s\n", member->ar_name);
+		printf("p - %s\n", member->ar_name);
 		fflush(stdout);
 	}
 	outfd = fileno(stdout);
+	outname = "stdout";
   }
 
   /* Changed loop to use long size for correct extracts */
@@ -497,7 +557,7 @@ struct i_ar_hdr *member;
 }
 
 /* Copy a given member from fd1 to fd2 */
-copy_member(infd, outfd, member)
+void copy_member(infd, outfd, member)
 int infd, outfd;
 struct i_ar_hdr *member;
 {
@@ -510,19 +570,41 @@ struct i_ar_hdr *member;
 
   /* Format for disk usage */
   strncpy(xmember.ar_name, member->ar_name, sizeof xmember.ar_name);
+#ifdef SARMAG
+  /* The following won't overrun the the arrays, because assuming ar.h has
+   * been designed to match the scalar types being printed, and that the
+   * size is reasonable (LONG_MIN won't fit).  However, spaces between the
+   * fields are not guaranteed.
+   */
+  sprintf(xmember.ar_date, "%d", member->ar_date);
+  sprintf(xmember.ar_uid, "%d", member->ar_uid);
+  sprintf(xmember.ar_gid, "%d", member->ar_gid);
+  sprintf(xmember.ar_mode, "%o", member->ar_mode);
+  sprintf(xmember.ar_size, "%d", member->ar_size);
+  strncpy(xmember.ar_fmag, ARFMAG, sizeof xmember.ar_fmag);
+
+  /* Change any nulls in the header to spaces. */
+  {
+	char *endpad;
+	register char *pad;
+
+	for (pad = (char *) &xmember, endpad = (char *) (&xmember + 1);
+	     pad < endpad; ++pad)
+		if (*pad == '\0') *pad = ' ';
+  }
+#else
   long_to_p4(xmember.ar_date, member->ar_date);
   xmember.ar_uid = member->ar_uid;
   xmember.ar_gid = member->ar_gid;
   int_to_p2(xmember.ar_mode, member->ar_mode);
   long_to_p4(xmember.ar_size, member->ar_size);
+#endif
 
   mwrite(outfd, (char *) &xmember, (int) SIZEOF_AR_HDR);
   for (; m > 0; m -= n) {
 	cnt = (m < BUFFERSIZE ? m : BUFFERSIZE);
-	if ((n = read(infd, buffer, cnt)) != cnt) {
-		fprintf(stderr, "Error: %s - read error on %-14.14s\n", progname, member->ar_name);
-		quit(mypid, SIGINT);
-	}
+	if ((n = read(infd, buffer, cnt)) != cnt)
+		error("read error on file", member->ar_name);
 	mwrite(outfd, buffer, n);
   }
   if (odd(size)) {		/* pad to word boundary */
@@ -532,7 +614,7 @@ struct i_ar_hdr *member;
 }
 
 /* Insert at current offset - name file */
-insert(fd, name, mess, oldmember)
+int insert(fd, name, mess, oldmember)
 int fd;
 char *name, *mess;
 struct i_ar_hdr *oldmember;
@@ -541,14 +623,12 @@ struct i_ar_hdr *oldmember;
   static struct stat status;
   int in_fd;
 
-  if (stat(name, &status) < 0) {
-	fprintf(stderr, "Error: %s cannot find file %s\n", progname, name);
-	quit(mypid, SIGINT);
-  } else if ((in_fd = open(name, O_RDONLY)) < 0) {
-	fprintf(stderr, "Error: %s cannot open file %s\n", progname, name);
-	quit(mypid, SIGINT);
-  }
-  strncpy(member.ar_name, basename(name), 14);
+  if (stat(name, &status) < 0)
+	error("can not find file", name);
+  else if ((in_fd = open(name, O_RDONLY)) < 0)
+	error("can not open file", name);
+  strncpy(member.ar_name, basename(name), sizeof member.ar_name - 1);
+  member.ar_name[sizeof member.ar_name - 1] = '\0';
   member.ar_uid = status.st_uid;
   member.ar_gid = status.st_gid;
   member.ar_mode = status.st_mode & 07777;
@@ -559,11 +639,11 @@ struct i_ar_hdr *oldmember;
 		if (member.ar_date <= oldmember->ar_date) {
 			close(in_fd);
 			if (verbose)
-				fprintf(stdout, "not %-14.14s - %-14.14s\n", mess, name);
+				printf("not %s - %s\n", mess, name);
 			return(-1);
 		}
   copy_member(in_fd, fd, &member);
-  if (verbose) fprintf(stdout, "%s - %-14.14s\n", mess, name);
+  if (verbose) printf("%s - %s\n", mess, name);
   close(in_fd);
   return(1);
 }
@@ -573,7 +653,7 @@ int oldfd, arfd;
 struct mov_list *mov;
 {
   long pos;
-  int cnt, want, a, newfd;
+  int cnt, want, newfd;
   struct i_ar_hdr *member;
 
   if (local)
@@ -605,7 +685,7 @@ struct mov_list *mov;
 	if ((member = get_member(arfd)) != NULL)
 		copy_member(arfd, newfd, member);
 	mov = mov->next;
-	if (verbose) fprintf(stdout, "m - %-14.14s\n", member->ar_name);
+	if (verbose) printf("m - %s\n", member->ar_name);
   }
 
   /* Copy rest of library into new tmp file */
@@ -673,7 +753,7 @@ char **argv;
   return(newfd);
 }
 
-ar_common(ac, argc, argv)
+void ar_common(ac, argc, argv)
 int ac, argc;
 char **argv;
 {
@@ -685,11 +765,11 @@ char **argv;
 	did_print = 0;
 	if (ac < argc) {
 		for (a = ac + 1; a <= argc; ++a) {
-			if (strncmp(basename(argv[a - 1]), member->ar_name, 14) == 0) {
+			if (strcmp(basename(argv[a - 1]), member->ar_name) == 0) {
 				if (Major & TABLE)
 					print_header(member);
 				else if (Major & (PRINT | EXTRACT)) {
-					print(fd, member);
+					print_member(fd, member);
 					did_print = 1;
 				}
 				*argv[a - 1] = '\0';
@@ -700,7 +780,7 @@ char **argv;
 		if (Major & TABLE)
 			print_header(member);
 		else if (Major & (PRINT | EXTRACT)) {
-			print(fd, member);
+			print_member(fd, member);
 			did_print = 1;
 		}
 	}
@@ -711,13 +791,12 @@ char **argv;
   }
 }
 
-ar_members(ac, argc, argv)
+void ar_members(ac, argc, argv)
 int ac, argc;
 char **argv;
 {
-  int a, fd, tempfd, rc;
+  int a, fd, tempfd;
   struct i_ar_hdr *member;
-  long *lpos;
 
   fd = open_archive(afile, WRITE, 0);
   tempfd = open_archive(tmp1, WRITE, 2);
@@ -725,12 +804,12 @@ char **argv;
 
 	/* If posname specified check for our member */
 	/* If our member save his starting pos in our working file */
-	if (posname && strncmp(posname, member->ar_name, 14) == 0)
+	if (posname && strcmp(posname, member->ar_name) == 0)
 		pos_offset = tell(tempfd) - MAGICSIZE;
 
 	if (ac < argc) {	/* we have a list of members to check */
 		for (a = ac + 1; a <= argc; ++a)
-			if (strncmp(basename(argv[a - 1]), member->ar_name, 14) == 0) {
+			if (strcmp(basename(argv[a - 1]), member->ar_name) == 0) {
 				if (Major & REPLACE) {
 					if (insert(tempfd, argv[a - 1], "r", member) < 0)
 						copy_member(fd, tempfd, member);
@@ -749,17 +828,15 @@ char **argv;
 		copy_member(fd, tempfd, member);
 	else if (Major & DELETE) {
 		if (verbose)
-			fprintf(stdout, "d - %-14.14s\n", member->ar_name);
+			printf("d - %s\n", member->ar_name);
 		lseek(fd, (long) even(member->ar_size), SEEK_CUR);
 	}
   }
   if (Major & MOVE) {
 	if (posname == NULL)
 		pos_offset = lseek(fd, 0l, SEEK_END);
-	else if (pos_offset == (-1)) {
-		fprintf(stderr, "Error: %s cannot find file %-14.14s\n", progname, posname);
-		quit(mypid, SIGINT);
-	}
+	else if (pos_offset == (-1))
+		error("can not find file", posname);
 	tempfd = ar_move(tempfd, fd, moves);
   } else if (Major & REPLACE) {
 	/* Take care to add left overs */
@@ -778,12 +855,11 @@ char **argv;
   close(fd);
 }
 
-append_members(ac, argc, argv)
+void append_members(ac, argc, argv)
 int ac, argc;
 char **argv;
 {
   int a, fd;
-  struct i_ar_hdr *member;
 
   /* Quickly append members don't worry about dups in ar */
   fd = open_archive(afile, WRITE, 0);
@@ -817,59 +893,23 @@ char *path;
   return last + 1;
 }
 
-
-#define MINUTE	60L
-#define HOUR	(60L * MINUTE)
-#define DAY	(24L * HOUR)
-#define YEAR	(365L * DAY)
-#define LYEAR	(366L * DAY)
-
-int mo[] = {
-      31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
-};
-
-char *moname[] = {
-	  " Jan ", " Feb ", " Mar ", " Apr ", " May ", " Jun ",
-	  " Jul ", " Aug ", " Sep ", " Oct ", " Nov ", " Dec "
-};
-
-/* Print the date.  This only works from 1970 to 2099. */
-print_date(t)
-long t;
+void error(str1, str2)
+char *str1;
+char *str2;
 {
-  int i, year, day, month, hour, minute;
-  long length, time(), original;
+/* Print a message about the error.
+ * Kill the current process to to insure that we get the current cleanup and
+ * exit logic.  Sleep a while to allow the cleanup.  The exit should normally
+ * be done by the signal handler and not here.
+ */
 
-  year = 1970;
-  original = t;
-  while (t > 0) {
-	length = (year % 4 == 0 ? LYEAR : YEAR);
-	if (t < length) break;
-	t -= length;
-	year++;
-  }
+  int old_errno;
 
-  /* Year has now been determined.  Now the rest. */
-  day = (int) (t / DAY);
-  t -= (long) day *DAY;
-  hour = (int) (t / HOUR);
-  t -= (long) hour *HOUR;
-  minute = (int) (t / MINUTE);
-
-  /* Determine the month and day of the month. */
-  mo[1] = (year % 4 == 0 ? 29 : 28);
-  month = 0;
-  i = 0;
-  while (day >= mo[i]) {
-	month++;
-	day -= mo[i];
-	i++;
-  }
-
-  /* At this point, 'year', 'month', 'day', 'hour', 'minute'  ok */
-  fprintf(stdout, "%s%2.2d ", moname[month], ++day);
-  if (time((long *) NULL) - original >= YEAR / 2L)
-	fprintf(stdout, "%4.4D ", (long) year);
-  else
-	fprintf(stdout, "%02.2d:%02.2d ", hour, minute);
+  old_errno = errno;
+  fprintf(stderr, "%s: %s %s", progname, str1, str2);
+  if (old_errno != 0) fprintf(stderr, ": %s", strerror(old_errno));
+  fprintf(stderr, "\n");
+  kill(getpid(), SIGINT);
+  sleep(20);
+  exit(EXIT_FAILURE);
 }

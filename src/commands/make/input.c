@@ -35,11 +35,11 @@ void init()
      fatal("No memory for name",(char *)0,0);
   (*suffparray)->n_next = (struct name *)0;
 
-  if ((str1 = malloc(LZ1)) == (char *)0)
+  if ((str1 = (char *) malloc(LZ1)) == ((char *)0))
      fatal("No memory for str1",(char *)0,0);
   str1s.ptr = &str1;
   str1s.len = LZ1;
-  if ((str2 = malloc(LZ2)) == (char *)0)
+  if ((str2 = (char *) malloc(LZ2)) == (char *)0)
      fatal("No memory for str2",(char *)0,0);
   str2s.ptr = &str2;
   str2s.len = LZ2;
@@ -49,7 +49,7 @@ void strrealloc(strs)
 struct str *strs;
 {
   strs->len *= 2;
-  if( (*strs->ptr = realloc( *strs->ptr, strs->len)) == (char *) NULL)
+  if( (*strs->ptr = (char *) realloc( *strs->ptr, strs->len)) == (char *) NULL)
        fatal("No memory for string reallocation",(char *)0,0);
 }
 
@@ -84,7 +84,7 @@ char *name;
                                    == (struct name *)0)
            fatal("No memory for name",(char *)0,0);
         (*sp)->n_next = (struct name *)0;
-        if ((cp = malloc(strlen(suff)+1)) == (char *)0)
+        if ((cp = (char *) malloc(strlen(suff)+1)) == (char *)0)
            fatal("No memory for name",(char *)0,0);
         strcpy(cp, suff);
         (*sp)->n_name = cp;
@@ -106,7 +106,7 @@ char *name;
   }
   rrp->n_next = rp;
   rp->n_next = (struct name *)0;
-  if ((cp = malloc(strlen(name)+1)) == (char *)0)
+  if ((cp = (char *) malloc(strlen(name)+1)) == (char *)0)
      fatal("No memory for name",(char *)0,0);
   strcpy(cp, name);
   rp->n_name = cp;
@@ -196,7 +196,7 @@ struct cmd *cp;
   if ((rp = (struct cmd *)malloc(sizeof (struct cmd))) == (struct cmd *)0)
 	fatal("No memory for command",(char *)0,0);
   rp->c_next = (struct cmd *)0;
-  if ((rcp = malloc(strlen(str)+1)) == (char *)0)
+  if ((rcp = (char *) malloc(strlen(str)+1)) == (char *)0)
 	fatal("No memory for command",(char *)0,0);
   strcpy(rcp, str);
   rp->c_cmd = rcp;

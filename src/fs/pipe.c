@@ -16,6 +16,7 @@
 #include "fs.h"
 #include <fcntl.h>
 #include <signal.h>
+#include <minix/boot.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "dev.h"
@@ -36,7 +37,6 @@ PUBLIC int do_pipe()
   register struct fproc *rfp;
   register struct inode *rip;
   int r;
-  dev_t device;
   struct filp *fil_ptr0, *fil_ptr1;
   int fil_des[2];		/* reply goes here */
 
@@ -53,9 +53,8 @@ PUBLIC int do_pipe()
   rfp->fp_filp[fil_des[1]] = fil_ptr1;
   fil_ptr1->filp_count = 1;
 
-  /* Make the inode in the current working directory. */
-  device = rfp->fp_workdir->i_dev;	/* inode dev is same as working dir */
-  if ( (rip = alloc_inode(device, I_REGULAR)) == NIL_INODE) {
+  /* Make the inode on the pipe device. */
+  if ( (rip = alloc_inode(PIPE_DEV, I_REGULAR) ) == NIL_INODE) {
 	rfp->fp_filp[fil_des[0]] = NIL_FILP;
 	fil_ptr0->filp_count = 0;
 	rfp->fp_filp[fil_des[1]] = NIL_FILP;
@@ -63,13 +62,20 @@ PUBLIC int do_pipe()
 	return(err_code);
   }
 
+  if (read_only(rip) != OK) panic("pipe device is read only", NO_NUM);
+ 
   rip->i_pipe = I_PIPE;
+  rip->i_mode &= ~I_REGULAR;
+  rip->i_mode |= I_NAMED_PIPE;	/* pipes and FIFOs have this bit set */
   fil_ptr0->filp_ino = rip;
+  fil_ptr0->filp_flags = O_RDONLY;
   dup_inode(rip);		/* for double usage */
   fil_ptr1->filp_ino = rip;
+  fil_ptr1->filp_flags = O_WRONLY;
   rw_inode(rip, WRITING);	/* mark inode as allocated */
   reply_i1 = fil_des[0];
   reply_i2 = fil_des[1];
+  rip->i_update = ATIME | CTIME | MTIME;
   return(OK);
 }
 
@@ -77,12 +83,13 @@ PUBLIC int do_pipe()
 /*===========================================================================*
  *				pipe_check				     *
  *===========================================================================*/
-PUBLIC int pipe_check(rip, rw_flag, oflags, bytes, position)
+PUBLIC int pipe_check(rip, rw_flag, oflags, bytes, position, canwrite)
 register struct inode *rip;	/* the inode of the pipe */
 int rw_flag;			/* READING or WRITING */
 int oflags;			/* flags set by open or fcntl */
 register int bytes;		/* bytes to be read or written (all chunks) */
 register off_t position;	/* current file position */
+int *canwrite;			/* return: number of bytes we can write */
 {
 /* Pipes are a little different.  If a process reads from an empty pipe for
  * which a writer still exists, suspend the reader.  If the pipe is empty
@@ -98,8 +105,10 @@ register off_t position;	/* current file position */
 		/* Process is reading from an empty pipe. */
 		if (find_filp(rip, W_BIT) != NIL_FILP) {
 			/* Writer exists */
-			if (oflags & O_NONBLOCK) r = EAGAIN;
-			else suspend(XPIPE);	/* block reader */
+			if (oflags & O_NONBLOCK) 
+				r = EAGAIN;
+			else 
+				suspend(XPIPE);	/* block reader */
 
 			/* If need be, activate sleeping writers. */
 			if (susp_count > 0) release(rip, WRITE, susp_count);
@@ -108,7 +117,7 @@ register off_t position;	/* current file position */
 	}
   } else {
 	/* Process is writing to a pipe. */
-	if (bytes > PIPE_SIZE) return(EFBIG);
+/*	if (bytes > PIPE_SIZE) return(EFBIG); */
 	if (find_filp(rip, R_BIT) == NIL_FILP) {
 		/* Tell kernel to generate a SIGPIPE signal. */
 		sys_kill((int)(fp - fproc), SIGPIPE);
@@ -116,7 +125,26 @@ register off_t position;	/* current file position */
 	}
 
 	if (position + bytes > PIPE_SIZE) {
-		if (oflags & O_NONBLOCK) return(EAGAIN);
+		if ((oflags & O_NONBLOCK) && bytes < PIPE_SIZE) 
+			return(EAGAIN);
+		else if ((oflags & O_NONBLOCK) && bytes > PIPE_SIZE) {
+			if ( (*canwrite = (PIPE_SIZE - position)) > 0)  {
+				/* Do a partial write. Need to wakeup reader */
+				release(rip, READ, susp_count);
+				return(1);
+			} else {
+				return(EAGAIN);
+			}
+		     }
+		if (bytes > PIPE_SIZE) {
+			if ((*canwrite = PIPE_SIZE - position) > 0) {
+				/* Do a partial write. Need to wakeup reader
+				 * since we'll suspend ourself in read_write()
+				 */
+				release(rip, READ, susp_count);
+				return(1);
+			}
+		}
 		suspend(XPIPE);	/* stop writer -- pipe full */
 		return(0);
 	}
@@ -125,6 +153,7 @@ register off_t position;	/* current file position */
 	if (position == 0) release(rip, READ, susp_count);
   }
 
+  *canwrite = 0;
   return(1);
 }
 
@@ -141,12 +170,17 @@ int task;			/* who is proc waiting for? (PIPE = pipe) */
  * but they are needed for pipes, and it is not worth making the distinction.)
  */
 
-  if (task == XPIPE || task == XOPEN) susp_count++;/* count procs suspended on pipe */
+  if (task == XPIPE || task == XPOPEN) susp_count++;/* #procs susp'ed on pipe*/
   fp->fp_suspended = SUSPENDED;
   fp->fp_fd = fd << 8 | fs_call;
-  fp->fp_buffer = buffer;
-  fp->fp_nbytes = nbytes;
   fp->fp_task = -task;
+  if (task == XLOCK) {
+	fp->fp_buffer = (char *) name1;	/*  third arg to fcntl() */
+	fp->fp_nbytes =request;		/* second arg to fcntl() */
+  } else {
+	fp->fp_buffer = buffer;		/* for reads and writes */
+	fp->fp_nbytes = nbytes;
+  }
   dont_reply = TRUE;		/* do not send caller a reply message now */
 }
 
@@ -156,12 +190,12 @@ int task;			/* who is proc waiting for? (PIPE = pipe) */
  *===========================================================================*/
 PUBLIC void release(ip, call_nr, count)
 register struct inode *ip;	/* inode of pipe */
-int call_nr;			/* READ or WRITE */
+int call_nr;			/* READ, WRITE, OPEN or CREAT */
 int count;			/* max number of processes to release */
 {
 /* Check to see if any process is hanging on the pipe whose inode is in 'ip'.
- * If one is, and it was trying to perform the call indicated by 'call_nr'
- * (READ or WRITE), release it.
+ * If one is, and it was trying to perform the call indicated by 'call_nr',
+ * release it.
  */
 
   register struct fproc *rp;
@@ -204,17 +238,17 @@ int bytes;			/* if hanging on task, how many bytes read */
    * must be restarted so it can try again.
    */
   task = -rfp->fp_task;
-  if (task == XPIPE) {
-	/* Revive a process suspended on a pipe. */
+  if (task == XPIPE || task == XLOCK) {
+	/* Revive a process suspended on a pipe or lock. */
 	rfp->fp_revived = REVIVING;
-	reviving++;		/* process was waiting on pipe */
+	reviving++;		/* process was waiting on pipe or lock */
   } else {
 	rfp->fp_suspended = NOT_SUSPENDED;
-	if (task == XOPEN) /* process blocked in open or create */
+	if (task == XPOPEN) /* process blocked in open or create */
 		reply(proc_nr, rfp->fp_fd>>8);
 	else {
 		/* Revive a process suspended on TTY or other device. */
-		rfp->fp_nbytes = bytes;	/* pretend it only wants what there is */
+		rfp->fp_nbytes = bytes;	/*pretend it wants only what there is*/
 		reply(proc_nr, bytes);	/* unblock the process */
 	}
   }
@@ -242,22 +276,35 @@ PUBLIC int do_unpause()
   if (rfp->fp_suspended == NOT_SUSPENDED) return(OK);
   task = -rfp->fp_task;
 
-  if (task != XPIPE) {
-	if (task != XOPEN) {
+  switch(task) {
+	case XPIPE:		/* process trying to read or write a pipe */
+		break;
+
+	case XOPEN:		/* process trying to open a special file */
+		panic ("fs/do_unpause called with XOPEN\n", NO_NUM);
+
+	case XLOCK:		/* process trying to set a lock with FCNTL */
+		break;
+
+	case XPOPEN:		/* process trying to open a fifo */
+		break;
+
+	default:		/* process trying to do device I/O (e.g. tty)*/
 		fild = (rfp->fp_fd >> 8) & BYTE;/* extract file descriptor */
-		if (fild < 0 || fild >= OPEN_MAX) panic("unpause err 2", NO_NUM);
+		if (fild < 0 || fild >= OPEN_MAX)panic("unpause err 2",NO_NUM);
 		f = rfp->fp_filp[fild];
-		dev = f->filp_ino->i_zone[0];	/* device on which proc is hanging */
+		dev = (dev_t) f->filp_ino->i_zone[0];	/* device hung on */
 		mess.TTY_LINE = (dev >> MINOR) & BYTE;
 		mess.PROC_NR = proc_nr;
-	/* Tell kernel whether R or W. Mode is from current call, not open. */
+
+		/* Tell kernel R or W. Mode is from current call, not open. */
 		mess.COUNT = (rfp->fp_fd & BYTE) == READ ? R_BIT : W_BIT;
 		mess.m_type = CANCEL;
+		fp = rfp;	/* hack - rw_dev2 uses fp */
 		(*dmap[(dev >> MAJOR) & BYTE].dmap_rw)(task, &mess);
-	}
-	rfp->fp_suspended = NOT_SUSPENDED;
-	reply(proc_nr, EINTR);	/* signal interrupted call */
   }
 
+  rfp->fp_suspended = NOT_SUSPENDED;
+  reply(proc_nr, EINTR);	/* signal interrupted call */
   return(OK);
 }

@@ -1,53 +1,31 @@
-#include <lib.h>
-/* Get next token from string s (NULL on 2nd, 3rd, etc. calls),
- * where tokens are nonempty strings separated by runs of
- * chars from delim.  Writes NULs into s to end tokens.  delim need not
- * remain constant from call to call.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: strtok.c,v 1.2 90/08/28 13:54:38 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-#define C_NULL  (char *) NULL
-
-PRIVATE char *scanpoint = C_NULL;
-
-char *strtok(s, delim)		/* NULL if no token left */
-char *s;
-register _CONST char *delim;
+char *
+strtok(register char *string, const char *separators)
 {
-  register char *scan;
-  char *tok;
-  register _CONST char *dscan;
+	register char *s1, *s2;
+	static char *savestring;
 
-  if (s == C_NULL && scanpoint == C_NULL) return(C_NULL);
-  if (s != C_NULL)
-	scan = s;
-  else
-	scan = scanpoint;
+	if (string == NULL) {
+		string = savestring;
+		if (string == NULL) return (char *)NULL;
+	}
 
-  /* Scan leading delimiters. */
-  for (; *scan != '\0'; scan++) {
-	for (dscan = delim; *dscan != '\0'; dscan++)
-		if (*scan == *dscan) break;
-	if (*dscan == '\0') break;
-  }
-  if (*scan == '\0') {
-	scanpoint = C_NULL;
-	return(C_NULL);
-  }
-  tok = scan;
+	s1 = string + strspn(string, separators);
+	if (*s1 == '\0') {
+		savestring = NULL;
+		return (char *)NULL;
+	}
 
-  /* Scan token. */
-  for (; *scan != '\0'; scan++) {
-	for (dscan = delim; *dscan != '\0';)	/* ++ moved down. */
-		if (*scan == *dscan++) {
-			scanpoint = scan + 1;
-			*scan = '\0';
-			return(tok);
-		}
-  }
-
-  /* Reached end of string. */
-  scanpoint = C_NULL;
-  return(tok);
+	s2 = strpbrk(s1, separators);
+	if (s2 != NULL)
+		*s2++ = '\0';
+	savestring = s2;
+	return s1;
 }

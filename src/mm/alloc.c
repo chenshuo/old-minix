@@ -31,8 +31,8 @@ PRIVATE struct hole {
 PRIVATE struct hole *hole_head;	/* pointer to first hole */
 PRIVATE struct hole *free_slots;	/* ptr to list of unused table slots */
 
-FORWARD void del_slot();
-FORWARD void merge();
+FORWARD _PROTOTYPE( void del_slot, (struct hole *prev_ptr, struct hole *hp) );
+FORWARD _PROTOTYPE( void merge, (struct hole *hp)			    );
 
 /*===========================================================================*
  *				alloc_mem				     *

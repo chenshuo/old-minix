@@ -1,21 +1,24 @@
-/* strncpy - copy at most n characters of string src to dst */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strncpy.c,v 1.3 90/08/28 13:54:11 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strncpy(dst, src, n)
-char *dst;
-_CONST char *src;
-size_t n;
+char *
+strncpy(char *ret, register const char *s2, register size_t n)
 {
-  register char *dscan;
-  register _CONST char *sscan;
-  register size_t count;
+	register char *s1 = ret;
 
-  dscan = dst;
-  sscan = src;
-  count = n + 1;		/* extra so predecrement tests remainder */
-  while (--count > 0 && (*dscan++ = *sscan++) != '\0') continue;
-  if (count <= 0) return(dst);	/* so next loop works with unsigned size_t */ 
-  while (--count > 0) *dscan++ = '\0';
-  return(dst);
+	if (n>0) {
+		while((*s1++ = *s2++) && --n > 0)
+			/* EMPTY */ ;
+		if ((*--s2 == '\0') && --n > 0) {
+			do {
+				*s1++ = '\0';
+			} while(--n > 0);
+		}
+	}
+	return ret;
 }

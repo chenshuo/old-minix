@@ -25,6 +25,7 @@
  *	Andy Tanenbaum also made some changes.
  */
 
+#include <minix/config.h>
 #include <minix/const.h>
 #include <stdlib.h>
 #include <string.h>

@@ -12,6 +12,7 @@ struct utmp {
   char ut_user[8];		/* user name */
   char ut_id[4];		/* /etc/inittab ID */
   char ut_line[12];		/* terminal name */
+  char ut_host[16];		/* host name, when remote */
   pid_t ut_pid;			/* process id */
   short int ut_type;		/* type of entry */
   long ut_time;			/* login/logout time */

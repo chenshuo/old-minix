@@ -9,12 +9,16 @@
  *
  *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
  * ----------------------------------------------------------------
- * |  DISK_READ | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |  DEV_OPEN  | device  | proc nr |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |  DEV_CLOSE | device  | proc nr |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_IOCTL | device  |         |  blocks | ram org |         |
- * ----------------------------------------------------------------
+ * |  DEV_READ  | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * | DEV_WRITE  | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * | DEV_IOCTL  | device  |         |  blocks | ram org |         |
+ * |------------+---------+---------+---------+---------+---------|
  * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
  * ----------------------------------------------------------------
  *  
@@ -38,8 +42,8 @@ PRIVATE message mess;		/* message buffer */
 PRIVATE phys_bytes ram_origin[NR_RAMS];	/* origin of each RAM disk  */
 PRIVATE phys_bytes ram_limit[NR_RAMS];	/* limit of RAM disk per minor dev. */
 
-FORWARD int do_mem();
-FORWARD int do_setup();
+FORWARD _PROTOTYPE( int do_mem, (message *m_ptr) );
+FORWARD _PROTOTYPE( int do_setup, (message *m_ptr) );
 
 /*===========================================================================*
  *				mem_task				     * 
@@ -81,10 +85,12 @@ PUBLIC void mem_task()
 
 	/* Now carry out the work.  It depends on the opcode. */
 	switch(mess.m_type) {
-	    case DISK_READ:	r = do_mem(&mess);	break;
-	    case DISK_WRITE:	r = do_mem(&mess);	break;
+	    case DEV_OPEN:	r = OK;			break;
+	    case DEV_CLOSE:	r = OK;			break;
+	    case DEV_READ:	r = do_mem(&mess);	break;
+	    case DEV_WRITE:	r = do_mem(&mess);	break;
 	    case SCATTERED_IO:	r = do_vrdwt(&mess, do_mem); break;
-	    case DISK_IOCTL:	r = do_setup(&mess);	break;
+	    case DEV_IOCTL:	r = do_setup(&mess);	break;
 	    default:		r = EINVAL;		break;
 	}
 
@@ -105,20 +111,22 @@ register message *m_ptr;	/* pointer to read or write message */
 {
 /* Read or write /dev/null, /dev/mem, /dev/kmem, /dev/ram or /dev/port. */
 
-  int device, count, endport, port, portval;
+  int device, count;
+#if (CHIP == INTEL)
+  int endport, port, portval;
+#endif
   phys_bytes mem_phys, user_phys;
 
   /* Get minor device number and check for /dev/null. */
   device = m_ptr->DEVICE;
   if (device < 0 || device >= NR_RAMS) return(ENXIO);	/* bad minor device */
-  if (device==NULL_DEV) return(m_ptr->m_type == DISK_READ ? 0 : m_ptr->COUNT);
+  if (device==NULL_DEV) return(m_ptr->m_type == DEV_READ ? 0 : m_ptr->COUNT);
 
   /* Set up 'mem_phys' for /dev/mem, /dev/kmem, or /dev/ram. */
-  if (m_ptr->POSITION < 0) return(ENXIO);
   mem_phys = ram_origin[device] + m_ptr->POSITION;
   if (mem_phys >= ram_limit[device]) return(0);
   count = m_ptr->COUNT;
-  if(mem_phys + count > ram_limit[device]) count = ram_limit[device] - mem_phys;
+  if (mem_phys + count > ram_limit[device]) count = ram_limit[device]-mem_phys;
 
   /* Determine address where data is to go or to come from. */
   user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
@@ -131,7 +139,7 @@ register message *m_ptr;	/* pointer to read or write message */
 	port = mem_phys;
 	mem_phys = umap(proc_ptr, D, (vir_bytes) &portval, (vir_bytes) 1);
 	for (endport = port + count; port != endport; ++port) {
-		if (m_ptr->m_type == DISK_READ) {
+		if (m_ptr->m_type == DEV_READ) {
 			portval = in_byte(port);
 			phys_copy(mem_phys, user_phys++, (phys_bytes) 1);
 		} else {
@@ -144,7 +152,7 @@ register message *m_ptr;	/* pointer to read or write message */
 #endif
 
   /* Copy the data. */
-  if (m_ptr->m_type == DISK_READ)
+  if (m_ptr->m_type == DEV_READ)
 	phys_copy(mem_phys, user_phys, (long) count);
   else
 	phys_copy(user_phys, mem_phys, (long) count);

@@ -2,7 +2,6 @@
 #define acc_time      m.m2_l1
 #define addr	      m.m1_i3
 #define buffer	      m.m1_p1
-#define cd_flag	      m.m1_i2
 #define child	      m.m1_i2
 #define co_mode	      m.m1_i1
 #define eff_grp_id    m.m1_i3
@@ -37,7 +36,8 @@
 #define sig	      m.m1_i2
 #define slot1	      m.m1_i1
 #define tp	      m.m2_l1
-#define updated_time  m.m2_l2
+#define utime_actime  m.m2_l1
+#define utime_modtime m.m2_l2
 #define utime_file    m.m2_p1
 #define utime_length  m.m2_i1
 #define whence	      m.m2_i2
@@ -51,3 +51,4 @@
 #define reply_t2      m1.m4_l2
 #define reply_t3      m1.m4_l3
 #define reply_t4      m1.m4_l4
+#define reply_t5      m1.m4_l5

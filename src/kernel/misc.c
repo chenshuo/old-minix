@@ -32,29 +32,27 @@ PUBLIC void mem_init()
  *	0x80: must be checked since BIOS doesn't and it may not be there.
  */
 
+  long ext_clicks;
+  phys_clicks max_clicks;
+
   /* Get the size of ordinary memory from the BIOS. */
   mem_size[0] = k_to_click(low_memsize);	/* 0 base and type */
-
-#if SPARE_VIDEO_MEMORY
-  /* Spare video memory.  Experimental, it's too slow for program memory
-   * except maybe on PC's, and belongs low in a memory hierarchy.
-   */
-  if (color) {
-	mem_size[1] = MONO_SIZE >> CLICK_SHIFT;
-	mem_base[1] = MONO_BASE >> CLICK_SHIFT;
-  } else {
-	mem_size[1] = COLOR_SIZE >> CLICK_SHIFT;
-	mem_base[1] = COLOR_BASE >> CLICK_SHIFT;
-  }
-  mem_type[1] = 0x80;
-#endif
 
   if (pc_at) {
 	/* Get the size of extended memory from the BIOS.  This is special
 	 * except in protected mode, but protected mode is now normal.
+	 * If 16M is present (except on 386), reduce it to 16M so the size
+	 * in clicks fits in a short.
 	 */
+	ext_clicks = k_to_click((long) ext_memsize);	/* clicks as a long */
+	max_clicks = USHRT_MAX - (EM_BASE >> CLICK_SHIFT);
 	mem_size[2] = k_to_click(ext_memsize);
 	mem_base[2] = EM_BASE >> CLICK_SHIFT;
+
+#if !INTEL_32BITS
+	/* You can't address more memory than you can count in clicks. */
+	if (ext_clicks > max_clicks) mem_size[2] = max_clicks;
+#endif
 
 	/* Shadow ROM memory. */
 	mem_size[3] = SHADOW_MAX >> CLICK_SHIFT;
@@ -75,7 +73,7 @@ PUBLIC void mem_init()
  *==========================================================================*/
 PUBLIC int do_vrdwt(m_ptr, do_rdwt)
 register message *m_ptr;	/* pointer to read or write message */
-int (*do_rdwt)();		/* pointer to function which does the work */
+rdwt_t do_rdwt;			/* pointer to function which does the work */
 {
 /* Fetch a vector of i/o requests.  Handle requests one at a time.  Return
  * status in the vector.

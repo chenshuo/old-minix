@@ -1,9 +1,17 @@
-CFLAGS=-F -D_POSIX_SOURCE -D_MINIX
-l=/lib
+# Makefile for mined
 
-mined:	mined1.s mined2.s mined.h
-	cc -i -o mined  mined1.s mined2.s
+CFLAGS	= -O -wo -D_POSIX_SOURCE
+O=o
 
+OBJ = mined1.$O mined2.$O
 
-clean:	
-	@rm -f *.bak *.s mined
+mined:	$(OBJ)
+	@rm -rf mined
+	@echo Start linking mined
+	@$(CC) -i -o $@ $(OBJ) >/dev/null
+	@chmem =64000 mined
+
+$(OBJ):	mined.h
+
+clean:
+	@rm -f mined *.o *.s core *.bak

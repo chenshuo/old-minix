@@ -1,0 +1,35 @@
+# Makefile for IBM specific files
+
+l=/usr/lib
+CC=exec cc
+
+CFLAGS= -O -D_MINIX -D_POSIX_SOURCE 
+SMALL= -Dprintf=printk -Dfprintf=fprintk
+O=s
+
+# The normal printf routine provided by MINIX is quite large (5K), at least
+# by MINIX standards, because it has to include all kinds of weird features
+# required by the ANSI standard.  However, many programs do not need all
+# these features.  These programs can get away with a much simpler version 
+# of printf (and fprintf) called printk (and fprintk).  The stunt below with
+# OBJ1 and OBJ2 divides the contents of this directory into files that can
+# use printk (OBJ1) and those that cannot (OBJ2).
+
+OBJ1=cc libpack libupack lorder readclock sdump ncc
+OBJ2=ar ast dosread fdisk postmort
+
+
+all:	$(OBJ1) $(OBJ2)
+
+$(OBJ1):
+	@echo ----------------------------- $@ -------------------------------
+	@$(CC) $(CFLAGS) -o bin/$@ $@.c
+	@chmem =8192 bin/$@ >/dev/null 2>&1
+
+$(OBJ2):
+	@echo ----------------------------- $@ -------------------------------
+	@$(CC) $(CFLAGS) $(SMALL) -o bin/$@ $@.c
+	@chmem =8192 bin/$@ >/dev/null 2>&1
+
+clean:	
+	@rm -f *.o *.s core *.bak

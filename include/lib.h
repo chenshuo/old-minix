@@ -20,20 +20,16 @@
 #include <minix/type.h>
 #include <minix/callnr.h>
 
-extern message _M;
-
 #define MM                 0
 #define FS                 1
 
-_PROTOTYPE( int _callm1, (int _proc, int _syscallnr,
-			 int _int1, int _int2, int _int3,
-			 char *_ptr1, char *_ptr2, char *_ptr3)		);
-_PROTOTYPE( int _callm3, (int _proc, int _syscallnr, int _int1,
-			 const char *_name)				);
-_PROTOTYPE( int _callx, (int _proc, int _syscallnr)			);
+_PROTOTYPE( int __execve, (const char *_path, char *const _argv[], 
+			char *const _envp[], int _nargs, int _nenvps)	);
+_PROTOTYPE( int _syscall, (int _who, int _syscallnr, message *_msgptr)	);
+_PROTOTYPE( void _loadname, (const char *_name, message *_msgptr)	);
 _PROTOTYPE( int _len, (const char *_s)					);
 _PROTOTYPE( void panic, (const char *_message, int _errnum)		);
 _PROTOTYPE( int _sendrec, (int _src_dest, message *_m_ptr)		);
-_PROTOTYPE( void begsig, (int dummy)					);
+_PROTOTYPE( void _begsig, (int _dummy)					);
 
 #endif /* _LIB_H */

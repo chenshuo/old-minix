@@ -2,18 +2,34 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains some of the commands - mostly ones that change text */
 
+#include "config.h"
+#include "ctype.h"
 #include "vi.h"
 #include "regexp.h"
+#if TOS
+# include <stat.h>
+#else
+# if OSK
+#  include "osk.h"
+# else
+#  if AMIGA
+#   include "amistat.h"
+#  else
+#   include <sys/stat.h>
+#  endif
+# endif
+#endif
 
 
+/*ARGSUSED*/
 void cmd_substitute(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -25,52 +41,99 @@ void cmd_substitute(frommark, tomark, cmd, bang, extra)
 	regexp	*re;	/* the compiled search expression */
 	char	*subst;	/* the substitution string */
 	char	*opt;	/* substitution options */
-	int	optp;	/* boolean option: print when done? */
-	int	optg;	/* boolean option: substitute globally in line? */
 	long	l;	/* a line number */
 	char	*s, *d;	/* used during subtitutions */
+	char	*conf;	/* used during confirmation */
 	long	chline;	/* # of lines changed */
 	long	chsub;	/* # of substitutions made */
+	static	optp;	/* boolean option: print when done? */
+	static	optg;	/* boolean option: substitute globally in line? */
+	static	optc;	/* boolean option: confirm before subst? */
+#ifndef CRUNCH
+	long	oldnlines;
+#endif
 
 
-	/* make sure we got a search pattern */
-	if (*extra != '/' && *extra != '?')
+	/* for now, assume this will fail */
+	rptlines = -1L;
+
+	if (cmd == CMD_SUBAGAIN)
 	{
-		msg("Usage: s/regular expression/new text/");
-		return;
+#ifndef NO_MAGIC
+		if (*o_magic)
+			subst = "~";
+		else
+#endif
+		subst = "\\~";
+		re = regcomp("");
+
+		/* if visual "&", then turn off the "p" and "c" options */
+		if (bang)
+		{
+			optp = optc = FALSE;
+		}
+	}
+	else /* CMD_SUBSTITUTE */
+	{
+		/* make sure we got a search pattern */
+		if (*extra != '/' && *extra != '?')
+		{
+			msg("Usage: s/regular expression/new text/");
+			return;
+		}
+
+		/* parse & compile the search pattern */
+		subst = parseptrn(extra);
+		re = regcomp(extra + 1);
 	}
 
-	/* parse & compile the search pattern */
-	subst = parseptrn(extra);
-	re = regcomp(extra + 1);
+	/* abort if RE error -- error message already given by regcomp() */
 	if (!re)
 	{
 		return;
 	}
 
-	/* parse the substitution string & find the option string */
-	for (opt = subst; *opt && (*opt != *extra || opt[-1] == '\\'); opt++)
+	if (cmd == CMD_SUBSTITUTE)
 	{
-	}
-	if (*opt)
-	{
-		*opt++ = '\0';
+		/* parse the substitution string & find the option string */
+		for (opt = subst; *opt && *opt != *extra; opt++)
+		{
+			if (*opt == '\\' && opt[1])
+			{
+				opt++;
+			}
+		}
+		if (*opt)
+		{
+			*opt++ = '\0';
+		}
+
+		/* analyse the option string */
+		if (!*o_edcompatible)
+		{
+			optp = optg = optc = FALSE;
+		}
+		while (*opt)
+		{
+			switch (*opt++)
+			{
+			  case 'p':	optp = !optp;	break;
+			  case 'g':	optg = !optg;	break;
+			  case 'c':	optc = !optc;	break;
+			  case ' ':
+			  case '\t':			break;
+			  default:
+				msg("Subst options are p, c, and g -- not %c", opt[-1]);
+				return;
+			}
+		}
 	}
 
-	/* analyse the option string */
-	optp = optg = 0;
-	while (*opt)
+	/* if "c" or "p" flag was given, and we're in visual mode, then NEWLINE */
+	if ((optc || optp) && mode == MODE_VI)
 	{
-		switch (*opt++)
-		{
-		  case 'p':	optp = 1;	break;
-		  case 'g':	optg = 1;	break;
-		  case ' ':
-		  case '\t':			break;
-		  default:
-			msg("Subst options are p and g -- not %c", opt[-1]);
-			return;
-		}
+		addch('\n');
+		exrefresh();
 	}
 
 	ChangeText
@@ -97,22 +160,58 @@ void cmd_substitute(frommark, tomark, cmd, bang, extra)
 				/* do once or globally ... */
 				do
 				{
+#ifndef CRUNCH
+					/* confirm, if necessary */
+					if (optc)
+					{
+						for (conf = line; conf < re->startp[0]; conf++)
+							addch(*conf);
+						standout();
+						for ( ; conf < re->endp[0]; conf++)
+							addch(*conf);
+						standend();
+						for (; *conf; conf++)
+							addch(*conf);
+						addch('\n');
+						exrefresh();
+						if (getkey(0) != 'y')
+						{
+							/* copy accross the original chars */
+							while (s < re->endp[0])
+								*d++ = *s++;
+
+							/* skip to next match on this line, if any */
+							goto Continue;
+						}
+					}
+#endif /* not CRUNCH */
+
 					/* increment the substitution change counter */
 					chsub++;
-
-					/* this may be the first line to redraw */
-					redrawrange(l, l + 1L, l + 1L);
 
 					/* copy stuff from before the match */
 					while (s < re->startp[0])
 					{
 						*d++ = *s++;
 					}
-	
-					/* subtitute for the matched part */
+
+					/* substitute for the matched part */
 					regsub(re, subst, d);
 					s = re->endp[0];
 					d += strlen(d);
+
+Continue:
+					/* if this regexp could conceivably match
+					 * a zero-length string, then require at
+					 * least 1 unmatched character between
+					 * matches.
+					 */
+					if (re->minlen == 0)
+					{
+						if (!*s)
+							break;
+						*d++ = *s++;
+					}
 
 				} while (optg && regexec(re, s, FALSE));
 
@@ -121,46 +220,65 @@ void cmd_substitute(frommark, tomark, cmd, bang, extra)
 				{
 				}
 
+#ifndef CRUNCH
+				/* NOTE: since the substitution text is allowed to have ^Ms which are
+				 * translated into newlines, it is possible that the number of lines
+				 * in the file will increase after each line has been substituted.
+				 * we need to adjust for this.
+				 */
+				oldnlines = nlines;
+#endif
+
 				/* replace the old version of the line with the new */
-				changeline(l, tmpblk.c);
+				d[-1] = '\n';
+				d[0] = '\0';
+				change(MARK_AT_LINE(l), MARK_AT_LINE(l + 1), tmpblk.c);
+
+#ifndef CRUNCH
+				l += nlines - oldnlines;
+				tomark += MARK_AT_LINE(nlines - oldnlines);
+#endif
 
 				/* if supposed to print it, do so */
 				if (optp)
 				{
 					addstr(tmpblk.c);
-					addch('\n');
 					exrefresh();
 				}
+
+				/* move the cursor to that line */
+				cursor = MARK_AT_LINE(l);
 			}
 		}
-	}
-
-	/* report what happened */
-	if (chsub == 0)
-	{
-		msg("Substitution failed");
-	}
-
-	/* tweak for redrawing */
-	if (chline > 1 || redrawafter && redrawafter != markline(cursor))
-	{
-		mustredraw = TRUE;
 	}
 
 	/* free the regexp */
 	free(re);
 
+	/* if done from within a ":g" command, then finish silently */
+	if (doingglobal)
+	{
+		rptlines = chline;
+		rptlabel = "changed";
+		return;
+	}
+
 	/* Reporting */
-	if (chline >= *o_report)
+	if (chsub == 0)
+	{
+		msg("Substitution failed");
+	}
+	else if (chline >= *o_report)
 	{
 		msg("%ld substitutions on %ld lines", chsub, chline);
 	}
-	rptlines = 0;
+	rptlines = 0L;
 }
 
 
 
 
+/*ARGSUSED*/
 void cmd_delete(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -168,7 +286,7 @@ void cmd_delete(frommark, tomark, cmd, bang, extra)
 	int	bang;
 	char	*extra;
 {
-	MARK	curs2;	/* al altered form of the cursor */
+	MARK	curs2;	/* an altered form of the cursor */
 
 	/* choose your cut buffer */
 	if (*extra == '"')
@@ -208,6 +326,7 @@ void cmd_delete(frommark, tomark, cmd, bang, extra)
 }
 
 
+/*ARGSUSED*/
 void cmd_append(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -216,6 +335,14 @@ void cmd_append(frommark, tomark, cmd, bang, extra)
 	char	*extra;
 {
 	long	l;	/* line counter */
+
+#ifndef CRUNCH
+	/* if '!' then toggle auto-indent */
+	if (bang)
+	{
+		*o_autoindent = !*o_autoindent;
+	}
+#endif
 
 	ChangeText
 	{
@@ -242,7 +369,8 @@ void cmd_append(frommark, tomark, cmd, bang, extra)
 				break;
 			}
 
-			addline(l, tmpblk.c);
+			strcat(tmpblk.c, "\n");
+			add(MARK_AT_LINE(l), tmpblk.c);
 			l++;
 		}
 	}
@@ -252,6 +380,7 @@ void cmd_append(frommark, tomark, cmd, bang, extra)
 }
 
 
+/*ARGSUSED*/
 void cmd_put(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -272,11 +401,12 @@ void cmd_put(frommark, tomark, cmd, bang, extra)
 	/* paste it */
 	ChangeText
 	{
-		cursor = paste(frommark, !bang, FALSE);
+		cursor = paste(frommark, TRUE, FALSE);
 	}
 }
 
 
+/*ARGSUSED*/
 void cmd_join(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -296,19 +426,19 @@ void cmd_join(frommark, tomark, cmd, bang, extra)
 	}
 	if (markline(frommark) == markline(tomark))
 	{
-		tomark = movedown(tomark, 1L);
+		tomark += BLKSIZE;
 	}
 
 	/* get the first line */
 	l = markline(frommark);
-	strcpy(tmpblk.c, fetchline(l++));
+	strcpy(tmpblk.c, fetchline(l));
 	len = strlen(tmpblk.c);
 
 	/* build the longer line */
-	while (l <= markline(tomark))
+	while (++l <= markline(tomark))
 	{
 		/* get the next line */
-		scan = fetchline(l++);
+		scan = fetchline(l);
 
 		/* remove any leading whitespace */
 		while (*scan == '\t' || *scan == ' ')
@@ -317,17 +447,31 @@ void cmd_join(frommark, tomark, cmd, bang, extra)
 		}
 
 		/* see if the line will fit */
-		if (strlen(scan) + len + 1 > BLKSIZE)
+		if (strlen(scan) + len + 3 > BLKSIZE)
 		{
 			msg("Can't join -- the resulting line would be too long");
 			return;
 		}
 
-		/* catenate it, with a space in between */
-		tmpblk.c[len++] = ' ';
+		/* catenate it, with a space (or two) in between */
+		if (!bang)
+		{
+			if (len >= 1)
+			{
+				if (tmpblk.c[len - 1] == '.'
+				 || tmpblk.c[len - 1] == '?'
+				 || tmpblk.c[len - 1] == '!')
+				{
+					 tmpblk.c[len++] = ' ';
+				}
+				tmpblk.c[len++] = ' ';
+			}
+		}
 		strcpy(tmpblk.c + len, scan);
 		len += strlen(scan);
 	}
+	tmpblk.c[len++] = '\n';
+	tmpblk.c[len] = '\0';
 
 	/* make the change */
 	ChangeText
@@ -335,13 +479,17 @@ void cmd_join(frommark, tomark, cmd, bang, extra)
 		frommark &= ~(BLKSIZE - 1);
 		tomark &= ~(BLKSIZE - 1);
 		tomark += BLKSIZE;
-		delete(frommark, tomark);
-		addline(markline(frommark), tmpblk.c);
+		change(frommark, tomark, tmpblk.c);
 	}
+
+	/* Reporting... */
+	rptlines = markline(tomark) - markline(frommark) - 1L;
+	rptlabel = "joined";
 }
 
 
 
+/*ARGSUSED*/
 void cmd_shift(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -356,21 +504,14 @@ void cmd_shift(frommark, tomark, cmd, bang, extra)
 	int	newcol;	/* new indent amount */
 	char	*text;	/* pointer to the old line's text */
 
-	/* figure out how much of the screen we must redraw (for vi mode) */
-	if (markline(frommark) != markline(tomark))
-	{
-		mustredraw = TRUE;
-		redrawrange(markline(frommark), markline(tomark) + 1L, markline(tomark) + 1L);
-	}
-
 	ChangeText
 	{
 		/* for each line to shift... */
 		for (l = markline(frommark); l <= markline(tomark); l++)
 		{
-			/* get the line - ignore empty lines */
+			/* get the line - ignore empty lines unless ! mode */
 			text = fetchline(l);
-			if (!*text)
+			if (!*text && !bang)
 				continue;
 
 			/* calc oldidx and oldcol */
@@ -387,7 +528,7 @@ void cmd_shift(frommark, tomark, cmd, bang, extra)
 					oldcol += *o_tabstop - (oldcol % *o_tabstop);
 				}
 			}
-	
+
 			/* calc newcol */
 			if (cmd == CMD_SHIFTR)
 			{
@@ -406,10 +547,13 @@ void cmd_shift(frommark, tomark, cmd, bang, extra)
 
 			/* build a new indent string */
 			newidx = 0;
-			while (newcol >= *o_tabstop)
+			if (*o_autotab)
 			{
-				tmpblk.c[newidx++] = '\t';
-				newcol -= *o_tabstop;
+				while (newcol >= *o_tabstop)
+				{
+					tmpblk.c[newidx++] = '\t';
+					newcol -= *o_tabstop;
+				}
 			}
 			while (newcol > 0)
 			{
@@ -417,7 +561,7 @@ void cmd_shift(frommark, tomark, cmd, bang, extra)
 				newcol--;
 			}
 			tmpblk.c[newidx] = '\0';
-			
+
 			/* change the old indent string into the new */
 			change(MARK_AT_LINE(l), MARK_AT_LINE(l) + oldidx, tmpblk.c);
 		}
@@ -436,6 +580,7 @@ void cmd_shift(frommark, tomark, cmd, bang, extra)
 }
 
 
+/*ARGSUSED*/
 void cmd_read(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -443,14 +588,20 @@ void cmd_read(frommark, tomark, cmd, bang, extra)
 	int	bang;
 	char	*extra;
 {
-	long	l;	/* line number counter - where new lines go */
 	int	fd, rc;	/* used while reading from the file */
-	char	*scan;	/* used for finding newlines */
-	char	*line;	/* points to the start of a line */
-	int	prevrc;	/* used to detect abnormal EOF */
+	char	*scan;	/* used for finding NUL characters */
+	int	hadnul;	/* boolean: any NULs found? */
+	int	addnl;	/* boolean: forced to add newlines? */
+	int	len;	/* number of chars in current line */
+	long	lines;	/* number of lines in current block */
+	struct stat statb;
 
-	/* first line goes after the selected line */
-	l = markline(frommark) + 1;
+	/* special case: if ":r !cmd" then let the filter() function do it */
+	if (extra[0] == '!')
+	{
+		filter(frommark, MARK_UNSET, extra + 1, TRUE);
+		return;
+	}
 
 	/* open the file */
 	fd = open(extra, O_RDONLY);
@@ -460,52 +611,87 @@ void cmd_read(frommark, tomark, cmd, bang, extra)
 		return;
 	}
 
-	/* get blocks from the file, and add each line in the block */
+#ifndef CRUNCH
+	if (stat(extra, &statb) < 0)
+	{
+		msg("Can't stat \"%s\"", extra);
+	}
+# if TOS
+	if (statb.st_mode & S_IJDIR)
+# else
+#  if OSK
+	if (statb.st_mode & S_IFDIR)
+#  else
+	if ((statb.st_mode & S_IFMT) != S_IFREG)
+#  endif
+# endif
+	{
+		msg("\"%s\" is not a regular file", extra);
+		return;
+	}
+#endif /* not CRUNCH */
+
+	/* get blocks from the file, and add them */
 	ChangeText
 	{
-		/* NOTE!  lint worried needlessly about the order of evaluation
-		 * of the 'rc' expressions in the test clause of this for(;;){}
-		 */
-		for (prevrc = rc = 0;
-		     (rc += read(fd, tmpblk.c + rc, BLKSIZE - rc)) > 0;
-		     prevrc = rc)
-		{
-			/* if we couldn't read anything, we damn well better have \n */
-			if (prevrc == rc)
-			{
-				if (rc == BLKSIZE)
-				{
-					rc--;
-				}
-				if (tmpblk.c[rc - 1] != '\n' || rc <= 0)
-				{
-					tmpblk.c[rc++] = '\n';
-				}
-			}
+		/* insertion starts at the line following frommark */
+		tomark = frommark = (frommark | (BLKSIZE - 1L)) + 1L;
+		len = 0;
+		hadnul = addnl = FALSE;
 
-			/* for each complete line in this block, add it */
-			for (line = scan = tmpblk.c; rc > 0; rc--, scan++)
+		/* add an extra newline, so partial lines at the end of
+		 * the file don't trip us up
+		 */
+		add(tomark, "\n");
+
+		/* for each chunk of text... */
+		while ((rc = tread(fd, tmpblk.c, BLKSIZE - 1)) > 0)
+		{
+			/* count newlines, convert NULs, etc. ... */
+			for (lines = 0, scan = tmpblk.c; rc > 0; rc--, scan++)
 			{
+				/* break up long lines */
+				if (*scan != '\n' && len + 2 > BLKSIZE)
+				{
+					*scan = '\n';
+					addnl = TRUE;
+				}
+
+				/* protect against NUL chars in file */
+				if (!*scan)
+				{
+					*scan = 0x80;
+					hadnul = TRUE;
+				}
+
+				/* starting a new line? */
 				if (*scan == '\n')
 				{
-					*scan = '\0';
-					addline(l, line);
-					l++;
-					line = scan + 1;
+					/* reset length at newline */
+					len = 0;
+					lines++;
 				}
-				else if (!*scan)
+				else
 				{
-					/* protect against NUL chars in file */
-					*scan = 0x80;
+					len++;
 				}
 			}
 
-			/* any extra chars are shifted to the start of the buffer */
-			rc = scan - line;
-			for (scan = tmpblk.c; scan < tmpblk.c + rc; )
-			{
-				*scan++ = *line++;
-			}
+			/* add the text */
+			*scan = '\0';
+			add(tomark, tmpblk.c);
+			tomark += MARK_AT_LINE(lines) + len - markidx(tomark);
+		}
+
+		/* if partial last line, then retain that first newline */
+		if (len > 0)
+		{
+			msg("Last line had no newline");
+			tomark += BLKSIZE; /* <- for the rptlines calc */
+		}
+		else /* delete that first newline */
+		{
+			delete(tomark, (tomark | (BLKSIZE - 1L)) + 1L);
 		}
 	}
 
@@ -513,51 +699,26 @@ void cmd_read(frommark, tomark, cmd, bang, extra)
 	close(fd);
 
 	/* Reporting... */
-	rptlines = l - markline(frommark) - 1L;
+	rptlines = markline(tomark) - markline(frommark);
 	rptlabel = "read";
-}
-
-
-void cmd_list(frommark, tomark, cmd, bang, extra)
-	MARK	frommark;
-	MARK	tomark;
-	CMD	cmd;
-	int	bang;
-	char	*extra;
-{
-	long		l;	/* line number counter */
-	register char	*scan;	/* used for moving through the line */
-
-	for (l = markline(frommark); l <= markline(tomark); l++)
+	if (mode == MODE_EX)
 	{
-		/* list the line */
-		scan = fetchline(l);
-
-		while (*scan)
-		{
-			/* if the char is non-printable, write it as \000 */
-			if (*scan < ' ' || *scan > '~')
-			{
-				/* build the \000 form & write it */
-				addch('\\');
-				addch('0' + ((*scan >> 6) & 3));
-				addch('0' + ((*scan >> 3) & 7));
-				addch('0' + (*scan & 7));
-			}
-			else
-			{
-				addch(*scan);
-			}
-			scan++;
-		}
-
-		/* write a $ and a \n */
-		addstr("$\n");
-		exrefresh();
+		cursor = (tomark & ~BLKSIZE) - BLKSIZE;
 	}
+	else
+	{
+		cursor = frommark;
+	}
+
+	if (addnl)
+		msg("Newlines were added to break up long lines");
+	if (hadnul)
+		msg("NULs were converted to 0x80");
 }
 
 
+
+/*ARGSUSED*/
 void cmd_undo(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -570,6 +731,7 @@ void cmd_undo(frommark, tomark, cmd, bang, extra)
 
 
 /* print the selected lines */
+/*ARGSUSED*/
 void cmd_print(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -577,14 +739,65 @@ void cmd_print(frommark, tomark, cmd, bang, extra)
 	int	bang;
 	char	*extra;
 {
-	register char	*scan;
-	register long	l;
+	REG char	*scan;
+	REG long	l;
+	REG int		col;
 
 	for (l = markline(frommark); l <= markline(tomark); l++)
 	{
-		/* get the next line */
-		scan = fetchline(l);
-		addstr(scan);
+		/* display a line number, if CMD_NUMBER */
+		if (cmd == CMD_NUMBER)
+		{
+			sprintf(tmpblk.c, "%6ld  ", l);
+			qaddstr(tmpblk.c);
+			col = 8;
+		}
+		else
+		{
+			col = 0;
+		}
+
+		/* get the next line & display it */
+		for (scan = fetchline(l); *scan; scan++)
+		{
+			/* expand tabs to the proper width */
+			if (*scan == '\t' && cmd != CMD_LIST)
+			{
+				do
+				{
+					qaddch(' ');
+					col++;
+				} while (col % *o_tabstop != 0);
+			}
+			else if (*scan > 0 && *scan < ' ' || *scan == '\177')
+			{
+				qaddch('^');
+				qaddch(*scan ^ 0x40);
+				col += 2;
+			}
+			else if ((*scan & 0x80) && cmd == CMD_LIST)
+			{
+				sprintf(tmpblk.c, "\\%03o", UCHAR(*scan));
+				qaddstr(tmpblk.c);
+				col += 4;
+			}
+			else
+			{
+				qaddch(*scan);
+				col++;
+			}
+
+			/* wrap at the edge of the screen */
+			if (!has_AM && col >= COLS)
+			{
+				addch('\n');
+				col -= COLS;
+			}
+		}
+		if (cmd == CMD_LIST)
+		{
+			qaddch('$');
+		}
 		addch('\n');
 		exrefresh();
 	}
@@ -592,6 +805,7 @@ void cmd_print(frommark, tomark, cmd, bang, extra)
 
 
 /* move or copy selected lines */
+/*ARGSUSED*/
 void cmd_move(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -646,7 +860,11 @@ void cmd_move(frommark, tomark, cmd, bang, extra)
 	}
 
 	/* move the cursor to the last line of the moved text */
-	cursor = destmark + (tomark - frommark);
+	cursor = destmark + (tomark - frommark) - BLKSIZE;
+	if (cursor < MARK_FIRST || cursor >= MARK_LAST + BLKSIZE)
+	{
+		cursor = MARK_LAST;
+	}
 
 	/* Reporting... */
 	rptlabel = ( (cmd == CMD_COPY) ? "copied" : "moved" );
@@ -655,6 +873,7 @@ void cmd_move(frommark, tomark, cmd, bang, extra)
 
 
 /* execute EX commands from a file */
+/*ARGSUSED*/
 void cmd_source(frommark, tomark, cmd, bang, extra)
 	MARK	frommark;
 	MARK	tomark;
@@ -671,3 +890,53 @@ void cmd_source(frommark, tomark, cmd, bang, extra)
 
 	doexrc(extra);
 }
+
+
+#ifndef NO_AT
+/*ARGSUSED*/
+void cmd_at(frommark, tomark, cmd, bang, extra)
+	MARK	frommark;
+	MARK	tomark;
+	CMD	cmd;
+	int	bang;
+	char	*extra;
+{
+	static	nest = FALSE;
+	int	result;
+	char	buf[MAXRCLEN];
+
+	/* don't allow nested macros */
+	if (nest)
+	{
+		msg("@ macros can't be nested");
+		return;
+	}
+	nest = TRUE;
+
+	/* require a buffer name */
+	if (*extra == '"')
+		extra++;
+	if (!*extra || !isascii(*extra) ||!islower(*extra))
+	{
+		msg("@ requires a cut buffer name (a-z)");
+	}
+
+	/* get the contents of the buffer */
+	result = cb2str(*extra, buf, (unsigned)(sizeof buf));
+	if (result <= 0)
+	{
+		msg("buffer \"%c is empty", *extra);
+	}
+	else if (result >= sizeof buf)
+	{
+		msg("buffer \"%c is too large to execute", *extra);
+	}
+	else
+	{
+		/* execute the contents of the buffer as ex commands */
+		exstring(buf, result, '\\');
+	}
+
+	nest = FALSE;
+}
+#endif

@@ -1,6 +1,5 @@
 /* memmove.x
  *	void *memmove(void *s1, const void *s2, size_t n)
- *	void *memcpy(void *s1, const void *s2, size_t n)
  *
  *	Copy n characters from the object pointed to by s2 into the
  *	object pointed to by s1.  Copying takes place as if the n
@@ -14,10 +13,9 @@
 
 #define BYTE_LIMIT 10		/* if n is above this, work with words */
 
-.define	_memmove, _memcpy
+.define	_memmove
 .text
 _memmove:
-_memcpy:
 	mov	bx,si		/* save si and di */
 	mov	dx,di
 	mov	di,sp
@@ -50,7 +48,7 @@ word_unaligned:
 	shr	cx,#1		/* move words, not bytes */
 	rep
 	movw
-	jnc	exit
+	jnb	exit
 #ifdef i8088
 	inc	si		/* fix up addresses for right to left moves */
 	inc	di

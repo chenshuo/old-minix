@@ -6,6 +6,8 @@
 #include <stddef.h>
 #include <time.h>
 #include <sys/times.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
 #undef NULL
 #include "sh.h"
 
@@ -36,11 +38,39 @@ static	char	*signame[] = {
 };
 #define	NSIGNAL (sizeof(signame)/sizeof(signame[0]))
 
-static	struct	op *findcase();
-static	void	brkset();
-static	void	echo();
-static	int	forkexec();
-static	int	parent();
+
+_PROTOTYPE(static int forkexec, (struct op *t, int *pin, int *pout, int act, char **wp, int *pforked ));
+_PROTOTYPE(static int parent, (void));
+_PROTOTYPE(int iosetup, (struct ioword *iop, int pipein, int pipeout ));
+_PROTOTYPE(static void echo, (char **wp ));
+_PROTOTYPE(static struct op **find1case, (struct op *t, char *w ));
+_PROTOTYPE(static struct op *findcase, (struct op *t, char *w ));
+_PROTOTYPE(static void brkset, (struct brkcon *bc ));
+_PROTOTYPE(int dolabel, (void));
+_PROTOTYPE(int dochdir, (struct op *t ));
+_PROTOTYPE(int doshift, (struct op *t ));
+_PROTOTYPE(int dologin, (struct op *t ));
+_PROTOTYPE(int doumask, (struct op *t ));
+_PROTOTYPE(int doexec, (struct op *t ));
+_PROTOTYPE(int dodot, (struct op *t ));
+_PROTOTYPE(int dowait, (struct op *t ));
+_PROTOTYPE(int doread, (struct op *t ));
+_PROTOTYPE(int doeval, (struct op *t ));
+_PROTOTYPE(int dotrap, (struct op *t ));
+_PROTOTYPE(int getsig, (char *s ));
+_PROTOTYPE(void setsig, (int n, void (*f)()));
+_PROTOTYPE(int getn, (char *as ));
+_PROTOTYPE(int dobreak, (struct op *t ));
+_PROTOTYPE(int docontinue, (struct op *t ));
+_PROTOTYPE(static int brkcontin, (char *cp, int val ));
+_PROTOTYPE(int doexit, (struct op *t ));
+_PROTOTYPE(int doexport, (struct op *t ));
+_PROTOTYPE(int doreadonly, (struct op *t ));
+_PROTOTYPE(static void rdexp, (char **wp, void (*f)(), int key));
+_PROTOTYPE(static void badid, (char *s ));
+_PROTOTYPE(int doset, (struct op *t ));
+_PROTOTYPE(void varput, (char *s, int out ));
+_PROTOTYPE(int dotimes, (void));
 
 int
 execute(t, pin, pout, act)
@@ -211,7 +241,6 @@ char **wp;
 int *pforked;
 {
 	int i, rv, (*shcom)();
-	int doexec();
 	register int f;
 	char *cp;
 	struct ioword **iopp;
@@ -331,6 +360,7 @@ parent()
  * 0< 1> are ignored as required
  * within pipelines.
  */
+int
 iosetup(iop, pipein, pipeout)
 register struct ioword *iop;
 int pipein, pipeout;
@@ -351,7 +381,7 @@ int pipein, pipeout;
 			return(1);
 	}
 	if (iop->io_flag & IODUP) {
-		if (cp[1] || !digit(*cp) && *cp != '-') {
+		if (cp[1] || (!digit(*cp) && *cp != '-')) {
 			prs(cp);
 			err(": illegal >& argument");
 			return(1);
@@ -517,7 +547,7 @@ int canintr;
 				intr = 0;
 		} else {
 			if (exstat == 0) exstat = rv;
-			onintr();
+			onintr(0);
 		}
 	return(rv);
 }
@@ -543,7 +573,6 @@ char *c, **v, **envp;
 	register int i;
 	register char *sp, *tp;
 	int eacces = 0, asis = 0;
-	extern int errno;
 
 	sp = any('/', c)? "": path->value;
 	asis = *sp == '\0';
@@ -587,6 +616,7 @@ char *c, **v, **envp;
  * Run the command produced by generator `f'
  * applied to stream `arg'.
  */
+int
 run(argp, f)
 struct ioarg *argp;
 int (*f)();
@@ -629,15 +659,13 @@ int (*f)();
  * built-in commands: doX
  */
 
-static	void	rdexp();
-static	void	badid();
-static	int	brkcontin();
-
+int
 dolabel()
 {
 	return(0);
 }
 
+int
 dochdir(t)
 register struct op *t;
 {
@@ -654,6 +682,7 @@ register struct op *t;
 	return(1);
 }
 
+int
 doshift(t)
 register struct op *t;
 {
@@ -674,6 +703,7 @@ register struct op *t;
 /*
  * execute login and newgrp directly
  */
+int
 dologin(t)
 struct op *t;
 {
@@ -688,6 +718,7 @@ struct op *t;
 	return(1);
 }
 
+int
 doumask(t)
 register struct op *t;
 {
@@ -708,6 +739,7 @@ register struct op *t;
 	return(0);
 }
 
+int
 doexec(t)
 register struct op *t;
 {
@@ -729,6 +761,7 @@ register struct op *t;
 	return(1);
 }
 
+int
 dodot(t)
 struct op *t;
 {
@@ -758,6 +791,7 @@ struct op *t;
 	return(-1);
 }
 
+int
 dowait(t)
 struct op *t;
 {
@@ -774,6 +808,7 @@ struct op *t;
 	return(0);
 }
 
+int
 doread(t)
 struct op *t;
 {
@@ -789,7 +824,7 @@ struct op *t;
 		for (cp = e.linep; !nl && cp < elinep-1; cp++)
 			if ((nb = read(0, cp, sizeof(*cp))) != sizeof(*cp) ||
 			    (nl = (*cp == '\n')) ||
-			    wp[1] && any(*cp, ifs->value))
+			    (wp[1] && any(*cp, ifs->value)))
 				break;
 		*cp = 0;
 		if (nb <= 0)
@@ -799,18 +834,17 @@ struct op *t;
 	return(nb <= 0);
 }
 
+int
 doeval(t)
 register struct op *t;
 {
-	int wdchar();
-
 	return(RUN(awordlist, t->words+1, wdchar));
 }
 
+int
 dotrap(t)
 register struct op *t;
 {
-	register char *s;
 	register int  n, i;
 	register int  resetsig;
 
@@ -849,6 +883,7 @@ register struct op *t;
 	return(0);
 }
 
+int
 getsig(s)
 char *s;
 {
@@ -861,9 +896,10 @@ char *s;
 	return(n);
 }
 
+void
 setsig(n, f)
 register n;
-int (*f)();
+_PROTOTYPE(void (*f), (int));
 {
 	if (n == 0)
 		return;
@@ -873,6 +909,7 @@ int (*f)();
 	}
 }
 
+int
 getn(as)
 char *as;
 {
@@ -894,12 +931,14 @@ char *as;
 	return(n*m);
 }
 
+int
 dobreak(t)
 struct op *t;
 {
 	return(brkcontin(t->words[1], 1));
 }
 
+int
 docontinue(t)
 struct op *t;
 {
@@ -909,6 +948,7 @@ struct op *t;
 static int
 brkcontin(cp, val)
 register char *cp;
+int val;
 {
 	register struct brkcon *bc;
 	register nl;
@@ -930,6 +970,7 @@ register char *cp;
 	/* NOTREACHED */
 }
 
+int
 doexit(t)
 struct op *t;
 {
@@ -939,8 +980,10 @@ struct op *t;
 	if ((cp = t->words[1]) != NULL)
 		exstat = getn(cp);
 	leave();
+	/* NOTREACHED */
 }
 
+int
 doexport(t)
 struct op *t;
 {
@@ -948,6 +991,7 @@ struct op *t;
 	return(0);
 }
 
+int
 doreadonly(t)
 struct op *t;
 {
@@ -979,6 +1023,7 @@ register char *s;
 	err(": bad identifier");
 }
 
+int
 doset(t)
 register struct op *t;
 {
@@ -1024,8 +1069,10 @@ register struct op *t;
 	return(0);
 }
 
+void
 varput(s, out)
 register char *s;
+int out;
 {
 	if (letnum(*s)) {
 		write(out, s, strlen(s));
@@ -1037,6 +1084,7 @@ register char *s;
 #define	SECS	60L
 #define	MINS	3600L
 
+int
 dotimes()
 {
 	struct tms tbuf;
@@ -1051,6 +1099,7 @@ dotimes()
 	prs("m");
 	prn((int)((tbuf.tms_cstime % MINS) / SECS));
 	prs("s\n");
+	return(0);
 }
 
 struct	builtin {

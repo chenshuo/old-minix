@@ -20,7 +20,7 @@ _strcmp:
 	cld
 	test	si,#1		/* align s1 on word boundary */
 	jz	setup_loop
-	lodb
+	lodsb
 	orb	al,al
 	jz	last_byte_test
 	cmpb	al,(di)
@@ -29,7 +29,7 @@ _strcmp:
 setup_loop:
 	sub	di,#2		/* set up for faster loop */
 word_loop:			/* loop through string by words */
-	lodw
+	lods
 	add	di,#2
 	orb	al,al
 	jz	last_byte_test

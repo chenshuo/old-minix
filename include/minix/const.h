@@ -1,4 +1,4 @@
-/* Copyright (C) 1990 by Prentice-Hall, Inc.  Permission is hereby granted
+/* Copyright (C) 1992 by Prentice-Hall, Inc.  Permission is hereby granted
  * to redistribute the binary and source programs of this system for
  * educational or research purposes.  For other use, written permission from
  * Prentice-Hall is required.  
@@ -19,10 +19,18 @@
 #define MAJOR	           8	/* major device = (dev>>MAJOR) & 0377 */
 #define MINOR	           0	/* minor device = (dev>>MINOR) & 0377 */
 
-#ifdef AM_KERNEL
-#define NR_TASKS	  14	/* must be 5 more than without amoeba */
-#else
-#define NR_TASKS           9	/* number of tasks in the transfer vector */
+#define NULL     ((void *)0)	/* null pointer */
+#define CPVEC_NR          16	/* max # of entries in a SYS_VCOPY request */
+#if (MACHINE == SUN_4)
+#define LOAD_ADDR     0x4000	/* addr at which the file is loaded (SPARC) */
+				/* DEBUG.  What file?  Is this the same as
+				 * KERNEL_LOAD_ADDRESS for the 8088/386?
+				 * It is 0x600 for the 8088 and for old 386
+				 * versions, 0x700 for the current 386 version,
+				 * and may have to be page-aligned for later
+				 * 386 versions.  It surely belongs in the
+				 * machine-dependent section.
+				 */
 #endif
 
 #define NR_PROCS          32	/* number of slots in proc table */
@@ -31,12 +39,49 @@
 #define D                  1	/* proc[i].mem_map[D] is for data */
 #define S                  2	/* proc[i].mem_map[S] is for stack */
 
-#define MAX_P_LONG  2147483647	/* maximum positive long, i.e. 2**31 - 1 */
+/* Process numbers of some important processes. */
+#define MM_PROC_NR         0	/* process number of memory manager */
+#define FS_PROC_NR         1	/* process number of file system */
+
+/* Miscellaneous */
+#define BYTE            0377	/* mask for 8 bits */
+#define TO_USER            0	/* flag telling to copy from fs to user */
+#define FROM_USER          1	/* flag telling to copy from user to fs */
+#define READING            0	/* copy data to user */
+#define WRITING            1	/* copy data from user */
+#define NO_NUM        0x8000	/* used as numerical argument to panic() */
+#define NIL_PTR   (char *) 0	/* generally useful expression */
+#define HAVE_SCATTERED_IO  1	/* scattered I/O is now standard */
+
+/* How many bytes are pushed by a signal. */
+#define SIG_PUSH_BYTES (sizeof(int)+sizeof(u16_t)+sizeof(u32_t)) 
+
+/* Macros. */
+#define MAX(a, b)   ((a) > (b) ? (a) : (b))
+#define MIN(a, b)   ((a) < (b) ? (a) : (b))
+
+/* Machine dependent stuff. */
+#if INET_KERNEL
+#define INET_TASKS         1	/* Ethernet task */
+#else
+#define INET_TASKS         0
+#endif
+
+#if (MACHINE == ATARI)
+#define NR_TASKS (11 + INET_TASKS)	/* number of tasks */
+#else
+#define NR_TASKS (10 + INET_TASKS)	/* number of tasks */
+#endif
 
 /* Memory is allocated in clicks. */
-#if (CHIP == INTEL) || (CHIP == M68000)
+#if (CHIP == INTEL)
 #define CLICK_SIZE       256	/* unit in which memory is allocated */
 #define CLICK_SHIFT        8	/* log2 of CLICK_SIZE */
+#endif
+
+#if (CHIP == SPARC) || (CHIP == M68000)
+#define CLICK_SIZE	4096	/* unit in which memory is alocated */
+#define CLICK_SHIFT	  12	/* 2log of CLICK_SIZE */
 #endif
 
 #define click_to_round_k(n) \
@@ -47,29 +92,16 @@
 #define k_to_click(n) ((n) / (CLICK_SIZE / 1024))
 #endif
 
-/* Process numbers of some important processes */
-#define MM_PROC_NR         0	/* process number of memory manager */
-#define FS_PROC_NR         1	/* process number of file system */
+#if INET_KERNEL
+#define INET_PROC_NR       2	/* process number of network task */
+#define INIT_PROC_NR       3	/* init -- the process that goes multiuser */
+#define LOW_USER           3	/* first user not part of operating system */
+#else
 #define INIT_PROC_NR       2	/* init -- the process that goes multiuser */
 #define LOW_USER           2	/* first user not part of operating system */
-
-/* Miscellaneous */
-#define BYTE            0377	/* mask for 8 bits */
-#define TO_USER            0	/* flag telling to copy from fs to user */
-#define FROM_USER          1	/* flag telling to copy from user to fs */
-#define READING            0	/* copy data to user */
-#define WRITING            1	/* copy data from user */
-
-#if (MACHINE != ATARI)
-#define ABS             -999	/* this process means absolute memory */
 #endif
 
-#define WORD_SIZE          2	/* number of bytes per word */
-
-#define NIL_PTR   (char *) 0	/* generally useful expression */
-
-#define NO_NUM        0x8000	/* used as numerical argument to panic() */
-#define SIG_PUSH_BYTES (4*sizeof(int))	/* how many bytes pushed by signal */
+#define ABS             -999	/* this process means absolute memory */
 
 /* Flag bits for i_mode in the inode. */
 #define I_TYPE          0170000	/* this field gives inode type */
@@ -86,3 +118,14 @@
 #define W_BIT           0000002	/* rWx protection bit */
 #define X_BIT           0000001	/* rwX protection bit */
 #define I_NOT_ALLOC     0000000	/* this inode is free */
+
+/* Some limits. */
+#define MAX_BLOCK_NR  ((block_t) 077777777)	/* largest block number */
+#define HIGHEST_ZONE   ((zone_t) 077777777)	/* largest zone number */
+#define MAX_INODE_NR      ((ino_t) 0177777)	/* largest inode number */
+#define MAX_FILE_POS ((off_t) 037777777777)	/* largest legal file offset */
+
+#define NO_BLOCK              ((block_t) 0)	/* absence of a block number */
+#define NO_ENTRY                ((ino_t) 0)	/* absence of a dir entry */
+#define NO_ZONE                ((zone_t) 0)	/* absence of a zone number */
+#define NO_DEV                  ((dev_t) 0)	/* absence of a device numb */

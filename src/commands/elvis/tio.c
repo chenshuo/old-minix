@@ -2,17 +2,17 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains terminal I/O functions */
 
-#include <sys/types.h>
-#include <signal.h>
+#include "config.h"
 #include "vi.h"
+#include "ctype.h"
 
 
 /* This function reads in a line from the terminal. */
@@ -26,6 +26,10 @@ int vgets(prompt, buf, bsize)
 	int	quoted;	/* is the next char quoted? */
 	int	tab;	/* column position of cursor */
 	char	widths[132];	/* widths of characters */
+	int	word;	/* index of first letter of word */
+#ifndef NO_DIGRAPH
+	int	erased;	/* 0, or first char of a digraph */
+#endif
 
 	/* show the prompt */
 	move(LINES - 1, 0);
@@ -39,14 +43,46 @@ int vgets(prompt, buf, bsize)
 	refresh();
 
 	/* read in the line */
+#ifndef NO_DIGRAPH
+	erased =
+#endif
 	quoted = len = 0;
 	for (;;)
 	{
-		ch = getkey(quoted ? 0 : WHEN_EX);
+#ifndef NO_ABBR
+		if (quoted || mode == MODE_EX)
+		{
+			ch = getkey(0);
+		}
+		else
+		{
+			/* maybe expand an abbreviation while getting key */
+			for (word = len; --word >= 0 && isalnum(buf[word]); )
+			{
+			}
+			word++;
+			ch = getabkey(WHEN_EX, &buf[word], len - word);
+		}
+#else
+		ch = getkey(0);
+#endif
+#ifndef NO_EXTENSIONS
+		if (ch == ctrl('O'))
+		{
+			ch = getkey(quoted ? 0 : WHEN_EX);
+		}
+#endif
 
 		/* some special conversions */
 		if (ch == ctrl('D') && len == 0)
 			ch = ctrl('[');
+#ifndef NO_DIGRAPH
+		if (*o_digraph && erased != 0 && ch != '\b')
+		{
+			ch = digraph(erased, ch);
+			erased = 0;
+		}
+#endif
 
 		/* inhibit detection of special chars (except ^J) after a ^V */
 		if (quoted && ch != '\n')
@@ -67,7 +103,11 @@ int vgets(prompt, buf, bsize)
 			return -1;
 
 		  case '\n':
+#if OSK
+		  case '\l':
+#else
 		  case '\r':
+#endif
 			clrtoeol();
 			goto BreakBreak;
 
@@ -75,7 +115,11 @@ int vgets(prompt, buf, bsize)
 			if (len > 0)
 			{
 				len--;
-				addstr("\b\b\b\b\b\b\b\b" + 8 - widths[len]);
+#ifndef NO_DIGRAPH
+				erased = buf[len];
+#endif
+				for (ch = widths[len]; ch > 0; ch--)
+					addch('\b');
 				if (mode == MODE_EX)
 				{
 					clrtoeol();
@@ -93,20 +137,20 @@ int vgets(prompt, buf, bsize)
 			if (ch & 256)
 			{
 				ch &= ~256;
-				quoted = FALSE;
 				qaddch(' ');
 				qaddch('\b');
 			}
+
 			/* add & echo the char */
 			if (len < bsize - 1)
 			{
-				if (ch == '\t')
+				if (ch == '\t' && !quoted)
 				{
 					widths[len] = *o_tabstop - (tab % *o_tabstop);
 					addstr("        " + 8 - widths[len]);
 					tab += widths[len];
 				}
-				else if (ch < ' ')
+				else if (ch > 0 && ch < ' ') /* > 0 by GB */
 				{
 					addch('^');
 					addch(ch + '@');
@@ -132,6 +176,7 @@ int vgets(prompt, buf, bsize)
 			{
 				beep();
 			}
+			quoted = FALSE;
 		}
 	}
 BreakBreak:
@@ -141,102 +186,96 @@ BreakBreak:
 }
 
 
-/* ring the terminal's bell */
-beep()
+static int	manymsgs; /* This variable keeps msgs from overwriting each other */
+static char	pmsg[80]; /* previous message (waiting to be displayed) */
+
+
+static int showmsg()
 {
-	if (*o_vbell)
+	/* if there is no message to show, then don't */
+	if (!manymsgs)
+		return FALSE;
+
+	/* display the message */
+	move(LINES - 1, 0);
+	if (*pmsg)
 	{
-		tputs(VB, 1, faddch);
-		refresh();
+		standout();
+		qaddch(' ');
+		qaddstr(pmsg);
+		qaddch(' ');
+		standend();
 	}
-	else
+	clrtoeol();
+
+	manymsgs = FALSE;
+	return TRUE;
+}
+
+
+void endmsgs()
+{
+	if (manymsgs)
 	{
-		write(1, "\007", 1);
+		showmsg();
+		addch('\n');
 	}
 }
 
-static manymsgs; /* This variable keeps msgs from overwriting each other */
-
 /* Write a message in an appropriate way.  This should really be a varargs
- * function, but there is no such thing as vwprintw.  Hack!!!  Also uses a
- * little sleaze in the way it saves messages for repetition later.
+ * function, but there is no such thing as vwprintw.  Hack!!!
  *
- * msg((char *)0)	- repeats the previous message
+ * In MODE_EX or MODE_COLON, the message is written immediately, with a
+ * newline at the end.
+ *
+ * In MODE_VI, the message is stored in a character buffer.  It is not
+ * displayed until getkey() is called.  msg() will call getkey() itself,
+ * if necessary, to prevent messages from being lost.
+ *
  * msg("")		- clears the message line
  * msg("%s %d", ...)	- does a printf onto the message line
  */
-msg(fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
+/*VARARGS1*/
+void msg(fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7)
 	char	*fmt;
 	long	arg1, arg2, arg3, arg4, arg5, arg6, arg7;
 {
-	static char	pmsg[80];	/* previous message */
-	char		*start;		/* start of current message */
-
 	if (mode != MODE_VI)
 	{
-		wprintw(stdscr, fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+		sprintf(pmsg, fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+		qaddstr(pmsg);
 		addch('\n');
 		exrefresh();
 	}
 	else
 	{
-		/* redrawing previous message? */
-		if (!fmt)
-		{
-			move(LINES - 1, 0);
-			standout();
-			qaddch(' ');
-			addstr(pmsg);
-			qaddch(' ');
-			standend();
-			clrtoeol();
-			return;
-		}
-
-		/* just blanking out message line? */
-		if (!*fmt)
-		{
-			if (!*pmsg) return;
-			*pmsg = '\0';
-			move(LINES - 1, 0);
-			clrtoeol();
-			return;
-		}
-
 		/* wait for keypress between consecutive msgs */
 		if (manymsgs)
 		{
-			qaddstr("[More...]");
-			wqrefresh(stdscr);
-			getkey(0);
+			getkey(WHEN_MSG);
 		}
 
 		/* real message */
-		move(LINES - 1, 0);
-		standout();
-		qaddch(' ');
-		start = stdscr;
-		wprintw(stdscr, fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
-		strcpy(pmsg, start);
-		qaddch(' ');
-		standend();
-		clrtoeol();
-		refresh();
+		sprintf(pmsg, fmt, arg1, arg2, arg3, arg4, arg5, arg6, arg7);
+		if (*fmt)
+		{
+			manymsgs = TRUE;
+		}
 	}
-	manymsgs = TRUE;
 }
 
 
 /* This function calls refresh() if the option exrefresh is set */
-exrefresh()
+void exrefresh()
 {
+	char	*scan;
+
 	/* If this ex command wrote ANYTHING set exwrote so vi's  :  command
 	 * can tell that it must wait for a user keystroke before redrawing.
 	 */
-	if (stdscr > kbuf)
-	{
-		exwrote = TRUE;
-	}
+	for (scan=kbuf; scan<stdscr; scan++)
+		if (*scan == '\n')
+			exwrote = TRUE;
 
 	/* now we do the refresh thing */
 	if (*o_exrefresh)
@@ -245,320 +284,743 @@ exrefresh()
 	}
 	else
 	{
-		wqrefresh(stdscr);
+		wqrefresh();
 	}
-	manymsgs = FALSE;
+	if (mode != MODE_VI)
+	{
+		manymsgs = FALSE;
+	}
 }
 
 
-/* This variable holds a single ungotten key, or 0 for no key */
-static int ungotten;
-ungetkey(key)
-	int	key;
-{
-	ungotten = key;
-}
-
-/* This array describes mapped key sequences */
-static struct _keymap
-{
-	char	*name;		/* name of the key, or NULL */
-	char	rawin[LONGKEY];	/* the unmapped version of input */
-	char	cooked[80];	/* the mapped version of input */
-	int	len;		/* length of the unmapped version */
-	int	when;		/* when is this key mapped? */
-}
-	mapped[MAXMAPS];
-
-/* This function reads in a keystroke for VI mode.  It automatically handles
- * key mapping.
+/* This structure is used to store maps and abbreviations.  The distinction
+ * between them is that maps are stored in the list referenced by the "maps"
+ * pointer, while abbreviations are referenced by the "abbrs" pointer.
  */
-static int dummy(){} /* for timeout */
-int getkey(when)
-	int		when;		/* which bits must be ON? */
+typedef struct _map
 {
-	static char	keybuf[100];	/* array of already-read keys */
-	static int	nkeys;		/* total number of keys in keybuf */
-	static int	next;		/* index of next key to return */
-	static char	*cooked;	/* rawin, or pointer to converted key */ 
-	register char	*kptr;		/* &keybuf[next] */
-	register struct _keymap *km;	/* used to count through keymap */
-	register int	i, j, k;
+	struct _map	*next;	/* another abbreviation */
+	short		len;	/* length of the "rawin" characters */
+	short		flags;	/* various flags */
+	char		*label;	/* label of the map/abbr, or NULL */
+	char		*rawin;	/* the "rawin" characters */
+	char		*cooked;/* the "cooked" characters */
+} MAP;
+
+static char	keybuf[KEYBUFSIZE];
+static int	cend;	/* end of input characters */
+static int	user;	/* from user through end are chars typed by user */
+static int	next;	/* index of the next character to be returned */
+static MAP	*match;	/* the matching map, found by countmatch() */
+static MAP	*maps;	/* the map table */
+#ifndef NO_ABBR
+static MAP	*abbrs;	/* the abbreviation table */
+#endif
+
+
+
+/* ring the terminal's bell */
+void beep()
+{
+	/* do a visible/audible bell */
+	if (*o_flash)
+	{
+		do_VB();
+		refresh();
+	}
+	else if (*o_errorbells)
+	{
+		ttywrite("\007", 1);
+	}
+
+	/* discard any buffered input, and abort macros */
+	next = user = cend;
+}
+
+
+
+/* This function replaces a "rawin" character sequence with the "cooked" version,
+ * by modifying the internal type-ahead buffer.
+ */
+void execmap(rawlen, cookedstr, visual)
+	int	rawlen;		/* length of rawin text -- string to delete */
+	char	*cookedstr;	/* the cooked text -- string to insert */
+	int	visual;		/* boolean -- chars to be executed in visual mode? */
+{
+	int	cookedlen;
+	char	*src, *dst;
+	int	i;
+
+	/* find the length of the cooked string */
+	cookedlen = strlen(cookedstr);
+#ifndef NO_EXTENSIONS
+	if (visual)
+	{
+		cookedlen *= 2;
+	}
+#endif
+
+	/* if too big to fit in type-ahead buffer, then don't do it */
+	if (cookedlen + (cend - next) - rawlen > KEYBUFSIZE)
+	{
+		return;
+	}
+
+	/* shift to make room for cookedstr at the front of keybuf */
+	src = &keybuf[next + rawlen];
+	dst = &keybuf[cookedlen];
+	i = cend - (next + rawlen);
+	if (src >= dst)
+	{
+		while (i-- > 0)
+		{
+			*dst++ = *src++;
+		}
+	}
+	else
+	{
+		src += i;
+		dst += i;
+		while (i-- > 0)
+		{
+			*--dst = *--src;
+		}
+	}
+
+	/* insert cookedstr, and adjust offsets */
+	cend += cookedlen - rawlen - next;
+	user += cookedlen - rawlen - next;
+	next = 0;
+	for (dst = keybuf, src = cookedstr; *src; )
+	{
+#ifndef NO_EXTENSIONS
+		if (visual)
+		{
+			*dst++ = ctrl('O');
+			cookedlen--;
+		}
+#endif
+		*dst++ = *src++;
+	}
+
+#ifdef DEBUG2
+	{
+#include <stdio.h>
+		FILE	*debout;
+		int		i;
+
+		debout = fopen("debug.out", "a");
+		fprintf(debout, "After execmap(%d, \"%s\", %d)...\n", rawlen, cookedstr, visual);
+		for (i = 0; i < cend; i++)
+		{
+			if (i == next) fprintf(debout, "(next)");
+			if (i == user) fprintf(debout, "(user)");
+			if (UCHAR(keybuf[i]) < ' ')
+				fprintf(debout, "^%c", keybuf[i] ^ '@');
+			else
+				fprintf(debout, "%c", keybuf[i]);
+		}
+		fprintf(debout, "(end)\n");
+		fclose(debout);
+	}
+#endif
+}
+
+/* This function calls ttyread().  If necessary, it will also redraw the screen,
+ * change the cursor shape, display the mode, and update the ruler.  If the
+ * number of characters read is 0, and we didn't time-out, then it exits because
+ * we've apparently reached the end of an EX script.
+ */
+static int fillkeybuf(when, timeout)
+	int	when;	/* mixture of WHEN_XXX flags */
+	int	timeout;/* timeout in 1/10 second increments, or 0 */
+{
+	int	nkeys;
+#ifndef NO_SHOWMODE
+	static int	oldwhen;	/* "when" from last time */
+	static int	oldleft;
+	static long	oldtop;
+	static long	oldnlines;
+	char		*str;
+#endif
+#ifndef NO_CURSORSHAPE
+	static int	oldcurs;
+#endif
+
+#ifdef DEBUG
+	watch();
+#endif
+
+
+#ifndef NO_CURSORSHAPE
+	/* make sure the cursor is the right shape */
+	if (has_CQ)
+	{
+		if (when != oldcurs)
+		{
+			switch (when)
+			{
+			  case WHEN_EX:		do_CX();	break;
+			  case WHEN_VICMD:	do_CV();	break;
+			  case WHEN_VIINP:	do_CI();	break;
+			  case WHEN_VIREP:	do_CR();	break;
+			}
+			oldcurs = when;
+		}
+	}
+#endif
+
+#ifndef NO_SHOWMODE
+	/* if "showmode" then say which mode we're in */
+	if (*o_smd && (when & WHENMASK))
+	{
+		/* redraw the screen before we check to see whether the
+		 * "showmode" message needs to be redrawn.
+		 */
+		redraw(cursor, !(when & WHEN_VICMD));
+
+		/* now the "topline" test should be valid */
+		if (when != oldwhen || topline != oldtop || leftcol != oldleft || nlines != oldnlines)
+		{
+			oldwhen = when;
+			oldtop = topline;
+			oldleft = leftcol;
+			oldnlines = nlines;
+
+			if (when & WHEN_VICMD)	    str = "Command";
+			else if (when & WHEN_VIINP) str = " Input ";
+			else if (when & WHEN_VIREP) str = "Replace";
+			else if (when & WHEN_REP1)  str = " Rep 1 ";
+			else if (when & WHEN_CUT)   str = "BufName";
+			else if (when & WHEN_MARK)  str = "Mark AZ";
+			else if (when & WHEN_CHAR)  str = "Dest Ch";
+			else			    str = (char *)0;
+
+			if (str)
+			{
+				move(LINES - 1, COLS - 10);
+				standout();
+				qaddstr(str);
+				standend();
+			}
+		}
+	}
+#endif
+
+#ifndef NO_EXTENSIONS
+	/* maybe display the ruler */
+	if (*o_ruler && (when & (WHEN_VICMD|WHEN_VIINP|WHEN_VIREP)))
+	{
+		char	buf[20];
+
+		redraw(cursor, !(when & WHEN_VICMD));
+		pfetch(markline(cursor));
+		sprintf(buf, "%7ld,%-4d", markline(cursor), 1 + idx2col(cursor, ptext, when & (WHEN_VIINP|WHEN_VIREP)));
+		move(LINES - 1, COLS - 22);
+		addstr(buf);
+	}
+#endif
+
+	/* redraw, so the cursor is in the right place */
+	if (when & WHENMASK)
+	{
+		redraw(cursor, !(when & (WHENMASK & ~(WHEN_VIREP|WHEN_VIINP))));
+	}
+
+	/* Okay, now we can finally read the rawin keystrokes */
+	refresh();
+	nkeys = ttyread(keybuf + cend, sizeof keybuf - cend, timeout);
+
+	/* if nkeys == 0 then we've reached EOF of an ex script. */
+	if (nkeys == 0 && timeout == 0)
+	{
+		tmpabort(TRUE);
+		move(LINES - 1, 0);
+		clrtoeol();
+		refresh();
+		endwin();
+		exit(1);
+	}
+
+	cend += nkeys;
+	user += nkeys;
+	return nkeys;
+}
+
+
+/* This function counts the number of maps that could match the characters
+ * between &keybuf[next] and &keybuf[cend], including incomplete matches.
+ * The longest comlete match is remembered via the "match" variable.
+ */
+static int countmatch(when)
+	int	when;	/* mixture of WHEN_XXX flags */
+{
+	MAP	*map;
+	int	count;
+
+	/* clear the "match" variable */
+	match = (MAP *)0;
+
+	/* check every map */
+	for (count = 0, map = maps; map; map = map->next)
+	{
+		/* can't match if wrong mode */
+		if ((map->flags & when) == 0)
+		{
+			continue;
+		}
+
+		/* would this be a complete match? */
+		if (map->len <= cend - next)
+		{
+			/* Yes, it would be.  Now does it really match? */
+			if (!strncmp(map->rawin, &keybuf[next], map->len))
+			{
+				count++;
+
+				/* if this is the longest complete match,
+				 * then remember it.
+				 */
+				if (!match || match->len < map->len)
+				{
+					match = map;
+				}
+			}
+		}
+		else
+		{
+			/* No, it wouldn't.  But check for partial match */
+			if (!strncmp(map->rawin, &keybuf[next], cend - next))
+			{
+				count++;
+			}
+		}
+	}
+	return count;
+}
+
+
+#ifndef NO_ABBR
+/* This function checks to see whether a word is an abbreviation.  If it is,
+ * then an appropriate number of backspoace characters is inserted into the
+ * type-ahead buffer, followed by the expanded form of the abbreviation.
+ */
+static void expandabbr(word, wlen)
+	char	*word;
+	int	wlen;
+{
+	MAP	*abbr;
+
+	/* if the next character wouldn't end the word, then don't expand */
+	if (isalnum(keybuf[next]) || keybuf[next] == ctrl('V'))
+	{
+		return;
+	}
+
+	/* find the abbreviation, if any */
+	for (abbr = abbrs;
+	     abbr && (abbr->len != wlen || strncmp(abbr->rawin, word, wlen));
+	     abbr = abbr->next)
+	{
+	}
+
+	/* If an abbreviation was found, then expand it by inserting the long
+	 * version into the type-ahead buffer, and then inserting (in front of
+	 * the long version) enough backspaces to erase to the short version.
+	 */
+	if (abbr)
+	{
+		execmap(0, abbr->cooked, FALSE);
+		while (wlen > 15)
+		{
+			execmap(0, "\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b", FALSE);
+			wlen -= 15;
+		}
+		if (wlen > 0)
+		{
+			execmap(0, "\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b" + 15 - wlen, FALSE);
+		}
+	}
+}
+#endif
+
+
+/* This function calls getabkey() without attempting to expand abbreviations */
+int getkey(when)
+	int	when;	/* mixture of WHEN_XXX flags */
+{
+	return getabkey(when, "", 0);
+}
+
+
+/* This is it.  This function returns keystrokes one-at-a-time, after mapping
+ * and abbreviations have been taken into account.
+ */
+int getabkey(when, word, wlen)
+	int	when;	/* mixture of WHEN_XXX flags */
+	char	*word;	/* a word that may need to be expanded as an abbr */
+	int	wlen;	/* length of "word" -- since "word" might not have \0 */
+{
+	int	matches;
 
 	/* if this key is needed for delay between multiple error messages,
 	 * then reset the manymsgs flag and abort any mapped key sequence.
 	 */
-	if (manymsgs)
+	if (showmsg())
 	{
-		manymsgs = FALSE;
-		cooked = (char *)0;
-		ungotten = 0;
-	}
-
-	/* if we have an ungotten key, use it */
-	if (ungotten != 0)
-	{
-		k = ungotten;
-		ungotten = 0;
-		return k;
-	}
-
-	/* if we're doing a mapped key, get the next char */
-	if (cooked && *cooked)
-	{
-		return *cooked++;
-	}
-
-	/* if keybuf is empty, fill it */
-	if (next == nkeys)
-	{
-		/* redraw if getting a VI command, refresh always */
-		if (when & WHEN_VICMD)
+		if (when == WHEN_MSG)
 		{
-			redraw(cursor, FALSE);
-		}
-		refresh();
-
-		/* read the rawin keystrokes */
-		while ((nkeys = read(0, keybuf, sizeof keybuf)) < 0)
-		{
-			/* terminal was probably resized */
-			*o_lines = LINES;
-			*o_columns = COLS;
-			if (when & (WHEN_VICMD|WHEN_VIINP|WHEN_VIREP))
+#ifndef CRUNCH
+			if (!*o_more)
 			{
-				redraw(MARK_UNSET, FALSE);
-				redraw(cursor, (when & WHEN_VICMD) == 0);
 				refresh();
+				return ' ';
 			}
+#endif
+			qaddstr("[More...]");
+			refresh();
+			execmap(user, "", FALSE);
 		}
-		next = 0;
 	}
 
-	/* see how many mapped keys this might be */
-	kptr = &keybuf[next];
-	for (i = j = 0, k = -1, km = mapped; i < MAXMAPS; i++, km++)
+#ifdef DEBUG
+	/* periodically check for screwed up internal tables */
+	watch();
+#endif
+
+	/* if buffer empty, read some characters without timeout */
+	if (next >= cend)
 	{
-		if ((km->when & when) && km->len > 0 && *km->rawin == *kptr)
+		next = user = cend = 0;
+		fillkeybuf(when, 0);
+	}
+
+	/* try to map the key, unless already mapped and not ":set noremap" */
+	if (next >= user || *o_remap)
+	{
+		do
 		{
-			if (km->len > nkeys - next
-			 && !strncmp(km->rawin, kptr, nkeys - next))
+			do
 			{
-				j++;
-			}
-			else if (km->len <= nkeys - next
-			 && !strncmp(km->rawin, kptr, km->len))
+				matches = countmatch(when);
+			} while (matches > 1 && fillkeybuf(when, *o_keytime) > 0);
+			if (matches == 1)
 			{
-				j++;
-				k = i;
+				execmap(match->len, match->cooked,
+					(match->flags & WHEN_INMV) != 0 
+					 && (when & (WHEN_VIINP|WHEN_VIREP)) != 0);
 			}
-		}
+		} while (*o_remap && matches == 1);
 	}
 
-	/* if more than one, try to read some more */
-	if (j > 1 && *o_keytime > 0)
+#ifndef NO_ABBR
+	/* try to expand an abbreviation, except in visual command mode */
+	if (wlen > 0 && (mode & (WHEN_EX|WHEN_VIINP|WHEN_VIREP)) != 0)
 	{
-		signal(SIGALRM, dummy);
-		alarm((unsigned)*o_keytime);
-		k = read(0, keybuf + nkeys, sizeof keybuf - nkeys);
-		alarm(0);
+		expandabbr(word, wlen);
+	}
+#endif
 
-		/* if we couldn't read any more, pretend 0 mapped keys */
-		if (k < 1)
-		{
-			j = 0;
-		}
-		else /* else we got some more - try again */
-		{
-			nkeys += k;
-			for (i = j = 0, km = mapped; i < MAXMAPS; i++, km++)
-			{
-				if ((km->when & when)
-				 && km->len <= nkeys - next
-				 && *km->rawin == *kptr
-				 && !strncmp(km->rawin, kptr, km->len))
-				{
-					j++;
-					k = i;
-				}
-			}
-		}
+	/* ERASEKEY should always be mapped to '\b'. */
+	if (keybuf[next] == ERASEKEY)
+	{
+		keybuf[next] = '\b';
 	}
 
-	/* if unambiguously mapped key, use it! */
-	if (j == 1 && k >= 0)
-	{
-		next += mapped[k].len;
-		cooked = mapped[k].cooked;
-		return *cooked++;
-	}
-	else
-	/* assume key is unmapped, but still translate weird erase key to '\b' */
-	if (keybuf[next] == ERASEKEY && when != 0)
-	{
-		next++;
-		return '\b';
-	}
-	else
-	{
-		return keybuf[next++];
-	}
+	/* return the next key */
+	return keybuf[next++];
 }
 
-
-mapkey(rawin, cooked, when, name)
+/* This function maps or unmaps a key */
+void mapkey(rawin, cooked, when, name)
 	char	*rawin;	/* the input key sequence, before mapping */
-	char	*cooked;/* after mapping */
+	char	*cooked;/* after mapping -- or NULL to remove map */
 	short	when;	/* bitmap of when mapping should happen */
-	char	*name;	/* name of the key, if any */
+	char	*name;	/* name of the key, NULL for no name, "abbr" for abbr */
 {
-	int	i, j;
+	MAP	**head;	/* head of list of maps or abbreviations */
+	MAP	*scan;	/* used for scanning through the list */
+	MAP	*prev;	/* used during deletions */
 
-	/* see if the key sequence was mapped before */
-	j = strlen(rawin);
-	for (i = 0; i < MAXMAPS; i++)
+	/* Is this a map or an abbreviation?  Choose the right list. */
+#ifndef NO_ABBR
+	head = ((!name || strcmp(name, "abbr")) ? &maps : &abbrs);
+#else
+	head = &maps;
+#endif
+
+	/* try to find the map in the list */
+	for (scan = *head, prev = (MAP *)0;
+	     scan && (strcmp(rawin, scan->rawin) ||
+		!(scan->flags & when & (WHEN_EX|WHEN_VICMD|WHEN_VIINP|WHEN_VIREP)));
+	     prev = scan, scan = scan->next)
 	{
-		if (mapped[i].len == j && !strncmp(mapped[i].rawin, rawin, j))
-		{
-			break;
-		}
 	}
 
-	/* if not, then try to find a new slot to use */
-	if (i == MAXMAPS)
-	{
-		for (i = 0; i < MAXMAPS && mapped[i].len > 0; i++)
-		{
-		}
-	}
-
-	/* no room for the new key? */
-	if (i == MAXMAPS)
-	{
-		msg("No room left in the key map table");
-		return;
-	}
-
+	/* trying to map? (not unmap) */
 	if (cooked && *cooked)
 	{
-		/* Map the key */
-		mapped[i].len = j;
-		strncpy(mapped[i].rawin, rawin, j);
-		strcpy(mapped[i].cooked, cooked);
-		mapped[i].when = when;
-		mapped[i].name = name;
+		/* if map starts with "visual ", then mark it as a visual map */
+		if (head == &maps && !strncmp(cooked, "visual ", 7))
+		{
+			cooked += 7;
+			when |= WHEN_INMV;
+		}
+
+		/* "visual" maps always work in input mode */
+		if (when & WHEN_INMV)
+		{
+			when |= WHEN_VIINP|WHEN_VIREP|WHEN_POPUP;
+		}
+
+		/* if not already in the list, then allocate a new structure */
+		if (!scan)
+		{
+			scan = (MAP *)malloc(sizeof(MAP));
+			scan->len = strlen(rawin);
+			scan->rawin = malloc(scan->len + 1);
+			strcpy(scan->rawin, rawin);
+			scan->flags = when;
+			scan->label = name;
+			if (*head)
+			{
+				prev->next = scan;
+			}
+			else
+			{
+				*head = scan;
+			}
+			scan->next = (MAP *)0;
+		}
+		else /* recycle old structure */
+		{
+			free(scan->cooked);
+		}
+		scan->cooked = malloc(strlen(cooked) + 1);
+		strcpy(scan->cooked, cooked);
 	}
-	else
+	else /* unmapping */
 	{
-		mapped[i].len = 0;
+		/* if nothing to unmap, then exit silently */
+		if (!scan)
+		{
+			return;
+		}
+
+		/* unlink the structure from the list */
+		if (prev)
+		{
+			prev->next = scan->next;
+		}
+		else
+		{
+			*head = scan->next;
+		}
+
+		/* free it, and the strings that it refers to */
+		free(scan->rawin);
+		free(scan->cooked);
+		free(scan);
 	}
 }
 
 
-dumpkey()
+/* This function returns a printable version of a string.  It uses tmpblk.c */
+char *printable(str)
+	char	*str;	/* the string to convert */
 {
-	int	i;
-	char	*scan;
+	char	*build;	/* used for building the string */
 
-	for (i = 0; i < MAXMAPS; i++)
+	for (build = tmpblk.c; *str; str++)
 	{
-		/* skip unused entries */
-		if (mapped[i].len <= 0)
+#if AMIGA
+		if (*str == '\233')
+		{
+			*build++ = '<';
+			*build++ = 'C';
+			*build++ = 'S';
+			*build++ = 'I';
+			*build++ = '>';
+		} else 
+#endif
+		if (UCHAR(*str) < ' ' || *str == '\177')
+		{
+			*build++ = '^';
+			*build++ = *str ^ '@';
+		}
+		else
+		{
+			*build++ = *str;
+		}
+	}
+	*build = '\0';
+	return tmpblk.c;
+}
+
+/* This function displays the contents of either the map table or the
+ * abbreviation table.  User commands call this function as follows:
+ *	:map	dumpkey(WHEN_VICMD, FALSE);
+ *	:map!	dumpkey(WHEN_VIREP|WHEN_VIINP, FALSE);
+ *	:abbr	dumpkey(WHEN_VIINP|WHEN_VIREP, TRUE);
+ *	:abbr!	dumpkey(WHEN_EX|WHEN_VIINP|WHEN_VIREP, TRUE);
+ */
+void dumpkey(when, abbr)
+	int	when;	/* WHEN_XXXX of mappings to be dumped */
+	int	abbr;	/* boolean: dump abbreviations instead of maps? */
+{
+	MAP	*scan;
+	char	*str;
+	int	len;
+
+#ifndef NO_ABBR
+	for (scan = (abbr ? abbrs : maps); scan; scan = scan->next)
+#else
+	for (scan = maps; scan; scan = scan->next)
+#endif
+	{
+		/* skip entries that don't match "when" */
+		if ((scan->flags & when) == 0)
 		{
 			continue;
 		}
 
 		/* dump the key label, if any */
-		if (mapped[i].name)
+		if (!abbr)
 		{
-			qaddstr(mapped[i].name);
+			len = 8;
+			if (scan->label)
+			{
+				qaddstr(scan->label);
+				len -= strlen(scan->label);
+			}
+			do
+			{
+				qaddch(' ');
+			} while (len-- > 0);
 		}
-		qaddch('\t');
 
-		/* write a '!' if defined with map! */
-		if (mapped[i].when & (WHEN_EX|WHEN_VIINP))
-		{
-			qaddch('!');
-		}
-		else
+		/* dump the rawin version */
+		str = printable(scan->rawin);
+		qaddstr(str);
+		len = strlen(str);
+		do
 		{
 			qaddch(' ');
-		}
-		qaddch(' ');
-
-		/* dump the raw version */
-		for (scan = mapped[i].rawin; scan < mapped[i].rawin + mapped[i].len; scan++)
-		{
-			if (*scan >= 0 && *scan < ' ' || *scan == '\177')
-			{
-				qaddch('^');
-				qaddch(*scan ^ '@');
-			}
-			else
-			{
-				qaddch(*scan);
-			}
-		}
-
-		qaddch('\t');
-
+		} while (len++ < 8);
+			
 		/* dump the mapped version */
-		for (scan = mapped[i].cooked; *scan; scan++)
+#ifndef NO_EXTENSIONS
+		if ((scan->flags & WHEN_INMV) && (when & (WHEN_VIINP|WHEN_VIREP)))
 		{
-			if (*scan >= 0 && *scan < ' ' || *scan == '\177')
-			{
-				qaddch('^');
-				qaddch(*scan ^ '@');
-			}
-			else
-			{
-				qaddch(*scan);
-			}
+			qaddstr("visual ");
 		}
-
+#endif
+		str = printable(scan->cooked);
+		qaddstr(str);
 		addch('\n');
+		exrefresh();
 	}
-	exrefresh();
 }
 
+#ifndef NO_MKEXRC
 
-
-/* This function saves the current configuration of mapped keys to a file */
-savekeys(fd)
-	int	fd;	/* file descriptor to save them to */
+static safequote(str)
+	char	*str;
 {
-	int	i;
+	char	*build;
 
-	/* HACK! refresh the screen now, so the output buffer is empty. */
-	refresh();
-
-	/* now write a map command for each key other thna the arrows */
-	for (i = 0; i < MAXMAPS; i++)
+	build = tmpblk.c + strlen(tmpblk.c);
+	while (*str)
 	{
-		/* ignore keys mapped from termcap */
-		if (mapped[i].name)
+		if (*str <= ' ' && *str >= 1 || *str == '|')
 		{
-			continue;
+			*build++ = ctrl('V');
 		}
-
-		/* If this isn't used, ignore it */
-		if (mapped[i].len <= 0)
-		{
-			continue;
-		}
-
-		/* write the map command */
-		wprintw(stdscr, "map%c %.*s %s",
-			(mapped[i].when & (WHEN_EX|WHEN_VIINP)) ? '!' : ' ',
-			mapped[i].len, mapped[i].rawin,
-			mapped[i].cooked);
-		qaddch('\n');
+		*build++ = *str++;
 	}
+	*build = '\0';
+}
 
-	/* now write the buffer to the file */
-	if (stdscr != kbuf)
+/* This function saves the contents of either the map table or the
+ * abbreviation table into a file.  Both the "bang" and "no bang" versions
+ * are saved.
+ *	:map	dumpkey(WHEN_VICMD, FALSE);
+ *	:map!	dumpkey(WHEN_VIREP|WHEN_VIINP, FALSE);
+ *	:abbr	dumpkey(WHEN_VIINP|WHEN_VIREP, TRUE);
+ *	:abbr!	dumpkey(WHEN_EX|WHEN_VIINP|WHEN_VIREP, TRUE);
+ */
+savemaps(fd, abbr)
+	int	fd;	/* file descriptor of an open file to write to */
+	int	abbr;	/* boolean: do abbr table? (else do map table) */
+{
+	MAP	*scan;
+	char	*str;
+	int	bang;
+	int	when;
+	int	len;
+
+# ifndef NO_ABBR
+	for (scan = (abbr ? abbrs : maps); scan; scan = scan->next)
+# else
+	for (scan = maps; scan; scan = scan->next)
+# endif
 	{
-		write(fd, kbuf, (stdscr - kbuf));
-		stdscr = kbuf;
+		/* skip maps that have labels, except for function keys */
+		if (scan->label && *scan->label != '#')
+		{
+			continue;
+		}
+
+		for (bang = 0; bang < 2; bang++)
+		{
+			/* decide which "when" flags we want */
+# ifndef NO_ABBR
+			if (abbr)
+				when = (bang ? WHEN_EX|WHEN_VIINP|WHEN_VIREP : WHEN_VIINP|WHEN_VIREP);
+			else
+# endif
+				when = (bang ? WHEN_VIREP|WHEN_VIINP : WHEN_VICMD);
+
+			/* skip entries that don't match "when" */
+			if ((scan->flags & when) == 0)
+			{
+				continue;
+			}
+
+			/* write a "map" or "abbr" command name */
+# ifndef NO_ABBR
+			if (abbr)
+				strcpy(tmpblk.c, "abbr");
+			else
+# endif
+				strcpy(tmpblk.c, "map");
+
+			/* maybe write a bang.  Definitely write a space */
+			if (bang)
+				strcat(tmpblk.c, "! ");
+			else
+				strcat(tmpblk.c, " ");
+
+			/* write the rawin version */
+# ifndef NO_FKEY
+			if (scan->label)
+				strcat(tmpblk.c, scan->label);
+			else
+# endif
+				safequote(scan->rawin);
+			strcat(tmpblk.c, " ");
+				
+			/* dump the mapped version */
+# ifndef NO_EXTENSIONS
+			if ((scan->flags & WHEN_INMV) && (when & (WHEN_VIINP|WHEN_VIREP)))
+			{
+				strcat(tmpblk.c, "visual ");
+			}
+# endif
+			safequote(scan->cooked);
+			strcat(tmpblk.c, "\n");
+			twrite(fd, tmpblk.c, strlen(tmpblk.c));
+		}
 	}
 }
+#endif

@@ -1,39 +1,59 @@
-/*  system.c
- *
- *  Changed to return() on fork failure, added signal()
- *  calls.          Terrence W. Holm      Oct. 1988
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: system.c,v 1.4 90/11/22 13:59:54 eck Exp $ */
 
-#include <lib.h>
-#include <stdlib.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <stdio.h>
+#if	defined(_POSIX_SOURCE)
+#include	<sys/types.h>
+#endif
+#include	<stdlib.h>
+#include	<signal.h>
 
-int system(cmd)
-_CONST char *cmd;
+extern pid_t _fork(void);
+extern pid_t _wait(int *);
+extern void _exit(int);
+extern void _execve(const char *path, const char ** argv, const char ** envp);
+extern int _close(int);
+
+#define	FAIL	127
+
+extern const char **_penvp;
+static const char *exec_tab[] = {
+	"sh",			/* argv[0] */
+	"-c",			/* argument to the shell */
+	NULL,			/* to be filled with user command */
+	NULL			/* terminating NULL */
+	};
+
+int
+system(const char *str)
 {
-  int retstat, procid, waitstat;
-  void (*sigint) (), (*sigquit) ();
+	int pid, exitstatus, waitval;
+	int i;
 
-  if ((procid = fork()) == 0) {
-	/* Child does an exec of the command. */
-	execl("/bin/sh", "sh", "-c", cmd, (char *) 0);
-	exit(127);
-  }
+	if ((pid = _fork()) < 0) return str ? -1 : 0;
 
-  /* Check to see if fork failed. */
-  if (procid < 0) return(127 << 8);
-
-  sigint = signal(SIGINT, SIG_IGN);
-  sigquit = signal(SIGQUIT, SIG_IGN);
-
-  while ((waitstat = wait(&retstat)) != procid && waitstat != -1);
-  if (waitstat == -1) retstat = -1;
-
-  signal(SIGINT, sigint);
-  signal(SIGQUIT, sigquit);
-
-  return(retstat);
+	if (pid == 0) {
+		for (i = 3; i <= 20; i++)
+			_close(i);
+		if (!str) str = "cd .";		/* just testing for a shell */
+		exec_tab[2] = str;		/* fill in command */
+		_execve("/bin/sh", exec_tab, _penvp);
+		/* get here if execve fails ... */
+		_exit(FAIL);	/* see manual page */
+	}
+	while ((waitval = _wait(&exitstatus)) != pid) {
+		if (waitval == -1) break;
+	}
+	if (waitval == -1) {
+		/* no child ??? or maybe interrupted ??? */
+		exitstatus = -1;
+	}
+	if (!str) {
+		if (exitstatus == FAIL << 8)		/* execve() failed */
+			exitstatus = 0;
+		else exitstatus = 1;			/* /bin/sh exists */
+	}
+	return exitstatus;
 }

@@ -33,7 +33,9 @@
  * up new shell processes if necessary.  It will not, however, kill off
  * login processes for lines that have been turned off; do this manually.
  */
+
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
@@ -42,6 +44,10 @@
 #include <time.h>
 #include <unistd.h>
 #include <utmp.h>
+
+#define FORWARD		static
+#define PRIVATE		static
+#define PUBLIC
 
 #define CONSNAME	"/dev/tty0"	/* system console device */
 
@@ -58,6 +64,9 @@
 #define EXIT_TTYFAIL	253		/* child had problems with tty */
 #define EXIT_EXECFAIL	254		/* child couldn't exec something */
 #define EXIT_OPENFAIL	255		/* child couldn't open something */
+
+#define HANG            1		/* hang after error */
+#define NOHANG		2		/* do not hang after error */
 
 struct uart {
   int baud;
@@ -90,7 +99,7 @@ struct uart {
 struct slotent {
   int onflag;			/* should this ttyslot be on? */
   int pid;			/* pid of login process for this tty line */
-  int exit;			/* eit status of child */
+  int exit;			/* exit status of child */
   char name[8];			/* name of this tty */
   int flags;			/* sg_flags field for this tty */
   int speed;			/* sg_ispeed for this tty */
@@ -101,37 +110,49 @@ struct slotent slots[PIDSLOTS];	/* init table of ttys and pids */
 char stack[STACKSIZE];		/* init's stack */
 char *stackpt = &stack[STACKSIZE];
 char **environ;			/* declaration required by library routines */
-extern int errno;
 
 char *CONSOLE = CONSNAME;	/* name of system console */
 struct sgttyb args;		/* buffer for TIOCGETP */
-int gothup = 0;			/* flag, showing signal 1 was recieved */
+int gothup = 0;			/* flag, showing signal 1 was received */
 int pidct = 0;			/* count of running children */
 
 char *env[] = { (char *)0 };	/* tiny environment for execle */
 
-main()
+_PROTOTYPE( int main, (void)						);
+_PROTOTYPE( char *_sbrk, (int incr)					);
+_PROTOTYPE( char *sbrk, (int incr)					);
+
+FORWARD _PROTOTYPE( void error, (char *s, int n)			);
+FORWARD _PROTOTYPE( void wtmp, (char *user, char *id, char *line,
+				int pid, int type, int lineno)		);
+FORWARD _PROTOTYPE( void readttys, (void)				);
+FORWARD _PROTOTYPE( void startup, (int linenr, int mode1, int mode2)	);
+FORWARD _PROTOTYPE( void onhup, (int s)					);
+
+PUBLIC int main()
 {
   int pid;			/* pid of child process */
   int fd;			/* fd of console for error messages */
   int i;			/* loop variable */
   int status;			/* return status from child process */
   struct slotent *slotp;	/* slots[] pointer */
-  void onhup();			/* SIGHUP interrupt catch routine */
 
   sync();			/* force buffers out onto disk */
 
   /* Execute the /etc/rc file. */
-  if(fork()) {
+  if(pid = fork()) {
 	/* Parent just waits. */
-	wait(&status);
+	while (wait(&status) != pid)
+		;
   } else {
 	/* Child exec's the shell to do the work. */
-	if(open("/etc/rc", 0) < 0) exit(EXIT_OPENFAIL);
-	dup(open(CONSOLE, 1));	/* std output, error */
-	execle(SHELL1, SHELL1, (char *)0, env);
-	execle(SHELL2, SHELL2, (char *)0, env);
-	exit(EXIT_EXECFAIL);	/* impossible, we hope */
+	open(CONSOLE, O_RDWR);		/* std input */
+	dup(0);				/* std output */
+	dup(0);				/* std error */
+	execle(SHELL1, "sh", "/etc/rc", (char *)0, env);
+	execle(SHELL2, "sh", "/etc/rc", (char *)0, env);
+	error("unable to exec shell to run /etc/rc", NOHANG);
+	_exit(EXIT_EXECFAIL);	/* impossible, we hope */
   }
 
   /* Log system reboot. */
@@ -162,7 +183,7 @@ main()
 			    slotp->exit = status;
 
 			    if(((status >> 8) & 0xFF) == EXIT_TTYFAIL) {
-				fd = open(CONSOLE, 1);
+				fd = open(CONSOLE, O_WRONLY);
 				write(fd, "init: tty problems, shutting down ", 39);
 				write(fd, slotp->name, sizeof slotp->name);
 				write(fd, "\n", 1);
@@ -184,18 +205,19 @@ main()
 	/* See which lines need a login process started up. */
 	for(slotp = slots; slotp < &slots[PIDSLOTS]; ++slotp) {
 		if(slotp->onflag && slotp->pid <= 0)
-			startup(slotp - slots, DEAD_PROCESS, LOGIN_PROCESS);
+		      startup((int)(slotp-slots), DEAD_PROCESS, LOGIN_PROCESS);
 	}
   }
 }
 
-void onhup()
+PRIVATE void onhup(s)
+int s;				/* ANSI C requires a parameter */
 {
   gothup = 1;
   signal(SIGHUP, onhup);
 }
 
-readttys()
+PRIVATE void readttys()
 {
   /* (Re)read /etc/ttys. */
 
@@ -206,10 +228,8 @@ readttys()
   struct slotent *slotp = slots;	/* entry in slots[] */
   char *q;				/* pointer for copying ttyname */
 
-  if((fd = open("/etc/ttys", 0)) < 0) {
-	write(open(CONSOLE, 1), "init: can't open /etc/ttys\n", 27);
-	while (1) ;		/* just hang -- system cannot be started */
-  }
+  if((fd = open("/etc/ttys", O_RDONLY)) < 0) 
+	error("cannot open /etc/ttys", HANG);
 
   /* Read /etc/ttys file. */
   endp = (p = ttys) + read(fd, ttys, TTYSBUF);
@@ -268,7 +288,7 @@ readttys()
   close(fd);
 }
 
-startup(linenr, mode1, mode2)
+PRIVATE void startup(linenr, mode1, mode2)
 int linenr;
 int mode1;
 int mode2;
@@ -294,16 +314,16 @@ int mode2;
 	strcpy(line, "/dev/");			/* part of device name */
 	strncat(line, slotp->name, sizeof (slotp->name)); /* rest of name */
 
-	if( open(line, 2) != 0 ) exit(EXIT_TTYFAIL);	/* standard input */
-	if(	   dup(0) != 1 ) exit(EXIT_TTYFAIL);	/* standard output */
-	if( 	   dup(1) != 2 ) exit(EXIT_TTYFAIL);	/* standard error */
+	if( open(line, O_RDWR) != 0 ) _exit(EXIT_TTYFAIL);  /* standard input*/
+	if(dup(0) != 1 ) _exit(EXIT_TTYFAIL);	/* standard output */
+	if(dup(1) != 2 ) _exit(EXIT_TTYFAIL);	/* standard error */
 
 	/* Set line parameters. */
 
-	if(ioctl(0, TIOCGETP, &args) < 0) exit(EXIT_TTYFAIL);
+	if(ioctl(0, TIOCGETP, &args) < 0) _exit(EXIT_TTYFAIL);
 	args.sg_ispeed = args.sg_ospeed = slotp->speed;
 	args.sg_flags = slotp->flags;
-	if(ioctl(0, TIOCSETP, &args) < 0) exit(EXIT_TTYFAIL);
+	if(ioctl(0, TIOCSETP, &args) < 0) _exit(EXIT_TTYFAIL);
 
 	/* Try to exec GETTY first if needed.  Call it with "-k CONSOLE" if
 	 * the line is the console.  This causes GETTY to skip the speed 
@@ -312,8 +332,7 @@ int mode2;
 	 */
 	if (slotp->onflag == 2) {
 		if (linenr == 0) {
-			execle(GETTY, GETTY, line, "-k", "CONSOLE", (char *)0,
-			       env);
+			execle(GETTY, GETTY,line,"-k","CONSOLE",(char *)0,env);
 		 } else {
 			execle(GETTY, GETTY, line, (char *)0, env);
 		}
@@ -327,13 +346,13 @@ int mode2;
 	execle(SHELL1, SHELL1, (char *)0, env);
 	execle(SHELL2, SHELL2, (char *)0, env);
 
-	write(open(CONSOLE, 1), "init: couldn't exec login\n", 26);
-	exit(EXIT_EXECFAIL);
+	error("cannot exec login", NOHANG);
+	_exit(EXIT_EXECFAIL);
   }
 }
 
 
-wtmp(user, id, line, pid, type, lineno)
+PRIVATE void wtmp(user, id, line, pid, type, lineno)
 char *user;			/* name of user */
 char *id;			/* inittab ID */
 char *line;			/* TTY name */
@@ -381,7 +400,15 @@ int lineno;			/* slot number in UTMP */
   }
 }
 
-char *sbrk(incr)
+PUBLIC char *sbrk(incr)
+int incr;
+{
+/* Version of _sbrk for old libraries. */
+
+  return _sbrk(incr);
+}
+
+PUBLIC char *_sbrk(incr)
 int incr;
 {
 /* One-off sbrk to allocate memory for execle.  The stack and heap are not set
@@ -398,9 +425,27 @@ int incr;
    */
   new_brk = old_brk + incr;
   if (new_brk > (char *) some_memory + sizeof (some_memory) ||
-      new_brk < (char *) some_memory)
+      new_brk < (char *) some_memory) {
 	return((char *) -1);
+  }	
   result = old_brk;
   old_brk = new_brk;
   return(result);
+}
+
+PRIVATE void error(s, n)
+char *s;			/* string to print */
+int n;				/* HANG, NOHANG */
+{
+/* Something awful has happened. */
+
+  int fd;
+
+  fd = open(CONSOLE, O_WRONLY);
+  write(fd, "init: ", 6);
+  write(fd, s, strlen(s));
+  write(fd, "\n", 1);
+  close(fd);
+  if (n == NOHANG) return;
+  while(1);			/* hang forever */
 }

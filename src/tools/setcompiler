@@ -1,0 +1,145 @@
+u=
+s=
+l=/usr/src/lib
+c=/usr/src/commands
+
+if test -f /usr/lib/libc.a.15; then :; else echo libc.a not in place; exit; fi
+if test `whoami` != "root"; then echo Must be superuser ; exit; fi
+
+case $1 in
+kr)
+	suffix=a
+	archiver=ar
+
+	# Install header files
+	cp $u/include/ctype.h.kr  $u/include/ctype.h
+	cp $u/include/setjmp.h.kr $u/include/setjmp.h
+	cp $u/include/stdio.h.kr  $u/include/stdio.h
+
+	# Install Makefiles
+	cp $s/kernel/Makefile.kr  $s/kernel/Makefile
+	cp $s/fs/Makefile.kr      $s/fs/Makefile
+	cp $s/mm/Makefile.kr      $s/mm/Makefile
+	cp $s/tools/Makefile.kr   $s/tools/Makefile
+	cp $l/Makefile.kr	  $l/Makefile
+	cp $l/ansi/Makefile.kr    $l/ansi/Makefile
+	cp $l/other/Makefile.kr   $l/other/Makefile
+	cp $l/curses/Makefile.kr  $l/curses/Makefile
+	cp $l/posix/Makefile.kr   $l/posix/Makefile
+	cp $l/rts/Makefile.kr     $l/rts/Makefile
+	cp $c/simple/Makefile.kr  $c/simple/Makefile
+	cp $c/ibm/Makefile.kr     $c/ibm/Makefile
+
+	# Install asld kernel assembler files
+	cp $s/kernel/klib88.x.kr  $s/kernel/klib.x
+	cp $s/kernel/mpx88.x.kr   $s/kernel/mpx.x
+	cp $s/kernel/rs2.x.kr     $s/kernel/rs2.x
+	cp $s/kernel/sconst.h.kr  $s/kernel/sconst.h
+
+	# Install tools assembler files
+	cp $s/tools/bootblk.s.kr  $s/tools/bootblk.s
+	cp $s/tools/monhead.s.kr  $s/tools/monhead.s
+
+	# Install lib/syscall and lib/ibm assembler files
+	rm -rf $l/syscall $l/ibm
+	cpdir $l/syscall.kr       $l/syscall
+	cpdir $l/ibm.kr           $l/ibm
+	chown ast $l/syscall $l/syscall/* 
+	chown ast $l/ibm $l/ibm/*
+
+	# Fix up Commands Makefiles
+	cd $c
+	for i in advent/Makefile bawk/Makefile bc/Makefile de/Makefile \
+	    dis88/Makefile elle/Makefile ibm/Makefile ic/Makefile \
+	    indent/Makefile m4/Makefile make/Makefile mined/Makefile \
+	    nroff/Makefile patch/Makefile sh/Makefile zmodem/Makefile 
+	do sed <$i '/O=o/s//O=s/' >tmp
+	   cp tmp $i
+	done
+
+	# Install C compiler
+	rm -f /lib/*cpp /lib/*head.* /lib/*crtso*
+	cp /usr/bin/cc.kr	  /bin/cc
+	cp /usr/lib/cpp		  /lib/cpp
+	cp /usr/lib/cem		  /lib/cem
+	cp /usr/lib/opt		  /lib/opt
+	cp /usr/lib/cg		  /lib/cg
+	cp /usr/lib/*.s		  /lib
+	cp /usr/lib/libc.a.15	  /lib/libc.a
+	cp /usr/lib/libc.a.15	  /usr/lib/libc.a
+	cp /usr/lib/head.s	  /lib/head.s
+	cp /usr/lib/crtso.s	  /lib/crtso.s
+	;;
+
+ansi)
+	suffix=o
+	archiver=aal
+
+	# Install header files
+	cp $u/include/ctype.h.ansi  $u/include/ctype.h
+	cp $u/include/setjmp.h.ansi $u/include/setjmp.h
+	cp $u/include/stdio.h.ansi  $u/include/stdio.h
+
+	# Install Makefiles
+	cp $s/kernel/Makefile.ansi  $s/kernel/Makefile
+	cp $s/fs/Makefile.ansi      $s/fs/Makefile
+	cp $s/mm/Makefile.ansi      $s/mm/Makefile
+	cp $s/tools/Makefile.ansi   $s/tools/Makefile
+	cp $l/Makefile.ansi	    $l/Makefile
+	cp $l/ansi/Makefile.ansi    $l/ansi/Makefile
+	cp $l/other/Makefile.ansi   $l/other/Makefile
+	cp $l/curses/Makefile.ansi  $l/curses/Makefile
+	cp $l/posix/Makefile.ansi   $l/posix/Makefile
+	cp $l/rts/Makefile.ansi     $l/rts/Makefile
+	cp $c/simple/Makefile.ansi  $c/simple/Makefile
+	cp $c/ibm/Makefile.ansi     $c/ibm/Makefile
+
+	# Install as kernel assembler files
+	cp $s/kernel/klib88.x.ansi  $s/kernel/klib.x
+	cp $s/kernel/mpx88.x.ansi   $s/kernel/mpx.x
+	cp $s/kernel/rs2.x.ansi     $s/kernel/rs2.x
+	cp $s/kernel/sconst.h.ansi  $s/kernel/sconst.h
+
+	# Install tools assembler files
+	cp $s/tools/bootblk.s.ansi  $s/tools/bootblk.s
+	cp $s/tools/monhead.s.ansi  $s/tools/monhead.s
+
+	# Install lib/syscall and lib/ibm assembler files
+	rm -rf $l/syscall $l/ibm
+	cpdir $l/syscall.ansi       $l/syscall
+	cpdir $l/ibm.ansi           $l/ibm
+	chown ast $l/syscall $l/syscall/* 
+	chown ast $l/ibm $l/ibm/*
+
+	# Fix up Commands Makefiles
+	cd $c
+	for i in advent/Makefile bawk/Makefile bc/Makefile de/Makefile \
+	    dis88/Makefile elle/Makefile ibm/Makefile ic/Makefile \
+	    indent/Makefile m4/Makefile make/Makefile mined/Makefile \
+	    nroff/Makefile patch/Makefile sh/Makefile zmodem/Makefile 
+	do sed <$i '/O=s/s//O=o/' >tmp
+	   cp tmp $i
+	done
+
+	# Install C compiler
+	cp /usr/bin/cc.ansi	    /bin/cc
+	cp /usr/lib/ncpp	    /lib/ncpp
+	cd /lib
+	rm -f cpp *head* *crtso* cem opt cg libc.a *.s
+
+	ln ncpp			    cpp
+	cp /usr/lib/ncem	    ncem
+	cp /usr/lib/nopt	    nopt
+	cp /usr/lib/ncg		    ncg
+	cp /usr/lib/nhead.o	    nhead.o
+	cp /usr/lib/ncrtso.o	    ncrtso.o
+	;;
+
+*)
+	echo "Usage: $0 [kr | ansi]"
+	exit 
+esac
+
+rm -rf /usr/include
+cpdir /include /usr/include
+chown ast /usr/include /usr/include/*

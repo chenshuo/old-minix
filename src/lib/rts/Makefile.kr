@@ -1,0 +1,9 @@
+CC=exec cc
+CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE -LIB
+SRC=fphook.c head.s crtso.s
+all:
+	$(CC) $(CFLAGS) $(SRC)
+
+clean:	
+	@rm -rf *.o *.bak
+

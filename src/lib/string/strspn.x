@@ -23,20 +23,20 @@ _strspn:
 	mov	cx,#-1		/* find length of s2 */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx
 	dec	cx
 	mov	dx,cx		/* save length of s2 */
 	dec	bx		/* set up byte count for faster loop */
 s1_loop:			/* loop over s1 looking for matches with s2 */
-	lodb
+	lodsb
 	inc	bx
 	orb	al,al
 	jz	exit
 	mov	di,6(bp)
 	mov	cx,dx
 	repne
-	scab
+	scasb
 	je	s1_loop
 	jmp	exit
 find_mismatch:			/* find a character in s1 that is not *s2 */
@@ -44,7 +44,7 @@ find_mismatch:			/* find a character in s1 that is not *s2 */
 	mov	di,si
 	mov	cx,#-1
 	repe
-	scab
+	scasb
 	dec	di		/* point back at mismatch */
 	mov	bx,di
 	sub	bx,si		/* number of matched characters */

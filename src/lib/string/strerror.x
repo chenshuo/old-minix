@@ -6,7 +6,7 @@
 
 .define	_strerror
 .data
-.extern	_sys_nerr, _sys_errlist
+.extern	__sys_nerr, __sys_errlist
 unknown: .asciz 'Unknown error'
 .text
 _strerror:
@@ -15,9 +15,9 @@ _strerror:
 	mov	ax,#unknown	/* default return is "Unknown error" */
 	or	bx,bx
 	jle	exit
-	cmp	bx,_sys_nerr
+	cmp	bx,__sys_nerr
 	jge	exit
 	sal	bx,#1
-	mov	ax,_sys_errlist(bx)
+	mov	ax,__sys_errlist(bx)
 exit:
 	ret

@@ -21,9 +21,13 @@
 
 #else 
 
-#include <stdio.h>
+#include <sys/types.h>
 #include <ctype.h>
 #include <signal.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
 
 #endif
 
@@ -192,3 +196,80 @@ typedef union {			/* stack structure */
 #define PREVEP	(mstack[fp+3].sstr)
 #define PREVSP	(fp-3)
 #define PREVFP	(mstack[fp-2].sfra)
+
+/* function prototypes */
+
+/* eval.c */
+
+_PROTOTYPE(void eval, (char *argv [], int argc, int td ));
+
+/* expr.c */
+
+_PROTOTYPE(int expr, (char *expbuf ));
+_PROTOTYPE(int query, (void));
+_PROTOTYPE(int lor, (void));
+_PROTOTYPE(int land, (void));
+_PROTOTYPE(int bor, (void));
+_PROTOTYPE(int bxor, (void));
+_PROTOTYPE(int band, (void));
+_PROTOTYPE(int eql, (void));
+_PROTOTYPE(int relat, (void));
+_PROTOTYPE(int shift, (void));
+_PROTOTYPE(int primary, (void));
+_PROTOTYPE(int term, (void));
+_PROTOTYPE(int unary, (void));
+_PROTOTYPE(int factor, (void));
+_PROTOTYPE(int constant, (void));
+_PROTOTYPE(int num, (void));
+_PROTOTYPE(int geteql, (void));
+_PROTOTYPE(int getrel, (void));
+_PROTOTYPE(int skipws, (void));
+_PROTOTYPE(int experr, (char *msg ));
+
+/* look.c */
+
+_PROTOTYPE(int hash, (char *name ));
+_PROTOTYPE(ndptr lookup, (char *name ));
+_PROTOTYPE(ndptr addent, (char *name ));
+_PROTOTYPE(void remhash, (char *name, int all ));
+_PROTOTYPE(void freent, (ndptr p ));
+
+/* main.c */
+
+_PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(void macro, (void));
+_PROTOTYPE(ndptr inspect, (char *tp ));
+_PROTOTYPE(void initm4, (void));
+_PROTOTYPE(void initkwds, (void));
+
+/* misc.c */
+
+_PROTOTYPE(int indx, (char *s1, char *s2 ));
+_PROTOTYPE(void putback, (int c ));
+_PROTOTYPE(void pbstr, (char *s ));
+_PROTOTYPE(void pbnum, (int n ));
+_PROTOTYPE(void chrsave, (int c ));
+_PROTOTYPE(void getdiv, (int ind ));
+_PROTOTYPE(void error, (char *s ));
+_PROTOTYPE(void onintr, (int s ));
+_PROTOTYPE(void killdiv, (void));
+_PROTOTYPE(char *strsave, (char *s ));
+_PROTOTYPE(void usage, (void));
+_PROTOTYPE(int getopt, (int argc, char *argv [], char *optstring ));
+
+/* serv.c */
+
+_PROTOTYPE(void expand, (char *argv [], int argc ));
+_PROTOTYPE(void dodefine, (char *name, char *defn ));
+_PROTOTYPE(void dodefn, (char *name ));
+_PROTOTYPE(void dopushdef, (char *name, char *defn ));
+_PROTOTYPE(void dodump, (char *argv [], int argc ));
+_PROTOTYPE(void doifelse, (char *argv [], int argc ));
+_PROTOTYPE(int doincl, (char *ifile ));
+_PROTOTYPE(int dopaste, (char *pfile ));
+_PROTOTYPE(void dochq, (char *argv [], int argc ));
+_PROTOTYPE(void dochc, (char *argv [], int argc ));
+_PROTOTYPE(void dodiv, (int n ));
+_PROTOTYPE(void doundiv, (char *argv [], int argc ));
+_PROTOTYPE(void dosub, (char *argv [], int argc ));
+_PROTOTYPE(void map, (char *dest, char *src, char *from, char *to ));

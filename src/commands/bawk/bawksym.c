@@ -17,6 +17,8 @@
 #define F_TOLOWER       8
 #define F_MATCH         9
 #define F_NEXTFILE      10
+#define F_ATOI          11
+#define F_ITOA          12
 
 isfunction( s )
 char *s;
@@ -46,6 +48,10 @@ char *s;
                 return F_MATCH;
         if ( !strcmp( s, "nextfile" ) )
                 return F_NEXTFILE;
+        if ( !strcmp( s, "atoi" ) )
+                return F_ATOI;
+        if ( !strcmp( s, "itoa" ) )
+                return F_ITOA;
         return 0;
 }
 
@@ -73,8 +79,6 @@ char *s;
                 return T_NF;
         if ( !strcmp( s, "NR" ) )
                 return T_NR;
-        if ( !strcmp( s, "FS" ) )
-                return T_FS;
         if ( !strcmp( s, "RS" ) )
                 return T_RS;
         if ( !strcmp( s, "FILENAME" ) )
@@ -147,7 +151,7 @@ function( funcnum )
                 while ( Fieldcount )
                         free( Fields[ --Fieldcount ] );
                 pushint( (INT)getline() );
-                Fieldcount = parse( Linebuf, Fields, Fieldsep );
+                Fieldcount = parse( Linebuf, Fields, findvar("FS")->vptr );
                 break;
         case F_STRLEN:  /* calculate length of string argument */
                 pushint( (INT)strlen( args[0].dptr ) );
@@ -169,6 +173,12 @@ function( funcnum )
                 break;
         case F_NEXTFILE:/* close current input file and process next file */
                 pushint( (INT)endfile() );
+                break;
+        case F_ATOI:    /* convert a string to an int (not automatic in bawk) */
+                pushint( (INT)atoi( args[0].dptr ) );
+                break;
+        case F_ITOA:    /* convert an int to a string (for symmetry) */
+                pushint( (INT)itoa( args[0].ival ) );
                 break;
         default:        /* oops! */
                 error( "bad function call", ACT_ERROR );

@@ -64,26 +64,26 @@
 #include <types.h>
 #include <stat.h>
 #define LOGFILE "rzlog.tmp"
-#include <stdio.h>
-#include <signal.h>
-#include <setjmp.h>
-#include <ctype.h>
-#include <errno.h>
 #define OS "VMS"
 #define BUFREAD
 extern int errno;
 #define SS_NORMAL SS$_NORMAL
 #else
+/* Not vax11c */
 #define SS_NORMAL 0
 #define LOGFILE "/tmp/rzlog"
-#include <stdio.h>
-#include <signal.h>
-#include <setjmp.h>
+#endif
+
+#include <time.h>
 #include <ctype.h>
 #include <errno.h>
-extern int errno;
-FILE *popen();
-#endif
+#include <signal.h>
+#include <setjmp.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <utime.h>
+#include <stdio.h>
 
 #define OK 0
 #define FALSE 0
@@ -91,7 +91,40 @@ FILE *popen();
 #undef ERROR
 #define ERROR (-1)
 
-void bibi();
+
+_PROTOTYPE(long getfree , (void));
+_PROTOTYPE(void alrm , (int sig ));
+_PROTOTYPE(int main , (int argc , char *argv []));
+_PROTOTYPE(int usage , (void));
+_PROTOTYPE(int wcreceive , (int argc , char **argp ));
+_PROTOTYPE(int wcrxpn , (char *rpn ));
+_PROTOTYPE(int wcrx , (void));
+_PROTOTYPE(int wcgetsec , (char *rxbuf , int maxtime ));
+_PROTOTYPE(int readline , (int timeout ));
+_PROTOTYPE(void purgeline , (void));
+_PROTOTYPE(int procheader , (char *name ));
+_PROTOTYPE(int make_dirs , (char *pathname ));
+_PROTOTYPE(int makedir , (char *dpath , int dmode ));
+_PROTOTYPE(int putsec , (char *buf , int n ));
+_PROTOTYPE(void sendline , (int c ));
+_PROTOTYPE(void flushmo , (void));
+_PROTOTYPE(void uncaps , (char *s ));
+_PROTOTYPE(int IsAnyLower , (char *s ));
+_PROTOTYPE(char *substr , (char *s , char *t ));
+void zperr();
+_PROTOTYPE(void canit , (void));
+_PROTOTYPE(void report , (int sct ));
+_PROTOTYPE(void chkinvok , (char *s ));
+_PROTOTYPE(void checkpath , (char *name ));
+_PROTOTYPE(int tryz , (void));
+_PROTOTYPE(int rzfiles , (void));
+_PROTOTYPE(int rzfile , (void));
+_PROTOTYPE(void zmputs , (char *s ));
+_PROTOTYPE(int closeit , (void));
+_PROTOTYPE(void ackbibi , (void));
+_PROTOTYPE(void bttyout , (int c ));
+_PROTOTYPE(int sys2 , (char *s ));
+_PROTOTYPE(void exec2 , (char *s ));
 
 /*
  * Max value for HOWMANY is 255.
@@ -134,7 +167,6 @@ unsigned Baudrate = 2400;
 
 #include "crctab.c"
 
-char *substr();
 FILE *fout;
 
 /*
@@ -221,13 +253,13 @@ int n;
 	exit(128+n);
 }
 
-main(argc, argv)
+int main(argc, argv)
+int argc;
 char *argv[];
 {
 	register char *cp;
 	register npats;
 	char *virgin, **patts;
-	char *getenv();
 	int exitcode = 0;
 
 	Rxtimeout = 100;
@@ -339,7 +371,7 @@ char *argv[];
 }
 
 
-usage()
+int usage()
 {
 	cucheck();
 #ifdef vax11c
@@ -366,7 +398,7 @@ usage()
  *  Debugging information output interface routine
  */
 /* VARARGS1 */
-vfile(f, a, b, c)
+void vfile(f, a, b, c)
 register char *f,*a,*b,*c;
 
 {
@@ -383,7 +415,8 @@ register char *f,*a,*b,*c;
 char *rbmsg =
 "%s ready. To begin transfer, type \"%s file ...\" to your modem program\r\n\n";
 
-wcreceive(argc, argp)
+int wcreceive(argc, argp)
+int argc;
 char **argp;
 {
 	register c;
@@ -447,7 +480,7 @@ fubar:
  * Length is indeterminate as long as less than Blklen
  * A null string represents no more files (YMODEM)
  */
-wcrxpn(rpn)
+int wcrxpn(rpn)
 char *rpn;	/* receive a pathname */
 {
 	register c;
@@ -481,11 +514,10 @@ et_tu:
  * Jack M. Wierda and Roderick W. Hart
  */
 
-wcrx()
+int wcrx()
 {
 	register int sectnum, sectcurr;
 	register char sendchar;
-	register char *p;
 	int cblklen;			/* bytes to dump this block */
 
 	Firstsec=TRUE;sectnum=0; Eofseen=FALSE;
@@ -496,7 +528,7 @@ wcrx()
 		Lleft=0;	/* Do read next time ... */
 		sectcurr=wcgetsec(secbuf, (sectnum&0177)?50:130);
 		report(sectcurr);
-		if (sectcurr==(sectnum+1 &0377)) {
+		if (sectcurr==((sectnum+1) &0377)) {
 			sectnum++;
 			cblklen = Bytesleft>Blklen ? Blklen:Bytesleft;
 			if (putsec(secbuf, cblklen)==ERROR)
@@ -535,7 +567,7 @@ wcrx()
  *    (Caller must do that when he is good and ready to get next sector)
  */
 
-wcgetsec(rxbuf, maxtime)
+int wcgetsec(rxbuf, maxtime)
 char *rxbuf;
 int maxtime;
 {
@@ -636,7 +668,7 @@ humbug:
  *
  * timeout is in tenths of seconds
  */
-readline(timeout)
+int readline(timeout)
 int timeout;
 {
 	register n;
@@ -683,7 +715,7 @@ int timeout;
 /*
  * Purge the modem input queue of all characters
  */
-purgeline()
+void purgeline()
 {
 	Lleft = 0;
 #ifdef USG
@@ -698,10 +730,10 @@ purgeline()
 /*
  * Process incoming file information header
  */
-procheader(name)
+int procheader(name)
 char *name;
 {
-	register char *openmode, *p, **pp;
+	register char *openmode, *p;
 
 	/* set default parameters and overrides */
 	openmode = "w";
@@ -814,7 +846,7 @@ char *name;
  * it's because some required directory was not present, and if
  * so, create all required dirs.
  */
-make_dirs(pathname)
+int make_dirs(pathname)
 register char *pathname;
 {
 	register char *p;		/* Points into path */
@@ -833,7 +865,7 @@ register char *pathname;
 		if (p[-1] == '.' && (p == pathname+1 || p[-2] == '/'))
 			continue;
 		*p = 0;				/* Truncate the path there */
-		if ( !mkdir(pathname, 0777)) {	/* Try to create it as a dir */
+		if ( !makedir(pathname, 0777)) {	/* Try to create it as a dir */
 			vfile("Made directory %s\n", pathname);
 			madeone++;		/* Remember if we made one */
 			*p = '/';
@@ -843,7 +875,7 @@ register char *pathname;
 		if (errno == EEXIST)		/* Directory already exists */
 			continue;
 		/*
-		 * Some other error in the mkdir.  We return to the caller.
+		 * Some other error in the makedir.  We return to the caller.
 		 */
 		break;
 	}
@@ -858,7 +890,7 @@ register char *pathname;
 /*
  * Make a directory.  Compatible with the mkdir() system call on 4.2BSD.
  */
-mkdir(dpath, dmode)
+int makedir(dpath, dmode)
 char *dpath;
 int dmode;
 {
@@ -909,9 +941,9 @@ int dmode;
  *  If not in binary mode, carriage returns, and all characters
  *  starting with CPMEOF are discarded.
  */
-putsec(buf, n)
+int putsec(buf, n)
 char *buf;
-register n;
+register int n;
 {
 	register char *p;
 
@@ -940,7 +972,8 @@ register n;
 /*
  *  Send a character to modem.  Small is beautiful.
  */
-sendline(c)
+void sendline(c)
+int c;
 {
 	char d;
 
@@ -950,7 +983,7 @@ sendline(c)
 	write(1, &d, 1);
 }
 
-flushmo() {}
+void flushmo() {}
 #endif
 
 
@@ -958,7 +991,7 @@ flushmo() {}
 
 
 /* make string s lower case */
-uncaps(s)
+void uncaps(s)
 register char *s;
 {
 	for ( ; *s; ++s)
@@ -968,7 +1001,7 @@ register char *s;
 /*
  * IsAnyLower returns TRUE if string s has lower case letters.
  */
-IsAnyLower(s)
+int IsAnyLower(s)
 register char *s;
 {
 	for ( ; *s; ++s)
@@ -1003,7 +1036,7 @@ register char *s,*t;
  * Log an error
  */
 /*VARARGS1*/
-zperr(s,p,u)
+void zperr(s,p,u)
 char *s, *p, *u;
 {
 	if (Verbose <= 0)
@@ -1014,7 +1047,7 @@ char *s, *p, *u;
 }
 
 /* send cancel string to get the other end to shut up */
-canit()
+void canit()
 {
 	static char canistr[] = {
 	 24,24,24,24,24,24,24,24,24,24,8,8,8,8,8,8,8,8,8,8,0
@@ -1031,7 +1064,7 @@ canit()
 }
 
 
-report(sct)
+void report(sct)
 int sct;
 {
 	if (Verbose>1)
@@ -1044,7 +1077,7 @@ int sct;
  * If called as [-][dir/../]rzCOMMAND set the pipe flag
  * If called as rb use YMODEM protocol
  */
-chkinvok(s)
+void chkinvok(s)
 char *s;
 {
 	register char *p;
@@ -1073,7 +1106,7 @@ char *s;
 /*
  * Totalitarian Communist pathname processing
  */
-checkpath(name)
+void checkpath(name)
 char *name;
 {
 	if (Restricted) {
@@ -1098,7 +1131,7 @@ char *name;
  *  Return ZFILE if Zmodem filename received, -1 on error,
  *   ZCOMPL if transaction finished,  else 0
  */
-tryz()
+int tryz()
 {
 	register c, n;
 	register cmdzack1flg;
@@ -1194,7 +1227,7 @@ again:
 /*
  * Receive 1 or more files with ZMODEM protocol
  */
-rzfiles()
+int rzfiles()
 {
 	register c;
 
@@ -1223,7 +1256,7 @@ rzfiles()
  * Receive a file with ZMODEM protocol
  *  Assumes file name frame is in secbuf
  */
-rzfile()
+int rzfile()
 {
 	register c, n;
 	long rxbytes;
@@ -1403,7 +1436,7 @@ moredata:
  * Send a string to the modem, processing for \336 (sleep 1 sec)
  *   and \335 (break signal)
  */
-zmputs(s)
+void zmputs(s)
 char *s;
 {
 	register c;
@@ -1423,9 +1456,9 @@ char *s;
 /*
  * Close the receive dataset, return OK or ERROR
  */
-closeit()
+int closeit()
 {
-	time_t time(), q;
+	time_t q;
 
 #ifndef vax11c
 	if (Topipe) {
@@ -1443,7 +1476,7 @@ closeit()
 	if (Modtime) {
 		timep[0] = time(&q);
 		timep[1] = Modtime;
-		utime(Pathname, timep);
+		utime(Pathname, (struct utimbuf *) timep);
 	}
 #endif
 	if ((Filemode&S_IFMT) == S_IFREG)
@@ -1454,7 +1487,7 @@ closeit()
 /*
  * Ack a ZFIN packet, let byegones be byegones
  */
-ackbibi()
+void ackbibi()
 {
 	register n;
 
@@ -1483,7 +1516,8 @@ ackbibi()
 /*
  * Local console output simulation
  */
-bttyout(c)
+void bttyout(c)
+int c;
 {
 	if (Verbose || Fromcu)
 		putc(c, stderr);
@@ -1493,7 +1527,7 @@ bttyout(c)
 /*
  * Strip leading ! if present, do shell escape. 
  */
-sys2(s)
+int sys2(s)
 register char *s;
 {
 	if (*s == '!')
@@ -1503,7 +1537,7 @@ register char *s;
 /*
  * Strip leading ! if present, do exec.
  */
-exec2(s)
+void exec2(s)
 register char *s;
 {
 	if (*s == '!')

@@ -65,8 +65,8 @@ extern struct dirent	__dirent;	/* (not actually used) */
    DIRENTSIZ and DIRENTBASESIZ to also have (struct dirent *) arguments.
    There shouldn't be any problem if you avoid using the DIRENTSIZ() macro. */
 
-#define	DIRENTBASESIZ		(((struct dirent *)0)->d_name \
-				- (char *)&((struct dirent *)0)->d_ino)
+#define	DIRENTBASESIZ		((int)(((struct dirent *)0)->d_name) \
+				- (int)&((struct dirent *)0)->d_ino)
 #endif
 
 #define	DIRENTSIZ( namlen )	((DIRENTBASESIZ + sizeof(long) + (namlen)) \

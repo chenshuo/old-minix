@@ -19,14 +19,17 @@
  */
 
 #define PUBLIC extern
-#include "globs.h"
 #include <ctype.h>
+#include <string.h>
+#include <stdlib.h>
+#include "globs.h"
+#include "proto.h"
 
 
 int             comment_open;
 static          paren_target;
 
-dump_line()
+void dump_line()
 {					/* dump_line is the routine
 					   that actually effects the
 					   printing of the new source.
@@ -267,9 +270,9 @@ inhibit_newline:
    paren_target = -ps.paren_indents[ps.paren_level - 1];
    not_first_line = 1;
    return;
-};
+}
 
-code_target()
+int code_target()
 {
    register        target_col = ps.ind_size * ps.ind_level + 1;
 
@@ -295,7 +298,7 @@ code_target()
    return target_col;
 }
 
-label_target()
+int label_target()
 {
    return
       ps.pcase ? (int) (case_ind * ps.ind_size) + 1
@@ -319,7 +322,7 @@ label_target()
  * buffer from temporary buffer
  *
  */
-int
+void
 fill_buffer()
 {					/* this routine reads stuff
 					   from the input */
@@ -348,7 +351,7 @@ fill_buffer()
 	 had_eof = true;
 	 break;
       }
-      *p++ = i;
+      *p++ = (char)i;
       if (i == '\n')
 	 break;
    }
@@ -408,7 +411,7 @@ fill_buffer()
       while (*p++ != '\n');
    }
    return;
-};
+}
 
 /*
  * Copyright (C) 1976 by the Board of Trustees of the University of Illinois
@@ -438,7 +441,7 @@ fill_buffer()
  * HISTORY: initial coding 	November 1976	D A Willcox of CAC
  *
  */
-pad_output(current, target)		/* writes tabs and blanks (if
+int pad_output(current, target)		/* writes tabs and blanks (if
 					   necessary) to get the
 					   current output position up
 					   to the target column */
@@ -464,7 +467,7 @@ pad_output(current, target)		/* writes tabs and blanks (if
 	 putc(' ', output);		/* pad with final blanks */
    }
    return (target);
-};
+}
 
 /*
  * Copyright (C) 1976 by the Board of Trustees of the University of Illinois
@@ -524,11 +527,13 @@ count_spaces(current, buffer)
       }					/* end of switch */
    }					/* end of for loop */
    return (cur);
-};
+}
 
 int             found_err;
-diag(level, msg, a, b)
+void diag(level, msg, a, b)
+int level;
 char *msg;
+int a, b;
 {
    if (level)
       found_err = 1;
@@ -545,8 +550,9 @@ char *msg;
    }
 }
 
-writefdef(f, nm)
+void writefdef(f, nm)
    register struct fstate *f;
+   int nm;
 {
    fprintf(output, ".ds f%c %s\n.nr s%c %d\n",
 	   nm, f->font, nm, f->size);
@@ -577,24 +583,24 @@ chfont(of, nf, s)
       if (nf->size < of->size)
       {
 	 *s++ = '-';
-	 *s++ = '0' + of->size - nf->size;
+	 *s++ = (char)'0' + of->size - nf->size;
       } else
       {
 	 *s++ = '+';
-	 *s++ = '0' + nf->size - of->size;
+	 *s++ = (char)'0' + nf->size - of->size;
       }
    }
    return s;
 }
 
 
-parsefont(f, s0)
+void parsefont(f, s0)
    register struct fstate *f;
    char           *s0;
 {
    register char  *s = s0;
    int             sizedelta = 0;
-   bzero(f, sizeof *f);
+   memset(f, '\0', sizeof *f);
    while (*s)
    {
       if (isdigit(*s))

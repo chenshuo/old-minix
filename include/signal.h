@@ -6,17 +6,23 @@
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
 
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
 /* Here are types that are closely associated with signal handling. */
 typedef int sig_atomic_t;
 
-#ifdef	_POSIX_SOURCE
-typedef unsigned short sigset_t;
+#ifdef _POSIX_SOURCE
+#ifndef _SIGSET_T
+#define _SIGSET_T
+typedef unsigned long sigset_t;
 #endif
-
+#endif
 
 #define _NSIG             16	/* number of signals used */
 
-#define SIGHUP	           1	/* hangup */
+#define SIGHUP             1	/* hangup */
 #define SIGINT             2	/* interrupt (DEL) */
 #define SIGQUIT            3	/* quit (ASCII FS) */
 #define SIGILL             4	/* illegal instruction */
@@ -47,68 +53,61 @@ typedef unsigned short sigset_t;
 #define SIGTTIN           21	/* background process wants to read */
 #define SIGTTOU           22	/* background process wants to write */
 
+/* The sighandler_t type is not allowed unless _POSIX_SOURCE is defined. */
 #ifdef _POSIX_SOURCE
-#define SA_NOCLDSTOP       1	/* signal parent if child stops */
+#define __sighandler_t sighandler_t
+#else
+typedef void (*__sighandler_t) (int);
+#endif
 
-#endif /* _POSIX_SOURCE */
+/* Macros used as function pointers. */
+#define SIG_ERR    ((__sighandler_t) -1)	/* error return */
+#define SIG_DFL	   ((__sighandler_t)  0)	/* default signal handling */
+#define SIG_IGN	   ((__sighandler_t)  1)	/* ignore signal */
+#define SIG_HOLD   ((__sighandler_t)  2)	/* block signal */
+#define SIG_CATCH  ((__sighandler_t)  3)	/* catch signal */
 
-/* POSIX requires these values for use on system calls involving signals. */
+#ifdef _POSIX_SOURCE
+struct sigaction {
+  __sighandler_t sa_handler;	/* SIG_DFL, SIG_IGN, or pointer to function */
+  sigset_t sa_mask;		/* signals to be blocked during handler */
+  int sa_flags;			/* special flags */
+};
+
+/* Fields for sa_flags. */
+#define SA_ONSTACK   0x0001	/* deliver signal on alternate stack */
+#define SA_RESETHAND 0x0002	/* reset signal handler when signal caught */
+#define SA_NODEFER   0x0004	/* don't block signal while catching it */
+#define SA_RESTART   0x0008	/* automatic system call restart */
+#define SA_SIGINFO   0x0010	/* extended signal handling */
+#define SA_NOCLDWAIT 0x0020	/* don't create zombies */
+#define SA_NOCLDSTOP 0x0040	/* don't receive SIGCHLD when child stops */
+#define SA_COMPAT    0x0080	/* internal flag for old signal catchers */
+
+/* POSIX requires these values for use with sigprocmask(2). */
 #define SIG_BLOCK          0	/* for blocking signals */
 #define SIG_UNBLOCK        1	/* for unblocking signals */
 #define SIG_SETMASK        2	/* for setting the signal mask */
+#define SIG_INQUIRE        4	/* for internal use only */
+#endif	/* _POSIX_SOURCE */
 
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
-/* Macros used as function pointers and one awful prototype. */
-#if _ANSI
-#define SIG_DFL		((void (*)(int))0)	/* default signal handling */
-#define SIG_IGN		((void (*)(int))1)	/* ignore signal */
-#define SIG_ERR		((void (*)(int))-1)
-
-void (*signal(int _sig, void (*_func)(int)))(int);
-
-#ifdef _POSIX_SOURCE
-struct sigaction {
-  void (*sa_handler)(int);	/* SIG_DFL, SIG_IGN, or pointer to function */
-  sigset_t sa_mask;		/* signals to be blocked during handler */
-  int sa_flags;			/* special flags */
-};
-#endif
-
-#else	/* !_ANSI */
-#define SIG_DFL		((void (*)())0)		/* default signal handling */
-#define SIG_IGN		((void (*)())1)		/* ignore signal */
-#define SIG_ERR		((void (*)())-1)
-
-void (*signal()) ();
-
-#ifdef _POSIX_SOURCE		/* otherwise sigset_t is not defined */
-struct sigaction {
-  void (*sa_handler)();		/* SIG_DFL, SIG_IGN, or pointer to function */
-  sigset_t sa_mask;		/* signals to be blocked during handler */
-  int sa_flags;			/* special flags */
-};
-#endif
-
-#endif	/* _ANSI */
-
-/* Function Prototypes. */
+/* POSIX and ANSI function prototypes. */
 _PROTOTYPE( int raise, (int _sig)					);
+_PROTOTYPE( __sighandler_t signal, (int _sig, __sighandler_t _func)	);
 
 #ifdef _POSIX_SOURCE
 _PROTOTYPE( int kill, (pid_t _pid, int _sig)				);
-_PROTOTYPE( int sigaddset, (sigset_t *_set)				);
-_PROTOTYPE( int sigdelset, (sigset_t *_set)				);
+_PROTOTYPE( int sigaction,
+    (int _sig, const struct sigaction *_act, struct sigaction *_oact)	);
+_PROTOTYPE( int sigaddset, (sigset_t *_set, int _sig)			);
+_PROTOTYPE( int sigdelset, (sigset_t *_set, int _sig)			);
 _PROTOTYPE( int sigemptyset, (sigset_t *_set)				);
 _PROTOTYPE( int sigfillset, (sigset_t *_set)				);
-_PROTOTYPE( int sigismember, (sigset_t *_set, int _signo)		);
-_PROTOTYPE( int sigpending, (sigset_t *set)				);
-_PROTOTYPE( int sigprocmask, (int _how, sigset_t *_set, sigset_t *_oset));
-_PROTOTYPE( int sigsuspend, (sigset_t *_sigmask)			);
-_PROTOTYPE( int sigaction,
-	    (int _sig, struct sigaction *_a, struct sigaction *_oact)	);
+_PROTOTYPE( int sigismember, (sigset_t *_set, int _sig)			);
+_PROTOTYPE( int sigpending, (sigset_t *_set)				);
+_PROTOTYPE( int sigprocmask,
+	    (int _how, const sigset_t *_set, sigset_t *_oset)		);
+_PROTOTYPE( int sigsuspend, (const sigset_t *_sigmask)			);
 #endif
 
 #endif /* _SIGNAL_H */

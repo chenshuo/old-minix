@@ -2,6 +2,7 @@
  *	enable_irq:	enable an interrupt line.  The cim...() functions in
  *			klib88 are specialized versions of this
  *	init_8259:	initialize the 8259(s), since the BIOS does it poorly
+ *	soon_reboot:	prepare to reboot the system
  */
 
 #include "kernel.h"
@@ -59,4 +60,20 @@ unsigned slave_base;
 	out_byte(INT_CTLMASK, ICW4_PC);
   }
   out_byte(INT_CTLMASK, ~0);
+}
+
+
+/*==========================================================================*
+ *				soon_reboot				    *
+ *==========================================================================*/
+PUBLIC void soon_reboot()
+{
+/* Prepare to reboot the system.  This mainly stops all interrupts.  lock()
+ * is not enough since functions may call unlock() (e.g. panic calls printf
+ * which calls set_6845 which calls unlock).  Set the 'rebooting' flag to
+ * show that the system is unreliable.
+ */
+
+  out_byte(INT_CTLMASK, ~0);
+  rebooting = TRUE;
 }

@@ -5,8 +5,6 @@
 #define _TABLE
 
 #include "fs.h"
-#include <sys/stat.h>
-
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "buf.h"
@@ -18,7 +16,7 @@
 
 PUBLIC char *stackpt = &fstack[FS_STACK_BYTES];	/* initial stack pointer */
 
-PUBLIC int (*call_vector[NCALLS])() = {
+PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 	no_sys,		/*  0 = unused	*/
 	do_exit,	/*  1 = exit	*/
 	do_fork,	/*  2 = fork	*/
@@ -30,7 +28,7 @@ PUBLIC int (*call_vector[NCALLS])() = {
 	do_creat,	/*  8 = creat	*/
 	do_link,	/*  9 = link	*/
 	do_unlink,	/* 10 = unlink	*/
-	no_sys,		/* 11 = exec	*/
+	no_sys,		/* 11 = waitpid	*/
 	do_chdir,	/* 12 = chdir	*/
 	do_time,	/* 13 = time	*/
 	do_mknod,	/* 14 = mknod	*/
@@ -78,7 +76,7 @@ PUBLIC int (*call_vector[NCALLS])() = {
 	no_sys,		/* 56 = (mpx)	*/
 	no_sys,		/* 57 = unused	*/
 	no_sys,		/* 58 = unused	*/
-	no_sys,		/* 59 = exece	*/
+	do_exec,	/* 59 = exece	*/
 	do_umask,	/* 60 = umask	*/
 	do_chroot,	/* 61 = chroot	*/
 	no_sys,		/* 62 = unused	*/
@@ -90,6 +88,12 @@ PUBLIC int (*call_vector[NCALLS])() = {
 	do_revive,	/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
 	no_sys,		/* 69 = unused */
+	no_sys,		/* 70 = unused */
+	no_sys,		/* 71 = SIGACTION */
+	no_sys,		/* 72 = SIGSUSPEND */
+	no_sys,		/* 73 = SIGPENDING */
+	no_sys,		/* 74 = SIGPROCMASK */
+	no_sys,		/* 75 = SIGRETURN */
 };
 
 
@@ -99,18 +103,26 @@ PUBLIC int (*call_vector[NCALLS])() = {
  * intermixed at random.  If this ordering is changed, the devices in h/boot.h
  * must be changed to correspond to the new values.  Note that the major
  * device numbers used in /dev are NOT the same as the task numbers used
- * inside the kernel (as defined in h/com.h).
+ * inside the kernel (as defined in h/com.h).  Also note that if /dev/mem
+ * is changed from 1, NULL_MAJOR must be changed in <include/minix/com.h>.
  */
 PUBLIC struct dmap dmap[] = {
 /*  Open       Read/Write   Close       Task #      Device  File
     ----       ----------   -----       -------     ------  ----      */
     0,         0,           0,          0,           /* 0 = not used  */
-    no_call,   rw_dev,      no_call,    MEM,         /* 1 = /dev/mem  */
-    no_call,   rw_dev,      no_call,    FLOPPY,      /* 2 = /dev/fd0  */
-    no_call,   rw_dev,      no_call,    WINCHESTER,  /* 3 = /dev/hd0  */
-    tty_open,  rw_dev,      no_call,    TTY,         /* 4 = /dev/tty0 */
-    no_call,   rw_dev2,     no_call,    TTY,         /* 5 = /dev/tty  */
-    no_call,   rw_dev,      no_call,    PRINTER,     /* 6 = /dev/lp   */
+    dev_opcl,  call_task,   dev_opcl,   MEM,         /* 1 = /dev/mem  */
+    dev_opcl,  call_task,   dev_opcl,   FLOPPY,      /* 2 = /dev/fd0  */
+    dev_opcl,  call_task,   dev_opcl,   WINCHESTER,  /* 3 = /dev/hd0  */
+    tty_open,  call_task,   tty_close,  TTY,         /* 4 = /dev/tty0 */
+    ctty_open, rw_dev2,     ctty_close, TTY,         /* 5 = /dev/tty  */
+    no_call,   call_task,   no_call,    PRINTER,     /* 6 = /dev/lp   */
+    dev_opcl,  call_task,   dev_opcl,   SCSI,        /* 7 = /dev/hdscsi0  */
+#if NETWORKING_ENABLED
+    nw_open,   nw_rw,       nw_close,	INET_PROC_NR, /* 8 = /dev/ip   */
+#if ALLOW_USER_SEND
+    nw_open,   nw_rw,       nw_close,   7,            /* 9 = debug /dev/ip */
+#endif
+#endif
 };
 
 PUBLIC int max_major = sizeof(dmap)/sizeof(struct dmap);

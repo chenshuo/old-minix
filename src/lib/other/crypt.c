@@ -1,4 +1,6 @@
 #include <lib.h>
+_PROTOTYPE( char *crypt, (char *pw, char *salt));
+
 char *crypt(pw, salt)
 char *pw, *salt;
 {

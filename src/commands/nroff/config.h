@@ -1,5 +1,4 @@
-/* nroff/config.h
- * Adapted for compatibility with Minix 1.5.5 nroff/Makefile
+/* nroff/config.h Adapted for compatibility with Minix 1.5.5 nroff/Makefile
  * by Wim 'Blue Baron' van Dorst (wsincc@tuerc3.urc.tue.nl)
  */
 #ifndef CONFIG_H
@@ -43,7 +42,7 @@
 
 #ifdef alcyon
 # ifndef ALCYON
-#  define ALCYON			/* for gemdos version, alcyon C */
+#  define ALCYON		/* for gemdos version, alcyon C */
 # endif
 # ifndef GEMDOS
 #  define GEMDOS
@@ -71,5 +70,4 @@
 # endif
 #endif
 
-#endif /*CONFIG_H*/
-
+#endif				/* CONFIG_H */

@@ -166,17 +166,11 @@ struct keyblk keywrds[] = {	/* m4 keywords to be installed */
 
 #define MAXKEYS	(sizeof(keywrds)/sizeof(struct keyblk))
 
-extern ndptr lookup();
-extern ndptr addent();
-extern int onintr();
-
-extern char *malloc();
-extern char *mktemp();
-
 extern int optind;
 extern char *optarg;
 
-main(argc,argv)
+int main(argc,argv)
+int argc;
 char *argv[];
 {
 	register int c;
@@ -244,13 +238,11 @@ char *argv[];
 	exit(0);
 }
 
-ndptr inspect();	/* forward ... */
-
 /*
  * macro - the work horse..
  *
  */
-macro() {
+void macro() {
 	char token[MAXTOK];
 	register char *s;
 	register int t, l;
@@ -355,9 +347,9 @@ macro() {
 					error("m4: internal stack overflow");
 
 				if (CALTYP == MACRTYPE)
-					expand(mstack+fp+1, sp-fp);
+					expand((char**)mstack+fp+1,(int)sp-fp);
 				else
-					eval(mstack+fp+1, sp-fp, CALTYP);
+					eval((char**)mstack+fp+1,sp-fp,CALTYP);
 
 				ep = PREVEP;	/* flush strspace */
 				sp = PREVSP;	/* previous sp..  */
@@ -415,7 +407,7 @@ register char *tp;
  * does not know anything about demand-zero pages.
  *
  */
-initm4()
+void initm4()
 {
 	register int i;
 
@@ -435,7 +427,7 @@ initm4()
  * to at least install the keywords (i.e. malloc won't fail).
  *
  */
-initkwds() {
+void initkwds() {
 	register int i;
 	register int h;
 	register ndptr p;

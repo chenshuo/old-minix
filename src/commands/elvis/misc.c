@@ -2,14 +2,15 @@
 
 /* Author:
  *	Steve Kirkendall
- *	16820 SW Tallac Way
- *	Beaverton, OR 97006
- *	kirkenda@jove.cs.pdx.edu, or ...uunet!tektronix!psueea!jove!kirkenda
+ *	14407 SW Teal Blvd. #C
+ *	Beaverton, OR 97005
+ *	kirkenda@cs.pdx.edu
  */
 
 
 /* This file contains functions which didn't seem happy anywhere else */
 
+#include "config.h"
 #include "vi.h"
 
 
@@ -18,10 +19,10 @@ char *fetchline(line)
 	long	line;	/* line number of the line to fetch */
 {
 	int		i;
-	register char	*scan;	/* used to search for the line in a BLK */
+	REG char	*scan;	/* used to search for the line in a BLK */
 	long		l;	/* line number counter */
 	static BLK	buf;	/* holds ONLY the selected line (as string) */
-	register char	*cpy;	/* used while copying the line */
+	REG char	*cpy;	/* used while copying the line */
 	static long	nextline;	/* }  These four variables are used */
 	static long	chglevel;	/*  } to implement a shortcut when  */
 	static char	*nextscan;	/*  } consecutive lines are fetched */
@@ -80,42 +81,6 @@ char *fetchline(line)
 	return buf.c;
 }
 
-/* find a particular line & delete it */
-deleteline(line)
-	long	line;	/* line number of the line to fetch */
-{
-	MARK	frommark, tomark;
-
-	frommark = MARK_AT_LINE(line);
-	tomark = frommark + BLKSIZE;
-	delete(frommark, tomark);
-}
-
-
-/* insert a given line at a particular line number */
-addline(l, txt)
-	long	l;	/* line number where the new line should go */
-	char	*txt;	/* text of line, terminated with '\0' (not '\n') */
-{
-	MARK	atmark;
-	BLK	newtext;
-
-	strcpy(newtext.c, txt);
-	strcat(newtext.c, "\n");
-	atmark = MARK_AT_LINE(l);
-	add(atmark, newtext.c);
-}
-
-
-/* replace one version of a line with another */
-changeline(l, txt)
-	long	l;	/* line# of line to change */
-	char	*txt;	/* new version of line, terminated with '\0' */
-{
-	deleteline(l);
-	addline(l, txt);
-}
-
 
 /* error message from the regexp code */
 void regerror(txt)
@@ -124,7 +89,6 @@ void regerror(txt)
 	msg("RE error: %s", txt);
 }
 
-#ifdef CRUNCH
 /* This function is equivelent to the pfetch() macro */
 void	pfetch(l)
 	long	l;	/* line number of line to fetch */
@@ -137,4 +101,3 @@ void	pfetch(l)
 		pchgs = changes;
 	}
 }
-#endif

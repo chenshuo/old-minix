@@ -18,14 +18,21 @@
  * WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
  */
 
+/* ported to MINIX by: Robert R. Hall <hall@pnet01.cts.com>  */
+
 #define	PUBLIC
 #define NAME_SIZE 14
 
+#include <ctype.h>
+#include <string.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "globs.h"
 #include "codes.h"
-#include <ctype.h>
-
-extern char *malloc();
+#include "proto.h"
 
 char           *in_name = "Standard Input";	/* will always point to
 						   name of input file */
@@ -33,7 +40,7 @@ char           *out_name = "Standard Output";	/* will always point to
 						   name of output file */
 char            bakfile[60];
 
-main(argc, argv)
+void main(argc, argv)
    int             argc;
    char          **argv;
 {
@@ -371,10 +378,10 @@ main(argc, argv)
 	    if (flushed_nl)		/* if we flushed a newline,
 					   make sure it is put back */
 	       force_nl = true;
-	    if (type_code == sp_paren && *token == 'i'
-		&& last_else && ps.else_if
-		|| type_code == sp_nparen && *token == 'e'
-		&& e_code != s_code && e_code[-1] == '}')
+	    if ((type_code == sp_paren && *token == 'i'
+		    && last_else && ps.else_if)
+		|| (type_code == sp_nparen && *token == 'e'
+		    && e_code != s_code && e_code[-1] == '}'))
 	       force_nl = false;
 
 	    if (sc_end == 0)
@@ -668,7 +675,6 @@ check_type:
 	 break;
 
       case binary_op:			/* any binary operation */
-   do_binary:
 	 if (ps.want_blank)
 	    *e_code++ = ' ';
 	 {
@@ -1214,7 +1220,7 @@ check_type:
 		  *sc_end++ = ' ';
 		  --line_no;
 	       }
-	       bcopy(s_lab + com_start, sc_end, com_end - com_start);
+	       memcpy(sc_end, s_lab + com_start, com_end - com_start);
 	       sc_end += com_end - com_start;
 	       if (sc_end >= &save_com[sc_size])
 		  abort();
@@ -1284,9 +1290,8 @@ check_type:
 					   newline character will cause
 					   the line to be printed */
 
-      case comment:			/* we have gotten a /*  this is
+      case comment:			/* we have gotten a / *  this is
 					   a biggie */
-   proc_comment:
 	 if (flushed_nl)
 	 {				/* we should force a broken
 					   line here */
@@ -1305,14 +1310,14 @@ check_type:
       if (type_code != comment && type_code != newline && type_code != preesc)
 	 ps.last_token = type_code;
    }					/* end of main while (1) loop */
-};
+}
 
 /*
  * copy input file to backup file if in_name is /blah/blah/blah/file, then
  * backup file will be ".Bfile" then make the backup file the input and
  * original input file the output
  */
-bakcopy()
+void bakcopy()
 {
    int             n, bakchn;
    char            buff[8 * 1024];

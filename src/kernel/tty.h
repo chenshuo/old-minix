@@ -1,5 +1,3 @@
-#define NR_CONS            1	/* how many consoles can system handle */
-#define	NR_RS_LINES	   2	/* how many rs232 terminals can system handle*/
 #define KB_IN_BYTES      200   	/* keyboard input queue size */
 #define RS_IN_BYTES   (1024 + 2 * RS_IBUFSIZE)	/* RS232 input queue size */
 #define TTY_RAM_WORDS    320	/* ram buffer size */
@@ -16,8 +14,7 @@
 #define XON_CHAR  (char) 021	/* default x-on character (CTRL-Q) */
 #define EOT_CHAR  (char) 004	/* CTRL-D */
 
-/*
- * This MARKER is used as an unambiguous flag for an unescaped end of
+/* This MARKER is used as an unambiguous flag for an unescaped end of
  * file character.  It is meaningful only in cooked mode.  0200 should
  * never be used in cooked mode, since that is supposed to be used only
  * for 7-bit ASCII.  Be careful that code only checks
@@ -32,6 +29,10 @@
 #define EVENT_THRESHOLD   64	/* events to accumulate before waking TTY */
 #define RS_IBUFSIZE      256	/* RS232 input buffer size */
 
+typedef _PROTOTYPE( int (*devread_t), (int minor, char **bufindirect,
+		unsigned char *odoneindirect) );
+typedef _PROTOTYPE( void (*devstart_t), (struct tty_struct *tp) );
+
 EXTERN struct tty_struct {
   /* Input queue.  Typed characters are stored here until read by a program. */
   char *tty_inbuf;		/* pointer to input buffer */
@@ -44,7 +45,7 @@ EXTERN struct tty_struct {
   phys_bytes tty_inphys;	/* physical address of input buffer */
   int tty_incount;		/* # chars in tty_inqueue */
   int tty_lfct;			/* # line feeds in tty_inqueue */
-  int (*tty_devread)();		/* routine to read from low level buffers */
+  devread_t tty_devread;	/* routine to read from low level buffers */
 
   /* Output section. */
   phys_bytes tty_outphys;	/* physical address of output buffer */
@@ -55,7 +56,7 @@ EXTERN struct tty_struct {
   char tty_esc_intro;		/* Distinguishing character following ESC */
   int tty_esc_parmv[MAX_ESC_PARMS];	/* list of escape parameters */
   int *tty_esc_parmp;		/* pointer to current escape parameter */
-  void (*tty_devstart)();	/* routine to start actual device output */
+  devstart_t tty_devstart;	/* routine to start actual device output */
 
   /* Echo buffer. Echoing is also delayed by output in progress. */
   char *tty_ebufend;		/* end of echo buffer */

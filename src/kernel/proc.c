@@ -21,17 +21,25 @@
 
 PRIVATE unsigned char switching;	/* nonzero to inhibit interrupt() */
 
-FORWARD int mini_send();
-FORWARD int mini_rec();
-FORWARD void pick_proc();
-FORWARD void ready();
-FORWARD void sched();
-FORWARD void unready();
+FORWARD _PROTOTYPE( int mini_send, (struct proc *caller_ptr, int dest,
+		message *m_ptr) );
+FORWARD _PROTOTYPE( int mini_rec, (struct proc *caller_ptr, int src,
+		message *m_ptr) );
+FORWARD _PROTOTYPE( void ready, (struct proc *rp) );
+FORWARD _PROTOTYPE( void sched, (void) );
+FORWARD _PROTOTYPE( void unready, (struct proc *rp) );
+FORWARD _PROTOTYPE( void pick_proc, (void) );
+
+#if (CHIP == M68000)
+FORWARD _PROTOTYPE( void cp_mess, (int src, struct proc *src_p, message *src_m,
+		struct proc *dst_p, message *dst_m) );
+#endif
 
 #if (CHIP == INTEL)
 #define CopyMess(s,sp,sm,dp,dm) \
-	cp_mess(s,(sp)->p_map[D].mem_phys,sm,(dp)->p_map[D].mem_phys,dm)
+	cp_mess(s, (sp)->p_map[D].mem_phys, (vir_bytes)sm, (dp)->p_map[D].mem_phys, (vir_bytes)dm)
 #endif
+
 #if (CHIP == M68000)
 #define CopyMess(s,sp,sm,dp,dm) \
 	cp_mess(s,sp,sm,dp,dm)
@@ -102,10 +110,7 @@ int task;			/* number of task to be started */
   if (rdy_head[TASK_Q] != NIL_PROC)
 	rdy_tail[TASK_Q]->p_nextready = rp;
   else
-#if (CHIP != M68000)
-	proc_ptr =
-#endif
-	rdy_head[TASK_Q] = rp;
+	proc_ptr = rdy_head[TASK_Q] = rp;
   rdy_tail[TASK_Q] = rp;
   rp->p_nextready = NIL_PROC;
 }
@@ -131,9 +136,9 @@ message *m_ptr;			/* pointer to message */
   /* Check for bad system call parameters. */
   if (!isoksrc_dest(src_dest)) return(E_BAD_SRC);
   rp = proc_ptr;
-  if (function != BOTH && isuserp(rp))
-	return(E_NO_PERM);	/* users only do BOTH */
 
+  if (isuserp(rp) && function != BOTH) return(E_NO_PERM);
+  
   /* The parameters are ok. Do the call. */
   if (function & SEND) {
 	/* Function = SEND or BOTH. */
@@ -171,6 +176,18 @@ message *m_ptr;			/* pointer to message buffer */
   dest_ptr = proc_addr(dest);	/* pointer to destination's proc entry */
   if (dest_ptr->p_flags & P_SLOT_FREE) return(E_BAD_DEST);	/* dead dest */
 
+#if ALLOW_GAP_MESSAGES
+  /* This check allows a message to be anywhere in data or stack or gap. 
+   * It will have to be made more elaborate later for machines which
+   * don't have the gap mapped.
+   */
+  vb = (vir_bytes) m_ptr;
+  vlo = vb >> CLICK_SHIFT;	/* vir click for bottom of message */
+  vhi = (vb + MESS_SIZE - 1) >> CLICK_SHIFT;	/* vir click for top of msg */
+  if (vlo < caller_ptr->p_map[D].mem_vir || vlo > vhi ||
+      vhi >= caller_ptr->p_map[S].mem_vir + caller_ptr->p_map[S].mem_len)
+        return(E_BAD_ADDR); 
+#else
   /* Check for messages wrapping around top of memory or outside data seg. */
   vb = (vir_bytes) m_ptr;
   vlo = vb >> CLICK_SHIFT;	/* vir click for bottom of message */
@@ -178,13 +195,17 @@ message *m_ptr;			/* pointer to message buffer */
   if (vhi < vlo ||
       vhi - caller_ptr->p_map[D].mem_vir >= caller_ptr->p_map[D].mem_len)
 	return(E_BAD_ADDR);
+#endif
 
   /* Check for deadlock by 'caller_ptr' and 'dest' sending to each other. */
   if (dest_ptr->p_flags & SENDING) {
-	next_ptr = caller_ptr->p_callerq;
-	while (next_ptr != NIL_PROC) {
-		if (next_ptr == dest_ptr) return(ELOCKED);
-		next_ptr = next_ptr->p_sendlink;
+	next_ptr = proc_addr(dest_ptr->p_sendto);
+	while (TRUE) {
+		if (next_ptr == caller_ptr) return(ELOCKED);
+		if (next_ptr->p_flags & SENDING)
+			next_ptr = proc_addr(next_ptr->p_sendto);
+		else
+			break;
 	}
   }
 
@@ -202,6 +223,7 @@ message *m_ptr;			/* pointer to message buffer */
 	caller_ptr->p_messbuf = m_ptr;
 	if (caller_ptr->p_flags == 0) unready(caller_ptr);
 	caller_ptr->p_flags |= SENDING;
+	caller_ptr->p_sendto= dest;
 
 	/* Process is now blocked.  Put in on the destination's queue. */
 	if ( (next_ptr = dest_ptr->p_callerq) == NIL_PROC)
@@ -306,7 +328,7 @@ PRIVATE void pick_proc()
   /* No one is ready.  Run the idle task.  The idle task might be made an
    * always-ready user task to avoid this special case.
    */
-  bill_ptr = proc_ptr = cproc_addr(IDLE);
+  bill_ptr = proc_ptr = proc_addr(IDLE);
 }
 
 
@@ -327,13 +349,10 @@ register struct proc *rp;	/* this process is now runnable */
 	if (rdy_head[TASK_Q] != NIL_PROC)
 		/* Add to tail of nonempty queue. */
 		rdy_tail[TASK_Q]->p_nextready = rp;
-	else
-{
-#if (CHIP != M68000)
+	else {
 		proc_ptr =		/* run fresh task next */
-#endif
 		rdy_head[TASK_Q] = rp;	/* add to empty queue */
-}
+	}
 	rdy_tail[TASK_Q] = rp;
 	rp->p_nextready = NIL_PROC;	/* new entry has no successor */
 	return;
@@ -347,7 +366,7 @@ register struct proc *rp;	/* this process is now runnable */
 	rp->p_nextready = NIL_PROC;
 	return;
   }
-#if (CHIP == M68000)
+#if (SHADOWING == 1)
   if (isshadowp(rp)) {		/* others are similar */
 	if (rdy_head[SHADOW_Q] != NIL_PROC)
 		rdy_tail[SHADOW_Q]->p_nextready = rp;
@@ -358,12 +377,18 @@ register struct proc *rp;	/* this process is now runnable */
 	return;
   }
 #endif
+  if (rdy_head[USER_Q] == NIL_PROC)
+	rdy_tail[USER_Q] = rp;
+  rp->p_nextready = rdy_head[USER_Q];
+  rdy_head[USER_Q] = rp;
+/*
   if (rdy_head[USER_Q] != NIL_PROC)
 	rdy_tail[USER_Q]->p_nextready = rp;
   else
 	rdy_head[USER_Q] = rp;
   rdy_tail[USER_Q] = rp;
   rp->p_nextready = NIL_PROC;
+*/
 }
 
 
@@ -400,7 +425,7 @@ register struct proc *rp;	/* this process is no longer runnable */
 	}
 	qtail = &rdy_tail[SERVER_Q];
   } else
-#if (CHIP == M68000)
+#if (SHADOWING == 1)
   if (isshadowp(rp)) {
 	if ( (xp = rdy_head[SHADOW_Q]) == NIL_PROC) return;
 	if (xp == rp) {
@@ -566,16 +591,26 @@ message *src_m;			/* source message */
 register struct proc *dst_p;	/* destination proc entry */
 message *dst_m;			/* destination buffer */
 {
-  register vir_clicks clk;
+#if (SHADOWING == 0)
+  /* convert virtual address to physical address */
+  /* The caller has already checked if all addresses are within bounds */
+  
+  src_m = (message *)((char *)src_m + (((phys_bytes)src_p->p_map[D].mem_phys
+				- src_p->p_map[D].mem_vir) << CLICK_SHIFT));
+  dst_m = (message *)((char *)dst_m + (((phys_bytes)dst_p->p_map[D].mem_phys
+				- dst_p->p_map[D].mem_vir) << CLICK_SHIFT));
+#else
+  register phys_bytes correction;
 
-  if (clk = src_p->p_shadow) {
-	clk -= src_p->p_map[D].mem_phys;
-	src_m = (message *)((char *)src_m + ((phys_bytes)clk << CLICK_SHIFT));
+  if (correction = src_p->p_shadow) {
+	correction = (correction - src_p->p_map[D].mem_phys) << CLICK_SHIFT;
+	src_m = (message *)((char *)src_m + correction);
   }
-  if (clk = dst_p->p_shadow) {
-	clk -= dst_p->p_map[D].mem_phys;
-	dst_m = (message *)((char *)dst_m + ((phys_bytes)clk << CLICK_SHIFT));
+  if (correction = dst_p->p_shadow) {
+	correction = (correction - dst_p->p_map[D].mem_phys) << CLICK_SHIFT;
+	dst_m = (message *)((char *)dst_m + correction);
   }
+#endif
 #ifdef NEEDFSTRUCOPY
   phys_copy(src_m,dst_m,(phys_bytes) sizeof(message));
 #else

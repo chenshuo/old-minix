@@ -40,6 +40,10 @@ long Locbit = LLITOUT;	/* Bit SUPPOSED to disable output translations */
 #include <string.h>
 #endif
 
+#include "zmodem.h"
+
+_PROTOTYPE(static unsigned getspeed , (int code ));
+
 #if HOWMANY  > 255
 Howmany must be 255 or less
 #endif
@@ -50,7 +54,8 @@ Howmany must be 255 or less
  *  different line
  */
 int Fromcu;		/* Were called from cu or yam */
-from_cu()
+
+void from_cu()
 {
 	struct stat a, b;
 
@@ -58,7 +63,8 @@ from_cu()
 	Fromcu = a.st_rdev != b.st_rdev;
 	return;
 }
-cucheck()
+
+void cucheck()
 {
 	if (Fromcu)
 		fprintf(stderr,"Please read the manual page BUGS chapter!\r\n");
@@ -94,7 +100,7 @@ int Twostop;		/* Use two stop bits */
 /*
  *  Return non 0 iff something to read from io descriptor f
  */
-rdchk(f)
+int rdchk(f)
 {
 	static long lf;
 
@@ -110,7 +116,7 @@ char checked = '\0' ;
 /*
  * Nonblocking I/O is a bit different in System V, Release 2
  */
-rdchk(f)
+int rdchk(f)
 {
 	int lf, savestat;
 
@@ -126,6 +132,7 @@ rdchk(f)
 
 static unsigned
 getspeed(code)
+int code;
 {
 	register n;
 
@@ -153,7 +160,8 @@ int iofd = 0;		/* File descriptor for ioctls & reads */
  *  1: save old tty stat, set raw mode 
  *  0: restore original tty mode
  */
-mode(n)
+int mode(n)
+int n;
 {
 	static did0 = FALSE;
 
@@ -323,7 +331,7 @@ mode(n)
 	}
 }
 
-sendbrk()
+void sendbrk()
 {
 #ifdef V7
 #ifdef TIOCSBRK

@@ -7,17 +7,13 @@
 #include "mdef.h"
 #include "extr.h" 
 
-extern ndptr lookup();
-extern ndptr addent();
-extern char  *strsave();
- 
 char *dumpfmt = "`%s'\t`%s'\n"; /* format string for dumpdef   */
  
 /*
  * expand - user-defined macro expansion
  *
  */
-expand(argv, argc)
+void expand(argv, argc)
 register char *argv[];
 register int argc;
 {
@@ -76,7 +72,7 @@ register int argc;
  * dodefine - install definition in the table
  *
  */
-dodefine(name, defn)
+void dodefine(name, defn)
 register char *name;
 register char *defn;
 {
@@ -102,7 +98,7 @@ register char *defn;
  *      the given name.
  */
  
-dodefn(name)
+void dodefn(name)
 char *name;
 {
         register ndptr p;
@@ -121,7 +117,7 @@ char *name;
  *      hash bucket, it hides a previous definition from
  *      lookup.
  */
-dopushdef(name, defn)
+void dopushdef(name, defn)
 register char *name;
 register char *defn;
 {
@@ -145,7 +141,7 @@ register char *defn;
  *      hash table is dumped.
  *
  */
-dodump(argv, argc)
+void dodump(argv, argc)
 register char *argv[];
 register int argc;
 {
@@ -170,7 +166,7 @@ register int argc;
  * doifelse - select one of two alternatives - loop.
  *
  */
-doifelse(argv,argc)
+void doifelse(argv,argc)
 register char *argv[];
 register int argc;
 {
@@ -192,7 +188,7 @@ register int argc;
  * doinclude - include a given file.
  *
  */
-doincl(ifile)
+int doincl(ifile)
 char *ifile;
 {
         if (ilevel+1 == MAXINP)
@@ -210,7 +206,7 @@ char *ifile;
  * dopaste - include a given file without any
  *           macro processing.
  */
-dopaste(pfile)
+int dopaste(pfile)
 char *pfile;
 {
         FILE *pf;
@@ -231,7 +227,7 @@ char *pfile;
  * dochq - change quote characters
  *
  */
-dochq(argv, argc)
+void dochq(argv, argc)
 register char *argv[];
 register int argc;
 {
@@ -255,7 +251,7 @@ register int argc;
  * dochc - change comment characters
  *
  */
-dochc(argv, argc)
+void dochc(argv, argc)
 register char *argv[];
 register int argc;
 {
@@ -279,7 +275,7 @@ register int argc;
  * dodivert - divert the output to a temporary file
  *
  */
-dodiv(n)
+void dodiv(n)
 register int n;
 {
         if (n < 0 || n >= MAXOUT)
@@ -297,7 +293,7 @@ register int n;
  * doundivert - undivert a specified output, or all
  *              other outputs, in numerical order.
  */
-doundiv(argv, argc)
+void doundiv(argv, argc)
 register char *argv[];
 register int argc;
 {
@@ -322,7 +318,7 @@ register int argc;
  * dosub - select substring
  *
  */
-dosub (argv, argc)
+void dosub (argv, argc)
 register char *argv[];
 register int  argc;
 {
@@ -375,7 +371,7 @@ register int  argc;
  *
  */
      
-map(dest,src,from,to)
+void map(dest,src,from,to)
 register char *dest;
 register char *src;
 register char *from;

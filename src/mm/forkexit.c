@@ -7,23 +7,25 @@
  * exits first, it continues to occupy a slot until the parent does a WAIT.
  *
  * The entry points into this file are:
- *   do_fork:	perform the FORK system call
- *   do_mm_exit:	perform the EXIT system call (by calling mm_exit())
- *   mm_exit:	actually do the exiting
- *   do_wait:	perform the WAIT system call
+ *   do_fork:	 perform the FORK system call
+ *   do_mm_exit: perform the EXIT system call (by calling mm_exit())
+ *   mm_exit:	 actually do the exiting
+ *   do_wait:	 perform the WAITPID or WAIT system call
  */
 
 
 #include "mm.h"
+#include <sys/wait.h>
 #include <minix/callnr.h>
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
 #define LAST_FEW            2	/* last few slots reserved for superuser */
 
-PRIVATE next_pid = INIT_PID+1;	/* next pid to be assigned */
+PRIVATE pid_t next_pid = INIT_PID+1;	/* next pid to be assigned */
 
-FORWARD void cleanup();
+FORWARD _PROTOTYPE (void cleanup, (register struct mproc *child) );
 
 /*===========================================================================*
  *				do_fork					     *
@@ -36,30 +38,26 @@ PUBLIC int do_fork()
   register struct mproc *rmc;	/* pointer to child */
   int i, child_nr, t;
   char *sptr, *dptr;
-  phys_clicks prog_clicks, child_base;
-#if (CHIP == INTEL)
-  long prog_bytes;
-  long parent_abs, child_abs;
-#endif
+  phys_clicks prog_clicks, child_base = 0;
+  long prog_bytes, parent_abs, child_abs;	/* Intel only */
 
  /* If tables might fill up during FORK, don't even start since recovery half
   * way through is such a nuisance.
   */
-
   rmp = mp;
   if (procs_in_use == NR_PROCS) return(EAGAIN);
-  if (procs_in_use >= NR_PROCS - LAST_FEW && rmp->mp_effuid != 0)return(EAGAIN);
+  if (procs_in_use >= NR_PROCS-LAST_FEW && rmp->mp_effuid != 0)return(EAGAIN);
 
   /* Determine how much memory to allocate. */
   prog_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-#if (CHIP == INTEL)
+#if (SHADOWING == 0)
   if (rmp->mp_flags & SEPARATE) prog_clicks += rmp->mp_seg[T].mem_len;
   prog_bytes = (long) prog_clicks << CLICK_SHIFT;
 #endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
 
-#if (CHIP == INTEL)
+#if (SHADOWING == 0)
   /* Create a copy of the parent's core image for the child. */
   child_abs = (long) child_base << CLICK_SHIFT;
   parent_abs = (long) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
@@ -81,7 +79,7 @@ PUBLIC int do_fork()
 
   rmc->mp_parent = who;		/* record child's parent */
   rmc->mp_flags &= ~TRACED;	/* child does not inherit trace status */
-#if (CHIP == INTEL)
+#if (SHADOWING == 0)
   rmc->mp_seg[T].mem_phys = child_base;
   rmc->mp_seg[D].mem_phys = child_base + rmc->mp_seg[T].mem_len;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
@@ -106,15 +104,10 @@ PUBLIC int do_fork()
   if (who == INIT_PROC_NR) rmc->mp_procgrp = rmc->mp_pid;
 
   /* Tell kernel and file system about the (now successful) FORK. */
-#if (CHIP == M68000)
-  sys_fork(who, child_nr, rmc->mp_pid, child_base);
-#else
-  sys_fork(who, child_nr, rmc->mp_pid);
-#endif
-
+  sys_fork(who, child_nr, rmc->mp_pid, child_base); /* child_base is 68K only*/
   tell_fs(FORK, who, child_nr, rmc->mp_pid);
 
-#if (CHIP == INTEL)
+#if (SHADOWING == 0)
   /* Report child's memory map to kernel. */
   sys_newmap(child_nr, rmc->mp_seg);
 #endif
@@ -147,42 +140,28 @@ PUBLIC void mm_exit(rmp, exit_status)
 register struct mproc *rmp;	/* pointer to the process to be terminated */
 int exit_status;		/* the process' exit status (for parent) */
 {
-/* A process is done.  If parent is waiting for it, clean it up, else hang. */
-#if (CHIP == M68000)
-  phys_clicks base, size;
-#else
-  phys_clicks s;
-#endif
-  register int proc_nr = (int)(rmp - mproc);
+/* A process is done.  Release most of the process' possessions.  If its
+ * parent is waiting, release the rest, else hang.
+ */
 
-  /* How to terminate a process is determined by whether or not the
-   * parent process has already done a WAIT.  Test to see if it has.
-   */
-  rmp->mp_exitstatus = (char) exit_status;	/* store status in 'mproc' */
+  register int proc_nr;
+  int parent_waiting, right_child;
+  pid_t pidarg;
+  phys_clicks base, size, s;	/* base and size used on 68000 only */
 
-  if (mproc[rmp->mp_parent].mp_flags & WAITING)
-	cleanup(rmp);		/* release parent and tell everybody */
-  else
-	rmp->mp_flags |= HANGING;	/* Parent not waiting.  Suspend proc */
+  proc_nr = (int) (rmp - mproc);	/* get process slot number */
 
   /* If the exited process has a timer pending, kill it. */
   if (rmp->mp_flags & ALARM_ON) set_alarm(proc_nr, (unsigned) 0);
 
-#if AM_KERNEL
-/* see if an amoeba transaction was pending or a putrep needed to be done */
-  am_check_sig(proc_nr, 1);
-#endif
-
   /* Tell the kernel and FS that the process is no longer runnable. */
-#if (CHIP == M68000)
-  sys_xit(rmp->mp_parent, proc_nr, &base, &size);
-  free_mem(base, size);
-#else
-  sys_xit(rmp->mp_parent, proc_nr);
-#endif
   tell_fs(EXIT, proc_nr, 0, 0);  /* file system can free the proc slot */
+  sys_xit(rmp->mp_parent, proc_nr, &base, &size);
+#if (SHADOWING == 1)
+  free_mem(base, size);
+#endif
 
-#if (CHIP == INTEL)
+#if (SHADOWING == 0)
   /* Release the memory occupied by the child. */
   s = (phys_clicks) rmp->mp_seg[S].mem_len;
   s += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
@@ -190,39 +169,78 @@ int exit_status;		/* the process' exit status (for parent) */
   free_mem(rmp->mp_seg[T].mem_phys, s);	/* free the memory */
 #endif
 
+  /* The process slot can only be freed if the parent has done a WAIT. */
+  rmp->mp_exitstatus = (char) exit_status;
+  pidarg = mproc[rmp->mp_parent].mp_wpid;	/* who's being waited for? */
+  parent_waiting = mproc[rmp->mp_parent].mp_flags & WAITING;
+  if (pidarg == -1 || pidarg == rmp->mp_pid || -pidarg == rmp->mp_procgrp)
+	right_child = TRUE;		/* child meets one of the 3 tests */
+  else
+	right_child = FALSE;		/* child fails all 3 tests */
+  if (parent_waiting && right_child)
+	cleanup(rmp);		/* tell parent and release child slot */
+  else
+	rmp->mp_flags |= HANGING;	/* parent not waiting, suspend child */
+
+  /* If the process has children, disinherit them.  INIT is the new parent. */
+  for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
+	if (rmp->mp_flags & IN_USE && rmp->mp_parent == proc_nr) {
+		/* 'rmp' now points to a child to be disinherited. */
+		rmp->mp_parent = INIT_PROC_NR;
+		parent_waiting = mproc[INIT_PROC_NR].mp_flags & WAITING;
+		if (parent_waiting && (rmp->mp_flags & HANGING)) cleanup(rmp);
+	}
+  }
 }
 
 
 /*===========================================================================*
- *				do_wait					     *
+ *				do_waitpid				     *
  *===========================================================================*/
-PUBLIC int do_wait()
+PUBLIC int do_waitpid()
 {
 /* A process wants to wait for a child to terminate. If one is already waiting,
  * go clean it up and let this WAIT call terminate.  Otherwise, really wait.
+ * Both WAIT and WAITPID are handled by this code.
  */
 
   register struct mproc *rp;
-  register int children;
+  int pidarg, options, children, res2;
 
   /* A process calling WAIT never gets a reply in the usual way via the
-   * reply() in the main loop.  If a child has already exited, the routine
-   * cleanup() sends the reply to awaken the caller.
+   * reply() in the main loop (unless WNOHANG is set or no qualifying child
+   * exists).  If a child has already exited, the routine cleanup() sends 
+   * the reply to awaken the caller.
    */
 
-  /* Is there a child waiting to be collected? */
+  /* Set internal variables, depending on whether this is WAIT or WAITPID. */
+  pidarg  = (mm_call == WAIT ? -1 : pid);	/* first param of waitpid */
+  options = (mm_call == WAIT ?  0 : sig_nr);	/* third param of waitpid */
+  if (pidarg == 0) pidarg = -mp->mp_procgrp;	/* pidarg < 0 ==> proc grp */
+
+  /* Is there a child waiting to be collected? At this point, pidarg != 0:
+   *	pidarg  >  0 means pidarg is pid of a specific process to wait for
+   *	pidarg == -1 means wait for any child
+   *	pidarg  < -1 means wait for any child whose process group = -pidarg
+   */
   children = 0;
   for (rp = &mproc[0]; rp < &mproc[NR_PROCS]; rp++) {
 	if ( (rp->mp_flags & IN_USE) && rp->mp_parent == who) {
-		children++;
+		/* The value of pidarg determines which children qualify. */
+		if (pidarg  > 0 && pidarg != rp->mp_pid) continue;
+		if (pidarg < -1 && -pidarg != rp->mp_procgrp) continue;
+
+		children++;		/* this child is acceptable */
 		if (rp->mp_flags & HANGING) {
-			cleanup(rp);	/* a child has already exited */
+			/* This child meets the pid test and has exited. */
+			cleanup(rp);	/* this child has already exited */
 			dont_reply = TRUE;
 			return(OK);
 		}
-		if (rp->mp_flags & STOPPED && rp->mp_sigstatus) {
-			reply(who, rp->mp_pid, 0177 | (rp->mp_sigstatus << 8),
-				NIL_PTR);
+		if ((rp->mp_flags & STOPPED) && rp->mp_sigstatus) {
+			/* This child meets the pid test and is being traced.*/
+			res2 =  0177 | (rp->mp_sigstatus << 8);
+			reply(who, rp->mp_pid, res2, NIL_PTR);
 			dont_reply = TRUE;
 			rp->mp_sigstatus = 0;
 			return(OK);
@@ -230,13 +248,18 @@ PUBLIC int do_wait()
 	}
   }
 
-  /* No child has exited.  Wait for one, unless none exists. */
-  if (children > 0) {		/* does this process have any children? */
-	mp->mp_flags |= WAITING;
-	dont_reply = TRUE;
-	return(OK);		/* yes - wait for one to exit */
-  } else
-	return(ECHILD);		/* no - parent has no children */
+  /* No qualifying child has exited.  Wait for one, unless none exists. */
+  if (children > 0) {
+	/* At least 1 child meets the pid test exists, but has not exited. */
+	if (options & WNOHANG) return(0);    /* parent does not want to wait */
+	mp->mp_flags |= WAITING;	     /* parent wants to wait */
+	mp->mp_wpid = (pid_t) pidarg;	     /* save pid for later */
+	dont_reply = TRUE;		     /* do not reply now though */
+	return(OK);			     /* yes - wait for one to exit */
+  } else {
+	/* No child even meets the pid test.  Return error immediately. */
+	return(ECHILD);			     /* no - parent has no children */
+  }
 }
 
 
@@ -246,46 +269,18 @@ PUBLIC int do_wait()
 PRIVATE void cleanup(child)
 register struct mproc *child;	/* tells which process is exiting */
 {
-/* Clean up the remains of a process.  This routine is only called if two
- * conditions are satisfied:
- *     1. The process has done an EXIT or has been killed by a signal.
- *     2. The process' parent has done a WAIT.
- *
- * It releases the memory, if that has not been done yet.  Whether it has or
- * has not been done depends on the order of the EXIT and WAIT calls.
+/* Finish off the exit of a process.  The process has exited or been killed
+ * by a signal, and its parent is waiting.
  */
 
-  register struct mproc *parent, *rp;
-  int init_waiting, child_nr;
-  unsigned int r;
+  int exitstatus;
 
-  child_nr = (int)(child - mproc);
-  parent = &mproc[child->mp_parent];
+  /* Wake up the parent. */
+  exitstatus = (child->mp_exitstatus << 8) | (child->mp_sigstatus & 0377);
+  reply(child->mp_parent, child->mp_pid, exitstatus, NIL_PTR);
+  mproc[child->mp_parent].mp_flags &= ~WAITING;	/* parent no longer waiting */
 
-  /* Wakeup the parent. */
-  r = child->mp_sigstatus & 0377;
-  r = r | (child->mp_exitstatus << 8);
-  reply(child->mp_parent, child->mp_pid, r, NIL_PTR);
-
-  /* Update flags. */
-  child->mp_flags  &= ~TRACED;	/* turn off TRACED bit */
-  child->mp_flags  &= ~HANGING;	/* turn off HANGING bit */
-  child->mp_flags  &= ~PAUSED;	/* turn off PAUSED bit */
-  parent->mp_flags &= ~WAITING;	/* parent is no longer waiting */
-  child->mp_flags  &= ~IN_USE;	/* release the table slot */
+  /* Release the process table entry. */
+  child->mp_flags = 0;
   procs_in_use--;
-
-  /* If exiting process has children, disinherit them.  INIT is new parent. */
-  init_waiting = (mproc[INIT_PROC_NR].mp_flags & WAITING ? 1 : 0);
-  for (rp = &mproc[0]; rp < &mproc[NR_PROCS]; rp++) {
-  	if (rp->mp_parent == child_nr) {
-  		/* 'rp' points to a child to be disinherited. */
-  		rp->mp_parent = INIT_PROC_NR;	/* init takes over */
-  		if (init_waiting && (rp->mp_flags & HANGING) ) {
-  			/* Init was waiting. */
-  			cleanup(rp);	/* recursive call */
-  			init_waiting = 0;
-  		}
-  	}
-  }
 }

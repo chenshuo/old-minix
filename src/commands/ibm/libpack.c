@@ -5,9 +5,12 @@
 /* Do not alter the order of the entries in "table"; asld depends on it.*/
 
 /* External interfaces */
+#include <sys/types.h>
 #include <ctype.h>
 #include <errno.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 
 /* Constants */
@@ -23,11 +26,6 @@ struct node {
 };
 typedef unsigned short TWOBYTES;	/* CHEAT - used to return two bytes */
 
-/* Local interfaces */
-static void error_exit(/* int rc, char *msg */);
-static void hash_init(/* void */);		/* initializes hash table */
-static void pack_line(/* char *line */);	/* packs an input line */
-static TWOBYTES abbreviate_string(/* char *s */); /* abbreviates a string */
 
 /* Macros */
 #define HASH(word) ((*(word) + *((word) + 1)) & 0x7f)
@@ -160,10 +158,14 @@ NULL
 };
 
 /* This table is used to look up strings.  */
-
 struct node node[ABBREVS];
-
 struct node *hash[ABBREVS];		/* hash table */
+
+_PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(static void error_exit, (int rc, char *msg));
+_PROTOTYPE(static void hash_init, (void));
+_PROTOTYPE(static void pack_line, (char *line));
+_PROTOTYPE(static TWOBYTES abbreviate_string, (char *ip));
 
 /* Code */
 int main(argc, argv)

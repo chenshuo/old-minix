@@ -7,61 +7,78 @@
 /* Task numbers, function codes and reply codes. */
 
 #define TTY         -NR_TASKS	/* terminal I/O class */
-#	define TTY_READ	    3	/* fcn code for reading from tty */
-#	define TTY_WRITE    4	/* fcn code for writing to tty */
-#	define TTY_IOCTL    5	/* fcn code for ioctl */
-#	define TTY_SETPGRP  6	/* fcn code for setpgrp */
-#	define TTY_OPEN     7	/* fcn code for opening tty */
-#	define TTY_CLOSE    8	/* fcn code for closing tty */
+#	define CANCEL       0	/* general req to force a task to cancel */
+#	define HARD_INT     2	/* fcn code for all hardware interrupts */
+#	define DEV_READ	    3	/* fcn code for reading from tty */
+#	define DEV_WRITE    4	/* fcn code for writing to tty */
+#	define DEV_IOCTL    5	/* fcn code for ioctl */
+#	define DEV_OPEN     6	/* fcn code for opening tty */
+#	define DEV_CLOSE    7	/* fcn code for closing tty */
+#	define SCATTERED_IO 8	/* fcn code for multiple reads/writes */
+#	define TTY_SETPGRP  9	/* fcn code for setpgroup */
+#	define TTY_EXIT	   10	/* a process group leader has exited */	
+#	define OPTIONAL_IO 16	/* modifier to DEV_* codes within vector */
+#	define NO_CTL_TTY  -1	/* returned by DEV_OPEN if no ctl tty exists */
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#ifdef AM_KERNEL
-#define	AMOEBA
-#endif
+#define SCSI		-NR_TASKS+1
 
-#ifdef AMOEBA
+#if INET_KERNEL
+#define DL_ETH		-10
+#endif /* INET_TASK */
 
-/* There are AM_NTASK copies of the amoeba kernel task.
- * If you change AM_NTASKS be sure to adjust kernel/table.c and fs/table.c
- */
-#define AM_NTASKS	   4	/* number of kernel tasks of this class */
+/* Message type for data link layer reqests. */
+#	define DL_WRITE		3
+#	define DL_WRITEV	4
+#	define DL_READ		5
+#	define DL_READV		6
+#	define DL_INIT		7
+#	define DL_STOP		8
+#	define DL_GETSTAT	9
 
-#define	AMINT_CLASS	    (TTY+1)	/* Amoeba event handler */
-#define AMOEBA_CLASS 	    (AMINT_CLASS+AM_NTASKS) /* transaction handlers */
-#	define ETHER_ARRIV   1	/* fcn code for packet arrival */
-#	define AM_TRANS      2	/* amoeba transaction */		
-#	define AM_GETREQ     3	/* amoeba getrequest */
-#	define AM_PUTREP     4	/* amoeba putrep */
-#	define AM_REVIVE     6	/* used by kernel task to revive luser task */
-#	define AM_TIMEOUT    8	/* used to talk to clock task */
-#	define AM_PUTSIG     9	/* when the luser hits the DEL ! */
-#	define AM_TASK_DIED 10  /* sent if task died during a transaction */
+/* Message type for data link layer replies. */
+#	define DL_INIT_REPLY	20
+#	define DL_TASK_REPLY	21
+#	define DL_INT_TASK	22
 
-#else	/* if AMOEBA not defined */
+#	define DL_PORT		m2_i1
+#	define DL_PROC		m2_i2
+#	define DL_COUNT		m2_i3
+#	define DL_MODE		m2_l1
+#	define DL_CLCK		m2_l2
+#	define DL_ADDR		m2_p1
+#	define DL_STAT		m2_l1
 
-#define	AMOEBA_CLASS	TTY
+/* Bits in `DL_STAT' field of DL replies. */
+#	define DL_PACK_SEND	0x01
+#	define DL_PACK_RECV	0x02
+#	define DL_DISABLED	0x10
 
-#endif /* AMOEBA */
+/* Bits in `DL_MODE' field of DL requests. */
+#	define DL_NOMODE	0x0
+#	define DL_WRITEINT_REQ	0x1
+#	define DL_PROMISC_REQ	0x2
+#	define DL_MULTI_REQ	0x4
+#	define DL_BROAD_REQ	0x8
 
-/*
- * New class definitions should go here and should be defined relative
- * to AMOEBA_CLASS  (ie. as AMOEBA_CLASS+n, for the nth task added).
- */
+#	define NW_OPEN		DEV_OPEN
+#	define NW_CLOSE		DEV_CLOSE
+#	define NW_READ		DEV_READ
+#	define NW_WRITE		DEV_WRITE
+#	define NW_IOCTL		DEV_IOCTL
+#	define NW_CANCEL	CANCEL
 
-#define IDLE (AMOEBA_CLASS+1)	/* task to run when there's nothing to run */
+#define SYN_ALRM_TASK     -9	/* task to send CLOCK_INT messages */
 
-#define PRINTER           -7		/* printer  I/O class */
-/* The printer uses the same commands as TTY. */
+#define IDLE              -8	/* task to run when there's nothing to run */
 
+/* The printer and disks use the same commands as TTY. */
+#define PRINTER           -7	/* printer  I/O class */
 #define WINCHESTER        -6	/* winchester (hard) disk class */
 #define FLOPPY            -5	/* floppy disk class */
-#	define DISK_READ   3	/* fcn code to DISK (must equal TTY_READ) */
-#	define DISK_WRITE  4	/* fcn code to DISK (must equal TTY_WRITE) */
-#	define DISK_IOCTL  5	/* fcn code for setting up RAM disk */
-#	define SCATTERED_IO 6	/* fcn code for multiple reads/writes */
-#	define OPTIONAL_IO 16	/* modifier to DISK_* codes within vector */
 
 #define MEM               -4	/* /dev/ram, /dev/(k)mem and /dev/null class */
+#       define NULL_MAJOR  1	/* major device for /dev/null */
 #	define RAM_DEV     0	/* minor device for /dev/ram */
 #	define MEM_DEV     1	/* minor device for /dev/mem */
 #	define KMEM_DEV    2	/* minor device for /dev/kmem */
@@ -74,12 +91,19 @@
 #	define SET_ALARM   1	/* fcn code to CLOCK, set up alarm */
 #	define GET_TIME	   3	/* fcn code to CLOCK, get real time */
 #	define SET_TIME	   4	/* fcn code to CLOCK, set real time */
+#	define GET_UPTIME  5	/* fcn code to CLOCK, get uptime */
+#	define SET_SYNC_AL 6	/* fcn code to CLOCK, set up alarm which */
+				/* times out with a send */
 #	define REAL_TIME   1	/* reply from CLOCK: here is real time */
+#	define CLOCK_INT   HARD_INT
+				/* this code will only be sent by */
+				/* SYN_ALRM_TASK to a task that requested a */
+				/* synchronous alarm */
 
 #define SYSTASK           -2	/* internal functions */
 #	define SYS_XIT     1	/* fcn code for sys_xit(parent, proc) */
 #	define SYS_GETSP   2	/* fcn code for sys_sp(proc, &new_sp) */
-#	define SYS_SIG     3	/* fcn code for sys_sig(proc, sig) */
+#	define SYS_OLDSIG  3	/* fcn code for sys_oldsig(proc, sig) */
 #	define SYS_FORK    4	/* fcn code for sys_fork(parent, child) */
 #	define SYS_NEWMAP  5	/* fcn code for sys_newmap(procno, map_ptr) */
 #	define SYS_COPY    6	/* fcn code for sys_copy(ptr) */
@@ -92,6 +116,11 @@
 #	define SYS_UMAP   13	/* fcn code for sys_umap(procno, etc) */
 #	define SYS_MEM    14	/* fcn code for sys_mem() */
 #	define SYS_TRACE  15	/* fcn code for sys_trace(req,pid,addr,data) */
+#	define SYS_VCOPY  16	/* fnc code for sys_vcopy(src_proc, dest_proc,
+				   vcopy_s, vcopy_ptr) */
+#	define SYS_SENDSIG   17	/* fcn code for sys_sendsig(&sigmsg) */
+#	define SYS_SIGRETURN 18	/* fcn code for sys_sigreturn(&sigmsg) */
+#	define SYS_ENDSIG    19	/* fcn code for sys_endsig(procno) */
 
 #define HARDWARE          -1	/* used as source on interrupt generated msgs*/
 
@@ -110,11 +139,15 @@
 #define ADDRESS        m2_p1	/* core buffer address */
 
 /* Names of message fields for messages to TTY task. */
-#define TTY_LINE       m2_i1	/* message parameter: terminal line */
-#define TTY_REQUEST    m2_i3	/* message parameter: ioctl request code */
-#define TTY_SPEK       m2_l1	/* message parameter: ioctl speed, erasing */
+#define TTY_LINE       DEVICE	/* message parameter: terminal line */
+#define TTY_REQUEST    COUNT	/* message parameter: ioctl request code */
+#define TTY_SPEK       POSITION	/* message parameter: ioctl speed, erasing */
 #define TTY_FLAGS      m2_l2	/* message parameter: ioctl tty mode */
-#define TTY_PGRP       m2_i3    /* message parameter: process group */
+#define TTY_PGRP       m2_i3	/* message parameter: process group */	
+
+/* Names of the message fields for QIC 02 status reply from tape driver */
+#define TAPE_STAT0	m2_l1
+#define TAPE_STAT1	m2_l2
 
 /* Names of messages fields used in reply messages from tasks. */
 #define REP_PROC_NR    m2_i1	/* # of proc on whose behalf I/O was done */
@@ -134,6 +167,7 @@
 #define SYSTEM_TIME    m4_l2	/* system time consumed by process */
 #define CHILD_UTIME    m4_l3	/* user time consumed by process' children */
 #define CHILD_STIME    m4_l4	/* sys time consumed by process' children */
+#define BOOT_TICKS     m4_l5	/* number of clock ticks since boot time */
 
 #define PROC1          m1_i1	/* indicates a process */
 #define PROC2          m1_i2	/* indicates a process */
@@ -143,24 +177,9 @@
 #define SIGNUM         m6_i2	/* signal number for sys_sig */
 #define FUNC           m6_f1	/* function pointer for sys_sig */
 #define MEM_PTR        m1_p1	/* tells where memory map is for sys_newmap */
-#define CANCEL             0    /* general request to force a task to cancel */
-#define SIG_MAP        m1_i2	/* used by kernel for passing signal bit map */
-
-#ifdef AMOEBA
-
-/* Names of message fields for amoeba tasks */
-#define	AM_OP		m2_i1	/* one of the above operators */
-#define	AM_PROC_NR	m2_i2	/* process # of proc doing operation */
-#define	AM_COUNT	m2_i3	/* size of buffer for operation */
-#define	AM_ADDRESS	m2_p1	/* address of buffer for operation */
-
-/* For communication between MM and AMOEBA_CLASS kernel tasks */
-#define	AM_STATUS	m2_i3	/* same use as REP_STATUS but for amoeba */
-#define	AM_FREE_IT	m2_l1	/* 1=not a getreq, 0=is a getreq */
-
-/* Special for passing a physical address from the ethernet driver */
-#define	AM_PADDR	m2_l1	/* to the transaction layer */
-
-#endif /* AMOEBA */
-
-#define HARD_INT           2	/* fcn code for all hardware interrupts */
+#define NAME_PTR       m1_p2	/* tells where program name is for dmp */
+#define IP_PTR	       m1_p3	/* initial value for ip after exec */
+#define SIG_PROC       m2_i1	/* process number for inform */
+#define SIG_MAP        m2_l1	/* used by kernel for passing signal bit map */
+#define SIG_MSG_PTR    m1_i1	/* pointer to info to build sig catch stack */
+#define SIG_CTXT_PTR   m1_p1	/* pointer to info to restore signal context */

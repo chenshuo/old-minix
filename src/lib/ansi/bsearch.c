@@ -1,49 +1,28 @@
-#include <lib.h>
-#include <stdlib.h>
-/*  bsearch(3)
- *
- *  Author: Terrence Holm          Aug. 1988
- *
- *
- *  Performs a binary search for a given <key> within a sorted
- *  table. The table contains <count> entries of size <width>
- *  and starts at <base>.
- *
- *  Entries are compared using keycmp( key, entry ), each argument
- *  is a (void *), the function returns an int < 0, = 0 or > 0
- *  according to the order of the two arguments.
- *
- *  Bsearch(3) returns a pointer to the matching entry, if found,
- *  otherwise NULL is returned.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: bsearch.c,v 1.2 89/12/18 15:12:21 eck Exp $ */
 
-#include <stddef.h>
+#include	<stdlib.h>
 
-void *bsearch(key, basefix, count, width, keycmp)
-_CONST void *key;
-_CONST void *basefix;
-unsigned int count;
-unsigned int width;
-_PROTOTYPE( int (*keycmp), (const void *, const void *));
+void *
+bsearch(register const void *key, register const void *base,
+	register size_t nmemb, register size_t size,
+	int (*compar)(const void *, const void *))
 {
-  _CONST char *mid_point;
-  int cmp;
-  _CONST char *base = (char *) basefix;
+	register const void *mid_point;
+	register int  cmp;
 
-  while (count > 0) {
-	mid_point = base + width * (count >> 1);
-
-	cmp = keycmp(key, mid_point);
-
-	if (cmp == 0) return((void *)mid_point);
-
-	if (cmp < 0)
-		count >>= 1;
-	else {
-		base = mid_point + width;
-		count = (count - 1) >> 1;
+	while (nmemb > 0) {
+		mid_point = (char *)base + size * (nmemb >> 1);
+		if ((cmp = (*compar)(key, mid_point)) == 0)
+			return (void *)mid_point;
+		if (cmp >= 0) {
+			base  = (char *)mid_point + size;
+			nmemb = (nmemb - 1) >> 1;
+		} else
+			nmemb >>= 1;
 	}
-  }
-
-  return((void *)NULL);
+	return (void *)NULL;
 }

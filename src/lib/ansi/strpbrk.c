@@ -1,18 +1,22 @@
-#include <lib.h>
-/* strpbrk - find first occurrence of any char from breakat in s */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strpbrk.c,v 1.2 89/12/18 16:02:21 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strpbrk(s, breakat)	/* found char, or NULL if none */
-_CONST char *s;
-_CONST char *breakat;
+char *
+strpbrk(register const char *string, register const char *brk)
 {
-  register _CONST char *sscan;
-  register _CONST char *bscan;
+	register const char *s1;
 
-  for (sscan = s; *sscan != '\0'; sscan++) {
-	for (bscan = breakat; *bscan != '\0';)	/* ++ moved down. */
-		if (*sscan == *bscan++) return((char *) sscan);
-  }
-  return( (char *) NULL);
+	while (*string) {
+		for (s1 = brk; *s1 && *s1 != *string; s1++)
+			/* EMPTY */ ;
+		if (*s1)
+			return (char *)string;
+		string++;
+	}
+	return (char *)NULL;
 }

@@ -1,37 +1,23 @@
-#include <lib.h>
-/* memchr - search for a byte
- *
- * CHARBITS should be defined only if the compiler lacks "unsigned char".
- * It should be a mask, e.g. 0377 for an 8-bit machine.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: memchr.c,v 1.3 90/08/28 13:52:11 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-#define CHARBITS 0377
-
-#ifndef CHARBITS
-#	define	UNSCHAR(c)	((unsigned char)(c))
-#else
-#	define	UNSCHAR(c)	((c)&CHARBITS)
-#endif
-
-void *memchr(s, ucharwanted, size)
-_CONST _VOIDSTAR s;
-int ucharwanted;
-size_t size;
+void *
+memchr(const void *s, register int c, register size_t n)
 {
-  register _CONST char *scan;
-  register size_t n;
-  register int uc;
+	register const unsigned char *s1 = s;
 
-  scan = (char *) s;
-  uc = UNSCHAR(ucharwanted);
-  for (n = size; n > 0; n--) {
-	if (UNSCHAR(*scan) == uc)
-		return( (void *) scan);
-	else
-		scan++;
-  }
-
-  return( (_VOIDSTAR) NULL);
+	c = (unsigned char) c;
+	if (n) {
+		n++;
+		while (--n > 0) {
+			if (*s1++ != c) continue;
+			return (void *) --s1;
+		}
+	}
+	return NULL;
 }

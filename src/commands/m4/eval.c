@@ -7,10 +7,6 @@
 #include "mdef.h"
 #include "extr.h"
 
-extern ndptr lookup();
-extern char *strsave();
-extern char *mktemp();
-
 /*
  * eval - evaluate built-in macros.
  *	  argc - number of elements in argv.
@@ -31,7 +27,7 @@ extern char *mktemp();
  *
  */
 
-eval (argv, argc, td)
+void eval (argv, argc, td)
 register char *argv[];
 register int argc;
 register int  td;

@@ -6,4 +6,4 @@
  * 
  */
 
-void version();
+_PROTOTYPE(void version , (void));

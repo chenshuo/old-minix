@@ -1,25 +1,22 @@
-#include <lib.h>
-/* memcmp - compare bytes */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: memcmp.c,v 1.3 90/08/28 13:52:20 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-int  memcmp(s1, s2, size)
-_CONST _VOIDSTAR s1;		/* <0, == 0, >0 */
-_CONST _VOIDSTAR s2;
-size_t size;
+int
+memcmp(const void *s1, const void *s2, size_t n)
 {
-  register _CONST char *scan1;
-  register _CONST char *scan2;
-  register size_t n;
+	register const char *p1 = s1, *p2 = s2;
 
-  scan1 = (char *) s1;
-  scan2 = (char *) s2;
-  for (n = size; n > 0; n--)
-	if (*scan1 == *scan2) {
-		scan1++;
-		scan2++;
-	} else
-		return(*scan1 - *scan2);
-
-  return(0);
+	if (n) {
+		n++;
+		while (--n > 0) {
+			if (*p1++ == *p2++) continue;
+			return *--p1 - *--p2;
+		}
+	}
+	return 0;
 }

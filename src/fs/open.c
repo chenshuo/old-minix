@@ -11,22 +11,24 @@
  */
 
 #include "fs.h"
-#include <minix/callnr.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <minix/callnr.h>
+#include <minix/com.h>
 #include "buf.h"
+#include "dev.h"
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
 #include "param.h"
 
+PRIVATE message dev_mess;
 PRIVATE char mode_map[] = {R_BIT, W_BIT, R_BIT|W_BIT, 0};
-PRIVATE char dot1[NAME_MAX] = ".\0\0\0\0\0\0\0\0\0\0\0\0";
-PRIVATE char dot2[NAME_MAX] =  "..\0\0\0\0\0\0\0\0\0\0\0";
 
-FORWARD int common_open();
-FORWARD struct inode *new_node();
-FORWARD int pipe_open();
+FORWARD _PROTOTYPE( int common_open, (int oflags, Mode_t omode)		);
+FORWARD _PROTOTYPE( int pipe_open, (struct inode *rip,Mode_t bits,int oflags));
+FORWARD _PROTOTYPE( struct inode *new_node, (char *path, Mode_t bits,
+			zone_t z0, off_t lsize)			);
 
 /*===========================================================================*
  *				do_creat				     *
@@ -34,9 +36,11 @@ FORWARD int pipe_open();
 PUBLIC int do_creat()
 {
 /* Perform the creat(name, mode) system call. */
-  /* get name */
+  int r;
+
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
-  return common_open(O_WRONLY | O_CREAT | O_TRUNC, (mode_t) mode);
+  r = common_open(O_WRONLY | O_CREAT | O_TRUNC, (mode_t) mode);
+  return(r);
 }
 
 
@@ -45,17 +49,21 @@ PUBLIC int do_creat()
  *===========================================================================*/
 PUBLIC int do_mknod()
 {
-/* Perform the mknod(name, mode, addr) system call. */
+/* Perform the mknod(name, mode, addr, size) system call. */
 
-  register mode_t bits;
-  unsigned int size;
+  register mode_t bits, mode_bits;
+  long size;
+  struct inode *ip;
 
   /* Only the super_user may make nodes other than fifos. */
-  if (!super_user && ((mode & I_TYPE) != I_NAMED_PIPE)) return(EPERM);
-  if (fetch_name(name1, name1_length, M1) != OK) return(err_code);
-  bits = (mode & I_TYPE) | (mode & ALL_MODES & fp->fp_umask);
-  size = (unsigned int) name2;
-  put_inode(new_node(user_path, bits, (zone_nr) addr), (off_t)size*BLOCK_SIZE);
+  mode_bits = (mode_t) m.m1_i2;	/* mode of the inode */
+  if (!super_user && ((mode_bits & I_TYPE) != I_NAMED_PIPE)) return(EPERM);
+  if (fetch_name(m.m1_p1, m.m1_i1, M1) != OK) return(err_code);
+  bits = (mode_bits & I_TYPE) | (mode_bits & ALL_MODES & fp->fp_umask);
+  size = (long) m.m1_p2;	/* number of blocks in the device */
+  if (size > MAX_FILE_POS/BLOCK_SIZE) return(EINVAL);
+  ip = new_node(user_path, bits, (zone_t) m.m1_i3, (off_t) size * BLOCK_SIZE);
+  put_inode(ip);
   return(err_code);
 }
 
@@ -66,7 +74,7 @@ PUBLIC int do_mknod()
 PRIVATE struct inode *new_node(path, bits, z0, lsize)
 char *path;			/* pointer to path name */
 mode_t bits;			/* mode of the new inode */
-zone_nr z0;			/* zone number 0 for new inode */
+zone_t z0;			/* zone number 0 for new inode */
 off_t lsize;			/* size of the special file */
 {
 /* New_node() is called by common_open(), do_mknod(), and do_mkdir().  
@@ -134,7 +142,7 @@ PUBLIC int do_open()
 {
 /* Perform the open(name, flags,...) system call. */
 
-  int create_mode = 0;
+  int create_mode = 0;		/* is really mode_t but this gives problems */
   int r;
 
   /* If O_CREAT is set, open has three parameters, otherwise two. */
@@ -146,7 +154,8 @@ PUBLIC int do_open()
   }
 
   if (r != OK) return(err_code); /* name was bad */
-  return common_open(mode, (mode_t) create_mode);
+  r = common_open(mode, create_mode);
+  return(r);
 }
 
 
@@ -160,11 +169,11 @@ mode_t omode;
 /* Common code from do_creat and do_open. */
 
   register struct inode *rip;
-  register int r;
-  register mode_t bits;
-  struct filp *fil_ptr;
+  int r, b, major, task, exist = TRUE;
   dev_t dev;
-  int nonblocking, exist = TRUE;
+  mode_t bits;
+  off_t pos;
+  struct filp *fil_ptr, *filp2;
 
   /* Remap the bottom two bits of oflags. */
   bits = (mode_t) mode_map[oflags & O_ACCMODE];
@@ -187,20 +196,14 @@ mode_t omode;
     	if ( (rip = eat_path(user_path)) == NIL_INODE) return(err_code);
   }
 
+  /* Claim the file descriptor and filp slot and fill them in. */
+  fp->fp_filp[fd] = fil_ptr;
+  fil_ptr->filp_count = 1;
+  fil_ptr->filp_ino = rip;
+  fil_ptr->filp_flags = oflags;
 
   /* Only do the normal open code if we didn't just create the file. */
   if (exist) {
-
-#if 0	/* I doubt this, but what does POSIX say?
-	 * I fixed the test anyway, to go with fixing the O_TRUNC test.
-	 * BDE
-	 */
-
-  	/* O_TRUNC and O_CREAT implies W_BIT */
-	if ((oflags & (O_TRUNC | O_CREAT)) == (O_CREAT | O_TRUNC))
-		bits |= W_BIT;
-#endif
-
   	/* Check protections. */
   	if ((r = forbidden(rip, bits, 0)) == OK) {
   		/* Opening reg. files directories and special files differ. */
@@ -208,6 +211,7 @@ mode_t omode;
     		   case I_REGULAR: 
 			/* Truncate regular file if O_TRUNC. */
 			if (oflags & O_TRUNC) {
+				if ((r = forbidden(rip, W_BIT, 0)) !=OK) break;
 				truncate(rip);
 				wipe_inode(rip);
 			}
@@ -221,13 +225,54 @@ mode_t omode;
 	     	   case I_CHAR_SPECIAL:
      		   case I_BLOCK_SPECIAL:
 			/* Invoke the driver for special processing. */
+			dev_mess.m_type = DEV_OPEN;
 			dev = (dev_t) rip->i_zone[0];
-			nonblocking = oflags & O_NONBLOCK;
-			r = dev_open(rip, (int) bits, nonblocking);
+			dev_mess.DEVICE = dev;
+			dev_mess.TTY_FLAGS = mode;
+			major = (dev >> MAJOR) & BYTE;	/* major device nr */
+			if (major <= 0 || major >= max_major) {
+				r = ENODEV;
+				break;
+			}
+			task = dmap[major].dmap_task;	/* device task nr */
+			(*dmap[major].dmap_open)(task, &dev_mess);
+			r = dev_mess.REP_STATUS;
 			break;
 
 		   case I_NAMED_PIPE:
+			oflags |= O_APPEND;	/* force append mode */
+			fil_ptr->filp_flags = oflags;
 			r = pipe_open(rip, bits, oflags);
+			if (r == OK) {
+				/* See if someone else is doing a rd or wt on
+				 * the FIFO.  If so, use its filp entry so the
+				 * file position will be automatically shared.
+				 */
+				b = (bits & R_BIT ? R_BIT : W_BIT);
+				fil_ptr->filp_count = 0; /* don't find self */
+				if ((filp2 = find_filp(rip, b)) != NIL_FILP) {
+					/* Co-reader or writer found. Use it.*/
+					fp->fp_filp[fd] = filp2;
+					filp2->filp_count++;
+					filp2->filp_ino = rip;
+					filp2->filp_flags = oflags;
+
+					/* i_count was incremented incorrectly
+					 * by eatpath above, not knowing that
+					 * we were going to use an existing
+					 * filp entry.  Correct this error.
+					 */
+					rip->i_count--;
+				} else {
+					/* Nobody else found.  Restore filp. */
+					fil_ptr->filp_count = 1;
+					if (b == R_BIT)
+					     pos = rip->i_zone[V2_NR_DZONES+1];
+					else
+					     pos = rip->i_zone[V2_NR_DZONES+2];
+					fil_ptr->filp_pos = pos;
+				}
+			}
 			break;
  		}
   	}
@@ -235,15 +280,12 @@ mode_t omode;
 
   /* If error, release inode. */
   if (r != OK) {
+	fp->fp_filp[fd] = NIL_FILP;
+	fil_ptr->filp_count= 0;
 	put_inode(rip);
 	return(r);
   }
   
-  /* Claim the file descriptor and filp slot and fill them in. */
-  fp->fp_filp[fd] = fil_ptr;
-  fil_ptr->filp_count = 1;
-  fil_ptr->filp_ino = rip;
-  fil_ptr->filp_flags = oflags;
   return(fd);
 }
 
@@ -255,22 +297,24 @@ register struct inode *rip;
 register mode_t bits;
 register int oflags;
 {
-/*  This function is called from do_creat and do_open, it checks if
+/*  This function is called from common_open. It checks if
  *  there is at least one reader/writer pair for the pipe, if not
  *  it suspends the caller, otherwise it revives all other blocked
  *  processes hanging on the pipe.
  */
 
   if (find_filp(rip, bits & W_BIT ? R_BIT : W_BIT) == NIL_FILP) { 
-	if (oflags & O_NONBLOCK) return(bits & W_BIT ? ENXIO : OK);
-	suspend(XOPEN); /* suspend caller */
+	if (oflags & O_NONBLOCK) {
+		if (bits & W_BIT) return(ENXIO);
+	} else
+		suspend(XPOPEN);	/* suspend caller */
   } else if (susp_count > 0) {/* revive blocked processes */
 	release(rip, OPEN, susp_count);
 	release(rip, CREAT, susp_count);
   }
   rip->i_pipe = I_PIPE; 
 
-  return OK ;
+  return(OK);
 }
 
 
@@ -283,8 +327,9 @@ PUBLIC int do_close()
 
   register struct filp *rfilp;
   register struct inode *rip;
-  int rw;
-  int mode_word;
+  struct file_lock *flp;
+  int rw, mode_word, major, task, lock_count;
+  dev_t dev;
 
   /* First locate the inode that belongs to the file descriptor. */
   if ( (rfilp = get_filp(fd)) == NIL_FILP) return(err_code);
@@ -293,24 +338,59 @@ PUBLIC int do_close()
   /* Check to see if the file is special. */
   mode_word = rip->i_mode & I_TYPE;
   if (mode_word == I_CHAR_SPECIAL || mode_word == I_BLOCK_SPECIAL) {
+	dev = (dev_t) rip->i_zone[0];
 	if (mode_word == I_BLOCK_SPECIAL)  {
 		/* Invalidate cache entries unless special is mounted or ROOT*/
-		do_sync();	/* purge cache */
-		if (mounted(rip) == FALSE) invalidate((dev_t) rip->i_zone[0]);
+		(void) do_sync();	/* purge cache */
+		if (mounted(rip) == FALSE) invalidate(dev);
 	}
-	if (rfilp->filp_count == 1) dev_close(rip);	/* about to become 0 */
+	/* Use the dmap_close entry to do any special processing required. */
+	dev_mess.m_type = DEV_CLOSE;
+	dev_mess.DEVICE = dev;
+	dev_mess.COUNT= rfilp->filp_count - 1;
+		/* Device wants to know how many times this fd is open after
+		 * the close. */
+	major = (dev >> MAJOR) & BYTE;	/* major device nr */
+	task = dmap[major].dmap_task;	/* device task nr */
+	(*dmap[major].dmap_close)(task, &dev_mess);
   }
 
   /* If the inode being closed is a pipe, release everyone hanging on it. */
-  if (rip->i_pipe) {
+  if (rip->i_pipe == I_PIPE) {
 	rw = (rfilp->filp_mode & R_BIT ? WRITE : READ);
 	release(rip, rw, NR_PROCS);
   }
 
   /* If a write has been done, the inode is already marked as DIRTY. */
-  if (--rfilp->filp_count == 0) put_inode(rip);
+  if (--rfilp->filp_count == 0) {
+	if (rip->i_pipe == I_PIPE && rip->i_count > 1) {
+		/* Save the file position in the i-node in case needed later.
+		 * The read and write positions are saved separately.  The
+		 * last 3 zones in the i-node are not used for (named) pipes.
+		 */
+		if (rfilp->filp_mode == R_BIT)
+			rip->i_zone[V2_NR_DZONES+1] = (zone_t) rfilp->filp_pos;
+		else
+			rip->i_zone[V2_NR_DZONES+2] = (zone_t) rfilp->filp_pos;
+	}
+	put_inode(rip);
+  }
 
+  fp->fp_cloexec &= ~(1L << fd);
+  fp->fp_cloexec &= ~(1L << fd);	/* turn off close-on-exec bit */
   fp->fp_filp[fd] = NIL_FILP;
+
+  /* Check to see if the file is locked.  If so, release all locks. */
+  if (nr_locks == 0) return(OK);
+  lock_count = nr_locks;	/* save count of locks */
+  for (flp = &file_lock[0]; flp < &file_lock[NR_LOCKS]; flp++) {
+	if (flp->lock_type == 0) continue;	/* slot not in use */
+	if (flp->lock_inode == rip && flp->lock_pid == fp->fp_pid) {
+		flp->lock_type = 0;
+		nr_locks--;
+	}
+  }
+  if (nr_locks < lock_count) lock_revive();	/* lock released */
   return(OK);
 }
 
@@ -331,21 +411,22 @@ PUBLIC int do_lseek()
   /* No lseek on pipes. */
   if (rfilp->filp_ino->i_pipe == I_PIPE) return(ESPIPE);
 
-  /* The value of 'whence' determines the algorithm to use. */
+  /* The value of 'whence' determines the start position to use. */
   switch(whence) {
-	case 0:	pos = offset;	break;
-	case 1: pos = rfilp->filp_pos + offset;	break;
-	case 2: pos = rfilp->filp_ino->i_size + offset;	break;
+	case 0:	pos = 0;	break;
+	case 1: pos = rfilp->filp_pos;	break;
+	case 2: pos = rfilp->filp_ino->i_size;	break;
 	default: return(EINVAL);
   }
 
-  /* Check if pos is invalid. */
-  if (pos < 0 || pos > MAX_FILE_POS) return(EINVAL);
+  /* Check for overflow. */
+  if (((long)offset > 0) && ((long)(pos + offset) < (long)pos)) return(EINVAL);
+  if (((long)offset < 0) && ((long)(pos + offset) > (long)pos)) return(EINVAL);
+  pos = pos + offset;
 
   if (pos != rfilp->filp_pos)
 	rfilp->filp_ino->i_seek = ISEEK;	/* inhibit read ahead */
   rfilp->filp_pos = pos;
-
   reply_l1 = pos;		/* insert the long into the output message */
   return(OK);
 }
@@ -364,26 +445,33 @@ PUBLIC int do_mkdir()
   char string[NAME_MAX];	/* last component of the new dir's path name */
   register struct inode *rip, *ldirp;
 
-  /* First make the inode. If that fails, return error code. */
+  /* Check to see if it is possible to make another link in the parent dir. */
   if (fetch_name(name1, name1_length, M1) != OK) return(err_code);
-  bits = S_IFDIR | (mode & RWX_MODES & fp->fp_umask);
-  rip = new_node(user_path, bits, (zone_nr) 0, (off_t) 0);
-  if (rip == NIL_INODE) return(err_code);
-  if (err_code == EEXIST) {
+  ldirp = last_dir(user_path, string);	/* pointer to new dir's parent */
+  if (ldirp == NIL_INODE) return(err_code);
+  if ( (ldirp->i_nlinks & BYTE) >= LINK_MAX) {
+	put_inode(ldirp);	/* return parent */
+	return(EMLINK);
+  }
+
+  /* Next make the inode. If that fails, return error code. */
+  bits = I_DIRECTORY | (mode & RWX_MODES & fp->fp_umask);
+  rip = new_node(user_path, bits, (zone_t) 0, (off_t) 0);
+  if (rip == NIL_INODE || err_code == EEXIST) {
 	put_inode(rip);		/* can't make dir: it already exists */
+	put_inode(ldirp);	/* return parent too */
 	return(err_code);
   }
 
   /* Get the inode numbers for . and .. to enter in the directory. */
-  ldirp = last_dir(user_path, string);	/* pointer to new dir's parent */
   dotdot = ldirp->i_num;	/* parent's inode number */
   dot = rip->i_num;		/* inode number of the new dir itself */
 
   /* Now make dir entries for . and .. unless the disk is completely full. */
-  rip->i_mode |= S_IRWXU;	/* make sure . and .. can be entered */
+  /* Use dot1 and dot2, so the mode of the directory isn't important. */
+  rip->i_mode = bits;	/* set mode */
   r1 = search_dir(rip, dot1, &dot, ENTER);	/* enter . in the new dir */
   r2 = search_dir(rip, dot2, &dotdot, ENTER);	/* enter .. in the new dir */
-  rip->i_mode = bits;		/* now set mode correctly */
 
   /* If both . and .. were successfully entered, increment the link counts. */
   if (r1 == OK && r2 == OK) {
@@ -393,8 +481,6 @@ PUBLIC int do_mkdir()
 	ldirp->i_dirt = DIRTY;	/* mark parent's inode as dirty */
   } else {
 	/* It was not possible to enter . or .. probably disk was full. */
-	(void) search_dir(rip, ".",  (ino_t *) 0, DELETE);
-	(void) search_dir(rip, "..", (ino_t *) 0, DELETE);
 	(void) search_dir(ldirp, string, (ino_t *) 0, DELETE);
 	rip->i_nlinks--;	/* undo the increment done in new_node() */
   }

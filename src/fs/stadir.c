@@ -15,8 +15,9 @@
 #include "inode.h"
 #include "param.h"
 
-FORWARD int change();
-FORWARD int stat_inode();
+FORWARD _PROTOTYPE( int change, (struct inode **iip, char *name_ptr, int len));
+FORWARD _PROTOTYPE( int stat_inode, (struct inode *rip, struct filp *fil_ptr,
+			char *user_addr)				);
 
 /*===========================================================================*
  *				do_chdir				     *
@@ -24,22 +25,37 @@ FORWARD int stat_inode();
 PUBLIC int do_chdir()
 {
 /* Change directory.  This function is  also called by MM to simulate a chdir
- * in order to do EXEC, etc.
+ * in order to do EXEC, etc.  It also changes the root directory, the uids and
+ * gids, and the umask.  The name of this function is now misleading and the
+ * cd_flag argument is no longer supported.
  */
 
+  int r;
   register struct fproc *rfp;
 
   if (who == MM_PROC_NR) {
 	rfp = &fproc[slot1];
+	put_inode(fp->fp_rootdir);
+	dup_inode(fp->fp_rootdir = rfp->fp_rootdir);
 	put_inode(fp->fp_workdir);
-	fp->fp_workdir = (cd_flag ? fp->fp_rootdir : rfp->fp_workdir);
-	dup_inode(fp->fp_workdir);
-	fp->fp_effuid = (cd_flag ? SUPER_USER : rfp->fp_effuid);
+	dup_inode(fp->fp_workdir = rfp->fp_workdir);
+
+	/* MM uses access() to check permissions.  To make this work, pretend
+	 * that the user's real ids are the same as the user's effective ids.
+	 * FS calls other than access() do not use the real ids, so are not
+	 * affected.
+	 */
+	fp->fp_realuid =
+	fp->fp_effuid = rfp->fp_effuid;
+	fp->fp_realgid =
+	fp->fp_effgid = rfp->fp_effgid;
+	fp->fp_umask = rfp->fp_umask;
 	return(OK);
   }
 
-/* Perform the chdir(name) system call. */
-  return change(&fp->fp_workdir, name, name_length);
+  /* Perform the chdir(name) system call. */
+  r = change(&fp->fp_workdir, name, name_length);
+  return(r);
 }
 
 
@@ -137,32 +153,38 @@ PUBLIC int do_fstat()
 PRIVATE int stat_inode(rip, fil_ptr, user_addr)
 register struct inode *rip;	/* pointer to inode to stat */
 struct filp *fil_ptr;		/* filp pointer, supplied by 'fstat' */
-char *user_addr;			/* user space address where stat buf goes */
+char *user_addr;		/* user space address where stat buf goes */
 {
 /* Common code for stat and fstat system calls. */
 
   register struct stat *stp;
   struct stat statbuf;
-  int r;
+  mode_t mo;
+  int r, s;
   vir_bytes v;
 
   /* Update the atime, ctime, and mtime fields in the inode, if need be. */
   if (rip->i_update) update_times(rip);
 
   /* Fill in the statbuf struct. */
+  mo = rip->i_mode & I_TYPE;
+  s = (mo == I_CHAR_SPECIAL || mo == I_BLOCK_SPECIAL);	/* true iff special */
   stp = &statbuf;		/* set up pointer to the buffer */
-  stp->st_dev = (int) rip->i_dev;
+  stp->st_dev = rip->i_dev;
   stp->st_ino = rip->i_num;
   stp->st_mode = rip->i_mode;
   stp->st_nlink = rip->i_nlinks & BYTE;
   stp->st_uid = rip->i_uid;
   stp->st_gid = rip->i_gid & BYTE;
-  stp->st_rdev = rip->i_zone[0];
+  stp->st_rdev = (dev_t) (s ? rip->i_zone[0] : NO_DEV);
   stp->st_size = rip->i_size;
-  if (	(rip->i_pipe == I_PIPE) &&	/* IF it is a pipe */
-	(fil_ptr != NIL_FILP) &&	/* AND it was fstat */
-	(fil_ptr->filp_mode == R_BIT))	/* on the reading end, */
-	stp->st_size -= fil_ptr->filp_pos; /* adjust the visible size. */
+
+  if (rip->i_pipe == I_PIPE) {
+	stp->st_mode &= ~I_REGULAR;	/* wipe out I_REGULAR bit for pipes */
+	if (fil_ptr != NIL_FILP && fil_ptr->filp_mode & R_BIT) 
+		stp->st_size -= fil_ptr->filp_pos;
+  }
+
   stp->st_atime = rip->i_atime;
   stp->st_mtime = rip->i_mtime;
   stp->st_ctime = rip->i_ctime;

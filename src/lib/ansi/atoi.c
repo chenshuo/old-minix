@@ -1,34 +1,30 @@
-/* atoi.c						ANSI 4.10.1.2
- *	int atoi(const char *nptr);
- *
- *	Converts a numeric string in base 10 to an integer.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: atoi.c,v 1.4 90/05/22 12:22:25 ceriel Exp $ */
 
-#include <lib.h>
-#include <ctype.h>
-#include <stdlib.h>
+#include	<ctype.h>
+#include	<stdlib.h>
 
-#ifdef atoi
-#undef atoi
-#endif
-
-PUBLIC int atoi(nptr)
-register _CONST char *nptr;
+/* We do not use strtol here for backwards compatibility in behaviour on
+   overflow.
+*/
+int
+atoi(register const char *nptr)
 {
-  register int c;
-  int result = 0;
-  int negative = 0;
+	int total = 0;
+	int minus = 0;
 
-  while ((c = *nptr) && isspace(c))	/* skip leading white space */
-	++nptr;
-
-  if (c == '+' || c == '-') {		/* handle signs */
-	negative = (c == '-');
-	++nptr;
-  }
-
-  while ((c = *nptr++ - '0') >= 0 && c < 10)
-	result = (result << 1) + (result << 3) + c;
-
-  return (negative) ? 0 - result : result;
+	while (isspace(*nptr)) nptr++;
+	if (*nptr == '+') nptr++;
+	else if (*nptr == '-') {
+		minus = 1;
+		nptr++;
+	}
+	while (isdigit(*nptr)) {
+		total *= 10;
+		total += (*nptr++ - '0');
+	}
+	return minus ? -total : total;
 }

@@ -7,6 +7,13 @@
 
 #include <stddef.h>
 
+_PROTOTYPE( char *lsearch, (char *key, char *base,
+			    unsigned *count, unsigned width,
+			    int (*keycmp)(const void *, const void *)));
+_PROTOTYPE( char *lfind, (char *key, char *base,
+			    unsigned *count, unsigned width,
+			    int (*keycmp)(const void *, const void *)));
+
 char *lsearch(key, base, count, width, keycmp)
 char *key;
 char *base;

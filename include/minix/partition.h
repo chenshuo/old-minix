@@ -1,4 +1,6 @@
 /* Description of entry in partition table.  */
+#ifndef _PARTITION_H
+#define _PARTITION_H
 struct part_entry {
   unsigned char bootind;	/* boot indicator 0/ACTIVE_FLAG	 */
   unsigned char start_head;	/* head value for first sector	 */
@@ -20,3 +22,4 @@ struct part_entry {
 #define MINIX_PART	0x81
 #define NO_PART		0x00
 #define OLD_MINIX_PART	0x80	/* created before 1.4b, driver must round */
+#endif /* _PARTITION_H */

@@ -1,8 +1,14 @@
-/*  ========================================================================  *
- *				Mined.h					      *	
- *  ========================================================================  */
+/*========================================================================*
+ *				Mined.h					  *
+ *========================================================================*/
 
 #include <minix/config.h>
+#include <sys/types.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <limits.h>
+
 #ifndef YMAX
 #ifdef UNIX
 #include <stdio.h>
@@ -10,7 +16,6 @@
 #undef getchar
 #undef NULL
 #undef EOF
-extern int _putchar();
 extern char *CE, *VS, *SO, *SE, *CL, *AL, *CM;
 #define YMAX		49
 #else
@@ -23,15 +28,16 @@ extern char *rev_scroll;	/* String for reverse scrolling */
 extern char *pos_string;	/* Absolute cursor positioning */
 #define X_PLUS	' '		/* To be added to x for cursor sequence */
 #define Y_PLUS	' '		/* To be added to y for cursor sequence */
-#endif UNIX
+#endif /* UNIX */
 
-#define XMAX		79		/* Maximum x coordinate starting at 0 */
+#define XMAX		79		/* Maximum x coordinate starting at 0*/
 #define SCREENMAX	(YMAX - 1)	/* Number of lines displayed */
-#define XBREAK		(XMAX - 2)	/* Line shift at this coordinate */
+#define XBREAK		(XMAX - 0)	/* Line shift at this coordinate */
 #define SHIFT_SIZE	25		/* Number of chars to shift */
-#define SHIFT_MARK	'!'		/* Char indicating that line continues*/
+#define SHIFT_MARK	'!'		/* Char indicating line continues */
 #define MAX_CHARS	1024		/* Maximum chars on one line */
-		    /* LINE_START must be rounded up to the lowest SHIFT_SIZE */
+
+/* LINE_START must be rounded up to the lowest SHIFT_SIZE */
 #define LINE_START	(((-MAX_CHARS - 1) / SHIFT_SIZE) * SHIFT_SIZE \
   				   - SHIFT_SIZE)
 #define LINE_END	(MAX_CHARS + 1)	/* Highest x-coordinate for line */
@@ -46,8 +52,8 @@ extern char *pos_string;	/* Absolute cursor positioning */
 #define FINE	 	(ERRORS + 1)
 #define NO_INPUT	(ERRORS + 2)
 
-#define STD_OUT	 	1		/* Filedescriptor for terminal */
-#define FILE_LENGTH	14		/* Length of filename in minix */
+#define STD_OUT	 	1		/* File descriptor for terminal */
+
 #if (CHIP == INTEL)
 #define MEMORY_SIZE	(50 * 1024)	/* Size of data space to malloc */
 #endif
@@ -153,7 +159,7 @@ extern FLAG loading;			/* Set if we're loading a file */
 extern int out_count;			/* Index in output buffer */
 extern char file_name[LINE_LEN];	/* Name of file in use */
 extern char text_buffer[MAX_CHARS];	/* Buffer for modifying text */
-extern char blank_line[LINE_LEN];	/* Line filled with spaces */
+extern char *blank_line;		/* Clear line to end */
 
 extern char yank_file[];		/* Temp file for buffer */
 extern FLAG yank_status;		/* Status of yank_file */
@@ -233,9 +239,132 @@ extern long chars_saved;		/* Nr of chars saved in buffer */
  */
 #define get_shift(cnt)		((cnt) & DUMMY_MASK)
 
-/* Forward declarations */
-extern LINE *proceed(), *install_line();
-extern LINE *match(), *line_insert();
-extern char *alloc(), *num_out(), *basename();
+#endif /* YMAX */
 
-#endif YMAX
+/* mined1.c */
+
+_PROTOTYPE(void FS, (void));
+_PROTOTYPE(void VI, (void));
+_PROTOTYPE(int WT, (void));
+_PROTOTYPE(void XWT, (void));
+_PROTOTYPE(void SH, (void));
+_PROTOTYPE(LINE *proceed, (LINE *line, int count ));
+_PROTOTYPE(int bottom_line, (FLAG revfl, char *s1, char *s2, char *inbuf, FLAG statfl ));
+_PROTOTYPE(int count_chars, (LINE *line ));
+_PROTOTYPE(void move, (int new_x, char *new_address, int new_y ));
+_PROTOTYPE(int find_x, (LINE *line, char *address ));
+_PROTOTYPE(char *find_address, (LINE *line, int x_coord, int *old_x ));
+_PROTOTYPE(int length_of, (char *string ));
+_PROTOTYPE(void copy_string, (char *to, char *from ));
+_PROTOTYPE(void reset, (LINE *head_line, int screen_y ));
+_PROTOTYPE(void set_cursor, (int nx, int ny ));
+_PROTOTYPE(void open_device, (void));
+_PROTOTYPE(int getchar, (void));
+_PROTOTYPE(void display, (int x_coord, int y_coord, LINE *line, int count ));
+_PROTOTYPE(int write_char, (int fd, int c ));
+_PROTOTYPE(int writeline, (int fd, char *text ));
+_PROTOTYPE(void put_line, (LINE *line, int offset, FLAG clear_line ));
+_PROTOTYPE(int flush_buffer, (int fd ));
+_PROTOTYPE(void bad_write, (int fd ));
+_PROTOTYPE(void catch, (int sig ));
+_PROTOTYPE(void abort_mined, (void));
+_PROTOTYPE(void raw_mode, (FLAG state ));
+_PROTOTYPE(void panic, (char *message ));
+_PROTOTYPE(char *alloc, (int bytes ));
+_PROTOTYPE(void free_space, (char *p ));
+/*
+#ifdef UNIX
+_PROTOTYPE(void (*key_map [128]), (void));
+#else
+_PROTOTYPE(void (*key_map [256]), (void));
+#endif
+*/
+_PROTOTYPE(void initialize, (void));
+_PROTOTYPE(char *basename, (char *path ));
+_PROTOTYPE(void load_file, (char *file ));
+_PROTOTYPE(int get_line, (int fd, char *buffer ));
+_PROTOTYPE(LINE *install_line, (char *buffer, int length ));
+_PROTOTYPE(void main, (int argc, char *argv []));
+_PROTOTYPE(void RD, (void));
+_PROTOTYPE(void I, (void));
+_PROTOTYPE(void XT, (void));
+_PROTOTYPE(void ESC, (void));
+_PROTOTYPE(int ask_save, (void));
+_PROTOTYPE(int line_number, (void));
+_PROTOTYPE(void file_status, (char *message, long count, char *file, int lines,
+						 FLAG writefl, FLAG changed ));
+void build_string();		/* varargs :-(  */
+
+_PROTOTYPE(char *num_out, (long number ));
+_PROTOTYPE(int get_number, (char *message, int *result ));
+_PROTOTYPE(int input, (char *inbuf, FLAG clearfl ));
+_PROTOTYPE(int get_file, (char *message, char *file ));
+_PROTOTYPE(int _getchar, (void));
+_PROTOTYPE(void _flush, (void));
+_PROTOTYPE(void _putchar, (int c ));
+_PROTOTYPE(void get_term, (void));
+
+/* mined2.c */
+
+_PROTOTYPE(void UP, (void));
+_PROTOTYPE(void DN, (void));
+_PROTOTYPE(void LF, (void));
+_PROTOTYPE(void RT, (void));
+_PROTOTYPE(void HIGH, (void));
+_PROTOTYPE(void LOW, (void));
+_PROTOTYPE(void BL, (void));
+_PROTOTYPE(void EL, (void));
+_PROTOTYPE(void GOTO, (void));
+_PROTOTYPE(void PD, (void));
+_PROTOTYPE(void PU, (void));
+_PROTOTYPE(void HO, (void));
+_PROTOTYPE(void EF, (void));
+_PROTOTYPE(void SU, (void));
+_PROTOTYPE(void SD, (void));
+_PROTOTYPE(int forward_scroll, (void));
+_PROTOTYPE(int reverse_scroll, (void));
+_PROTOTYPE(void MP, (void));
+_PROTOTYPE(void move_previous_word, (FLAG remove ));
+_PROTOTYPE(void MN, (void));
+_PROTOTYPE(void move_next_word, (FLAG remove ));
+_PROTOTYPE(void DCC, (void));
+_PROTOTYPE(void DPC, (void));
+_PROTOTYPE(void DLN, (void));
+_PROTOTYPE(void DNW, (void));
+_PROTOTYPE(void DPW, (void));
+_PROTOTYPE(void S, (int character ));
+_PROTOTYPE(void CTL, (void));
+_PROTOTYPE(void LIB, (void));
+_PROTOTYPE(LINE *line_insert, (LINE *line, char *string, int len ));
+_PROTOTYPE(int insert, (LINE *line, char *location, char *string ));
+_PROTOTYPE(LINE *line_delete, (LINE *line ));
+_PROTOTYPE(void delete, (LINE *start_line, char *start_textp, LINE *end_line, char *end_textp ));
+_PROTOTYPE(void PT, (void));
+_PROTOTYPE(void IF, (void));
+_PROTOTYPE(void file_insert, (int fd, FLAG old_pos ));
+_PROTOTYPE(void WB, (void));
+_PROTOTYPE(void MA, (void));
+_PROTOTYPE(void YA, (void));
+_PROTOTYPE(void DT, (void));
+_PROTOTYPE(void set_up, (FLAG remove ));
+_PROTOTYPE(FLAG checkmark, (void));
+_PROTOTYPE(int legal, (void));
+_PROTOTYPE(void yank, (LINE *start_line, char *start_textp, LINE *end_line, char *end_textp, FLAG remove ));
+_PROTOTYPE(int scratch_file, (FLAG mode ));
+_PROTOTYPE(void SF, (void));
+_PROTOTYPE(void SR, (void));
+_PROTOTYPE(REGEX *get_expression, (char *message ));
+_PROTOTYPE(void GR, (void));
+_PROTOTYPE(void LR, (void));
+_PROTOTYPE(void change, (char *message, FLAG file ));
+_PROTOTYPE(char *substitute, (LINE *line, REGEX *program, char *replacement ));
+_PROTOTYPE(void search, (char *message, FLAG method ));
+_PROTOTYPE(int find_y, (LINE *match_line ));
+_PROTOTYPE(void finished, (REGEX *program, int *last_exp ));
+_PROTOTYPE(void compile, (char *pattern, REGEX *program ));
+_PROTOTYPE(LINE *match, (REGEX *program, char *string, FLAG method ));
+_PROTOTYPE(int line_check, (REGEX *program, char *string, FLAG method ));
+_PROTOTYPE(int check_string, (REGEX *program, char *string, int *expression ));
+_PROTOTYPE(int star, (REGEX *program, char *end_position, char *string, int *expression ));
+_PROTOTYPE(int in_list, (int *list, int c, int list_length, int opcode ));
+_PROTOTYPE(void dummy_line, (void));

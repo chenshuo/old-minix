@@ -71,6 +71,7 @@ char *userv = "User Interface 4E(059), 29 Jan 88";
 
 /* Includes */
  
+#include <sys/types.h>
 #include "ckcdeb.h"
 #include <stdio.h>
 #include <ctype.h>

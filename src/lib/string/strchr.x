@@ -15,13 +15,13 @@ _strchr:
 	cld
 	test	si,#1		/* align string on word boundary */
 	jz	word_loop
-	lodb
+	lodsb
 	cmpb	al,dl
 	je	one_past
 	orb	al,al
 	jz	no_match
 word_loop:			/* look for c word by word */
-	lodw
+	lods
 	cmpb	al,dl
 	je	two_past
 	orb	al,al

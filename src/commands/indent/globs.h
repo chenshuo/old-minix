@@ -166,7 +166,6 @@ struct fstate
    char            size;
    int             allcaps;
 };
-char           *chfont();
 
 PUBLIC struct fstate
                 keywordf,		/* keyword font */
@@ -192,7 +191,7 @@ PUBLIC struct parser_state
 					   "boxed" comment. In that
 					   case, the first non-blank
 					   char should be lined up with
-					   the / in /* */
+					   the / in / *     */
    int             comment_delta, n_comment_delta;
    int             cast_mask;		/* indicates which close parens
 					   close off casts */
@@ -293,7 +292,7 @@ PUBLIC struct parser_state
    int             its_a_keyword;
    int             sizeof_keyword;
    int             dumped_decl_indent;
-   long            case_indent;		/* The distance to indent case
+   int            case_indent;		/* The distance to indent case
 					   labels from the switch
 					   statement */
    int             in_par_decl;

@@ -33,10 +33,10 @@ set_length:
 	shr	cx,#1		/* copy words, not bytes */
 	jz	last_byte
 word_copy:			/* loop to copy words */
-	lodw
+	lods
 	orb	al,al
 	jz	restore_length	/* early exit if low byte == 0 */
-	stow
+	stos
 	orb	ah,ah
 	loopnz	word_copy
 	jz	restore_length
@@ -49,22 +49,23 @@ restore_length:			/* retrieve remaining length (in bytes) */
 	shl	cx,#1
 	and	dx,#1
 	add	cx,dx
+	jz	exit
 zero_fill:			/* add null characters if necessary */
 	xor	ax,ax
 	cmp	cx,*BYTE_LIMIT
 	jbe	zero_bytes
 	test	di,#1		/* align destination on word boundary */
 	jz	zero_words
-	stob
+	stosb
 	dec	cx
 zero_words:
 	shr	cx,#1		/* zero words, not bytes */
 	rep
-	stow
+	stos
 	adc	cx,cx		/* set up for leftover byte */
 zero_bytes:
 	rep
-	stob
+	stosb
 exit:
 	pop	di
 	pop	si

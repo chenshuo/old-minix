@@ -8,6 +8,8 @@
 #include <ansi.h>
 #include <stddef.h>
 
+_PROTOTYPE( void *memccpy, (void *dst, const void *src,
+			    int ucharstop, size_t size));
 #ifndef CHARBITS
 #	define	UNSCHAR(c)	((unsigned char)(c))
 #else

@@ -24,12 +24,12 @@
  */
 
 #define PUBLIC extern
-#include "globs.h"
 #include <sys/types.h>
 #include <ctype.h>
-
-extern char *getenv(), *index();
-extern char *malloc();
+#include <string.h>
+#include <stdlib.h>
+#include "globs.h"
+#include "proto.h"
 
 /* profile types */
 #define	PRO_SPECIAL	1		/* special case */
@@ -135,7 +135,7 @@ struct pro
  * set_profile reads $HOME/.indent.pro and ./.indent.pro and handles
  * arguments given in these files.
  */
-set_profile()
+void set_profile()
 {
    register FILE  *f;
    char            fname[BUFSIZ];
@@ -154,7 +154,7 @@ set_profile()
    }
 }
 
-scan_profile(f)
+void scan_profile(f)
    register FILE  *f;
 {
    register int    i;
@@ -163,7 +163,7 @@ scan_profile(f)
 
    while (1)
    {
-      for (p = buf; (i = getc(f)) != EOF && (*p = i) > ' '; ++p);
+      for (p = buf; (i = getc(f)) != EOF && (*p = (char)i) > ' '; ++p);
       if (p != buf)
       {
 	 *p++ = 0;
@@ -177,7 +177,7 @@ scan_profile(f)
 
 char           *param_start;
 
-eqin(s1, s2)
+int eqin(s1, s2)
    register char  *s1;
    register char  *s2;
 {
@@ -193,7 +193,7 @@ eqin(s1, s2)
 /*
  * Set the defaults.
  */
-set_defaults()
+void set_defaults()
 {
    register struct pro *p;
 
@@ -205,11 +205,10 @@ set_defaults()
 	 *p->p_obj = p->p_default;
 }
 
-set_option(arg)
+void set_option(arg)
    register char  *arg;
 {
    register struct pro *p;
-   extern int      atoi();
 
    arg++;				/* ignore leading "-" */
    for (p = pro; p->p_name; p++)

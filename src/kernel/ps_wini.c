@@ -11,10 +11,14 @@
  *
  *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
  * ----------------------------------------------------------------
- * |  DISK_READ | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |  DEV_OPEN  |         |         |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
- * ----------------------------------------------------------------
+ * |  DEV_CLOSE |         |         |         |         |         |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_READ  | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
  * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
  * ----------------------------------------------------------------
  *
@@ -96,7 +100,7 @@
 
 /* Variables. */
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
-  int wn_opcode;		/* DISK_READ or DISK_WRITE */
+  int wn_opcode;		/* DEV_READ or DEV_WRITE */
   int wn_procnr;		/* which proc wanted this operation? */
   int wn_drive;			/* drive number addressed */
   int wn_cylinder;		/* cylinder number addressed */
@@ -124,24 +128,24 @@ PRIVATE int command[NUM_COM_BYTES];    /* Common command block */
 
 PRIVATE unsigned char buf[BLOCK_SIZE]; /* Buffer used by the startup routine */
 
-FORWARD void ch_select();
-FORWARD void ch_unselect();
-FORWARD int com_out();
-FORWARD int controller_ready();
-FORWARD void copy_params();
-FORWARD void copy_prt();
-FORWARD int drive_busy();
-FORWARD void init_params();
-FORWARD void sort();
-FORWARD int w_do_rdwt();
-FORWARD int w_reset();
-FORWARD int w_transfer();
-FORWARD int win_init();
-FORWARD int win_results();
-FORWARD void set_command();
-FORWARD void w_dma_setup();
-FORWARD void abort_com();
-FORWARD int status();
+FORWARD _PROTOTYPE( void ch_select, (void) );
+FORWARD _PROTOTYPE( void ch_unselect, (void) );
+FORWARD _PROTOTYPE( int com_out, (int nr_words, int attention) );
+FORWARD _PROTOTYPE( int controller_ready, (void) );
+FORWARD _PROTOTYPE( void copy_params, (unsigned char *src, struct wini *dest));
+FORWARD _PROTOTYPE( void copy_prt, (int base_dev) );
+FORWARD _PROTOTYPE( void init_params, (void) );
+FORWARD _PROTOTYPE( void sort, (struct wini wn[]) );
+FORWARD _PROTOTYPE( int w_do_rdwt, (message *m_ptr) );
+FORWARD _PROTOTYPE( int w_reset, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (struct wini *wn) );
+FORWARD _PROTOTYPE( int win_init, (void) );
+FORWARD _PROTOTYPE( int win_results, (void) );
+FORWARD _PROTOTYPE( void set_command, (struct wini *wn) );
+FORWARD _PROTOTYPE( void w_dma_setup, (struct wini *wn) );
+FORWARD _PROTOTYPE( void abort_com, (void) );
+FORWARD _PROTOTYPE( void dump_isr, (void) );
+FORWARD _PROTOTYPE( int status, (void) );
 
 /*===========================================================================*
  *				winchester_task				     * 
@@ -163,7 +167,7 @@ PUBLIC void winchester_task()
 	/* First wait for a request to read or write a disk block. */
 	receive(ANY, &w_mess);	/* get a request to do some work */
 	if (w_mess.m_source < 0) {
-		printf("winchester task got message from %d ", w_mess.m_source);
+		printf("winchester task got message from %d ",w_mess.m_source);
 		continue;
 	}
 	caller = w_mess.m_source;
@@ -171,8 +175,12 @@ PUBLIC void winchester_task()
 
 	/* Now carry out the work. */
 	switch(w_mess.m_type) {
-	    case DISK_READ:
-	    case DISK_WRITE:	r = w_do_rdwt(&w_mess);	break;
+	    case DEV_OPEN:	r = OK;				  break;
+	    case DEV_CLOSE:	r = OK;				  break;
+
+	    case DEV_READ:
+	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
+
 	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
 	    default:		r = EINVAL;		break;
 	}
@@ -209,7 +217,7 @@ message *m_ptr;			/* pointer to read or write w_message */
   wn->wn_drive = device/DEV_PER_DRIVE;	/* save drive number */
   if (wn->wn_drive >= nr_drives)
 	return(EIO);
-  wn->wn_opcode = m_ptr->m_type;	/* DISK_READ or DISK_WRITE */
+  wn->wn_opcode = m_ptr->m_type;	/* DEV_READ or DEV_WRITE */
   if (m_ptr->POSITION % BLOCK_SIZE != 0)
 	return(EINVAL);
   sector = m_ptr->POSITION/SECTOR_SIZE;
@@ -251,7 +259,7 @@ message *m_ptr;			/* pointer to read or write w_message */
 PRIVATE int w_transfer(wn)
 register struct wini *wn;	/* pointer to the drive struct */
 {
-	register int i, j, r;	/* indices */
+	register int i, r;	/* indices */
 	message dummy;		/* dummy message to recieve interrupts */
 
 	set_command(wn);	/* setup command block */
@@ -303,8 +311,7 @@ PRIVATE int w_reset()
  * like the controller refusing to respond.
  */
 
-  int i, r;
-  message dummy;
+  int i;
 
   out_byte(ACR, 0x80);	/* Strobe reset bit high. */
   out_byte(ACR, 0);	/* Strobe reset bit low. */
@@ -333,7 +340,7 @@ PRIVATE int win_init()
 {
 /* Routine to initialize the drive parameters after boot or reset */
 
-  register int i, cyl;
+  register int i;
   message dummy;
 
 /*
@@ -421,9 +428,9 @@ PRIVATE int win_init()
   return(OK);
 }
 
-/*============================================================================*
- *				win_results				      *
- *============================================================================*/
+/*===========================================================================*
+ *				win_results				     *
+ *===========================================================================*/
 PRIVATE int win_results()
 {
 /* Extract results from the controller after an operation.
@@ -450,9 +457,9 @@ PRIVATE int controller_ready()
   return(retries);		/* nonzero if ready */
 }
 
-/*============================================================================*
- *				com_out					      *
- *============================================================================*/
+/*===========================================================================*
+ *				com_out					     *
+ *===========================================================================*/
 PRIVATE int com_out(nr_words, attention)
 int nr_words;
 int attention;
@@ -487,9 +494,9 @@ int attention;
 
 }
 
-/*============================================================================*
- *				init_params				      *
- *============================================================================*/
+/*===========================================================================*
+ *				init_params				     *
+ *===========================================================================*/
 PRIVATE void init_params()
 {
 /* This routine is called at startup to initialize the partition table,
@@ -546,7 +553,7 @@ PRIVATE void init_params()
 	w_mess.COUNT = BLOCK_SIZE;
 	w_mess.ADDRESS = (char *) buf;
 	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DISK_READ;
+	w_mess.m_type = DEV_READ;
 	if (w_do_rdwt(&w_mess) != BLOCK_SIZE) {
 		printf("Can't read partition table on winchester %d\n",i);
 		milli_delay(20000);
@@ -562,9 +569,9 @@ PRIVATE void init_params()
 
 }
 
-/*============================================================================*
- *				copy_params				      *
- *============================================================================*/
+/*===========================================================================*
+ *				copy_params				     *
+ *===========================================================================*/
 PRIVATE void copy_params(src, dest)
 register unsigned char *src;
 register struct wini *dest;
@@ -712,7 +719,7 @@ register struct wini *wn;
   vir_bytes vir, ct;
   phys_bytes user_phys;
 
-  mode = (wn->wn_opcode == DISK_READ ? DMA_READ : DMA_WRITE);
+  mode = (wn->wn_opcode == DEV_READ ? DMA_READ : DMA_WRITE);
   vir = (vir_bytes) wn->wn_address;
   ct = (vir_bytes) BLOCK_SIZE;
   user_phys = numap(wn->wn_procnr, vir, BLOCK_SIZE);
@@ -776,7 +783,7 @@ PRIVATE void abort_com()
 /*===========================================================================*
  *				dump_isr				     *
  *===========================================================================*/
-PRIVATE dump_isr()
+PRIVATE void dump_isr()
 {
 /*
  * Dump_isr will print out an informative message of what the controller
@@ -807,7 +814,7 @@ PRIVATE dump_isr()
 PRIVATE void set_command(wn)
 register struct wini *wn;
 {
-	command[0] = wn->wn_opcode == DISK_READ ? WIN_READ : WIN_WRITE;
+	command[0] = wn->wn_opcode == DEV_READ ? WIN_READ : WIN_WRITE;
 	command[1] = ((wn->wn_head << 4) & 0xF0) | 
 					((wn->wn_cylinder >> 8) & 0x03);
 	command[2] = wn->wn_cylinder & BYTE;

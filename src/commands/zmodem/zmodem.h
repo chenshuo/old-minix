@@ -102,8 +102,6 @@
 /* Parameters for ZCOMMAND frame ZF0 (otherwise 0) */
 #define ZCACK1	1	/* Acknowledge, then do command */
 
-long rclhdr();
-
 /* Globals used by ZMODEM functions */
 extern Rxframeind;	/* ZBIN ZBIN32, or ZHEX type of frame received */
 extern Rxtype;		/* Type of header received */
@@ -119,5 +117,45 @@ extern Crc32t;		/* Display flag indicating 32 bit CRC being sent */
 extern Crc32;		/* Display flag indicating 32 bit CRC being received */
 extern Znulls;		/* Number of nulls to send at beginning of ZDATA hdr */
 extern char Attn[ZATTNLEN+1];	/* Attention string rx sends to tx on err */
+
+/* crctab.c */
+
+_PROTOTYPE(long UPDC32 , (int b , long c ));
+
+/* rbsb.c */
+
+_PROTOTYPE(void from_cu , (void));
+_PROTOTYPE(void cucheck , (void));
+_PROTOTYPE(int rdchk , (int f ));
+_PROTOTYPE(int rdchk , (int f ));
+_PROTOTYPE(int mode , (int n ));
+_PROTOTYPE(void sendbrk , (void));
+
+/* zm.c */
+
+_PROTOTYPE(void zsbhdr , (int type , char *hdr ));
+_PROTOTYPE(void zsbh32 , (char *hdr , int type ));
+_PROTOTYPE(void zshhdr , (int type , char *hdr ));
+_PROTOTYPE(void zsdata , (char *buf , int length , int frameend ));
+_PROTOTYPE(void zsda32 , (char *buf , int length , int frameend ));
+_PROTOTYPE(int zrdata , (char *buf , int length ));
+_PROTOTYPE(int zrdat32 , (char *buf , int length ));
+_PROTOTYPE(int zgethdr , (char *hdr , int eflag ));
+_PROTOTYPE(int zrbhdr , (char *hdr ));
+_PROTOTYPE(int zrbhdr32 , (char *hdr ));
+_PROTOTYPE(int zrhhdr , (char *hdr ));
+_PROTOTYPE(void zputhex , (int c ));
+_PROTOTYPE(void zsendline , (int c ));
+_PROTOTYPE(int zgethex , (void));
+_PROTOTYPE(int zgeth1 , (void));
+_PROTOTYPE(int zdlread , (void));
+_PROTOTYPE(int noxrd7 , (void));
+_PROTOTYPE(void stohdr , (long pos ));
+_PROTOTYPE(long rclhdr , (char *hdr ));
+
+/* rz.c sz.c */
+
+void vfile();
+_PROTOTYPE(void bibi , (int n ));
 
 /* End of ZMODEM.H */

@@ -1,10 +1,20 @@
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+/* Need a way to have void used for ANSI, nothing for K&R. */
+#ifndef _ANSI
+#undef _VOID
+#define _VOID
+#endif
+
 /* -------- sh.h -------- */
 /*
  * shell
  */
 
-#define NULL    0
-#define	LINELIM	1000
+#define	LINELIM	2100
 #define	NPUSH	8	/* limit to input nesting */
 
 #define	NOFILE	20	/* Number of open files */
@@ -21,7 +31,11 @@
 /*
  * library and system defintions
  */
+#ifdef __STDC__
+typedef void xint;	/* base type of jmp_buf, for not broken compilers */
+#else
 typedef char * xint;	/* base type of jmp_buf, for broken compilers */
+#endif
 
 /*
  * shell components
@@ -166,40 +180,51 @@ extern	char	*elinep;
 /*
  * other functions
  */
-int	(*inbuilt())();	/* find builtin command */
-char	*rexecve();
-char	*space();
-char	*getwd();
-char	*strsave();
-char	*evalstr();
-char	*putn();
-char	*itoa();
-char	*unquote();
-struct	var	*lookup();
-struct	wdblock	*add2args();
-struct	wdblock	*glob();
-char	**makenv();
-struct	ioword	*addio();
-char	**eval();
-int	setstatus();
-int	waitfor();
+#ifdef __STDC__
+int (*inbuilt(char *s ))(void);
+#else
+int (*inbuilt())();
+#endif
+_PROTOTYPE(char *rexecve , (char *c , char **v , char **envp ));
+_PROTOTYPE(char *space , (int n ));
+_PROTOTYPE(char *strsave , (char *s , int a ));
+_PROTOTYPE(char *evalstr , (char *cp , int f ));
+_PROTOTYPE(char *putn , (int n ));
+_PROTOTYPE(char *itoa , (unsigned u , int n ));
+_PROTOTYPE(char *unquote , (char *as ));
+_PROTOTYPE(struct var *lookup , (char *n ));
+_PROTOTYPE(int rlookup , (char *n ));
+_PROTOTYPE(struct wdblock *glob , (char *cp , struct wdblock *wb ));
+_PROTOTYPE(int subgetc , (int ec , int quoted ));
+_PROTOTYPE(char **makenv , (void));
+_PROTOTYPE(char **eval , (char **ap , int f ));
+_PROTOTYPE(int setstatus , (int s ));
+_PROTOTYPE(int waitfor , (int lastpid , int canintr ));
 
-void	onintr();	/* SIGINT handler */
+_PROTOTYPE(void onintr , (int s )); /* SIGINT handler */
+
+_PROTOTYPE(int newenv , (int f ));
+_PROTOTYPE(void quitenv , (void));
+_PROTOTYPE(void err , (char *s ));
+_PROTOTYPE(int anys , (char *s1 , char *s2 ));
+_PROTOTYPE(int any , (int c , char *s ));
+_PROTOTYPE(void next , (int f ));
+_PROTOTYPE(void setdash , (void));
+_PROTOTYPE(void onecommand , (void));
+_PROTOTYPE(void runtrap , (int i ));
+_PROTOTYPE(void xfree , (char *s ));
+_PROTOTYPE(int letter , (int c ));
+_PROTOTYPE(int digit , (int c ));
+_PROTOTYPE(int letnum , (int c ));
+_PROTOTYPE(int gmatch , (char *s , char *p ));
 
 /*
  * error handling
  */
-void	leave();	/* abort shell (or fail in subshell) */
-void	fail();		/* fail but return to process next command */
-void	sig();		/* default signal handler */
-
-/*
- * library functions and system calls
- */
-long	lseek();
-char	*strncpy();
-int	strlen();
-extern int errno;
+_PROTOTYPE(void leave , (void)); /* abort shell (or fail in subshell) */
+_PROTOTYPE(void fail , (void));	 /* fail but return to process next command */
+_PROTOTYPE(void warn , (char *s ));
+_PROTOTYPE(void sig , (int i ));	 /* default signal handler */
 
 /* -------- var.h -------- */
 
@@ -223,16 +248,19 @@ Extern	struct	var	*path;		/* search path for commands */
 Extern	struct	var	*shell;		/* shell to interpret command files */
 Extern	struct	var	*ifs;		/* field separators */
 
-struct	var	*lookup(/* char *s */);
-void	setval(/* struct var *, char * */);
-void	nameval(/* struct var *, char *val, *name */);
-void	export(/* struct var * */);
-void	ronly(/* struct var * */);
-int	isassign(/* char *s */);
-int	checkname(/* char *name */);
-int	assign(/* char *s, int copyflag */);
-void	putvlist(/* int key, int fd */);
-int	eqname(/* char *n1, char *n2 */);
+_PROTOTYPE(int yyparse , (void));
+_PROTOTYPE(struct var *lookup , (char *n ));
+_PROTOTYPE(void setval , (struct var *vp , char *val ));
+_PROTOTYPE(void nameval , (struct var *vp , char *val , char *name ));
+_PROTOTYPE(void export , (struct var *vp ));
+_PROTOTYPE(void ronly , (struct var *vp ));
+_PROTOTYPE(int isassign , (char *s ));
+_PROTOTYPE(int checkname , (char *cp ));
+_PROTOTYPE(int assign , (char *s , int cf ));
+_PROTOTYPE(void putvlist , (int f , int out ));
+_PROTOTYPE(int eqname , (char *n1 , char *n2 ));
+
+_PROTOTYPE(int execute , (struct op *t , int *pin , int *pout , int act ));
 
 /* -------- io.h -------- */
 /* io buffer */
@@ -258,7 +286,7 @@ Extern struct ioarg ioargstack[NPUSH];
 
 /* an input generator's state */
 struct	io {
-	int	(*iofn)();
+	int	(*iofn)(_VOID);
 	struct	ioarg	*argp;
 	int	peekc;
 	char	prev;		/* previous character read by readc() */
@@ -278,39 +306,45 @@ Extern	struct	io	iostack[NPUSH];
 /*
  * input generators for IO structure
  */
-int	nlchar();
-int	strchar();
-int	qstrchar();
-int	filechar();
-int	herechar();
-int	linechar();
-int	gravechar();
-int	qgravechar();
-int	dolchar();
-int	wdchar();
+_PROTOTYPE(int nlchar , (struct ioarg *ap ));
+_PROTOTYPE(int strchar , (struct ioarg *ap ));
+_PROTOTYPE(int qstrchar , (struct ioarg *ap ));
+_PROTOTYPE(int filechar , (struct ioarg *ap ));
+_PROTOTYPE(int herechar , (struct ioarg *ap ));
+_PROTOTYPE(int linechar , (struct ioarg *ap ));
+_PROTOTYPE(int gravechar , (struct ioarg *ap , struct io *iop ));
+_PROTOTYPE(int qgravechar , (struct ioarg *ap , struct io *iop ));
+_PROTOTYPE(int dolchar , (struct ioarg *ap ));
+_PROTOTYPE(int wdchar , (struct ioarg *ap ));
+_PROTOTYPE(void scraphere , (void));
+_PROTOTYPE(void freehere , (int area ));
+_PROTOTYPE(void gethere , (void));
+_PROTOTYPE(void markhere , (char *s , struct ioword *iop ));
+_PROTOTYPE(int herein , (char *hname , int xdoll ));
+_PROTOTYPE(int run , (struct ioarg *argp , int (*f)(_VOID)));
 
 /*
  * IO functions
  */
-int	eofc();
-int	getc();
-int	readc();
-void	unget();
-void	ioecho();
-void	prs();
-void	putc();
-void	prn();
-void	closef();
-void	closeall();
+_PROTOTYPE(int eofc , (void));
+_PROTOTYPE(int getc , (int ec ));
+_PROTOTYPE(int readc , (void));
+_PROTOTYPE(void unget , (int c ));
+_PROTOTYPE(void ioecho , (int c ));
+_PROTOTYPE(void prs , (char *s ));
+_PROTOTYPE(void putc , (int c ));
+_PROTOTYPE(void prn , (unsigned u ));
+_PROTOTYPE(void closef , (int i ));
+_PROTOTYPE(void closeall , (void));
 
 /*
  * IO control
  */
-void	pushio(/* struct ioarg arg, int (*gen)() */);
-int	remap();
-int	openpipe();
-void	closepipe();
-struct io *setbase(/* struct io * */);
+_PROTOTYPE(void pushio , (struct ioarg *argp , int (*fn)(_VOID)));
+_PROTOTYPE(int remap , (int fd ));
+_PROTOTYPE(int openpipe , (int *pv ));
+_PROTOTYPE(void closepipe , (int *pv ));
+_PROTOTYPE(struct io *setbase , (struct io *ip ));
 
 extern	struct	ioarg	temparg;	/* temporary for PUSHIO */
 #define	PUSHIO(what,arg,gen) ((temparg.what = (arg)),pushio(&temparg,(gen)))
@@ -326,9 +360,9 @@ struct	wdblock {
 	char	*w_words[1];
 };
 
-struct	wdblock	*addword();
-struct	wdblock	*newword();
-char	**getwords();
+_PROTOTYPE(struct wdblock *addword , (char *wd , struct wdblock *wb ));
+_PROTOTYPE(struct wdblock *newword , (int nw ));
+_PROTOTYPE(char **getwords , (struct wdblock *wb ));
 #endif
 
 /* -------- area.h -------- */
@@ -336,15 +370,14 @@ char	**getwords();
 /*
  * storage allocation
  */
-char	*getcell(/* unsigned size */);
-void	garbage();
-void	setarea(/* char *obj, int to */);
-int	getarea(/* char *obj */);
-void	freearea(/* int area */);
-void	freecell(/* char *obj */);
+_PROTOTYPE(char *getcell , (unsigned nbytes ));
+_PROTOTYPE(void garbage , (void));
+_PROTOTYPE(void setarea , (char *cp , int a ));
+_PROTOTYPE(int getarea , (char *cp ));
+_PROTOTYPE(void freearea , (int a ));
+_PROTOTYPE(void freecell , (char *cp ));
 
 Extern	int	areanum;	/* current allocation area */
 
 #define	NEW(type) (type *)getcell(sizeof(type))
 #define	DELETE(obj)	freecell((char *)obj)
-

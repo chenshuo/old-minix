@@ -23,8 +23,11 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <utime.h>
+#include <stdio.h>
 #endif
 
 #ifdef eon
@@ -48,15 +51,15 @@ struct DOSTIME {short time,date; };     /* time structure of TOS */
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <osbind.h>
-#endif LATTICE
+#endif /* LATTICE */
 
 #ifdef TURBO
 #include <tos.h>
 #include <errno.h>
 #include <string.h>
-#endif TURBO
+#endif /* TURBO */
 
-#endif tos
+#endif /* tos */
 
 #include <ctype.h>
 #include <stdio.h>
@@ -234,108 +237,76 @@ EXTERN int           lineno;
 #ifdef tos
 #ifdef LATTICE
 EXTERN int _mneed INIT(60000);    /* VERY important for TOS with LATTICE C*/
-#endif LATTICE
-#endif tos
+#endif /* LATTICE */
+#endif /* tos */
 #ifdef eon
 #define MEMSPACE  (16384)
 EXTERN unsigned  memspace = MEMSPACE;
 #endif
 
-/* Defines function declarations for all functions */
-
-#ifdef __STDC__
-#define CONST const
-#define LINT_ARGS
-#else
-#define CONST /* */
-#endif
-
-#ifndef PARMS
-#ifdef  LINT_ARGS
-#define PARMS(x)   x
-#else
-#define PARMS(x)   ()
-#endif
-#endif
-
-/*
-:.,$s/(PARMS\(.*\));/PARMS\1;/
-*/
-
-extern time_t  time PARMS(( time_t *));
-extern char   *ctime PARMS (( CONST time_t *));
-extern char   *getenv PARMS (( CONST char *));
-extern char   *fgets PARMS (( char *, int, FILE *));
-extern char   *strchr PARMS (( CONST char *, int));
-extern char   *strrchr PARMS (( CONST char *, int));
-#ifndef __STDC__
-extern char   *malloc PARMS (( unsigned));
-extern char   *realloc PARMS (( char *, unsigned)); /* OS9 ? */
-#else
-extern void   *malloc PARMS (( unsigned));
-extern void   *realloc PARMS (( void *, unsigned)); /* OS9 ? */
-#endif
-
-/* main.c */
-void           main PARMS (( int, char **));
-void           setoption PARMS ((char));
-void           usage PARMS (());
-void           fatal PARMS (( char *, char *, int));
-/* check.c */
-void           prt PARMS (());
-void           check PARMS (( struct name *));
-void           circh PARMS (());
-void           precious PARMS (());
-/* input.c */
-void           init PARMS (());
-void           strrealloc PARMS (( struct str *));
-struct name   *newname  PARMS (( char *));
-struct name   *testname PARMS (( char *));
-struct depend *newdep PARMS (( struct name *, struct depend *));
-struct cmd    *newcmd PARMS (( char *, struct cmd *));
-void           newline PARMS (( struct name *, struct depend *, struct cmd *, int));
-void           input PARMS (( FILE *));
-/* macro.c */
-struct macro  *getmp PARMS (( char *));
-char          *getmacro PARMS (( char *));
-struct macro  *setmacro PARMS (( char *, char *));
-void           setDFmacro PARMS (( char *, char *));
-void           doexp PARMS (( struct str *, char *));
-void           expand PARMS (( struct str *));
-/* make.c */
-int            dosh PARMS (( char *, char *));
-void           docmds1 PARMS (( struct name *, struct line *));
-void           docmds PARMS (( struct name *));
-#ifdef tos
-int            Tosexec PARMS (( char *));
-time_t         mstonix PARMS (( struct DOSTIME *));
-#endif
-#ifdef os9
-void           getmdate PARMS (( int, struct sgtbuf *));
-time_t         cnvtime PARMS (( struct sgtbuf *));
-void           time PARMS (( time_t *));
-#endif
-void           modtime PARMS (( struct name *));
-void           touch PARMS (( struct name *));
-int            make PARMS (( struct name *, int));
-void           make1 PARMS (( struct name *, struct line *, struct depend *,char *, char *));
-void           implmacros PARMS (( struct name *, struct line *, char **,char **));
-void           dbgprint PARMS (( int, struct name *, char *));
-/* reader.c */
-void           error PARMS (( char *, char *));
-bool           getline PARMS (( struct str *, FILE *));
-char          *gettok PARMS (( register char **));
-/* rules.c */
-bool           dyndep PARMS (( struct name  *, char **, char **));
-void           makerules PARMS (());
-
-
-/*
- *	Return a pointer to the suffix of a name
- */
 #define  suffix(name)   strrchr(name,(int)'.')
 
 EXTERN int _ctypech;
 #define mylower(x)  (islower(_ctypech=(x)) ? _ctypech :tolower(_ctypech))
 #define myupper(x)  (isupper(_ctypech=(x)) ? _ctypech :toupper(_ctypech))
 
+/* Prototypes. */
+struct sgtbuf;
+
+/* check.c */
+_PROTOTYPE(void prt, (void));
+_PROTOTYPE(void check, (struct name *np ));
+_PROTOTYPE(void circh, (void));
+_PROTOTYPE(void precious, (void));
+
+/* input.c */
+_PROTOTYPE(void init, (void));
+_PROTOTYPE(void strrealloc, (struct str *strs ));
+_PROTOTYPE(struct name *newname, (char *name ));
+_PROTOTYPE(struct name *testname, (char *name ));
+_PROTOTYPE(struct depend *newdep, (struct name *np, struct depend *dp ));
+_PROTOTYPE(struct cmd *newcmd, (char *str, struct cmd *cp ));
+_PROTOTYPE(void newline, (struct name *np, struct depend *dp, struct cmd *cp, 
+								   int flag ));
+_PROTOTYPE(void input, (FILE *fd ));
+
+/* macro.c */
+_PROTOTYPE(struct macro *getmp, (char *name ));
+_PROTOTYPE(char *getmacro, (char *name ));
+_PROTOTYPE(struct macro *setmacro, (char *name, char *val ));
+_PROTOTYPE(void setDFmacro, (char *name, char *val ));
+_PROTOTYPE(void doexp, (struct str *to, char *from ));
+_PROTOTYPE(void expand, (struct str *strs ));
+
+/* main.c */
+_PROTOTYPE(void main, (int argc, char **argv ));
+_PROTOTYPE(void setoption, (char option ));
+_PROTOTYPE(void usage, (void));
+_PROTOTYPE(void fatal, (char *msg, char *a1, int a2 ));
+
+/* make.c */
+_PROTOTYPE(int dosh, (char *string, char *shell ));
+_PROTOTYPE(int makeold, (char *name ));
+_PROTOTYPE(void docmds1, (struct name *np, struct line *lp ));
+_PROTOTYPE(void docmds, (struct name *np ));
+_PROTOTYPE(int Tosexec, (char *string ));
+_PROTOTYPE(time_t mstonix, (unsigned int date, unsigned int time ));
+_PROTOTYPE(void getmdate, (int fd, struct sgtbuf *tbp ));
+_PROTOTYPE(time_t cnvtime, (struct sgtbuf *tbp ));
+_PROTOTYPE(void modtime, (struct name *np ));
+_PROTOTYPE(void touch, (struct name *np ));
+_PROTOTYPE(int make, (struct name *np, int level ));
+_PROTOTYPE(void make1, (struct name *np, struct line *lp, struct depend *qdp, 
+					char *basename, char *inputname ));
+_PROTOTYPE(void implmacros, (struct name *np, struct line *lp, 
+					char **pbasename, char **pinputname ));
+_PROTOTYPE(void dbgprint, (int level, struct name *np, char *comment ));
+
+/* reader.c */
+_PROTOTYPE(void error, (char *msg, char *a1 ));
+_PROTOTYPE(bool getline, (struct str *strs, FILE *fd ));
+_PROTOTYPE(char *gettok, (char **ptr ));
+
+/* rules.c */
+_PROTOTYPE(bool dyndep, (struct name *np, char **pbasename,char **pinputname));
+_PROTOTYPE(void makerules, (void));

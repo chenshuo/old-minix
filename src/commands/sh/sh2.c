@@ -42,27 +42,42 @@ typedef union {
 #define	SYNTAXERR	zzerr()
 static	int	startl;
 static	int	peeksym;
-static	void	zzerr();
-static	void	word();
-static	char	**copyw();
-static	struct	op *block(), *namelist(), *list(), *newtp();
-static	struct	op *pipeline(), *andor(), *command();
-static	struct	op *nested(), *simple(), *c_list();
-static	struct	op *dogroup(), *thenpart(), *casepart(), *caselist();
-static	struct	op *elsepart();
-static	char	**wordlist(), **pattern();
-static	void	musthave();
-static	int	yylex();
-static	struct ioword *io();
-static	struct ioword **copyio();
-static	char	*tree();
-static	void	diag();
 static	int	nlseen;
 static	int	iounit = IODEFAULT;
-static	struct	op	*tp;
-struct	op	*newtp();
 
 static	YYSTYPE	yylval;
+
+_PROTOTYPE(static struct op *pipeline, (int cf ));
+_PROTOTYPE(static struct op *andor, (void));
+_PROTOTYPE(static struct op *c_list, (void));
+_PROTOTYPE(static int synio, (int cf ));
+_PROTOTYPE(static void musthave, (int c, int cf ));
+_PROTOTYPE(static struct op *simple, (void));
+_PROTOTYPE(static struct op *nested, (int type, int mark ));
+_PROTOTYPE(static struct op *command, (int cf ));
+_PROTOTYPE(static struct op *dogroup, (int onlydone ));
+_PROTOTYPE(static struct op *thenpart, (void));
+_PROTOTYPE(static struct op *elsepart, (void));
+_PROTOTYPE(static struct op *caselist, (void));
+_PROTOTYPE(static struct op *casepart, (void));
+_PROTOTYPE(static char **pattern, (void));
+_PROTOTYPE(static char **wordlist, (void));
+_PROTOTYPE(static struct op *list, (struct op *t1, struct op *t2 ));
+_PROTOTYPE(static struct op *block, (int type, struct op *t1, struct op *t2, char **wp ));
+_PROTOTYPE(static struct op *newtp, (void));
+_PROTOTYPE(static struct op *namelist, (struct op *t ));
+_PROTOTYPE(static char **copyw, (void));
+_PROTOTYPE(static void word, (char *cp ));
+_PROTOTYPE(static struct ioword **copyio, (void));
+_PROTOTYPE(static struct ioword *io, (int u, int f, char *cp ));
+_PROTOTYPE(static void zzerr, (void));
+_PROTOTYPE(void yyerror, (char *s ));
+_PROTOTYPE(static int yylex, (int cf ));
+_PROTOTYPE(int collect, (int c, int c1 ));
+_PROTOTYPE(int dual, (int c ));
+_PROTOTYPE(static void diag, (int ec ));
+_PROTOTYPE(static char *tree, (unsigned size ));
+_PROTOTYPE(void printf, (char *s ));
 
 int
 yyparse()
@@ -126,7 +141,7 @@ c_list()
 	if (t != NULL) {
 		if((peeksym = yylex(0)) == '&')
 			t = block(TASYNC, t, NOBLOCK, NOWORDS);
-		while ((c = yylex(0)) == ';' || c == '&' || multiline && c == '\n') {
+		while ((c = yylex(0)) == ';' || c == '&' || (multiline && c == '\n')) {
 			if ((p = andor()) == NULL)
 				return(t);
 			if((peeksym = yylex(0)) == '&')
@@ -214,7 +229,6 @@ static struct op *
 command(cf)
 int cf;
 {
-	register struct ioword *io;
 	register struct op *t;
 	struct wdblock *iosave;
 	register int c;
@@ -253,7 +267,7 @@ int cf;
 		multiline++;
 		t->words = wordlist();
 		if ((c = yylex(0)) != '\n' && c != ';')
-			SYNTAXERR;
+			peeksym = c;
 		t->left = dogroup(0);
 		multiline--;
 		break;
@@ -365,7 +379,6 @@ static struct op *
 caselist()
 {
 	register struct op *t;
-	register int c;
 
 	t = NULL;
 	while ((peeksym = yylex(CONTIN)) != ESAC)
@@ -377,7 +390,6 @@ static struct op *
 casepart()
 {
 	register struct op *t;
-	register int c;
 
 	t = newtp();
 	t->type = TPAT;
@@ -438,6 +450,7 @@ register struct op *t1, *t2;
 
 static struct op *
 block(type, t1, t2, wp)
+int type;
 struct op *t1, *t2;
 char **wp;
 {
@@ -478,6 +491,7 @@ struct res {
 	0,
 };
 
+int
 rlookup(n)
 register char *n;
 {
@@ -555,6 +569,8 @@ copyio()
 
 static struct ioword *
 io(u, f, cp)
+int u;
+int f;
 char *cp;
 {
 	register struct ioword *iop;
@@ -573,6 +589,7 @@ zzerr()
 	yyerror("syntax error");
 }
 
+void
 yyerror(s)
 char *s;
 {
@@ -775,6 +792,7 @@ unsigned size;
 
 /* VARARGS1 */
 /* ARGSUSED */
+void 
 printf(s)	/* yyparse calls it */
 char *s;
 {

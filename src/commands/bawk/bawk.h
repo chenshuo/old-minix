@@ -129,7 +129,6 @@ EXTERN char Workbuf[ MAXWORKBUFLEN ];   /* work area for C action and */
 #define T_END           'E'
 #define T_NF            'f'
 #define T_NR            '#'
-#define T_FS            ' '
 #define T_RS            '\n'
 #define T_FILENAME      'z'
 
@@ -180,7 +179,6 @@ EXTERN char Token;      /* current input token */
 EXTERN DATUM Value;     /* and its value */
 EXTERN char Saw_break;  /* set when break stmt seen */
 EXTERN char Where;      /* indicates whether C stmt is a PATTERN or ACTION */
-EXTERN char Fieldsep[20];        /* field seperator */
 EXTERN char Recordsep[20];       /* record seperator */
 EXTERN char *Beginact;  /* BEGINning of input actions */
 EXTERN char *Endact;    /* END of input actions */

@@ -11,17 +11,25 @@
 
 #include <minix/config.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <ar.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <grp.h>
 #include <pwd.h>
-#include <sys/stat.h>
-#include <stdio.h>
+#include <stdarg.h>
+#include <stdlib.h>
+#include <string.h>
+#include <termcap.h>
+#include <time.h>
+#include <unistd.h>
 
+#include <minix/const.h>
 #include <minix/type.h>
 #include "../../fs/const.h"
 #include "../../fs/type.h"
+#include "../../fs/inode.h"
+#include <minix/fslib.h>
 
 #include "de.h"
 
@@ -46,6 +54,19 @@ char   Kup    = 0;		/* (ku) - Up arrow key		*/
 char   Kdown  = 0;		/* (kd) - Down arrow key	*/
 char   Kleft  = 0;		/* (kl) - Left arrow key	*/
 char   Kright = 0;		/* (kr) - Right arrow key	*/
+
+_PROTOTYPE(void Goto , (int column , int line ));
+_PROTOTYPE(void Block_Type , (de_state *s ));
+_PROTOTYPE(void Draw_Words , (de_state *s ));
+_PROTOTYPE(void Draw_Info , (de_state *s ));
+_PROTOTYPE(void Draw_Block , (char *block ));
+_PROTOTYPE(void Draw_Map , (char *block , int max_bits ));
+_PROTOTYPE(void Draw_Offset , (de_state *s ));
+_PROTOTYPE(void Word_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Block_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Map_Pointers , (off_t old_addr , off_t new_addr ));
+_PROTOTYPE(void Print_Number , (word_t number , int output_base ));
+_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode , int zindex , int zrow ));
 
 
 
@@ -301,12 +322,16 @@ void Draw_Screen( s )
 		  /*  of the i-node or zone bit maps.	    */
 
 		  if ( s->block == 2 + s->inode_maps - 1 )
-		    max_bits = s->inodes_in_map - 8 * K * (s->inode_maps - 1)
-				 - 8 * (s->offset & ~ MAP_MASK);
+		    max_bits = (int)
+			       (s->inodes_in_map
+				- CHAR_BIT * K * (ino_t) (s->inode_maps - 1)
+				- CHAR_BIT * (ino_t) (s->offset & ~ MAP_MASK));
 
 		  else if ( s->block == 2 + s->inode_maps + s->zone_maps - 1 )
-		    max_bits = s->zones_in_map - 8 * K * (s->zone_maps - 1)
-				 - 8 * (s->offset & ~ MAP_MASK);
+		    max_bits = (int)
+			       (s->zones_in_map
+			        - CHAR_BIT * K * (zone_t) (s->zone_maps - 1)
+				- CHAR_BIT * (zone_t) (s->offset & ~ MAP_MASK));
 
 		  if ( max_bits < 0 )
 		      max_bits = 0;
@@ -348,6 +373,19 @@ void Draw_Strings( s )
   printf( "Device %s= %-14.14s  ",
 	     s->device_mode == O_RDONLY ? "" : "(w) ", s->device_name );
 
+  switch ( s->magic )
+    {
+    case SUPER_MAGIC :	printf( "V1 file system  ");
+			break;
+    case SUPER_REV :	printf( "V1-bytes-swapped file system (?)  ");
+			break;
+    case SUPER_V2 :	printf( "V2 file system  ");
+			break;
+    case SUPER_V2_REV :	printf( "V2-bytes-swapped file system (?)  ");
+			break;
+    default :		printf( "not a Minix file system  ");
+			break;
+    }
 
   len = strlen( s->file_name );
 
@@ -407,6 +445,8 @@ void Block_Type( s )
 
   printf( "Block  = %5u of %-5u  ", s->block, s->zones );
 
+  if ( !s->is_fs )
+    return;
 
   if ( s->block == BOOT_BLOCK )
     printf( "Boot block" );
@@ -425,7 +465,8 @@ void Block_Type( s )
 
   else
     printf( "Data block  (%sin use)",
-	In_Use(s->block - s->first_data + 1, s->zone_map) ? "" : "not " );
+	In_Use( (bit_t) (s->block - (s->first_data - 1)), s->zone_map )
+	? "" : "not " );
   }
 
 
@@ -456,10 +497,10 @@ void Draw_Words( s )
 
     printf( "%5d  ", addr );
 
-    Print_Number( *( (unsigned short *) &s->buffer[ addr ] ), s->output_base );
+    Print_Number( *( (word_t *) &s->buffer[ addr ] ), s->output_base );
     }
 
-  Goto( BLOCK_COLUMN + 64, BLOCK_LINE + 6 );
+  Goto( BLOCK_COLUMN + 64, BLOCK_LINE  );
   printf( "(base %d)", s->output_base );
   }
 
@@ -492,54 +533,47 @@ char *super_block_info[] =  {	"number of inodes",
 				"magic number"  };
 
 
-char *inode_info[] =  {	"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"",
-			"zone 0",
-			"zone 1",
-			"zone 2",
-			"zone 3",
-			"zone 4",
-			"zone 5",
-			"zone 6",
-			"indirect",
-			"double indirect"  };
-
-
-
 void Draw_Info( s )
   de_state *s;
 
   {
   int i;
   int page = s->offset >> PAGE_SHIFT;
+  dev_t dev;
 
 
-  if ( s->block == SUPER_BLOCK  &&  page == 0 )
+  if ( s->is_fs  &&  s->block == SUPER_BLOCK  &&  page == 0 )
       for ( i = 0;  i < 9;  ++i )
  	{
 	Goto( INFO_COLUMN, INFO_LINE + i );
 	printf( "%s", super_block_info[ i ] );
 	}
 
-  else if ( s->block >= s->first_data - s->inode_blocks  &&
+  else if ( s->is_fs  &&  s->block >= s->first_data - s->inode_blocks  &&
 	    s->block < s->first_data )
       {
-      d_inode *inode = (d_inode *) &s->buffer[ s->offset & ~ PAGE_MASK ];
+      struct inode core_inode;
+      d1_inode *dip1;
+      d2_inode *dip2;
+      struct inode *inode = &core_inode;
       int special = 0;
       int m;
-      struct passwd *user = getpwuid( inode->i_uid );
-      struct group  *grp  = getgrgid( inode->i_gid );
+      struct passwd *user;
+      struct group *grp;
 
-      for ( i = 0;  i < 16;  ++i )
-    	{
-    	Goto( INFO_COLUMN, INFO_LINE + i );
-    	printf( "%s", inode_info[ i ] );
-    	}
+      dip1 = (d1_inode *) &s->buffer[ s->offset & ~ PAGE_MASK ];
+      dip2 = (d2_inode *) &s->buffer[ s->offset & ~ PAGE_MASK
+						& ~ (V2_INODE_SIZE-1) ];
+      conv_inode( inode, dip1, dip2, READING, s->magic );
+
+      user = getpwuid( inode->i_uid );
+      grp  = getgrgid( inode->i_gid );
+
+      if ( s->magic != SUPER_MAGIC  &&  page & 1 )
+	{
+	Draw_Zone_Numbers( s, inode, 2, 0 );
+	return;
+	}
 
       Goto( INFO_COLUMN, INFO_LINE  );
 
@@ -562,30 +596,70 @@ void Draw_Info( s )
     	case S_IFIFO :  printf( "fifo  " );
 		    	break;
 #endif
+#ifdef S_IFLNK
+    	case S_IFLNK :  printf( "symlink  " );
+		    	break;
+#endif
+#ifdef S_IFSOCK
+    	case S_IFSOCK:  printf( "socket  " );
+		    	break;
+#endif
     	default      :  printf( "unknown  " );
     	}
 
+	for ( m = 11;  m >= 0;  --m )
+	  putchar( (inode->i_mode & (1<<m)) ? "xwrxwrxwrtgu"[m] : '-' );
 
-      for ( m = 11;  m >= 0;  --m )
-    	putchar( (inode->i_mode & (1<<m)) ? "xwrxwrxwrtgu"[m] : '-' );
+	if ( s->magic == SUPER_MAGIC )
+	  {
+	  /* V1 file system */
+	  Goto( INFO_COLUMN, INFO_LINE + 1 );
+	  printf( "user %s", user ? user->pw_name : "" );
 
-      Goto( INFO_COLUMN, INFO_LINE + 1 );
-      printf( "user %s", user ? user->pw_name : "" );
+	  Goto( INFO_COLUMN, INFO_LINE + 2 );
+	  printf( "file size %lu", inode->i_size );
 
-      Goto( INFO_COLUMN, INFO_LINE + 2 );
-      printf( "file size %lu", inode->i_size );
+	  Goto( INFO_COLUMN, INFO_LINE + 4 );
+	  printf( "m_time %s", ctime( &inode->i_mtime ) );
 
-      Goto( INFO_COLUMN, INFO_LINE + 4 );
-      printf( "%s", ctime( &inode->i_mtime ) );
+	  Goto( INFO_COLUMN, INFO_LINE + 6 );
+	  printf( "links %d, group %s",
+		  inode->i_nlinks, grp ? grp->gr_name : "" );
 
-      Goto( INFO_COLUMN, INFO_LINE + 6 );
-      printf( "links %d, group %s", inode->i_nlinks, grp ? grp->gr_name : "" );
+	  Draw_Zone_Numbers( s, inode, 0, 7 );
+	  }
+	else
+	  {
+	  /* V2 file system, even page. */
+	  Goto( INFO_COLUMN, INFO_LINE + 1 );
+	  printf( "links %d ", inode->i_nlinks);
+
+	  Goto( INFO_COLUMN, INFO_LINE + 2 );
+	  printf( "user %s", user ? user->pw_name : "" );
+
+	  Goto( INFO_COLUMN, INFO_LINE + 3 );
+	  printf( "group %s", grp ? grp->gr_name : "" );
+
+	  Goto( INFO_COLUMN, INFO_LINE + 4 );
+	  printf( "file size %lu", inode->i_size );
+
+	  Goto( INFO_COLUMN, INFO_LINE + 6 );
+	  printf( "a_time %s", ctime( &inode->i_atime ) );
+
+	  Goto( INFO_COLUMN, INFO_LINE + 8 );
+	  printf( "m_time %s", ctime( &inode->i_mtime ) );
+
+	  Goto( INFO_COLUMN, INFO_LINE + 10 );
+	  printf( "c_time %s", ctime( &inode->i_ctime ) );
+
+	  Draw_Zone_Numbers( s, inode, 0, 12 );
+	}
 
       if ( special )
 	{
-        Goto( INFO_COLUMN, INFO_LINE + 7 );
-	printf( "major %d, minor %d", major( inode->i_zone[0] ),
-				      minor( inode->i_zone[0] ) );
+	Goto( INFO_COLUMN, INFO_LINE + 7 );
+	dev = (dev_t) inode->i_zone[0];
+	printf( "major %d, minor %d", major(dev), minor(dev) );
 	}
       }
 
@@ -602,12 +676,12 @@ void Draw_Info( s )
 
       if ( s->block >= s->first_data  &&  page == 0 )
 	{
-	int magic  = (s->buffer[1] << 8) | (s->buffer[0] & 0xff);
-	int second = (s->buffer[3] << 8) | (s->buffer[2] & 0xff);
+	unsigned magic  = ((s->buffer[1] & 0xff) << 8) | (s->buffer[0] & 0xff);
+	unsigned second = ((s->buffer[3] & 0xff) << 8) | (s->buffer[2] & 0xff);
 
         /*  Is this block the start of an "ar" archive?  */
 
-	if ( magic == ARMAG )
+	if ( magic == (unsigned) ARMAG )
 	  {
           Goto( INFO_COLUMN, INFO_LINE );
 	  printf( "\"ar\" archive" );
@@ -615,14 +689,14 @@ void Draw_Info( s )
 
 	/*  Is this block the start of an executable file?  */
 
-	else if ( magic == A_OUT )
+	else if ( magic == (unsigned) A_OUT )
 	  {
           Goto( INFO_COLUMN, INFO_LINE );
 	  printf( "executable" );
 
           Goto( INFO_COLUMN, INFO_LINE + 1 );
 
-	  if ( second == SPLIT )
+	  if ( second == (unsigned) SPLIT )
 	    printf( "separate I & D" );
 	  else
 	    printf( "combined I & D" );
@@ -864,12 +938,13 @@ void Draw_Offset( s )
 
   else if ( s->block < s->first_data )
     {
-    int node = (s->address - (2 + s->inode_maps + s->zone_maps) * K) /
-		INODE_SIZE + 1;
+    bit_t node = (s->address - (2 + s->inode_maps + s->zone_maps) * K) /
+		s->inode_size + 1;
 
     if ( node <= s->inodes )
-	printf( "I-node %d of %d  (%sin use)       ", node, s->inodes,
-	     In_Use(node, s->inode_map) ? "" : "not " );
+	printf( "I-node %lu of %lu  (%sin use)       ",
+		(unsigned long) node, (unsigned long) s->inodes,
+		In_Use( node, s->inode_map ) ? "" : "not " );
     else
 	printf( "(padding)                             " );
     }
@@ -969,7 +1044,7 @@ void Map_Pointers( old_addr, new_addr )
 
 
 void Print_Number( number, output_base )
-  int number;
+  word_t number;
   int output_base;
 
   {
@@ -1043,19 +1118,58 @@ void Print_Ascii( c )
 /****************************************************************/
 
 
-void Warning( text, arg1, arg2 )
+#if __STDC__
+void Warning( const char *text, ... )
+#else
+void Warning( text )
   char *text;
-  char *arg1;
-  char *arg2;
+#endif  
 
   {
+  va_list argp;
+  
   printf( "%c%s", BELL, Tclr_all );
 
   Goto( WARNING_COLUMN, WARNING_LINE );
 
   printf( "%s Warning: ", Treverse );
-  printf( text, arg1, arg2 );
+  va_start( argp, text );
+  vprintf( text, argp );
+  va_end( argp );
   printf( " %s", Tnormal );
 
+  fflush(stdout);		/* why does everyone forget this? */
+
   sleep( 2 );
+  }
+
+
+void Draw_Zone_Numbers( s, inode, zindex, zrow )
+  de_state *s;
+  struct inode *inode;
+  int zindex;
+  int zrow;
+
+  {
+  static char *plurals[] = { "", "double ", "triple " };
+  zone_t zone;
+
+  for ( ; zrow < 16;
+	++zindex, zrow += s->zone_num_size / sizeof (word_t) )
+    {
+    Goto( INFO_COLUMN, INFO_LINE + zrow );
+    if ( zindex < inode->i_ndzones )
+      printf( "zone %d", zindex );
+    else
+      printf( "%sindirect", plurals[ zindex - inode->i_ndzones ] );
+    if ( s->magic != SUPER_MAGIC )
+      {
+      zone = inode->i_zone[ zindex ];
+      if ( zone != (word_t) zone )
+	{
+	Goto( INFO_COLUMN + 16, INFO_LINE + zrow );
+	printf("%ld", (long) zone );
+	}
+      }
+    }
   }

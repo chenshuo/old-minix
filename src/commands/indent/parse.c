@@ -21,11 +21,12 @@
 #define PUBLIC	extern
 #include "./globs.h"
 #include "./codes.h"
+#include "proto.h"
 
 
 
 
-parse(tk)
+void parse(tk)
    int             tk;			/* the code for the construct
 					   scanned */
 {
@@ -234,7 +235,7 @@ parse(tk)
 /*----------------------------------------------*\
 |   REDUCTION PHASE				    |
 \*----------------------------------------------*/
-reduce()
+void reduce()
 {
 
    register int    i;

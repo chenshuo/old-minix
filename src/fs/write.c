@@ -3,19 +3,22 @@
  *
  * The entry points into this file are
  *   do_write:     call read_write to perform the WRITE system call
- *   write_map:    add a new zone to an inode
  *   clear_zone:   erase a zone in the middle of a file
  *   new_block:    acquire a new block
  */
 
 #include "fs.h"
+#include <string.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
 #include "super.h"
 
-FORWARD int write_map();
+FORWARD _PROTOTYPE( int write_map, (struct inode *rip, off_t position,
+			zone_t new_zone)				);
+
+FORWARD _PROTOTYPE( void wr_indir, (struct buf *bp, int index, zone_t zone) );
 
 /*===========================================================================*
  *				do_write				     *
@@ -23,6 +26,7 @@ FORWARD int write_map();
 PUBLIC int do_write()
 {
 /* Perform the write(fd, buffer, nbytes) system call. */
+
   return(read_write(WRITING));
 }
 
@@ -33,82 +37,112 @@ PUBLIC int do_write()
 PRIVATE int write_map(rip, position, new_zone)
 register struct inode *rip;	/* pointer to inode to be changed */
 off_t position;			/* file address to be mapped */
-zone_nr new_zone;		/* zone # to be inserted */
+zone_t new_zone;		/* zone # to be inserted */
 {
 /* Write a new zone into an inode. */
-  int scale;
-  zone_nr z, *zp;
-  register block_nr b;
+  int scale, ind_ex, new_ind, new_dbl, zones, nr_indirects, single, zindex, ex;
+  zone_t z, z1;
+  register block_t b;
   long excess, zone;
-  int index;
   struct buf *bp;
-  int new_ind, new_dbl;
 
   rip->i_dirt = DIRTY;		/* inode will be changed */
   bp = NIL_BUF;
-  scale = scale_factor(rip);	/* for zone-block conversion */
+  scale = rip->i_sp->s_log_zone_size;		/* for zone-block conversion */
   zone = (position/BLOCK_SIZE) >> scale;	/* relative zone # to insert */
+  zones = rip->i_ndzones;	/* # direct zones in the inode */
+  nr_indirects = rip->i_nindirs;/* # indirect zones per indirect block */
 
   /* Is 'position' to be found in the inode itself? */
-  if (zone < NR_DZONE_NUM) {
-	rip->i_zone[(int) zone] = new_zone;
-	rip->i_update = MTIME;	/* mark mtime for update later */
+  if (zone < zones) {
+	zindex = (int) zone;	/* we need an integer here */
+	rip->i_zone[zindex] = new_zone;
 	return(OK);
   }
 
   /* It is not in the inode, so it must be single or double indirect. */
-  excess = zone - NR_DZONE_NUM;	/* first NR_DZONE_NUM don't count */
+  excess = zone - zones;	/* first Vx_NR_DZONES don't count */
   new_ind = FALSE;
   new_dbl = FALSE;
 
-  if (excess < NR_INDIRECTS) {
+  if (excess < nr_indirects) {
 	/* 'position' can be located via the single indirect block. */
-	zp = &rip->i_zone[NR_DZONE_NUM];
+	z1 = rip->i_zone[zones];	/* single indirect zone */
+	single = TRUE;
   } else {
 	/* 'position' can be located via the double indirect block. */
-	if ( (z = rip->i_zone[NR_DZONE_NUM+1]) == NO_ZONE) {
+	if ( (z = rip->i_zone[zones+1]) == NO_ZONE) {
 		/* Create the double indirect block. */
 		if ( (z = alloc_zone(rip->i_dev, rip->i_zone[0])) == NO_ZONE)
 			return(err_code);
-		rip->i_zone[NR_DZONE_NUM+1] = z;
+		rip->i_zone[zones+1] = z;
 		new_dbl = TRUE;	/* set flag for later */
 	}
 
 	/* Either way, 'z' is zone number for double indirect block. */
-	excess -= NR_INDIRECTS;	/* single indirect doesn't count */
-	index = excess / NR_INDIRECTS;
-	excess = excess % NR_INDIRECTS;
-	if (index >= NR_INDIRECTS) return(EFBIG);
-	b = (block_nr) z << scale;
+	excess -= nr_indirects;	/* single indirect doesn't count */
+	ind_ex = (int) (excess / nr_indirects);
+	excess = excess % nr_indirects;
+	if (ind_ex >= nr_indirects) return(EFBIG);
+	b = (block_t) z << scale;
 	bp = get_block(rip->i_dev, b, (new_dbl ? NO_READ : NORMAL));
 	if (new_dbl) zero_block(bp);
-	zp= &bp->b_ind[index];
+	z1 = rd_indir(bp, ind_ex);
+	single = FALSE;
   }
 
-  /* 'zp' now points to place where indirect zone # goes; 'excess' is index. */
-  if (*zp == NO_ZONE) {
-	/* Create indirect block. */
-	*zp = alloc_zone(rip->i_dev, rip->i_zone[0]);
+  /* z1 is now single indirect zone; 'excess' is index. */
+  if (z1 == NO_ZONE) {
+	/* Create indirect block and store zone # in inode or dbl indir blk. */
+	z1 = alloc_zone(rip->i_dev, rip->i_zone[0]);
+	if (single)
+		rip->i_zone[zones] = z1;	/* update inode */
+	else
+		wr_indir(bp, ind_ex, z1);	/* update dbl indir */
+
 	new_ind = TRUE;
-	if (bp != NIL_BUF) bp->b_dirt = DIRTY;	/* if double ind, it is dirty */
-	if (*zp == NO_ZONE) {
+	if (bp != NIL_BUF) bp->b_dirt = DIRTY;	/* if double ind, it is dirty*/
+	if (z1 == NO_ZONE) {
 		put_block(bp, INDIRECT_BLOCK);	/* release dbl indirect blk */
 		return(err_code);	/* couldn't create single ind */
 	}
   }
   put_block(bp, INDIRECT_BLOCK);	/* release double indirect blk */
 
-  /* 'zp' now points to indirect block's zone number. */
-  b = (block_nr) *zp << scale;
+  /* z1 is indirect block's zone number. */
+  b = (block_t) z1 << scale;
   bp = get_block(rip->i_dev, b, (new_ind ? NO_READ : NORMAL) );
   if (new_ind) zero_block(bp);
-  bp->b_ind[(int) excess] = new_zone;
-  rip->i_update = MTIME;		/* mark mtime for update later */
+  ex = (int) excess;			/* we need an int here */
+  wr_indir(bp, ex, new_zone);
   bp->b_dirt = DIRTY;
   put_block(bp, INDIRECT_BLOCK);
 
   return(OK);
 }
+
+
+/*===========================================================================*
+ *				wr_indir				     *
+ *===========================================================================*/
+PRIVATE void wr_indir(bp, index, zone)
+struct buf *bp;			/* pointer to indirect block */
+int index;			/* index into *bp */
+zone_t zone;			/* zone to write */
+{
+/* Given a pointer to an indirect block, write one entry. */
+
+  struct super_block *sp;
+
+  sp = get_super(bp->b_dev);	/* need super block to find file sys type */
+
+  /* write a zone into an indirect block */
+  if (sp->s_version == V1)
+	bp->b_v1_ind[index] = (zone1_t) conv2(sp->s_native, (int)  zone);
+  else
+	bp->b_v2_ind[index] = (zone_t)  conv4(sp->s_native, (long) zone);
+}
+
 
 /*===========================================================================*
  *				clear_zone				     *
@@ -124,16 +158,16 @@ int flag;			/* 0 if called by read_write, 1 by new_block */
  */
 
   register struct buf *bp;
-  register block_nr b, blo, bhi;
+  register block_t b, blo, bhi;
   register off_t next;
   register int scale;
-  register zone_type zone_size;
+  register zone_t zone_size;
 
   /* If the block size and zone size are the same, clear_zone() not needed. */
-  if ( (scale = scale_factor(rip)) == 0) return;
+  scale = rip->i_sp->s_log_zone_size;
+  if (scale == 0) return;
 
-
-  zone_size = (zone_type) BLOCK_SIZE << scale;
+  zone_size = (zone_t) BLOCK_SIZE << scale;
   if (flag == 1) pos = (pos/zone_size) * zone_size;
   next = pos + BLOCK_SIZE - 1;
 
@@ -164,20 +198,24 @@ off_t position;			/* file pointer */
  */
 
   register struct buf *bp;
-  block_nr b, base_block;
-  zone_nr z;
-  zone_type zone_size;
+  block_t b, base_block;
+  zone_t z;
+  zone_t zone_size;
   int scale, r;
   struct super_block *sp;
 
   /* Is another block available in the current zone? */
   if ( (b = read_map(rip, position)) == NO_BLOCK) {
-	/* Choose first zone if need be. */
-	if (rip->i_size == 0) {
-		sp = get_super(rip->i_dev);
+	/* Choose first zone if possible. */
+	/* Lose if the file is nonempty but the first zone number is NO_ZONE
+	 * corresponding to a zone full of zeros.  It would be better to
+	 * search near the last real zone.
+	 */
+	if (rip->i_zone[0] == NO_ZONE) {
+		sp = rip->i_sp;
 		z = sp->s_firstdatazone;
 	} else {
-		z = rip->i_zone[0];
+		z = rip->i_zone[0];	/* hunt near first zone */
 	}
 	if ( (z = alloc_zone(rip->i_dev, z)) == NO_ZONE) return(NIL_BUF);
 	if ( (r = write_map(rip, position, z)) != OK) {
@@ -188,10 +226,10 @@ off_t position;			/* file pointer */
 
 	/* If we are not writing at EOF, clear the zone, just to be safe. */
 	if ( position != rip->i_size) clear_zone(rip, position, 1);
-	scale = scale_factor(rip);
-	base_block = (block_nr) z << scale;
-	zone_size = (zone_type) BLOCK_SIZE << scale;
-	b = base_block + (block_nr)((position % zone_size)/BLOCK_SIZE);
+	scale = rip->i_sp->s_log_zone_size;
+	base_block = (block_t) z << scale;
+	zone_size = (zone_t) BLOCK_SIZE << scale;
+	b = base_block + (block_t)((position % zone_size)/BLOCK_SIZE);
   }
 
   bp = get_block(rip->i_dev, b, NO_READ);
@@ -208,12 +246,6 @@ register struct buf *bp;	/* pointer to buffer to zero */
 {
 /* Zero a block. */
 
-  register int n;
-  register int *zip;
-
-  n = INTS_PER_BLOCK;		/* number of integers in a block */
-  zip = bp->b_int;		/* where to start clearing */
-
-  do { *zip++ = 0;}  while (--n);
+  memset(bp->b_data, 0, BLOCK_SIZE);
   bp->b_dirt = DIRTY;
 }

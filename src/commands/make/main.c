@@ -47,9 +47,11 @@ static char version[]= "2.0";
 static char *makefile;      /*  The make file  */
 static FILE *ifd;           /*  Input file desciptor  */
 static char *ptrmakeflags;
-static char  makeflags[] = "MAKEFLAGS=                    ";
-   /* there must be enough 'space' for all possible flags ! */
 
+/* There must be enough 'space' for all possible flags ! */
+static char  makeflags[] = "MAKEFLAGS=                    ";
+
+_PROTOTYPE(int putenv, (char *name ));
 
 void main(argc, argv)
 int    argc;

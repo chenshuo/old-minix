@@ -51,6 +51,7 @@ unsigned vec_nr;
   }
 
   /* This is not supposed to happen. */
+  soon_reboot();		/* so printf doesn't try to use sys services */
   if (ep->msg == NIL_PTR || processor < ep->minprocessor)
 	printf("\r\nIntel-reserved exception %d\r\n", vec_nr);
   else

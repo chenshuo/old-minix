@@ -23,17 +23,17 @@ _strstr:
 	mov	cx,#-1		/* find length of s2 */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx
 	dec	cx
 	mov	-2(bp),cx	/* save length of s2 */
 	mov	cx,#-1		/* find length + 1 of s1 */
 	mov	di,si
 	repne
-	scab
+	scasb
 	not	cx
-	sub	cx,-2(bp)	/* |s1| - |s2| + 1 is number of possibilities */
-	jbe	not_found	/* if |s1| < |s2|, give up right now */
+	sub	cx,-2(bp)	/* !s1| - |s2| + 1 is number of possibilities */
+	jbe	not_found	/* if !s1| < |s2|, give up right now */
 	mov	dx,cx
 	inc	dx		/* set up for faster loop */
 	dec	bx

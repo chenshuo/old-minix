@@ -8,6 +8,7 @@
  *    - take care of setuid and setgid bits
  *    - fix up 'mproc' table
  *    - tell kernel about EXEC
+ *    - save offset to initial argc (for ps)
  *
  *   The only entry point is do_exec.
  */
@@ -15,28 +16,23 @@
 #include "mm.h"
 #include <sys/stat.h>
 #include <minix/callnr.h>
+#include <a.out.h>
+#include <signal.h>
 #include "mproc.h"
 #include "param.h"
 
-#if INTEL_32BITS
-#define MAGIC    0x10000301L
-#else
-#define MAGIC    0x04000301L	/* magic number with 2 bits masked off */
-#endif
-#define SEP      0x00200000L	/* value for separate I & D */
-#define TEXTB              2	/* location of text size in header */
-#define DATAB              3	/* location of data size in header */
-#define BSSB               4	/* location of bss size in header */
-#define TOTB               6	/* location of total size in header */
-#define SYMB               7	/* location of symbol size in header */
+FORWARD _PROTOTYPE( void load_seg, (int fd, int seg, vir_bytes seg_bytes) );
+FORWARD _PROTOTYPE( int new_mem, (vir_bytes text_bytes, vir_bytes data_bytes,
+		vir_bytes bss_bytes, vir_bytes stk_bytes, phys_bytes tot_bytes,
+		char bf [ZEROBUF_SIZE ], int zs)			);
+FORWARD _PROTOTYPE( void patch_ptr, (char stack [ARG_MAX ], vir_bytes base) );
+FORWARD _PROTOTYPE( int read_header, (int fd, int *ft, vir_bytes *text_bytes,
+		vir_bytes *data_bytes, vir_bytes *bss_bytes,
+		phys_bytes *tot_bytes, long *sym_bytes, vir_clicks sc,
+		vir_bytes *pc)						);
 
-FORWARD void load_seg();
-FORWARD int new_mem();
-FORWARD void patch_ptr();
-FORWARD int read_header();
-
-#if (CHIP == M68000)
-FORWARD int relocate();
+#if (SHADOWING == 1)
+FORWARD _PROTOTYPE( int relocate, (int fd, unsigned char *buf)		);
 #endif
 
 /*===========================================================================*
@@ -50,18 +46,17 @@ PUBLIC int do_exec()
  */
 
   register struct mproc *rmp;
-  int m, r, fd, ft;
-  char mbuf[ARG_MAX];	/* buffer for stack and zeroes */
-  union u {
-	char name_buf[PATH_MAX];/* the name of the file to exec */
-	char zb[ZEROBUF_SIZE];	/* used to zero bss */
-  } u;
+  int m, r, fd, ft, sn;
+  char mbuf[ARG_MAX];		/* buffer for stack and zeroes */
+  char name_buf[PATH_MAX];	/* the name of the file to exec */
+  char zb[ZEROBUF_SIZE];	/* used to zero bss */
   char *new_sp;
   vir_bytes src, dst, text_bytes, data_bytes, bss_bytes, stk_bytes, vsp;
   phys_bytes tot_bytes;		/* total space for program, including gap */
   long sym_bytes;
   vir_clicks sc;
   struct stat s_buf;
+  vir_bytes pc;
 
   /* Do some validity checks. */
   rmp = mp;
@@ -71,18 +66,17 @@ PUBLIC int do_exec()
 
   /* Get the exec file name and see if the file is executable. */
   src = (vir_bytes) exec_name;
-  dst = (vir_bytes) u.name_buf;
+  dst = (vir_bytes) name_buf;
   r = mem_copy(who, D, (long) src, MM_PROC_NR, D, (long) dst, (long) exec_len);
   if (r != OK) return(r);	/* file name not in user data segment */
-  tell_fs(CHDIR, who, 0, 0);	/* temporarily switch to user's directory */
-  fd = allowed(u.name_buf, &s_buf, X_BIT);	/* is file executable? */
-  tell_fs(CHDIR, 0, 1, 0);	/* switch back to MM's own directory */
+  tell_fs(CHDIR, who, FALSE, 0);	/* switch to the user's FS environ. */
+  fd = allowed(name_buf, &s_buf, X_BIT);	/* is file executable? */
   if (fd < 0) return(fd);	/* file was not executable */
 
   /* Read the file header and extract the segment sizes. */
   sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, 
-						&tot_bytes, &sym_bytes, sc);
+					&tot_bytes, &sym_bytes, sc, &pc);
   if (m < 0) {
 	close(fd);		/* something wrong with header */
 	return(ENOEXEC);
@@ -91,7 +85,7 @@ PUBLIC int do_exec()
   /* Fetch the stack from the user before destroying the old core image. */
   src = (vir_bytes) stack_ptr;
   dst = (vir_bytes) mbuf;
-  r = mem_copy(who, D, (long) src, MM_PROC_NR, D, (long) dst, (long) stk_bytes);
+  r = mem_copy(who, D, (long) src, MM_PROC_NR, D, (long) dst, (long)stk_bytes);
   if (r != OK) {
 	close(fd);		/* can't fetch stack (e.g. bad virtual addr) */
 	return(EACCES);
@@ -99,7 +93,7 @@ PUBLIC int do_exec()
 
   /* Allocate new memory and release old memory.  Fix map and tell kernel. */
   r = new_mem(text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes,
-							u.zb, ZEROBUF_SIZE);
+							zb, ZEROBUF_SIZE);
   if (r != OK) {
 	close(fd);		/* insufficient core or program too big */
 	return(r);
@@ -111,38 +105,51 @@ PUBLIC int do_exec()
   vsp -= stk_bytes;
   patch_ptr(mbuf, vsp);
   src = (vir_bytes) mbuf;
-  r = mem_copy(MM_PROC_NR, D, (long) src, who, D, (long) vsp, (long) stk_bytes);
+  r = mem_copy(MM_PROC_NR, D, (long) src, who, D, (long) vsp, (long)stk_bytes);
   if (r != OK) panic("do_exec stack copy err", NO_NUM);
 
   /* Read in text and data segments. */
   load_seg(fd, T, text_bytes);
   load_seg(fd, D, data_bytes);
-#if (CHIP == M68000)
-  if (lseek(fd, sym_bytes, 1) < 0)
-	;	/* error */
-  if (relocate(fd, mbuf) < 0)
-	;	/* error */
+
+#if (SHADOWING == 1)
+  if (lseek(fd, sym_bytes, 1) < 0) 	;		/* error */
+  if (relocate(fd, (unsigned char *)mbuf) < 0) 	;	/* error */
 #endif
+
   close(fd);			/* don't need exec file any more */
 
   /* Take care of setuid/setgid bits. */
   if ((rmp->mp_flags & TRACED) == 0) { /* suppress if tracing */
 	if (s_buf.st_mode & I_SET_UID_BIT) {
 		rmp->mp_effuid = s_buf.st_uid;
-		tell_fs(SETUID, who, (int) rmp->mp_realuid, (int) rmp->mp_effuid);
+		tell_fs(SETUID,who, (int)rmp->mp_realuid, (int)rmp->mp_effuid);
 	}
 	if (s_buf.st_mode & I_SET_GID_BIT) {
 		rmp->mp_effgid = s_buf.st_gid;
-		tell_fs(SETGID, who, (int) rmp->mp_realgid, (int) rmp->mp_effgid);
+		tell_fs(SETGID,who, (int)rmp->mp_realgid, (int)rmp->mp_effgid);
 	}
   }
 
-  /* Fix up some 'mproc' fields and tell kernel that exec is done. */
-  rmp->mp_catch = 0;		/* reset all caught signals */
+  /* Save offset to initial argc (for ps) */
+  rmp->mp_procargs = vsp;
+
+  /* Fix 'mproc' fields, tell kernel that exec is done,  reset caught sigs. */
+  for (sn = 1; sn <= _NSIG; sn++) {
+	if (sigismember(&rmp->mp_catch, sn)) {
+		sigdelset(&rmp->mp_catch, sn);
+		rmp->mp_sigact[sn].sa_handler = SIG_DFL;
+		sigemptyset(&rmp->mp_sigact[sn].sa_mask);
+		/* XXX - check what to do for sa_flags. */
+	}
+  }
+
   rmp->mp_flags &= ~SEPARATE;	/* turn off SEPARATE bit */
   rmp->mp_flags |= ft;		/* turn it on for separate I & D files */
   new_sp = (char *) vsp;
-  sys_exec(who, new_sp, rmp->mp_flags & TRACED);
+
+  tell_fs(EXEC, who, 0, 0);	/* allow FS to handle FD_CLOEXEC files */
+  sys_exec(who, new_sp, rmp->mp_flags & TRACED, name_buf, pc);
   return(OK);
 }
 
@@ -151,7 +158,7 @@ PUBLIC int do_exec()
  *				read_header				     *
  *===========================================================================*/
 PRIVATE int read_header(fd, ft, text_bytes, data_bytes, bss_bytes, 
-						    tot_bytes, sym_bytes, sc)
+						tot_bytes, sym_bytes, sc, pc)
 int fd;				/* file descriptor for reading exec file */
 int *ft;			/* place to return ft number */
 vir_bytes *text_bytes;		/* place to return text size */
@@ -160,45 +167,72 @@ vir_bytes *bss_bytes;		/* place to return bss size */
 phys_bytes *tot_bytes;		/* place to return total size */
 long *sym_bytes;		/* place to return symbol table size */
 vir_clicks sc;			/* stack size in clicks */
+vir_bytes *pc;
 {
 /* Read the header and extract the text, data, bss and total sizes from it. */
 
-  int m, ct;
+  int m, ct, hdr_size;
   vir_clicks tc, dc, s_vir, dvir;
   phys_clicks totc;
-  long buf[HDR_SIZE/sizeof(long)];
+  struct exec hdr;		/* a.out header is read in here */
 
   /* Read the header and check the magic number.  The standard MINIX header 
-   * consists of 8 longs, as follows:
-   *	0: 0x04100301L (combined I & D space) or 0x04200301L (separate I & D)
-   *	1: 0x00000020L 
-   *	2: size of text segments in bytes
-   *	3: size of initialized data segment in bytes
-   *	4: size of bss in bytes
-   *	5: 0x00000000L
-   *	6: total memory allocated to program (text, data and stack, combined)
-   *	7: size of symbol table in bytes
+   * is defined in <a.out.h>.  It consists of 8 chars followed by 6 longs.
+   * Then come 4 more longs that are not used here.
+   *    Byte 0: magic number 0x01
+   *	Byte 1: magic number 0x03
+   *	Byte 2: normal = 0x10; separate I/D = 0x20
+   *	Byte 3: CPU type, Intel = 0x04, Motorola = 0x0B
+   *	Byte 4: Header length = 0x20
+   *	Bytes 5-7 are not used.
+   *
+   *	Now come the 6 longs
+   *	Bytes  8-11: size of text segments in bytes
+   *	Bytes 12-15: size of initialized data segment in bytes
+   *	Bytes 16-19: size of bss in bytes
+   *	Bytes 20-23: 0x00000000L
+   *	Bytes 24-27: total memory allocated to program (text, data + stack)
+   *	Bytes 28-31: size of symbol table in bytes
    * The longs are represented in a machine dependent order,
    * little-endian on the 8088, big-endian on the 68000.
    * The header is followed directly by the text and data segments, whose sizes
    * are given in the header.
    */
 
-  if (read(fd, buf, HDR_SIZE) != HDR_SIZE) return(ENOEXEC);
-  if ( (buf[0] & 0xFF0FFFFFL) != MAGIC) return(ENOEXEC);
-  *ft = (buf[0] & SEP ? SEPARATE : 0);	/* separate I & D or not */
+  hdr_size = sizeof(struct exec) - 4 * sizeof(long);
+  if (read(fd, (char *) &hdr, hdr_size) != hdr_size) return(ENOEXEC);
+#if (CHIP == M68000)
+  if (hdr.a_cpu == A_MAGIC0 && hdr.a_flags == A_MAGIC1)
+  {
+    /* old style 68000 executable; convert header */
+
+    short version;
+
+    hdr.a_flags = hdr.a_magic[1];
+    hdr.a_cpu = 0xb; /* A_M68K */
+    hdr.a_magic[0] = A_MAGIC0;
+    hdr.a_magic[1] = A_MAGIC1;
+    version = (hdr.a_unused << 8) + hdr.a_hdrlen;
+    hdr.a_hdrlen = hdr.a_version & 0xff;
+    hdr.a_unused = (hdr.a_version >> 8) & 0xff;
+    hdr.a_version = version;
+  }
+#endif
+  if (hdr.a_magic[0] != A_MAGIC0 || hdr.a_magic[1] != A_MAGIC1)return(ENOEXEC);
+  *ft = ( (hdr.a_flags & A_SEP) ? SEPARATE : 0);    /* separate I & D or not */
 
   /* Get text and data sizes. */
-  *text_bytes = (vir_bytes) buf[TEXTB];	/* text size in bytes */
-  *data_bytes = (vir_bytes) buf[DATAB];	/* data size in bytes */
-  *bss_bytes = (vir_bytes) buf[BSSB];	/* bss size in bytes */
-  *sym_bytes = buf[SYMB];	/* symbol table size in bytes */
-  *tot_bytes = buf[TOTB];	/* total bytes to allocate for program */
+  *text_bytes = (vir_bytes) hdr.a_text;	/* text size in bytes */
+  *data_bytes = (vir_bytes) hdr.a_data;	/* data size in bytes */
+  *bss_bytes  = (vir_bytes) hdr.a_bss;	/* bss size in bytes */
+  *tot_bytes  = hdr.a_total;		/* total bytes to allocate for prog */
+  *sym_bytes  = hdr.a_syms;		/* symbol table size in bytes */
   if (*tot_bytes == 0) return(ENOEXEC);
 
   if (*ft != SEPARATE) {
-#if (CHIP != M68000)
-	/* If I & D space is not separated, it is all considered data. Text=0 */
+
+#if (SHADOWING == 0)
+	/* If I & D space is not separated, it is all considered data. Text=0*/
 	*data_bytes += *text_bytes;
 	*text_bytes = 0;
 #else
@@ -217,19 +251,20 @@ vir_clicks sc;			/* stack size in clicks */
 	*data_bytes -= *text_bytes;
 	*tot_bytes -= *text_bytes;
 #endif
-  }
 
+  }
+  *pc = 0x0;	/* XXX */
 
   /* Check to see if segment sizes are feasible. */
-  tc = (*text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  tc = ((unsigned long) *text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   dc = (*data_bytes + *bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   totc = (*tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   if (dc >= totc) return(ENOEXEC);	/* stack must be at least 1 click */
   dvir = (*ft == SEPARATE ? 0 : tc);
   s_vir = dvir + (totc - sc);
   m = size_ok(*ft, tc, dc, sc, dvir, s_vir);
-  ct = buf[1] & BYTE;		/* header length */
-  if (ct > HDR_SIZE) read(fd, buf, ct - HDR_SIZE);	/* skip unused hdr */
+  ct = hdr.a_hdrlen & BYTE;		/* header length */
+  if (ct > hdr_size) read(fd, (char *)&hdr, ct-hdr_size); /* skip unused hdr*/
   return(m);
 }
 
@@ -237,7 +272,7 @@ vir_clicks sc;			/* stack size in clicks */
 /*===========================================================================*
  *				new_mem					     *
  *===========================================================================*/
-PRIVATE int new_mem(text_bytes, data_bytes, bss_bytes,stk_bytes,tot_bytes,bf,zs)
+PRIVATE int new_mem(text_bytes, data_bytes,bss_bytes,stk_bytes,tot_bytes,bf,zs)
 vir_bytes text_bytes;		/* text segment size in bytes */
 vir_bytes data_bytes;		/* size of initialized data in bytes */
 vir_bytes bss_bytes;		/* size of bss in bytes */
@@ -253,7 +288,8 @@ int zs;				/* true size of 'bf' */
   register struct mproc *rmp;
   vir_clicks text_clicks, data_clicks, gap_clicks, stack_clicks, tot_clicks;
   phys_clicks new_base;
-#if (CHIP == M68000)
+
+#if (SHADOWING == 1)
   phys_clicks base, size;
 #else
   char *rzp;
@@ -267,7 +303,8 @@ int zs;				/* true size of 'bf' */
    * boundary.  The data and bss parts are run together with no space.
    */
 
-  text_clicks = (text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  text_clicks = ((unsigned long) text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+				/* HACK */
   data_clicks = (data_bytes + bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   stack_clicks = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   tot_clicks = (tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
@@ -282,7 +319,8 @@ int zs;				/* true size of 'bf' */
 
   /* There is enough memory for the new core image.  Release the old one. */
   rmp = mp;
-#if (CHIP != M68000)
+
+#if (SHADOWING == 0)
   old_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   old_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
   if (rmp->mp_flags & SEPARATE) old_clicks += rmp->mp_seg[T].mem_len;
@@ -300,25 +338,33 @@ int zs;				/* true size of 'bf' */
   rmp->mp_seg[D].mem_phys = new_base + text_clicks;
   rmp->mp_seg[S].mem_len = stack_clicks;
   rmp->mp_seg[S].mem_phys = rmp->mp_seg[D].mem_phys + data_clicks + gap_clicks;
+
 #if (CHIP == M68000)
+#if (SHADOWING == 0)
+  rmp->mp_seg[T].mem_vir = 0;
+  rmp->mp_seg[D].mem_vir = rmp->mp_seg[T].mem_len;
+  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + rmp->mp_seg[D].mem_len + gap_clicks;
+#else
   rmp->mp_seg[T].mem_vir = rmp->mp_seg[T].mem_phys;
   rmp->mp_seg[D].mem_vir = rmp->mp_seg[D].mem_phys;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[S].mem_phys;
+#endif
 #else
   rmp->mp_seg[T].mem_vir = 0;
   rmp->mp_seg[D].mem_vir = 0;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
 #endif
-#if (CHIP == M68000)
+
+#if (SHADOWING == 1)
   sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
 			&base, &size);
   free_mem(base, size);
 #else
-  sys_newmap(who, rmp->mp_seg);	/* report new map to the kernel */
+  sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel */
 
   /* Zero the bss, gap, and stack segment. Start just above text.  */
   for (rzp = &bf[0]; rzp < &bf[zs]; rzp++) *rzp = 0;	/* clear buffer */
-  bytes = (phys_bytes) (data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
+  bytes = (phys_bytes)(data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
   vzb = (vir_bytes) bf;
   base = (long) rmp->mp_seg[T].mem_phys + rmp->mp_seg[T].mem_len;
   base = base << CLICK_SHIFT;
@@ -334,6 +380,7 @@ int zs;				/* true size of 'bf' */
 	bytes -= count;
   }
 #endif
+
   return(OK);
 }
 
@@ -394,8 +441,8 @@ vir_bytes seg_bytes;		/* how big is the segment */
 
   new_fd = (who << 8) | (seg << 6) | fd;
   ubuf_ptr = (char *) ((vir_bytes)mp->mp_seg[seg].mem_vir << CLICK_SHIFT);
-  while (seg_bytes) {
-	bytes = 31*1024;		/* <= 32767 */
+  while (seg_bytes != 0) {
+	bytes = (INT_MAX / BLOCK_SIZE) * BLOCK_SIZE;
 	if (seg_bytes < bytes)
 		bytes = (int)seg_bytes;
 	if (read(new_fd, ubuf_ptr, bytes) != bytes)
@@ -405,20 +452,18 @@ vir_bytes seg_bytes;		/* how big is the segment */
   }
 }
 
-#if (CHIP == M68000)
+#if (SHADOWING == 1)
 /*===========================================================================*
  *				relocate				     *
  *===========================================================================*/
 PRIVATE int relocate(fd, buf)
 int fd;				/* file descriptor to read from */
-char *buf;			/* borrowed from do_exec() */
+unsigned char *buf;		/* borrowed from do_exec() */
 {
-  register n;
-  register char *p;
-  register c;
+  register int n;
+  register unsigned char *p, c;
   register phys_bytes off;
   register phys_bytes adr;
-  register struct mproc *rmp = mp;
 
   /* Read in relocation info from the exec file and relocate.
    * Relocation info is in GEMDOS format. Only longs can be relocated.
@@ -440,37 +485,33 @@ char *buf;			/* borrowed from do_exec() */
    * B==0bXXXXXXX1:
    *	illegal
    */
-  off = (phys_bytes)rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
+  off = (phys_bytes)mp->mp_seg[T].mem_phys << CLICK_SHIFT;
   p = buf;
-  n = read(fd, p, ARG_MAX);
-  if (n < sizeof(long))
-	return(-1);	/* error */
-  if (*((long *)p) == 0)
-	return(0);	/* ok */
+  n = read(fd, (char *)p, ARG_MAX);
+  if (n < sizeof(long)) return(-1);	/* error */
+  if (*((long *)p) == 0) return(0);	/* ok */
   adr = off + *((long *)p);
   n -= sizeof(long);
   p += sizeof(long);
-
-  for (;;) {			/* once per relocation */
-	*((long *)adr) += off;
-	for (;;) {		/* once per byte */
-		if (--n < 0) {
-			p = buf;
-			n = read(fd, p, ARG_MAX);
-			if (--n < 0)
-				return(-1);	/* error */
-		}
-		c = *p++ & 0xFF;
-		if (c != 1)
-			break;
-		adr += 254;
+  *((long *)adr) += off;
+  while (1) {			/* once per relocation byte */
+	if (--n < 0) {
+		p = buf;
+		n = read(fd, (char *)p, ARG_MAX);
+		if (--n < 0)
+			return(-1);	/* error */
 	}
-	if (c == 0)
-		break;
-	if (c & 1)
+	c = *p++;
+	if (c == 1)
+		adr += 254;
+	else if (c == 0)
+		return(0);	/* ok */
+	else if (c & 1)
 		return(-1);	/* error */
-	adr += c;
+	else {
+		adr += c;
+		*((long *)adr) += off;
+	}
   }
-  return(0);	/* ok */
 }
 #endif

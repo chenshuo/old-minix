@@ -23,19 +23,19 @@ _strcspn:
 	mov	cx,bx		/* find length of s2 */
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx
 	dec	cx
 	mov	dx,cx		/* save length of s2 */
 s1_loop:			/* loop over s1 looking for matches with s2 */
-	lodb
+	lodsb
 	inc	bx
 	orb	al,al
 	jz	exit
 	mov	di,6(bp)
 	mov	cx,dx
 	repne
-	scab
+	scasb
 	jne	s1_loop
 	jmp	exit
 s1_length:			/* find length of s1 */
@@ -43,7 +43,7 @@ s1_length:			/* find length of s1 */
 	mov	cx,bx
 	xorb	al,al
 	repne
-	scab
+	scasb
 	not	cx
 	dec	cx
 	mov	bx,cx
@@ -52,14 +52,14 @@ find_match:			/* find a match for *s2 in s1 */
 	movb	dl,(di)
 	test	si,#1		/* align source on word boundary */
 	jz	word_loop
-	lodb
+	lodsb
 	inc	bx
 	orb	al,al
 	je	exit
 	cmpb	al,dl
 	je	exit
 word_loop:
-	lodw
+	lods
 	inc	bx
 	orb	al,al
 	je	exit

@@ -25,9 +25,11 @@
  */
 
 #define PUBLIC extern
+#include <ctype.h>
+#include <string.h>
 #include "globs.h"
 #include "codes.h"
-#include "ctype.h"
+#include "proto.h"
 
 #define alphanum 1
 #define opchar 3
@@ -131,7 +133,7 @@ lexi()
    }
 
    /* Scan an alphanumeric token */
-   if (chartype[*buf_ptr] == alphanum || buf_ptr[0] == '.' && isdigit(buf_ptr[1]))
+   if (chartype[*buf_ptr] == alphanum || (buf_ptr[0] == '.' && isdigit(buf_ptr[1])))
    {
       /* we have a character or number */
       register char  *j;		/* used for searching thru list
@@ -140,7 +142,7 @@ lexi()
 					reserved words */
       register struct templ *p;
 
-      if (isdigit(*buf_ptr) || buf_ptr[0] == '.' && isdigit(buf_ptr[1]))
+      if (isdigit(*buf_ptr) || (buf_ptr[0] == '.' && isdigit(buf_ptr[1])))
       {
 	 int             seendot = 0, seenexp = 0;
 	 if (*buf_ptr == '0' &&
@@ -543,13 +545,14 @@ stop_lit:
    ps.last_u_d = unary_delim;
    *tok = '\0';				/* null terminate the token */
    return (code);
-};
+}
 
 /*
  * Add the given keyword to the keyword table, using val as the keyword type
  */
-addkey(key, val)
+void addkey(key, val)
    char           *key;
+   int val;
 {
    register struct templ *p = specials;
    while (p->rwd)

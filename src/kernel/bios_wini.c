@@ -10,10 +10,14 @@
  *
  *	m_type	  DEVICE   PROC_NR	COUNT	 POSITION  ADRRESS
  * ----------------------------------------------------------------
- * |  DISK_READ | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |  DEV_OPEN  |         |         |         |         |         |
  * |------------+---------+---------+---------+---------+---------|
- * | DISK_WRITE | device  | proc nr |  bytes  |	 offset | buf ptr |
- * ----------------------------------------------------------------
+ * |  DEV_CLOSE |         |         |         |         |         |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_READ  | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * |  DEV_WRITE | device  | proc nr |  bytes  |	 offset | buf ptr |
+ * |------------+---------+---------+---------+---------+---------|
  * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
  * ----------------------------------------------------------------
  *
@@ -51,7 +55,7 @@ PRIVATE unsigned char buf[BLOCK_SIZE] = { 1 };
 PRIVATE message w_mess;		/* message buffer for in and out */
 
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
-  int wn_opcode;		/* DISK_READ or DISK_WRITE */
+  int wn_opcode;		/* DEV_READ or DEV_WRITE */
   int wn_procnr;		/* which proc wanted this operation? */
   int wn_cylinder;		/* cylinder number addressed */
   int wn_sector;		/* sector addressed */
@@ -72,14 +76,15 @@ PRIVATE struct param {
 	int nr_sectors;		/* Number of sectors per track */
 } param0, param1;
 
-PRIVATE int nr_drives;
+PRIVATE int nr_drives;		/* number of hard disk drives */
+PRIVATE int no_disk;		/* TRUE if hard disk problems found */
 
-FORWARD void copy_prt();
-FORWARD void get_params();
-FORWARD void init_params();
-FORWARD void replace();
-FORWARD void sort();
-FORWARD int w_do_rdwt();
+FORWARD _PROTOTYPE( void copy_prt, (int base_dev) );
+FORWARD _PROTOTYPE( void get_params, (int dr, struct param* params) );
+FORWARD _PROTOTYPE( void init_params, (void) );
+FORWARD _PROTOTYPE( void replace, (int from, int to) );
+FORWARD _PROTOTYPE( void sort, (struct wini wn[]) );
+FORWARD _PROTOTYPE( int w_do_rdwt, (message *m_ptr) );
 
 /*=========================================================================*
  *			winchester_task					   * 
@@ -93,16 +98,13 @@ PUBLIC void winchester_task()
   /* First initialize the controller */
   init_params();
 
-  /* Here is the main loop of the disk task.  It waits for a message, carries
-   * it out, and sends a reply.
-   */
-
+  /*  Main loop.  Waits for message, carry it out, and send reply. */
   while (TRUE) {
 	/* First wait for a request to read or write a disk block. */
 	receive(ANY, &w_mess);	/* get a request to do some work */
 	if (w_mess.m_source < 0) {
-		printf("winchester task got message from %d\n",w_mess.m_source);
-		continue;
+	       printf("winchester task got message from %d\n",w_mess.m_source);
+	       continue;
 	}
 
 	caller = w_mess.m_source;
@@ -110,8 +112,12 @@ PUBLIC void winchester_task()
 
 	/* Now carry out the work. */
 	switch(w_mess.m_type) {
-	    case DISK_READ:
-	    case DISK_WRITE:	r = w_do_rdwt(&w_mess);	break;
+	    case DEV_OPEN:	r = OK;				  break;
+	    case DEV_CLOSE:	r = OK;				  break;
+
+	    case DEV_READ:
+	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
+
 	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
 	    default:		r = EINVAL;		break;
 	}
@@ -120,6 +126,7 @@ PUBLIC void winchester_task()
 	w_mess.m_type = TASK_REPLY;	
 	w_mess.REP_PROC_NR = proc_nr;
 
+	if (no_disk) r = EIO;	/* always fail if there is no disk */
 	w_mess.REP_STATUS = r;	/* # of bytes transferred or error code */
 	send(caller, &w_mess);	/* send reply to caller */
   }
@@ -137,23 +144,24 @@ message *m_ptr;			/* pointer to read or write w_message */
   vir_bytes vir, ct;
   unsigned locyl, hicyl, c1, c2, c3;
   int r, device;
-  long sector;
+  long sector, s;
   phys_bytes user_phys;
 
   /* Decode the w_message parameters. */
+  if (no_disk) return(EIO);	/* if there is no disk, do not even try */
   device = m_ptr->DEVICE;	/* minor device #.  1-4 are partitions */
   if (device < 0 || device >= NR_DEVICES) return(EIO);
   if (m_ptr->COUNT != BLOCK_SIZE) return(EINVAL);
   wn = &wini[device];		/* 'wn' points to entry for this drive */
 
   /* Set opcode to BIOS_READ or BIOS_WRITE. Check for bad starting addr. */
-  wn->wn_opcode = (m_ptr->m_type == DISK_WRITE ? BIOS_WRITE : BIOS_READ);
+  wn->wn_opcode = (m_ptr->m_type == DEV_WRITE ? BIOS_WRITE : BIOS_READ);
   if (m_ptr->POSITION % BLOCK_SIZE != 0) return(EINVAL);
 
   /* Calculate the physical parameters */
-  sector = m_ptr->POSITION/SECTOR_SIZE;	/* relative sector within partition */
-  if ((sector+BLOCK_SIZE/SECTOR_SIZE) > wn->wn_size) return(0);
-  sector += wn->wn_low;		/* absolute sector number */
+  s = m_ptr->POSITION;
+  if (s < 0 || s > wn->wn_size * SECTOR_SIZE - BLOCK_SIZE) return(0);
+  sector = s/SECTOR_SIZE + wn->wn_low;	/* relative sector within partition */
   wn->wn_cylinder = sector / (wn->wn_heads * wn->wn_maxsec);
   wn->wn_sector =  (sector % wn->wn_maxsec);
   wn->wn_head = (sector % (wn->wn_heads * wn->wn_maxsec) )/wn->wn_maxsec;
@@ -204,7 +212,7 @@ PRIVATE void init_params()
 {
 /* This routine is called at startup to initialize the partition table,
  * the number of drives and the controller
-*/
+ */
   unsigned int i;
 
   /* Give control to the BIOS interrupt handler. */
@@ -225,8 +233,7 @@ PRIVATE void init_params()
   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
   /* Set the parameters in the drive structure */
-  for (i = 0; i < DEV_PER_DRIVE; i++)
-  {
+  for (i = 0; i < DEV_PER_DRIVE; i++) {
 	wini[i].wn_heads = param0.nr_heads;
 	wini[i].wn_maxsec = param0.nr_sectors;
 	wini[i].wn_drive = DRIVE;
@@ -234,8 +241,7 @@ PRIVATE void init_params()
   wini[0].wn_low = wini[DEV_PER_DRIVE].wn_low = 0L;
   wini[0].wn_size = (long)((long)param0.nr_cyl
       * (long)param0.nr_heads * (long)param0.nr_sectors);
-  for (i = DEV_PER_DRIVE; i < (2*DEV_PER_DRIVE); i++)
-  {
+  for (i = DEV_PER_DRIVE; i < (2*DEV_PER_DRIVE); i++) {
 	wini[i].wn_heads = param1.nr_heads;
 	wini[i].wn_maxsec = param1.nr_sectors;
 	wini[i].wn_drive = DRIVE + 1;
@@ -251,9 +257,12 @@ PRIVATE void init_params()
 	w_mess.COUNT = BLOCK_SIZE;
 	w_mess.ADDRESS = (char *) buf;
 	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DISK_READ;
-	if (w_do_rdwt(&w_mess) != BLOCK_SIZE)
-		panic("Can't read partition table of winchester ", i);
+	w_mess.m_type = DEV_READ;
+	if (w_do_rdwt(&w_mess) != BLOCK_SIZE) {
+		printf("Can't read hard disk partition table. Disable disk\n");
+		no_disk = TRUE;
+		return;
+	}
 	copy_prt(i * DEV_PER_DRIVE);
   }
 }

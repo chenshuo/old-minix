@@ -1,17 +1,18 @@
-#include <lib.h>
-/* strcpy - copy string src to dst  */
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
+ */
+/* $Header: strcpy.c,v 1.2 90/05/31 18:33:13 ceriel Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strcpy(dst, src)
-char *dst;
-_CONST char *src;
+char *
+strcpy(char *ret, register const char *s2)
 {
-  register char *dscan;
-  register _CONST char *sscan;
+	register char *s1 = ret;
 
-  dscan = dst;
-  sscan = src;
-  while ((*dscan++ = *sscan++) != '\0') continue;
-  return(dst);
+	while (*s1++ = *s2++)
+		/* EMPTY */ ;
+
+	return ret;
 }

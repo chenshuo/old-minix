@@ -80,7 +80,7 @@ vir_bytes sp;			/* new value of sp */
   mem_sp = &rmp->mp_seg[S];	/* pointer to stack segment map */
   changed = 0;			/* set when either segment changed */
 
-  if(rmp - mproc == INIT_PROC_NR) return(OK);	/* don't bother init */
+  if (mem_sp->mem_len == 0) return(OK);	/* don't bother init */
 
   /* See if stack size has gone negative (i.e., sp too close to 0xFFFF...) */
   base_of_stack = (long) mem_sp->mem_vir + (long) mem_sp->mem_len;
@@ -193,6 +193,6 @@ int proc_nr;			/* tells who got the stack fault */
   if (r == OK) return;
 
   /* Stack has bumped into data segment.  Kill the process. */
-  rmp->mp_catch = 0;		/* don't catch this signal */
+  sigdelset(&rmp->mp_catch, SIGSEGV);	/* don't catch this signal */
   sig_proc(rmp, SIGSEGV);	/* terminate process */
 }

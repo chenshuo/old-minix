@@ -36,7 +36,9 @@ PUBLIC int do_utime()
   if (rip->i_uid != fp->fp_effuid && !super_user) r = EPERM;
   if (read_only(rip) != OK) r = EROFS;	/* not even su can touch if R/O */
   if (r == OK) {
-	rip->i_mtime = updated_time;
+	rip->i_atime = utime_actime;
+	rip->i_mtime = utime_modtime;
+	rip->i_update = CTIME;	/* discard any stale ATIME and MTIME flags */
 	rip->i_dirt = DIRTY;
   }
 
@@ -71,7 +73,7 @@ PUBLIC int do_stime()
   clock_mess.m_type = SET_TIME;
   clock_mess.NEW_TIME = (long) tp;
   if ( (k = sendrec(CLOCK, &clock_mess)) != OK) panic("do_stime error", k);
-  return (OK);
+  return(OK);
 }
 
 
@@ -82,12 +84,13 @@ PUBLIC int do_tims()
 {
 /* Perform the times(buffer) system call. */
 
-  time_t t[4];
+  clock_t t[5];
 
   sys_times(who, t);
   reply_t1 = t[0];
   reply_t2 = t[1];
   reply_t3 = t[2];
   reply_t4 = t[3];
+  reply_t5 = t[4];
   return(OK);
 }

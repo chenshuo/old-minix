@@ -10,9 +10,9 @@ EXT LINENUM input_lines INIT(0);	/* how long is input file in lines */
 EXT LINENUM last_frozen_line INIT(0);	/* how many input lines have been */
 					/* irretractibly output */
 
-bool rev_in_string();
-void scan_input();
-bool plan_a();			/* returns false if insufficient memory */
-void plan_b();
-char *ifetch();
-
+_PROTOTYPE(bool rev_in_string , (char *string ));
+_PROTOTYPE(void scan_input , (char *filename ));
+_PROTOTYPE(bool plan_a , (char *filename )); 
+_PROTOTYPE(void plan_b , (char *filename ));
+_PROTOTYPE(char *ifetch , (Reg1 LINENUM line , int whichbuf ));
+_PROTOTYPE(void re_input , (void));

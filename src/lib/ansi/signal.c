@@ -1,40 +1,35 @@
+/* SYSVR4 and ANSI compatible signal(2). */
+
 #include <lib.h>
+#define sigaction	_sigaction
+#define sigemptyset	_sigemptyset
 #include <signal.h>
 
-extern void (*__vectab[_NSIG]) ();	/* array of funcs to catch signals */
-
-/* The definition of signal really should be
- *  PUBLIC void (*signal(signr, func))()
- * but some compilers refuse to accept this, even though it is correct.
- * The only thing to do if you are stuck with such a defective compiler is
- * change it to
- *  PUBLIC void *signal(signr, func)
- * and change ../h/signal.h accordingly.
- */
-
-PUBLIC void (*signal(signr, func)) ()
-int signr;			/* which signal is being set */
-void (*func) ();			/* pointer to function that catches signal */
+PUBLIC sighandler_t signal(sig, disp)
+int sig;			/* signal number */
+sighandler_t disp;		/* signal handler, or SIG_DFL, or SIG_IGN */
 {
-  int r;
-  void (*old) ();
+  struct sigaction sa, osa;
 
-  old = __vectab[signr - 1];
-  _M.m6_i1 = signr;
-  if (func == SIG_IGN || func == SIG_DFL)
-	/* Keep old signal catcher until it is completely de-installed */
-	_M.m6_f1 = (void (*)())func;
-  else {
-	/* Use new signal catcher immediately (old one may not exist) */
-	__vectab[signr - 1] = func;
-	_M.m6_f1 = begsig;
+  if (sig <= 0 || sig > _NSIG || sig == SIGKILL) {
+	errno = EINVAL;
+	return(SIG_ERR);
   }
-  r = callx(MM, SIGNAL);
-  if (r < 0) {
-	__vectab[signr - 1] = old;/* undo any pre-installation */
-	return((void (*) ()) r);
-  }
-  __vectab[signr - 1] = func;	/* redo any pre-installation */
-  if (r == 1) return(SIG_IGN);
-  return(old);
+  sigemptyset(&sa.sa_mask);
+
+#ifdef BASH
+  sa.sa_flags = 0;
+#else
+  /* Allow the signal being handled to interrupt the signal handler. */
+  sa.sa_flags = SA_NODEFER;
+
+  /* When signal is caught, reset signal handler to SIG_DFL for all but
+   * SIGILL and SIGTRAP.
+   */
+  if (sig != SIGILL && sig != SIGTRAP) sa.sa_flags |= SA_RESETHAND;
+#endif
+
+  sa.sa_handler = disp;
+  if (sigaction(sig, &sa, &osa) < 0) return(SIG_ERR);
+  return(osa.sa_handler);
 }

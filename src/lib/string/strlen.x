@@ -14,7 +14,7 @@ _strlen:
 	xorb	al,al
 	cld
 	repne
-	scab
+	scasb
 	not	cx		/* silly trick gives length (including null) */
 	dec	cx		/* forget about null */
 	mov	ax,cx

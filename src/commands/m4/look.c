@@ -7,14 +7,11 @@
 #include "mdef.h"
 #include "extr.h"
 
-extern char *strsave();
-extern char *malloc();
-
 /*
  *  hash - compute hash value using the proverbial
  *	   hashing function. Taken from K&R.
  */
-hash (name)
+int hash (name)
 register char *name;
 {
 	register int h = 0;
@@ -64,7 +61,7 @@ char *name;
  * remhash - remove an entry from the hashtable
  *
  */
-remhash(name, all)
+void remhash(name, all)
 char *name;
 int all;
 {
@@ -100,7 +97,7 @@ int all;
  * freent - free a hashtable information block
  *
  */
-freent(p)
+void freent(p)
 ndptr p;
 {
 	if (!(p->type & STATIC)) {

@@ -1,19 +1,22 @@
-#include <lib.h>
-/* strerror - map error number to descriptive string
- *
- * This version is obviously somewhat Unix-specific.
+/*
+ * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
+ * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
+/* $Header: strerror.c,v 1.3 90/08/28 13:53:31 eck Exp $ */
 
-#include <string.h>
+#include	<string.h>
 
-char *strerror(errnum)
-int errnum;
+/*
+ * I don't know why, but X3J11 says that strerror() should be in declared
+ * in <string.h>.  That is why the function is defined here.
+ */
+char *
+strerror(register int errnum)
 {
-  extern int sys_nerr;
-  extern char *sys_errlist[];
+	extern const char *_sys_errlist[];
+	extern const int _sys_nerr;
 
-  if (errnum > 0 && errnum < sys_nerr)
-	return(sys_errlist[errnum]);
-  else
-	return("unknown error");
+  	if (errnum < 0 || errnum >= _sys_nerr)
+		return "unknown error";
+	return (char *)_sys_errlist[errnum];
 }

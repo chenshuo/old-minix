@@ -1,13 +1,17 @@
-# Makefile for make!  (Minix PC)
+# Makefile for make
 
-CFLAGS = -Dunix -DMINIXPC 
+CFLAGS = -O -Dunix -DMINIXPC -Dprintf=printk -Dfprintf=fprintk
+O=o
 
-OBJS =	check.s input.s macro.s main.s make.s reader.s rules.s
+OBJ =	check.$O input.$O macro.$O main.$O make.$O reader.$O rules.$O
 
-make :	$(OBJS)
-	$(CC) -i -o make $(OBJS)
+make :	$(OBJ)
+	@rm -rf make
+	@echo Start linking make
+	@$(CC) -o make $(OBJ) >/dev/null
+	@chmem =35000 make
  
-clean:	
-	@rm -f *.s *.bak make core
+$(OBJ): h.h
 
-$(OBJS): h.h
+clean:
+	@rm -f *.o *.s *.bak core make

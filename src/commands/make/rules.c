@@ -51,7 +51,7 @@ char        **pinputname;
   suff = suffix(q);
   while (*q && (q < suff || !suff)) *p++ = *q++;
   *p = '\0';
-  if ((*pbasename = malloc(strlen(str1)+1)) == (char *)0 )
+  if ((*pbasename = (char *) malloc(strlen(str1)+1)) == (char *)0 )
      fatal("No memory for basename",(char *)0,0);
   strcpy(*pbasename,str1);
   if ( !suff) suff = p - str1 + *pbasename;  /* set suffix to nullstring */
@@ -198,20 +198,20 @@ void makerules()
 
   setmacro("CC", "cc");
   setmacro("CFLAGS", "-O");
-#ifdef MINIXPC
+
   cp = newcmd("$(CC) -S $(CFLAGS) $<", (struct cmd *)0);
   np = newname(".c.s");
-#else
+  newline(np, (struct depend *)0, cp, 0);
+
   cp = newcmd("$(CC) -c $(CFLAGS) $<", (struct cmd *)0);
   np = newname(".c.o");
-#endif MINIXPC
   newline(np, (struct depend *)0, cp, 0);
 
 #ifdef MINIXPC
   cp = newcmd("$(CC) $(CFLAGS) -i -o $@ $<", (struct cmd *)0);
 #else
   cp = newcmd("$(CC) $(CFLAGS) -o $@ $<", (struct cmd *)0);
-#endif MINIXPC
+#endif /* MINIXPC */
   np = newname(".c");
   newline(np, (struct depend *)0, cp, 0);
 
@@ -228,15 +228,9 @@ void makerules()
   newline(np, (struct depend *)0, cp, 0);
 
   cp = newcmd("$(YACC) $(YFLAGS) $<", (struct cmd *)0);
-#ifdef MINIXPC
-  cp = newcmd("$(CC) $(CFLAGS) -S y.tab.c", cp);
-  cp = newcmd("mv y.tab.s $@", cp);
-  np = newname(".y.s");
-#else
   cp = newcmd("$(CC) $(CFLAGS) -c y.tab.c", cp);
   cp = newcmd("mv y.tab.o $@", cp);
   np = newname(".y.o");
-#endif MINIXPC
   cp = newcmd("rm y.tab.c", cp);
   newline(np, (struct depend *)0, cp, 0);
 
@@ -247,15 +241,9 @@ void makerules()
   newline(np, (struct depend *)0, cp, 0);
 
   cp = newcmd("$(FLEX) $(FLEX_FLAGS) $<", (struct cmd *)0);
-#ifdef MINIXPC
-  cp = newcmd("$(CC) $(CFLAGS) -S lex.yy.s", cp);
-  cp = newcmd("mv lex.yy.s $@", cp);
-  np = newname(".l.s");
-#else
   cp = newcmd("$(CC) $(CFLAGS) -c lex.yy.c", cp);
   cp = newcmd("mv lex.yy.o $@", cp);
   np = newname(".l.o");
-#endif MINIXPC
   cp = newcmd("rm lex.yy.c", cp);
   newline(np, (struct depend *)0, cp, 0);
 
@@ -272,7 +260,7 @@ void makerules()
   np = newname(".SUFFIXES");
   newline(np, dp, (struct cmd *)0, 0);
 
-#endif unix
+#endif /* unix */
 
 
 #ifdef os9

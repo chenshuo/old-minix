@@ -18,6 +18,11 @@ static unsigned bufid = AFID_ID;	/* buffer id counter */
 
 struct ioarg temparg = {0, 0, 0, AFID_NOBUF, 0};
 
+_PROTOTYPE(static void readhere, (char **name, char *s, int ec ));
+_PROTOTYPE(void pushio, (struct ioarg *argp, int (*fn)()));
+_PROTOTYPE(static int xxchar, (struct ioarg *ap ));
+_PROTOTYPE(void tempname, (char *tname ));
+
 int
 getc(ec)
 register int ec;
@@ -32,7 +37,7 @@ register int ec;
 		return(c);
 	}
 	c = readc();
- 	if (ec != '\'' && ec != '`' && e.iop->task != XGRAVE) {
+ 	if (ec != '\'' && e.iop->task != XGRAVE) {
 		if(c == '\\') {
 			c = readc();
 			if (c == '\n' && ec != '\"')
@@ -45,6 +50,7 @@ register int ec;
 
 void
 unget(c)
+int c;
 {
 	if (e.iop >= e.iobase)
 		e.iop->peekc = c;
@@ -206,8 +212,6 @@ register struct ioarg *ap;
  * Return the characters of a list of words,
  * producing a space between them.
  */
-static	int	xxchar();
-
 int
 dolchar(ap)
 register struct ioarg *ap;
@@ -274,7 +278,6 @@ register struct ioarg *ap;
 	register int i;
 	char c;
 	struct iobuf *bp = ap->afbuf;
-	extern int errno;
 
 	if (ap->afid != AFID_NOBUF) {
 	  if ((i = ap->afid != bp->id) || bp->bufp == bp->ebufp) {
@@ -403,7 +406,7 @@ unsigned u;
 
 void
 closef(i)
-register i;
+register int i;
 {
 	if (i > 2)
 		close(i);
@@ -482,8 +485,7 @@ struct	here {
 static	struct here *inhere;		/* list of hear docs while parsing */
 static	struct here *acthere;		/* list of active here documents */
 
-static	void readhere();
-
+void
 markhere(s, iop)
 register char *s;
 struct ioword *iop;
@@ -516,6 +518,7 @@ struct ioword *iop;
 	h->h_dosub = iop->io_flag & IOXHERE;
 }
 
+void
 gethere()
 {
 	register struct here *h, *hp;
@@ -536,6 +539,7 @@ static void
 readhere(name, s, ec)
 char **name;
 register char *s;
+int ec;
 {
 	int tf;
 	char tname[30];
@@ -585,8 +589,10 @@ register char *s;
  * open here temp file.
  * if unquoted here, expand here temp file into second temp file.
  */
+int
 herein(hname, xdoll)
 char *hname;
+int xdoll;
 {
 	register hf, tf;
 
@@ -621,6 +627,7 @@ char *hname;
 		return (hf);
 }
 
+void
 scraphere()
 {
 	register struct here *h;
@@ -633,6 +640,7 @@ scraphere()
 }
 
 /* unlink here temp files before a freearea(area) */
+void
 freehere(area)
 int area;
 {
@@ -640,7 +648,7 @@ int area;
 
 	hl = NULL;
 	for (h = acthere; h != NULL; h = h->h_next)
-		if (getarea(h) >= area) {
+		if (getarea((char *) h) >= area) {
 			if (h->h_iop->io_name != NULL)
 				unlink(h->h_iop->io_name);
 			if (hl == NULL)
@@ -651,6 +659,7 @@ int area;
 			hl = h;
 }
 
+void
 tempname(tname)
 char *tname;
 {

@@ -1,3 +1,4 @@
+
 /* This file contains the main program of the File System.  It consists of
  * a loop that gets messages requesting work, carries out the work, and sends
  * replies.
@@ -7,44 +8,44 @@
  *   reply:	send a reply to a process after the requested work is done
  */
 
+struct super_block;		/* proto.h needs to know this */
+
 #include "fs.h"
+#include <fcntl.h>
+#include <string.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include <minix/boot.h>
 #include "buf.h"
+#include "dev.h"
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
 #include "param.h"
 #include "super.h"
 
-#if FASTLOAD
-#include "dev.h"
-#endif
-
 #define M64K     0xFFFF0000L	/* 16 bit mask for DMA check */
 #define MAX_RAM        16384	/* maximum RAM disk size in blocks */
 #define RAM_IMAGE (dev_t)0x303	/* major-minor dev where root image is kept */
-#define DEMO_RAM_OFFSET  200	/* location of RAM image on demo diskette */
 
-FORWARD void buf_pool();
-FORWARD void fs_init();
-FORWARD void get_boot_parameters();
-FORWARD void get_work();
-FORWARD dev_t load_ram();
-FORWARD void load_super();
+FORWARD _PROTOTYPE( void buf_pool, (void)				);
+FORWARD _PROTOTYPE( void fs_init, (void)				);
+FORWARD _PROTOTYPE( void get_boot_parameters, (void)			);
+FORWARD _PROTOTYPE( void get_work, (void)				);
+FORWARD _PROTOTYPE( dev_t load_ram, (void)				);
+FORWARD _PROTOTYPE( void load_super, (Dev_t super_dev, block_t origin)	);
 
 #if ASKDEV
-FORWARD int askdev();
+FORWARD _PROTOTYPE( int askdev, (void)					);
 #endif
 
 #if FASTLOAD
-FORWARD void fastload();
-FORWARD int lastused();
+FORWARD _PROTOTYPE( void fastload, (Dev_t boot_dev, char *address)	);
+FORWARD _PROTOTYPE( int lastused, (Dev_t boot_dev)			);
 #endif
 
 #if (CHIP == INTEL)
-FORWARD phys_bytes get_physbase();
+FORWARD _PROTOTYPE( phys_bytes get_physbase, (void)			);
 #endif
 
 /*===========================================================================*
@@ -144,14 +145,19 @@ PRIVATE void fs_init()
   register struct inode *rip;
   int i;
   dev_t d;			/* device to fetch the superblock from */
+  
+  /* The following 3 initializations are needed to let dev_open succeed .*/
+  fp = (struct fproc *) NULL;
+  who = FS_PROC_NR;
 
   buf_pool();			/* initialize buffer pool */
-  get_boot_parameters();
+  get_boot_parameters();	/* get the parameters from the menu */
   d = load_ram();		/* init RAM disk, load if it is root */
-  load_super(d);		/* Load super block for root device */
+  load_super(d, (block_t) 0);	/* load super block for root device */
 
-  /* Initialize the 'fproc' fields for process 0 and process 2. */
-  for (i = 0; i < 3; i+= 2) {
+  /* Initialize the 'fproc' fields for process 0 .. INIT. */
+  for (i = 0; i <= LOW_USER; i+= 1) {
+	if (i == FS_PROC_NR) continue;	/* do not initialize FS */
 	fp = &fproc[i];
 	rip = get_inode(ROOT_DEV, ROOT_INODE);
 	fp->fp_rootdir = rip;
@@ -165,12 +171,14 @@ PRIVATE void fs_init()
   }
 
   /* Certain relations must hold for the file system to work at all. */
-  if (ZONE_NUM_SIZE != 2) panic("ZONE_NUM_SIZE != 2", NO_NUM);
   if (SUPER_SIZE > BLOCK_SIZE) panic("SUPER_SIZE > BLOCK_SIZE", NO_NUM);
-  if(BLOCK_SIZE % INODE_SIZE != 0)panic("BLOCK_SIZE % INODE_SIZE != 0",NO_NUM);
+  if (BLOCK_SIZE % V2_INODE_SIZE != 0)	/* this checks V1_INODE_SIZE too */
+	panic("BLOCK_SIZE % V2_INODE_SIZE != 0", NO_NUM);
   if (OPEN_MAX > 127) panic("OPEN_MAX > 127", NO_NUM);
   if (NR_BUFS < 6) panic("NR_BUFS < 6", NO_NUM);
-  if (sizeof(d_inode) != 32) panic("inode size != 32", NO_NUM);
+  if (V1_INODE_SIZE != 32) panic("V1 inode size != 32", NO_NUM);
+  if (V2_INODE_SIZE != 64) panic("V2 inode size != 64", NO_NUM);
+  if (OPEN_MAX > 8 * sizeof(long)) panic("Too few bits in fp_cloexec", NO_NUM);
 }
 
 /*===========================================================================*
@@ -210,13 +218,13 @@ PRIVATE void buf_pool()
 	high_off = low_off + BLOCK_SIZE - 1;
 	if (((org + low_off) & M64K) != ((org + high_off) & M64K)) {
 		++bp->b_count;	/* it was 0, by static initialization */
-		++bufs_in_use;
+		rm_lru(bp);
 	}
   }
 #endif
 
   for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) bp->b_hash = bp->b_next;
-  buf_hash[NO_BLOCK & (NR_BUF_HASH - 1)] = front;
+  buf_hash[0] = front;
 }
 
 
@@ -232,13 +240,15 @@ PRIVATE dev_t load_ram()
 
   register struct buf *bp, *bp1;
   int count;
-  long k_loaded;
+  long k_loaded, lcount;
   struct super_block *sp;
-  block_nr ram_offset = 0;	/* block offset of RAM image on demo diskette*/
-  block_nr i, b;
+  block_t ram_offset = 0;	/* block offset of RAM image on demo diskette*/
+  block_t i, b;
   dev_t root_device;		/* really the root image device */
   dev_t super_dev;		/* device to get superblock from */
   phys_clicks ram_clicks, init_org, init_text_clicks, init_data_clicks;
+  int major, task;
+  message dev_mess;
 
   /* Get size of INIT by reading block on diskette where 'build' put it. */
   init_org = data_org[INFO];
@@ -247,51 +257,67 @@ PRIVATE dev_t load_ram()
 
   /* Print ATARI copyright message. */
 #if (MACHINE == ATARI)
-  printf("Booting MINIX 1.5.  Copyright 1990 Prentice-Hall, Inc.\n");
+  printf("Booting MINIX 1.6.25.  Copyright 1993 Prentice-Hall, Inc.\n");
 #endif
 
   /* If the root device is specified in the boot parameters, use it. */
   if (ROOT_DEV != DEV_RAM) {
-	count = boot_parameters.bp_ramsize;
+	lcount = boot_parameters.bp_ramsize;
 	super_dev = ROOT_DEV;	/* get superblock directly from root device */
+	major = (super_dev >> MAJOR) & BYTE;	/* major device nr */
+	task = dmap[major].dmap_task;		/* device task nr */
+	dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
+	dev_mess.DEVICE = super_dev;
+	dev_mess.TTY_FLAGS = O_RDWR;
+	(*dmap[major].dmap_open)(task, &dev_mess);
+	if (dev_mess.REP_STATUS != OK) panic("Cannot open root device",NO_NUM);
 	goto got_root_dev;	/* kludge to avoid excessive indent/diffs */
   } else {
 	super_dev = DEV_RAM;	/* get superblock from RAM disk */
   }
 
+  sp = &super_block[0];
   /* Get size of RAM disk by reading root file system's super block.
    * First read block 0 from the floppy.  If this is a valid file system, use
    * it as the root image, otherwise try the hard disk (RAM_IMAGE).  
    */
 #if ASKDEV
-  root_device = (dev_t)askdev();
-  if (root_device == 0)
+  sp->s_dev = (dev_t) askdev();
+  if (sp->s_dev == 0)
 #endif
+  sp->s_dev = BOOT_DEV;	/* this is the 'then' clause if ASKDEV is defined */
 
-#if DEMO
-  /* If this file is compiled with -DDEMO=1, RAM image is at DEMO_RAM_OFFSET */
-  ram_offset = DEMO_RAM_OFFSET;
-#endif
+  major = (sp->s_dev >> MAJOR) & BYTE;	/* major device nr */
+  task = dmap[major].dmap_task;		/* device task nr */
+  dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
+  dev_mess.DEVICE = sp->s_dev;
+  dev_mess.TTY_FLAGS = O_RDWR;
+  (*dmap[major].dmap_open)(task, &dev_mess);
+  if (dev_mess.REP_STATUS != OK) panic("Cannot open root device", NO_NUM);
 
-  root_device = BOOT_DEV;	/* get super block; try floppy disk first */
-  bp = get_block(root_device, SUPER_BLOCK + ram_offset, NORMAL);
-  copy(super_block, bp->b_data, SUPER_SIZE);
-  sp = &super_block[0];
-  if (sp->s_magic != SUPER_MAGIC) {
-	put_block(bp, FULL_DATA_BLOCK);
-	root_device = RAM_IMAGE;
-	bp = get_block(root_device, SUPER_BLOCK, NORMAL);  /* get super block*/
-	copy(super_block, bp->b_data, SUPER_SIZE);
-	sp = &super_block[0];
-	if (sp->s_magic != SUPER_MAGIC)
-		panic("Invalid root file system", NO_NUM);
+  read_super(sp, ram_offset);	/* read in default (root or image) super blk*/
+  if (sp->s_version == 0) {
+	dev_mess.m_type = DEV_CLOSE;		/* distinguish from open */
+	(*dmap[major].dmap_close)(task, &dev_mess);
+	sp->s_dev = RAM_IMAGE;
+	major = (sp->s_dev >> MAJOR) & BYTE;	/* major device nr */
+	task = dmap[major].dmap_task;		/* device task nr */
+	dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
+	dev_mess.DEVICE = sp->s_dev;
+	dev_mess.TTY_FLAGS = O_RDWR;
+	(*dmap[major].dmap_open)(task, &dev_mess);
+	if (dev_mess.REP_STATUS != OK) panic("Cannot open RAM image",NO_NUM);
+	read_super(sp, ram_offset);	/* read in HD RAM image super block */
+	if (sp->s_version == 0) panic("Bad root file system", NO_NUM);
   }
-  count = sp->s_nzones << sp->s_log_zone_size;	/* # blocks on root dev */
-  put_block(bp, FULL_DATA_BLOCK);
+
+  root_device = sp->s_dev;
+  lcount = sp->s_zones << sp->s_log_zone_size;	/* # blks on root dev*/
 
 got_root_dev:
-  if (count > MAX_RAM) panic("RAM disk is too big. # blocks = ", count);
-  ram_clicks = count * (BLOCK_SIZE/CLICK_SIZE);
+  if (lcount > MAX_RAM) panic("RAM disk is too big. # blocks > ", MAX_RAM);
+  count = (int) lcount;		/* lcount is now known to be <= MAX_RAM */
+  ram_clicks = (lcount * BLOCK_SIZE)/CLICK_SIZE;
 
   /* Tell MM the origin and size of INIT, and the amount of memory used for the
    * system plus RAM disk combined, so it can remove all of it from the map.
@@ -300,19 +326,13 @@ got_root_dev:
   m1.m1_i1 = init_text_clicks;
   m1.m1_i2 = init_data_clicks;
   m1.m1_i3 = init_org + init_text_clicks + init_data_clicks + ram_clicks;
-
-#if (MACHINE == ATARI)
-  m1.m1_p1 = (char *) (int) init_org;	/* bug in Alcyon 4.14 C */
-#else
-  m1.m1_p1 = (char *) init_org;		/* other compilers */
-#endif
-
+  m1.m1_p1 = (char *) (int) init_org;	/* bug in Alcyon 4.14 C needs 2 casts*/
   if (sendrec(MM_PROC_NR, &m1) != OK) panic("FS Can't report to MM", NO_NUM);
 
   /* Tell RAM driver where RAM disk is and how big it is. The BRK2 call has
    * filled in the m1.POSITION field.
    */
-  m1.m_type = DISK_IOCTL;
+  m1.m_type = DEV_IOCTL;
   m1.DEVICE = RAM_DEV;
   m1.COUNT = count;
   if (sendrec(MEM, &m1) != OK) panic("Can't report size to MEM", NO_NUM);
@@ -328,22 +348,23 @@ got_root_dev:
   /* If the root device is not the RAM disk, it doesn't need loading. */
   if (ROOT_DEV != DEV_RAM) return(super_dev);	/* ROOT_DEV is a macro */
 
-  /* Copy the blocks one at a time from the root diskette to the RAM */
-
 #if FASTLOAD
+  /* Copy the blocks one at a time from the root diskette to the RAM */
   fastload(root_device, (char *) m1.POSITION);	/* assumes 32 bit pointers */
 #else
-  printf("Loading RAM disk.                            Loaded:   0K ");
+
+  printf("Loading RAM disk.                       Loaded:    0K ");
 
   inode[0].i_mode = I_BLOCK_SPECIAL;	/* temp inode for rahead */
-  inode[0].i_size = MAX_P_LONG;
-  inode[0].i_dev = inode[0].i_zone[0] = root_device;
+  inode[0].i_size = LONG_MAX;
+  inode[0].i_dev = root_device;
+  inode[0].i_zone[0] = root_device;
 
   for (i = 0; i < count; i++) {
 	b = i + ram_offset;		/* true block number */
-	bp = rahead(&inode[0], (block_nr) b, (off_t)BLOCK_SIZE*b, BLOCK_SIZE);
+	bp = rahead(&inode[0], (block_t) b, (off_t)BLOCK_SIZE*b, BLOCK_SIZE);
 	bp1 = get_block(ROOT_DEV, i, NO_READ);
-	copy(bp1->b_data, bp->b_data, BLOCK_SIZE);
+	memcpy(bp1->b_data, bp->b_data, (size_t) BLOCK_SIZE);
 	bp1->b_dirt = DIRTY;
 	put_block(bp, I_MAP_BLOCK);
 	put_block(bp1, I_MAP_BLOCK);
@@ -363,9 +384,11 @@ got_root_dev:
 /*===========================================================================*
  *				load_super				     *
  *===========================================================================*/
-PRIVATE void load_super(super_dev)
+PRIVATE void load_super(super_dev, origin)
 dev_t super_dev;			/* place to get superblock from */
+block_t origin;				/* offset to give to read_super() */
 {
+  int bad;
   register struct super_block *sp;
   register struct inode *rip;
 
@@ -376,13 +399,15 @@ dev_t super_dev;			/* place to get superblock from */
   /* Read in super_block for the root file system. */
   sp = &super_block[0];
   sp->s_dev = super_dev;
-  rw_super(sp,READING);
-  rip = get_inode(super_dev, ROOT_INODE);	/* inode for root dir */
+  read_super(sp, origin);
 
   /* Check super_block for consistency (is it the right diskette?). */
-  if ( (rip->i_mode & I_TYPE) != I_DIRECTORY || rip->i_nlinks < 3 ||
-						sp->s_magic != SUPER_MAGIC)
-	panic("Root file system corrupted.  Possibly wrong diskette.", NO_NUM);
+  bad = (sp->s_version == 0); /* version is zero if bad magic in super block.*/
+  if (!bad) {
+	rip = get_inode(super_dev, ROOT_INODE);	/* inode for root dir */
+	if ( (rip->i_mode & I_TYPE) != I_DIRECTORY || rip->i_nlinks < 3) bad++;
+  }
+  if (bad)panic("Invalid root file system.  Possibly wrong diskette.",NO_NUM);
 
   sp->s_imount = rip;
   dup_inode(rip);
@@ -397,52 +422,41 @@ dev_t super_dev;			/* place to get superblock from */
 /*===========================================================================*
  *				askdev					     *
  *===========================================================================*/
-PRIVATE askdev()
+PRIVATE int askdev()
 {
   char line[80];
   register char *p;
   register min, maj, c, n;
 
   printf("Insert ROOT diskette and hit RETURN (or specify bootdev) %c", 0);
-  m.m_type = TTY_READ;
+  m.m_type = DEV_READ;
   m.TTY_LINE = 0;
   m.PROC_NR = FS_PROC_NR;
   m.ADDRESS = line;
   m.COUNT = sizeof(line);
-  if (sendrec(TTY, &m) != OK)
-	return(0);
+  if (sendrec(TTY, &m) != OK) return(0);
   for (;;) {
-	if (m.REP_PROC_NR != FS_PROC_NR)
-		return(-1);
-	if (m.REP_STATUS != SUSPEND)
-		break;
+	if (m.REP_PROC_NR != FS_PROC_NR) return(-1);
+	if (m.REP_STATUS != SUSPEND) break;
 	receive(TTY, &m);
   }
-  if ((n = m.REP_STATUS) <= 0)
-	return(0);
+  if ((n = m.REP_STATUS) <= 0) return(0);
   p = line;
   for (maj = 0;;) {
-	if (--n < 0)
-		return(0);
+	if (--n < 0) return(0);
 	c = *p++;
-	if (c == ',')
-		break;
-	if (c < '0' || c > '9')
-		return(0);
+	if (c == ',') break;
+	if (c < '0' || c > '9') return(0);
 	maj = maj * 10 + c - '0';
   }
-  for (min = 0;;) {
-	if (--n < 0)
-		return(0);
+  for (min = 0; ;) {
+	if (--n < 0) return(0);
 	c = *p++;
-	if (c == '\n')
-		break;
-	if (c < '0' || c > '9')
-		return(0);
+	if (c == '\n') break;
+	if (c < '0' || c > '9') return(0);
 	min = min * 10 + c - '0';
   }
-  if (n != 0)
-	return(0);
+  if (n != 0) return(0);
   return((maj << 8) | min);
 }
 #endif /* ASKDEV */
@@ -459,16 +473,15 @@ char *address;
   register long position;
 
   blocks = lastused(boot_dev);
-  printf("Loading RAM disk. To load: %4DK           Loaded:   0K %c",
+  printf("Loading RAM disk. To load: %4DK        Loaded:   0K %c",
 	((long)blocks * BLOCK_SIZE) / 1024, 0);
   position = 0;
   while (blocks) {
 	i = blocks;
-	if (i > (18*1024)/BLOCK_SIZE)
-		i = (18*1024)/BLOCK_SIZE;
+	if (i > (18*1024)/BLOCK_SIZE) i = (18*1024)/BLOCK_SIZE;
 	blocks -= i;
 	i *= BLOCK_SIZE;
-	m1.m_type = DISK_READ;
+	m1.m_type = DEV_READ;
 	m1.DEVICE = (boot_dev >> MINOR) & BYTE;
 	m1.POSITION = position;
 	m1.PROC_NR = HARDWARE;
@@ -495,24 +508,23 @@ dev_t boot_dev;
   register i, w, b, last, this, zbase;
   register struct super_block *sp = &super_block[0];
   register struct buf *bp;
-  register short *wptr, *wlim;
+  register bitchunk_t *wptr, *wlim;
 
   zbase = SUPER_BLOCK + 1 + sp->s_imap_blocks;
   this = sp->s_firstdatazone;
   last = this - 1;
   for (i = 0; i < sp->s_zmap_blocks; i++) {
-	bp = get_block(boot_dev, (block_nr) zbase + i, NORMAL);
-	wptr = (short *)&bp->b_data[0];
-	wlim = (short *)&bp->b_data[BLOCK_SIZE];
+	bp = get_block(boot_dev, (block_t) zbase + i, NORMAL);
+	wptr = &bp->b_bitmap[0];
+	wlim = &bp->b_bitmap[BITMAP_CHUNKS];
 	while (wptr != wlim) {
 		w = *wptr++;
 		for (b = 0; b < 8*sizeof(*wptr); b++) {
-			if (this == sp->s_nzones) {
+			if (this == sp->s_zones) {
 				put_block(bp, ZMAP_BLOCK);
 				return(last << sp->s_log_zone_size);
 			}
-			if ((w>>b) & 1)
-				last = this;
+			if ((w>>b) & 1) last = this;
 			this++;
 		}
 	}
@@ -558,6 +570,7 @@ PRIVATE phys_bytes get_physbase()
   m1.COPY_BYTES = 1;
   if (sendrec(SYSTASK, &m1) != OK || m1.SRC_BUFFER == 0)
 	panic("Can't get fs base", NO_NUM);
-  return m1.SRC_BUFFER;
+  return(m1.SRC_BUFFER);
 }
 #endif /* INTEL */
+

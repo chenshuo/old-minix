@@ -113,6 +113,7 @@ char *dialv = "Dial Command, V2.0(009) 24 Jan 88";
  * PHRASE THAT WOULD PRESUMABLY NEVER BE A PART OF A VALID AUTODIAL SEQUENCE
  * (E.G., "QUIT" and "quit"). -- DS
  */
+#include <sys/types.h>
 #include "ckcdeb.h"
 #include <stdio.h>
 #include <ctype.h>

@@ -19,6 +19,7 @@ char *connv = "Connect Command for Unix, V4E(017) 14 Sep 87";
  interpreter, to allow sending/receiving without breaking connection.
 */
 
+#include <sys/types.h>
 #include <stdio.h>
 #include <ctype.h>			/* Character types */
 #include "ckcdeb.h"

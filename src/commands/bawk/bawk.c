@@ -36,7 +36,9 @@ char **argv;
         Stacktop = Stackbtm + MAXSTACKSZ;
         Nextvar = Vartab;
 
-        strcpy( Fieldsep, " \t" );
+        addvar("FS")->vclass=1;
+        findvar("FS")->vptr=" \t";
+
         strcpy( Recordsep, "\n" );
 
         /*
@@ -58,11 +60,6 @@ char **argv;
                         ++Debug;
                         break;
 #endif
-		case 'F':
-			Fieldsep[0] = *(argv[0] + 1);
-			Fieldsep[1] = '\0';
-			break;
-
 		case 'f':
 			argv++ ; argc-- ;
 			if ( gotrules || argc <= 0 ) usage();
@@ -303,7 +300,7 @@ process()
                 /*
                  * Parse the input line.
                  */
-                Fieldcount = parse( Linebuf, Fields, Fieldsep );
+                Fieldcount = parse( Linebuf, Fields, findvar("FS")->vptr );
 #ifdef DEBUG
                 if ( Debug>1 )
                 {

@@ -1,9 +1,14 @@
 # Makefile for nroff
+
 CFLAGS=-D_MINIX -D_POSIX_SOURCE -F
-OBJS    = main.s command.s text.s io.s macros.s strings.s escape.s low.s
+O=o
+OBJS = main.$O command.$O text.$O io.$O macros.$O strings.$O escape.$O low.$O
 
 nroff:	$(OBJS) nroff.h
-	cc -i -o nroff $(OBJS)
+	@rm -rf mroff
+	@echo Start linking nroff
+	@cc -i -o nroff $(OBJS) >/dev/null
+	@chmem =65000 nroff
 
 clean:	
-	@rm -f *.bak *.s nroff
+	@rm -f *.bak *.o *.s core nroff

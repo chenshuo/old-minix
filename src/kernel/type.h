@@ -4,7 +4,6 @@
  * trap or interrupt, as well as for causing interrupts for signals.
  */
 
-
 #ifdef i8088
 struct pc_psw {
   int (*pc)();			/* storage for program counter */
@@ -18,3 +17,9 @@ struct sig_info {
   struct pc_psw sigpcpsw;
 };
 #endif
+
+PUBLIC struct tasktab {
+	int	(*initial_pc)();
+	int	stksize;
+	char	name[8];
+};

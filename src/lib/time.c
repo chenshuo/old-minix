@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC long time(tp)
 long *tp;

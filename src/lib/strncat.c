@@ -1,21 +1,29 @@
-char *strncat(s1, s2, n)
-register char *s1, *s2;
+/*
+  strncat.c - char *strncat( char *s1, char *s2, int n )
+
+  Strncat  appends up to  n  characters  from  s2  to the end of  s1.
+  It returns s1.
+*/
+
+char *strncat( s1, s2, n )
+char *s1;
+register char *s2;
 int n;
 {
-/* Append s2 to the end of s1, but no more than n characters */
+  register char *rs1;
 
-  char *original = s1;
-
-  if (n == 0) return(s1);
-
-  /* Find the end of s1. */
-  while (*s1 != 0) s1++;
-
-  /* Now copy s2 to the end of s1. */
-  while (*s2 != 0) {
-	*s1++ = *s2++;
-	if (--n == 0) break;
+  rs1 = s1;
+  if ( n > 0 )
+  {
+    while ( *rs1++ != 0 )
+      ;
+    --rs1;
+    while ( (*rs1++ = *s2++) != 0 )
+      if ( --n == 0 )
+      {
+        *rs1 = 0;
+        break;
+      }
   }
-  *s1 = 0;
-  return(original);
+  return s1;
 }

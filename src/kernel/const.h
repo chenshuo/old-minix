@@ -22,11 +22,15 @@
 #define DIVIDE_VECTOR      0	/* divide interrupt vector */
 #define CLOCK_VECTOR       8	/* clock interrupt vector */
 #define KEYBOARD_VECTOR    9	/* keyboard interrupt vector */
+#define ETHER_VECTOR      11	/* ethernet interrupt vector */
+#define SECONDARY_VECTOR  11	/* RS232 interrupt vector for port 2 */
+#define	RS232_VECTOR      12	/* RS232 interrupt vector for port 1 */
 #define XT_WINI_VECTOR	  13	/* xt winchester interrupt vector */
 #define FLOPPY_VECTOR     14	/* floppy disk interrupt vector */
 #define PRINTER_VECTOR    15	/* line printer interrupt vector */
 #define SYS_VECTOR        32	/* system calls are made with int SYSVEC */
 #define AT_WINI_VECTOR	 118	/* at winchester interrupt vector */
+#define PS_KEYB_VECTOR	0x71	/* keyboard interrupt vector for PS/2 */
 
 /* The 8259A interrupt controller has to be re-enabled after each interrupt. */
 #define INT_CTL         0x20	/* I/O port for interrupt controller */
@@ -34,10 +38,10 @@
 #define INT2_CTL	0xA0	/* I/O port for second interrupt controller */
 #define INT2_MASK	0xA1	/* setting bits in this port disables ints */
 #define ENABLE          0x20	/* code used to re-enable after an interrupt */
+#define PCR		0x65	/* Planar Control Register */
 #endif
 
-#define TASK_STACK_BYTES 256	/* how many bytes for each task stack */
-#define K_STACK_BYTES    256	/* how many bytes for the kernel stack */
+#define K_STACK_BYTES    512	/* how many bytes for the kernel stack */
 
 #define RET_REG            0	/* system call return codes go in this reg */
 #define IDLE            -999	/* 'cur_proc' = IDLE means nobody is running */
@@ -49,3 +53,5 @@
 #define USER_Q             2	/* ready users are scheduled via queue 2 */
 
 #define printf        printk	/* the kernel really uses printk, not printf */
+
+

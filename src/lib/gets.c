@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 char *gets(str)
 char *str;
@@ -10,7 +10,7 @@ char *str;
 	while ((ch = getc(stdin)) != EOF && ch != '\n')
 		*ptr++ = ch;
 
-	if (ch == EOF && ptr==str)
+	if (ch == EOF)
 		return(NULL);
 	*ptr = '\0';
 	return(str);

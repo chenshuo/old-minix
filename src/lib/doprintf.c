@@ -1,218 +1,271 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
-#define MAXDIGITS 12
-#define PRIVATE   static
+/*
+ * three compile time options:
+ *	STACKUP		fetch arguments using *p-- instead of *p++
+ *	NO_LONGD	%d and %ld/%D are equal
+ *	NO_FLOAT	abort on %e, %f and %g
+ */
 
-/* This is the same as varargs , on BSD systems */
+#define	NO_FLOAT
 
-#define GET_ARG(arglist,mode) ((mode *)(arglist += sizeof(mode)))[-1]
+#ifdef NO_FLOAT
+#define	MAXDIG		11	/* 32 bits in radix 8 */
+#else
+#define	MAXDIG		128	/* this must be enough */
+#endif
 
-_doprintf(fp, format, args)
-FILE *fp;
-register char *format;
-int args;
+static char *
+_itoa(p, num, radix)
+register char *p;
+register unsigned num;
+register radix;
 {
-	register char *vl;
-	int  r,
-	    w1, w2,
-	    sign;
-	long l;
-	char c;
-	char *s;
-	char padchar;
-	char a[MAXDIGITS];
+	register	i;
+	register char	*q;
 
-	vl = (char *) args;
+	q = p + MAXDIG;
+	do {
+		i = (int)(num % radix);
+		i += '0';
+		if (i > '9')
+			i += 'A' - '0' - 10;
+		*--q = i;
+	} while (num = num / radix);
+	i = p + MAXDIG - q;
+	do
+		*p++ = *q++;
+	while (--i);
+	return(p);
+}
 
-	while ( *format != '\0') {
-		if ( *format != '%' ) {
-			putc( *format++, fp );
+#ifndef NO_LONGD
+static char *
+ltoa(p, num, radix)
+register char *p;
+register unsigned long num;
+register radix;
+{
+	register	i;
+	register char	*q;
+
+	q = p + MAXDIG;
+	do {
+		i = (int)(num % radix);
+		i += '0';
+		if (i > '9')
+			i += 'A' - '0' - 10;
+		*--q = i;
+	} while (num = num / radix);
+	i = p + MAXDIG - q;
+	do
+		*p++ = *q++;
+	while (--i);
+	return(p);
+}
+#endif
+
+#ifndef NO_FLOAT
+extern char	*_ecvt();
+extern char	*_fcvt();
+extern char	*_gcvt();
+#endif
+
+#ifdef STACKUP
+#define	GETARG(typ)	*((typ *)args)--
+#else
+#define	GETARG(typ)	*((typ *)args)++
+#endif STACKUP
+
+_doprintf(iop, fmt, args)
+FILE *iop;
+register char *fmt;
+register int *args;
+{
+	char		buf[MAXDIG+1];	/* +1 for sign */
+	register char	*p;
+	register char	*s;
+	register	c;
+	register	i;
+	register short	width;
+	register short	ndigit;
+	register	ndfnd;
+	register	ljust;
+	register	zfill;
+#ifndef NO_LONGD
+	register	lflag;
+	register long	l;
+#endif
+
+	for (;;) {
+		c = *fmt++;
+		if (c == 0)
+			return;
+		if (c != '%') {
+			putc(c, iop);
 			continue;
 		}
-
-		w1 = 0;
-		w2 = 0;
-		sign = 1;
-		padchar = ' ';
-		format++;
-
-		if ( *format == '-' ) {
-			sign = -1;
-			format++;
+		p = buf;
+		s = buf;
+		ljust = 0;
+		if (*fmt == '-') {
+			fmt++;
+			ljust++;
 		}
-
-		if ( *format == '0') {
-			padchar = '0';
-			format++;
+		zfill = ' ';
+		if (*fmt == '0') {
+			fmt++;
+			zfill = '0';
 		}
-
-		while ( *format >='0' && *format <='9' ){
-			w1 = 10 * w1 + sign * ( *format - '0' );
-			format++;
+		for (width = 0;;) {
+			c = *fmt++;
+			if (c >= '0' && c <= '9')
+				c -= '0';
+			else if (c == '*')
+				c = GETARG(int);
+			else
+				break;
+			width *= 10;
+			width += c;
 		}
-
-		if ( *format == '.'){
-			format++;
-			while ( *format >='0' && *format <='9' ){
-				w2 = 10 * w2 + ( *format - '0' );
-				format++;
+		ndfnd = 0;
+		ndigit = 0;
+		if (c == '.') {
+			for (;;) {
+				c = *fmt++;
+				if (c >= '0' && c <= '9')
+					c -= '0';
+				else if (c == '*')
+					c = GETARG(int);
+				else
+					break;
+				ndigit *= 10;
+				ndigit += c;
+				ndfnd++;
 			}
 		}
-
-		switch (*format) {
-		case 'd':
-			l = (long) GET_ARG(vl, int);
-			r = 10;
-			break;
-		case 'u':
-			l = (long) GET_ARG(vl, int);
-			l = l & 0xFFFF;
-			r = 10;
-			break;
-		case 'o':
-			l = (long) GET_ARG(vl, int);
-			if (l < 0) l = l & 0xFFFF;
-			r = 8;
-			break;
+#ifndef NO_LONGD
+		lflag = 0;
+#endif
+		if (c == 'l' || c == 'L') {
+#ifndef NO_LONGD
+			lflag++;
+#endif
+			if (*fmt)
+				c = *fmt++;
+		}
+		switch (c) {
+		case 'X':
+#ifndef NO_LONGD
+			lflag++;
+#endif
 		case 'x':
-			l = (long) GET_ARG(vl, int);
-			if (l < 0) l = l & 0xFFFF;
-			r = 16;
+			c = 16;
+			goto oxu;
+		case 'U':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'u':
+			c = 10;
+			goto oxu;
+		case 'O':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'o':
+			c = 8;
+		oxu:
+#ifndef NO_LONGD
+			if (lflag) {
+				p = ltoa(p, GETARG(long), c);
+				break;
+			}
+#endif
+			p = _itoa(p, GETARG(int), c);
 			break;
 		case 'D':
-			l = (long) GET_ARG(vl, long);
-			r = 10;
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'd':
+#ifndef NO_LONGD
+			if (lflag) {
+				if ((l = GETARG(long)) < 0) {
+					*p++ = '-';
+					l = -l;
+				}
+				p = ltoa(p, l, 10);
+				break;
+			}
+#endif
+			if ((i = GETARG(int)) < 0) {
+				*p++ = '-';
+				i = -i;
+			}
+			p = _itoa(p, i, 10);
 			break;
-		case 'O':
-			l = (long) GET_ARG(vl, long);
-			r = 8;
+#ifdef NO_FLOAT
+		case 'e':
+		case 'f':
+		case 'g':
+			zfill = ' ';
+			*p++ = '?';
 			break;
-		case 'X':
-			l = (long) GET_ARG(vl, long);
-			r = 16;
+#else
+		case 'e':
+			if (ndfnd == 0)
+				ndigit = 6;
+			ndigit++;
+			p = _ecvt(p, GETARG(double), ndigit);
 			break;
+		case 'f':
+			if (ndfnd == 0)
+				ndigit = 6;
+			p = _fcvt(p, GETARG(double), ndigit);
+			break;
+		case 'g':
+			if (ndfnd == 0)
+				ndigit = 6;
+			p = _gcvt(p, GETARG(double), ndigit);
+			break;
+#endif
 		case 'c':
-			c = (char) GET_ARG(vl, int); 
-			/* char's are casted back to int's */
-			putc( c, fp);
-			format++;
-			continue;
+			zfill = ' ';
+			*p++ = GETARG(int);
+			break;
 		case 's':
-			s = GET_ARG(vl, char *);
-			_printit(s,w1,w2,padchar,strlen(s),fp);
-			format++;
-			continue;
+			zfill = ' ';
+			if ((s = GETARG(char *)) == 0)
+				s = "(null)";
+			if (ndigit == 0)
+				ndigit = 32767;
+			for (p = s; *p && --ndigit >= 0; p++)
+				;
+			break;
 		default:
-			putc('%',fp);
-			putc(*format++,fp);
-			continue;
+			*p++ = c;
+			break;
 		}
-
-		_bintoascii (l, r, a);
-		_printit(a,w1,w2,padchar,strlen(a),fp);
-		format++;
-	}
-}
-
-
-
-PRIVATE _bintoascii (num, radix, a)
-long    num;
-int     radix;
-char    *a;
-{
-	char b[MAXDIGITS];
-	int hit, negative;
-	register int n, i;
-
-	negative = 0;
-	if (num == 0) {
-		a[0] = '0';
-		a[1] = '\0';
-		return;
-	}
-	if (radix == 10) {
-		if (num < 0) {num = -num; negative++;}
-	} 
-
-	for (n = 0; n < MAXDIGITS; n++)
-		b[n] = 0;
-
-	n = 0;
-
-	do {
-		if (radix == 10) {
-			b[n] = num % 10;
-			num = (num - b[n]) / 10;
+		i = p - s;
+		if ((width -= i) < 0)
+			width = 0;
+		if (ljust == 0)
+			width = -width;
+		if (width < 0) {
+			if (*s == '-' && zfill == '0') {
+				putc(*s++, iop);
+				i--;
+			}
+			do
+				putc(zfill, iop);
+			while (++width != 0);
 		}
-		if (radix == 8) {
-			b[n] = num & 0x7;
-			num = (num >> 3) & 0x1FFFFFFF;
-		}
-		if (radix == 16) {
-			b[n] = num & 0xF;
-			num = (num >> 4) & 0x0FFFFFFF;
-		}
-		n++;
-	} 
-	while (num != 0);
-
-	/* Convert to ASCII. */
-	hit = 0;
-	for (i = n - 1; i >= 0; i--) {
-		if (b[i] == 0 && hit == 0) {
-			b[i] = ' ';
-		}
-		else {
-			if (b[i] < 10)
-				b[i] += '0';
-			else
-				b[i] += 'A' - 10;
-			hit++;
+		while (--i >= 0)
+			putc(*s++, iop);
+		while (width) {
+			putc(zfill, iop);
+			width--;
 		}
 	}
-	if (negative)
-		b[n++] = '-';
-	
-	for(i = n - 1 ; i >= 0 ; i-- )
-		*a++ = b[i];
-	
-	*a = '\0';
-	
-}
-
-
-PRIVATE _printit(str, w1, w2, padchar, length, file)
-char *str;
-int w1, w2;
-char padchar;
-int length;
-FILE *file;
-{
-	int len2 = length;
-	int temp;
-	
-	if ( w2 > 0  && length > w2) 
-		len2 = w2;
-
-	temp = len2;
-
-	if ( w1 > 0 )
-		while ( w1 > len2 ){
-			--w1;
-			putc(padchar,file);
-		}
-	
-	while ( *str && ( len2-- != 0 ))
-		putc(*str++, file);
-
-	if ( w1 < 0 )
-		if ( padchar == '0' ){
-			putc('.',file);
-			w1++;
-		}
-		while ( w1 < -temp ){
-			w1++;
-			putc(padchar,file);
-		}
 }

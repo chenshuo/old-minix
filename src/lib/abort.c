@@ -1,4 +1,6 @@
+#include <signal.h>
+
 abort()
 {
-  exit(99);
+  return(kill(getpid(), SIGIOT));
 }

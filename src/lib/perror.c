@@ -1,8 +1,8 @@
 /* perror(s) print the current error message. */
 
-#include "../h/error.h"
+#include <errno.h>
 extern int errno;
-char *error_message[NERROR+1] = {
+char *sys_errlist[] = {
         "Error 0",
         "Not owner",
         "No such file or directory",
@@ -40,16 +40,17 @@ char *error_message[NERROR+1] = {
         "Result too large"
 };
 
+int sys_nerr = sizeof(sys_errlist)/sizeof(char *);
 
 perror(s)
 char *s;
 {
-  if (errno < 0 || errno > NERROR) {
+  if (errno < 0 || errno >= sizeof(sys_errlist)/sizeof(char *)) {
 	write(2, "Invalid errno\n", 14);
   } else {
 	write(2, s, slen(s));
 	write(2, ": ", 2);
-	write(2, error_message[errno], slen(error_message[errno]));
+	write(2, sys_errlist[errno], slen(sys_errlist[errno]));
 	write(2, "\n", 1);
   }
 }

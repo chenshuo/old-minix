@@ -74,7 +74,6 @@ PRIVATE get_work()
 
   if (receive(ANY, &mm_in) != OK) panic("MM receive error", NO_NUM);
   who = mm_in.m_source;		/* who sent the message */
-  if (who < HARDWARE || who >= NR_PROCS) panic("MM called by", who);
   mm_call = mm_in.m_type;	/* system call number */
 }
 
@@ -162,10 +161,12 @@ PUBLIC do_brk2()
   mem1 = tot_mem/CLICK_TO_K;
   mem2 = (ram_base + 512/CLICK_SIZE)/CLICK_TO_K;	/* MINIX, rounded */
   mem3 = ram_clicks/CLICK_TO_K;
-  printf("%c 8%c~0",033, 033);	/* go to top of screen and clear screen */
-  printf("Memory size = %dK     ", mem1);
-  printf("MINIX = %dK     ", mem2);
-  printf("RAM disk = %dK     ", mem3);
+#ifndef ATARI_ST
+  printf("%c[H%c[J",033, 033);	/* go to top of screen and clear screen */
+#endif
+  printf("Memory size = %3dK     ", mem1);
+  printf("MINIX = %3dK     ", mem2);
+  printf("RAM disk = %3dK     ", mem3);
   printf("Available = %dK\n\n", mem1 - mem2 - mem3);
   if (mem1 - mem2 - mem3 < 32) {
 	printf("\nNot enough memory to run MINIX\n\n", NO_NUM);
@@ -178,37 +179,37 @@ PUBLIC do_brk2()
   rmp->mp_seg[T].mem_len  = init_text_clicks;
   rmp->mp_seg[D].mem_phys = init_org + init_text_clicks;
   rmp->mp_seg[D].mem_len  = init_data_clicks;
-  rmp->mp_seg[S].mem_vir  = init_clicks;
   rmp->mp_seg[S].mem_phys = init_org + init_clicks;
+#ifdef ATARI_ST
+  rmp->mp_seg[T].mem_vir  = rmp->mp_seg[T].mem_phys;
+  rmp->mp_seg[D].mem_vir  = rmp->mp_seg[D].mem_phys;
+  rmp->mp_seg[S].mem_vir  = rmp->mp_seg[S].mem_phys;
+#else
+  rmp->mp_seg[S].mem_vir  = init_clicks;
+#endif
   if (init_text_clicks != 0) rmp->mp_flags |= SEPARATE;
 
   return(OK);
 }
 
-
+#ifdef ATARI_ST
 /*===========================================================================*
- *				set_map	   				     *
+ *				get_tot_mem				     *
  *===========================================================================*/
-PRIVATE set_map(proc_nr, base, clicks)
-int proc_nr;			/* whose map to set? */
-phys_clicks base;		/* where in memory does the process start? */
-phys_clicks clicks;		/* total size in clicks (sep I & D not used) */
+/*
+ * Current memory size is set by TOS in variable 'phystop'.
+ * The TOS variable '_memtop' compensates for VIDEO memory.
+ */
+PUBLIC phys_clicks get_tot_mem()
 {
-/* Set up the memory map as part of the system initialization. */
+  long i;
 
-  register struct mproc *rmp;
-  vir_clicks vclicks;
-
-  rmp = &mproc[proc_nr];
-  vclicks = (vir_clicks) clicks;
-  rmp->mp_seg[T].mem_vir = 0;
-  rmp->mp_seg[T].mem_len = 0;
-  rmp->mp_seg[T].mem_phys = base;
-  rmp->mp_seg[D].mem_vir = 0;
-  rmp->mp_seg[D].mem_len = vclicks;
-  rmp->mp_seg[D].mem_phys = base;
-  rmp->mp_seg[S].mem_vir = vclicks;
-  rmp->mp_seg[S].mem_len = 0;
-  rmp->mp_seg[S].mem_phys = base + vclicks;
-  sys_newmap(proc_nr, rmp->mp_seg);
+  if (mem_copy(
+	HARDWARE, D, (long)0x0436,	/* TOS variable _memtop */
+	MM_PROC_NR, D, (long)&i,
+	(long)sizeof(i)
+  ) != OK)
+	panic("get_tot_mem", NO_NUM);
+  return((phys_clicks)(i >> CLICK_SHIFT));
 }
+#endif

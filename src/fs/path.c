@@ -67,7 +67,7 @@ char string[NAME_SIZE];		/* the final component is returned here */
   register char *new_name;
   register struct inode *new_ip;
   extern struct inode *advance();
-  extern char *get_name();
+  char *get_name();
 
   /* Is the path absolute or relative?  Initialize 'rip' accordingly. */
   rip = (*path == '/' ? fp->fp_rootdir : fp->fp_workdir);
@@ -118,18 +118,18 @@ char string[NAME_SIZE];		/* component extracted from 'old_name' */
   while ( (c = *rnp) == '/') rnp++;	/* skip leading slashes */
 
   /* Copy the unparsed path, 'old_name', to the array, 'string'. */
-  while ( rnp < &user_path[MAX_PATH]  &&  c != '/'   &&  c != '\0') {
+  while ( rnp < &old_name[MAX_PATH]  &&  c != '/'   &&  c != '\0') {
 	if (np < &string[NAME_SIZE]) *np++ = c;
 	c = *++rnp;		/* advance to next character */
   }
 
   /* To make /usr/ast/ equivalent to /usr/ast, skip trailing slashes. */
-  while (c == '/' && rnp < &user_path[MAX_PATH]) c = *++rnp;
+  while (c == '/' && rnp < &old_name[MAX_PATH]) c = *++rnp;
 
   /* Pad the component name out to NAME_SIZE chars, using 0 as filler. */
   while (np < &string[NAME_SIZE]) *np++ = '\0';
 
-  if (rnp >= &user_path[MAX_PATH]) {
+  if (rnp >= &old_name[MAX_PATH]) {
 	err_code = E_LONG_STRING;
 	return((char *) 0);
   }
@@ -160,6 +160,9 @@ char string[NAME_SIZE];		/* component name to look for */
   /* If 'string' is empty, yield same inode straight away. */
   if (string[0] == '\0') return(get_inode(dirp->i_dev, dirp->i_num));
 
+  /* Check for NIL_INODE. */
+  if (dirp == NIL_INODE) return(NIL_INODE);
+
   /* If 'string' is not present in the directory, signal error. */
   if ( (r = search_dir(dirp, string, &numb, LOOK_UP)) != OK) {
 	err_code = r;
@@ -172,7 +175,7 @@ char string[NAME_SIZE];		/* component name to look for */
   if (rip->i_num == ROOT_INODE)
 	if (dirp->i_num == ROOT_INODE) {
 	    if (string[1] == '.') {
-		for (sp = &super_block[1]; sp < &super_block[NR_SUPERS]; sp++) {
+		for (sp = &super_block[1]; sp < &super_block[NR_SUPERS]; sp++){
 			if (sp->s_dev == rip->i_dev) {
 				/* Release the root inode.  Replace by the
 				 * inode mounted on.
@@ -187,6 +190,8 @@ char string[NAME_SIZE];		/* component name to look for */
 		}
 	    }
 	}
+  if (rip == NIL_INODE) return(NIL_INODE);
+
   /* See if the inode is mounted on.  If so, switch to root directory of the
    * mounted file system.  The super_block provides the linkage between the
    * inode mounted on and the root directory of the mounted file system.

@@ -1,25 +1,20 @@
-#include	<stdio.h>
+#include <stdio.h>
 
-#ifndef NIL
-#define NIL 0
-#endif
-
-
-system( cmd )
+system(cmd)
 char *cmd;
 {
     int retstat, procid, waitstat;
 
-    if( (procid = fork()) == 0 )
-    {
-        execl( "/bin/sh", "sh", "-c", cmd, NIL );
+    if ( (procid = fork()) == 0) {
+	/* Child does an exec of the command. */
+        execl( "/bin/sh", "sh", "-c", cmd, 0 );
         exit( 127 );
     }
 
-    while( (waitstat = wait(&retstat)) != procid && waitstat != -1 )
-        ;
-    if (waitstat == -1)
-        retstat = -1;
+    /* Check to see if fork failed. */
+    if (procid < 0) exit(1);
 
-    return( retstat );
+    while ( (waitstat = wait(&retstat)) != procid && waitstat != -1 ) ;
+    if (waitstat == -1) retstat = -1;
+    return(retstat);
 }

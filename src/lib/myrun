@@ -1,0 +1,25 @@
+# Run this to create a new library
+# You must have all the .s files in
+# the current directory.
+# To do this, unarchive the existing `libc.a'
+# to get the assembly files & object files.
+# If you wish to recompile the library, then
+# do the following:
+#  for i in [a-m]*.c
+#  do echo $i
+#     cc -c -LIB -Di8088 $i
+#     done
+#  for i in [n-z]*.c
+#  do echo $i
+#     cc -c -LIB -Di8088 $i
+#  done
+#
+rm libc.a
+split -30 order
+for i in xa?
+do ar vq libc.a `cat $i`
+   rm $i
+done
+rm [a-h]*.s
+rm [i-r]*.s
+rm *.s

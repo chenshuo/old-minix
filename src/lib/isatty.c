@@ -1,13 +1,13 @@
-#include "../include/stat.h"
+#include "lib.h"
+#include <minix/com.h>
+#include <sgtty.h>
 
 int isatty(fd)
 int fd;
 {
-  struct stat s;
-
-  fstat(fd, &s);
-  if ( (s.st_mode&S_IFMT) == S_IFCHR)
-	return(1);
-  else
+  M.TTY_REQUEST = TIOCGETP;
+  M.TTY_LINE = fd;
+  if (callx(FS, IOCTL) < 0)
 	return(0);
+  return(1);
 }

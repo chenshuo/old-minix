@@ -11,12 +11,11 @@ EXTERN int sig_procs;		/* number of procs with p_pending != 0 */
 EXTERN message int_mess;	/* interrupt routines build message here */
 
 /* CPU type. */
-EXTERN int olivetti;		/* TRUE for Olivetti-style keyboard */
-EXTERN int pc_at;		/*  PC-AT type diskette drives (360K/1.2M) ? */
+EXTERN int pc_at;		/* PC-AT type diskette drives (360K/1.2M) ? */
+EXTERN int ps;			/* are we dealing with a ps? */
+EXTERN int port_65;		/* saved contents of Planar Control Register */
 
-/* The kernel and task stacks. */
-EXTERN struct t_stack {
-  int stk[TASK_STACK_BYTES/sizeof(int)];
-} t_stack[NR_TASKS - 1];	/* task stacks; task = -1 never really runs */
-
-EXTERN char k_stack[K_STACK_BYTES];	/* The kernel stack. */
+/* Video cards and keyboard types. */
+EXTERN int color;		/* 1 if console is color, 0 if it is mono */
+EXTERN int ega;			/* 1 if console is EGA, 0 if not */
+EXTERN int scan_code;		/* scan code of key pressed to start minix */

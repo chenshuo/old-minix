@@ -27,6 +27,7 @@
 #define owner	      m.m1_i2
 #define parent	      m.m1_i1
 #define pathname      m.m3_ca1
+#define pid	      m.m1_i3
 #define pro	      m.m1_i1
 #define rd_only	      m.m1_i3
 #define real_user_id  m.m1_i2

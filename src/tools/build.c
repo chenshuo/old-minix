@@ -109,12 +109,12 @@ char *argv[];
   /* Copy the 5 programs to the output file or diskette. */
   for (i = 0; i < PROGRAMS; i++) copy2(i, argv[i+2]);
   flush();
-  printf("                                               -----     -----\n");
+  printf("                                               -----      -----\n");
 #ifdef PCIX
-  printf("Operating system size  %29ld     %5lx\n", cum_size, cum_size);
+  printf("Operating system size  %29ld      %5lx\n", cum_size, cum_size);
   printf("\nTotal size including fsck is %ld.\n", all_size);
 #else
-  printf("Operating system size  %29D     %5X\n", cum_size, cum_size);
+  printf("Operating system size  %29D      %5X\n", cum_size, cum_size);
   printf("\nTotal size including fsck is %D.\n", all_size);
 #endif
 
@@ -163,7 +163,8 @@ char *file_name;                /* file to open */
  */
 
   int fd, sepid, bytes_read, count;
-  unsigned text_bytes, data_bytes, bss_bytes, tot_bytes, rest, filler;
+  unsigned text_bytes, data_bytes, bss_bytes, rest, filler;
+  long tot_bytes;
   unsigned left_to_read;
   char inbuf[READ_UNIT];
   
@@ -177,7 +178,7 @@ char *file_name;                /* file to open */
         pexit("separate I & D but text size not multiple of 16 bytes.  File: ", 
                                                                 file_name);
   }
-  tot_bytes = text_bytes + data_bytes + bss_bytes;
+  tot_bytes = (long)text_bytes + data_bytes + bss_bytes;
   rest = tot_bytes % 16;
   filler = (rest > 0 ? 16 - rest : 0);
   bss_bytes += filler;
@@ -193,7 +194,7 @@ char *file_name;                /* file to open */
 
   /* Print a message giving the program name and size, except for fsck. */
   if (num < FSCK) { 
-        printf("%s  text=%5u  data=%5u  bss=%5u  tot=%5u  hex=%4x  %s\n",
+        printf("%s  text=%5u  data=%5u  bss=%5u  tot=%5D  hex=%5X  %s\n",
                 name[num], text_bytes, data_bytes, bss_bytes, tot_bytes,
                 tot_bytes, (sizes[num].sep_id ? "Separate I & D" : ""));
   }
@@ -383,10 +384,10 @@ patch2()
         b = sizes[i].bss_size;
         if (sizes[i].sep_id) {
                 text_clicks = t >> CLICK_SHIFT;
-                data_clicks = (d + b) >> CLICK_SHIFT;
+                data_clicks = ((unsigned long)d + b) >> CLICK_SHIFT;
         } else {
                 text_clicks = 0;
-                data_clicks = (t + d + b) >> CLICK_SHIFT;
+                data_clicks = ((unsigned long)t + d + b) >> CLICK_SHIFT;
         }
         put_byte(data_offset + 4*i + 0L, (text_clicks>>0) & 0377);
         put_byte(data_offset + 4*i + 1L, (text_clicks>>8) & 0377);
@@ -416,13 +417,13 @@ patch3()
   long init_org, fs_org, fbase, mm_data;
 
   init_org  = PROG_ORG;
-  init_org += sizes[KERN].text_size+sizes[KERN].data_size+sizes[KERN].bss_size;
+  init_org += (long)sizes[KERN].text_size+sizes[KERN].data_size+sizes[KERN].bss_size;
   mm_data = init_org - PROG_ORG +512L;	/* offset of mm in file */
   mm_data += (long) sizes[MM].text_size;
-  init_org += sizes[MM].text_size + sizes[MM].data_size + sizes[MM].bss_size;
+  init_org += (long)sizes[MM].text_size + sizes[MM].data_size + sizes[MM].bss_size;
   fs_org = init_org - PROG_ORG + 512L;   /* offset of fs-text into file */
   fs_org +=  (long) sizes[FS].text_size;
-  init_org += sizes[FS].text_size + sizes[FS].data_size + sizes[FS].bss_size;
+  init_org += (long)sizes[FS].text_size + sizes[FS].data_size + sizes[FS].bss_size;
   init_text_size = sizes[INIT].text_size;
   init_data_size = sizes[INIT].data_size + sizes[INIT].bss_size;
   init_org  = init_org >> CLICK_SHIFT;  /* convert to clicks */

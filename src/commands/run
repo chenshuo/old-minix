@@ -1,6 +1,0 @@
-mkdir bin 2>/dev/null
-for i in *.c
-do
-   echo Making $i
-   make f=`basename $i .c`
-done

@@ -85,8 +85,10 @@ PUBLIC int do_sync()
 
   /* Update the time in the root super_block. */
   sp = get_super(ROOT_DEV);
-  sp->s_time = clock_time();
-  if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
+  if (sp != NIL_SUPER) {
+	  sp->s_time = clock_time();
+	  if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
+  }
 
   /* Write all the dirty inodes to the disk. */
   for (rip = &inode[0]; rip < &inode[NR_INODES]; rip++)
@@ -121,7 +123,7 @@ PUBLIC int do_sync()
 PUBLIC int do_fork()
 {
 /* Perform those aspects of the fork() system call that relate to files.
- * In particular, let the child inherit its parents file descriptors.
+ * In particular, let the child inherit its parent's file descriptors.
  * The parent and child parameters tell who forked off whom. The file
  * system uses the same slot numbers as the kernel.  Only MM makes this call.
  */
@@ -143,6 +145,12 @@ PUBLIC int do_fork()
   cp = &fproc[child];
   for (i = 0; i < NR_FDS; i++)
 	if (cp->fp_filp[i] != NIL_FILP) cp->fp_filp[i]->filp_count++;
+
+  /* Fill in new process id and, if necessary, process group. */
+  cp->fp_pid = pid;
+  if (parent == INIT_PROC_NR) {
+	cp->fp_pgrp = pid;
+  }
 
   /* Record the fact that both root and working dir have another user. */
   dup_inode(cp->fp_rootdir);
@@ -166,6 +174,9 @@ PUBLIC int do_exit()
   /* Nevertheless, pretend that the call came from the user. */
   fp = &fproc[slot1];		/* get_filp() needs 'fp' */
   exitee = slot1;
+
+  /* Can this be a process group leader associated with a terminal? */
+  if (fp->fp_pid == fp->fp_pgrp && fp->fs_tty != 0) tty_exit();
 
   if (fp->fp_suspended == SUSPENDED) {
 	if (fp->fp_task == XPIPE) susp_count--;

@@ -18,8 +18,8 @@
  *	3. Altered versions must be plainly marked as such, and must not
  *		be misrepresented as being the original software.
  */
-#include "../include/stdio.h"
-#include "../include/regexp.h"
+#include <stdio.h>
+#include <regexp.h>
 /*
  * The first byte of the regexp internal "program" is actually this magic
  * number; the start node begins in the second byte.
@@ -73,7 +73,7 @@ char *dest;
 				c = *src++;
 			*dst++ = c;
 		} else if (prog->startp[no] != NULL && prog->endp[no] != NULL) {
-			len = prog->endp[no] - prog->startp[no];
+			len = (int)(prog->endp[no] - prog->startp[no]);
 			strncpy(dst, prog->startp[no], len);
 			dst += len;
 			if (len !=0 && *(dst-1) == '\0') { /* strncpy hit NUL. */

@@ -36,7 +36,7 @@ PUBLIC int do_creat()
   register mask_bits bits;
   struct filp *fil_ptr;
   int file_d;
-  extern struct inode *new_node();
+  struct inode *new_node();
 
   /* See if name ok and file descriptor and filp slots are available. */
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
@@ -49,7 +49,7 @@ PUBLIC int do_creat()
   if (r != OK && r != EEXIST) return(r);
 
   /* At this point two possibilities exist: the given path did not exist
-   * and has been created, or it pre-existed.  In the later case, truncate
+   * and has been created, or it pre-existed.  In the latter case, truncate
    * if possible, otherwise return an error.
    */
   if (r == EEXIST) {
@@ -210,11 +210,6 @@ PUBLIC int do_open()
 	break;
 
      case I_CHAR_SPECIAL:
-	/* Assume that first open of char special file is controlling tty. */
-	if (fp->fs_tty == 0) fp->fs_tty = (dev_nr) rip->i_zone[0];
-	dev_open((dev_nr) rip->i_zone[0], (int) bits);
-	break;
-
      case I_BLOCK_SPECIAL:
 	dev_open((dev_nr) rip->i_zone[0], (int) bits);
 	break;

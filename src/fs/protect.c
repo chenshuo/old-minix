@@ -135,7 +135,7 @@ register struct inode *rip;	/* pointer to inode to be checked */
 mask_bits access_desired;	/* RWX bits */
 int real_uid;			/* set iff real uid to be tested */
 {
-/* Given a pointer to an inode, 'rip', and the accessed desired, determine
+/* Given a pointer to an inode, 'rip', and the access desired, determine
  * if the access is allowed, and if not why not.  The routine looks up the
  * caller's uid in the 'fproc' table.  If the access is allowed, OK is returned
  * if it is forbidden, EACCES is returned.
@@ -178,7 +178,7 @@ int real_uid;			/* set iff real uid to be tested */
 /*===========================================================================*
  *				read_only				     *
  *===========================================================================*/
-PRIVATE int read_only(ip)
+PUBLIC int read_only(ip)
 struct inode *ip;		/* ptr to inode whose file sys is to be cked */
 {
 /* Check to see if the file system on which the inode 'ip' resides is mounted

@@ -1,6 +1,8 @@
-#include "../include/stdio.h"
+#include <stdio.h>
+#include <errno.h>
+#include "lib.h"
 
-#define  PMODE    0644
+#define  PMODE    0666
 
 
 FILE *fopen(name,mode)
@@ -27,7 +29,8 @@ char *name , *mode;
 	case 'a': 
 		flags |= WRITEMODE;
 		if (( fd = open(name,1)) < 0 )
-			return(NULL);
+			if(errno != ENOENT || (fd = creat(name, PMODE)) < 0)
+				return(NULL);
 		lseek(fd,0L,2);
 		break;         
 

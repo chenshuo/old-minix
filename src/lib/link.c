@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC int link(name, name2)
 char *name, *name2;

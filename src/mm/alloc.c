@@ -97,7 +97,7 @@ phys_clicks clicks;		/* number of clicks to free */
    * front of the hole list.
    */
   if (hp == NIL_HOLE || base <= hp->h_base) {
-	/* Block to be freed goes on front of hole list. */
+	/* Block to be freed goes on front of the hole list. */
 	new_ptr->h_next = hp;
 	hole_head = new_ptr;
 	merge(new_ptr);
@@ -166,7 +166,7 @@ register struct hole *hp;	/* ptr to hole to merge with its successors */
   }
 
   /* If 'hp' now points to the last hole, return; otherwise, try to absorb its
-   * succesor into it.
+   * successor into it.
    */
   if ( (next_ptr = hp->h_next) == NIL_HOLE) return;
   if (hp->h_base + hp->h_len == next_ptr->h_base) {

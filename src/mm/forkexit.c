@@ -13,6 +13,7 @@
  *   do_wait:	perform the WAIT system call
  */
 
+
 #include "../h/const.h"
 #include "../h/type.h"
 #include "../h/callnr.h"
@@ -25,7 +26,6 @@
 #define LAST_FEW            2	/* last few slots reserved for superuser */
 
 PRIVATE next_pid = INIT_PROC_NR+1;	/* next pid to be assigned */
-PRIVATE process_group = 1;		/* next process grp to be assigned */
 
 /* Some C compilers require static declarations to precede their first use. */
 
@@ -40,10 +40,12 @@ PUBLIC int do_fork()
   register struct mproc *rmc;	/* pointer to child */
   int i, child_nr, t;
   char *sptr, *dptr;
-  long prog_bytes;
   phys_clicks prog_clicks, child_base;
-  long parent_abs, child_abs;
   extern phys_clicks alloc_mem();
+#ifndef ATARI_ST
+  long prog_bytes;
+  long parent_abs, child_abs;
+#endif
 
  /* If tables might fill up during FORK, don't even start since recovery half
   * way through is such a nuisance.
@@ -54,40 +56,41 @@ PUBLIC int do_fork()
   if (procs_in_use >= NR_PROCS - LAST_FEW && rmp->mp_effuid != 0)return(EAGAIN);
 
   /* Determine how much memory to allocate. */
-  prog_clicks = (phys_clicks) rmp->mp_seg[T].mem_len + rmp->mp_seg[D].mem_len +
-						      rmp->mp_seg[S].mem_len;
-#ifdef i8088
-  prog_clicks += rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_len; /* gap too */
-#endif
+  prog_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
+  prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
+#ifndef ATARI_ST
+  if (rmp->mp_flags & SEPARATE) prog_clicks += rmp->mp_seg[T].mem_len;
   prog_bytes = (long) prog_clicks << CLICK_SHIFT;
+#endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
 
+#ifndef ATARI_ST
   /* Create a copy of the parent's core image for the child. */
   child_abs = (long) child_base << CLICK_SHIFT;
   parent_abs = (long) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
   i = mem_copy(ABS, 0, parent_abs, ABS, 0, child_abs, prog_bytes);
   if ( i < 0) panic("do_fork can't copy", i);
+#endif
 
   /* Find a slot in 'mproc' for the child process.  A slot must exist. */
   for (rmc = &mproc[0]; rmc < &mproc[NR_PROCS]; rmc++)
 	if ( (rmc->mp_flags & IN_USE) == 0) break;
 
   /* Set up the child and its memory map; copy its 'mproc' slot from parent. */
-  child_nr = rmc - mproc;	/* slot number of the child */
+  child_nr = (int)(rmc - mproc);	/* slot number of the child */
   procs_in_use++;
   sptr = (char *) rmp;		/* pointer to parent's 'mproc' slot */
   dptr = (char *) rmc;		/* pointer to child's 'mproc' slot */
   i = sizeof(struct mproc);	/* number of bytes in a proc slot. */
   while (i--) *dptr++ = *sptr++;/* copy from parent slot to child's */
 
-  /* Set process group. */
-  if (who == INIT_PROC_NR) rmc->mp_procgrp = process_group++;
-
   rmc->mp_parent = who;		/* record child's parent */
+#ifndef ATARI_ST
   rmc->mp_seg[T].mem_phys = child_base;
   rmc->mp_seg[D].mem_phys = child_base + rmc->mp_seg[T].mem_len;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
 			(rmp->mp_seg[S].mem_phys - rmp->mp_seg[D].mem_phys);
+#endif
   rmc->mp_exitstatus = 0;
   rmc->mp_sigstatus = 0;
 
@@ -96,19 +99,29 @@ PUBLIC int do_fork()
 	t = 0;			/* 't' = 0 means pid still free */
 	next_pid = (next_pid < 30000 ? next_pid + 1 : INIT_PROC_NR + 1);
 	for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++)
-		if (rmp->mp_pid == next_pid) {
+		if (rmp->mp_pid == next_pid || rmp->mp_procgrp == next_pid) {
 			t = 1;
 			break;
 		}
 	rmc->mp_pid = next_pid;	/* assign pid to child */
   } while (t);
 
-  /* Tell kernel and file system about the (now successful) FORK. */
-  sys_fork(who, child_nr, rmc->mp_pid);
-  tell_fs(FORK, who, child_nr, 0);
+  /* Set process group. */
+  if (who == INIT_PROC_NR) rmc->mp_procgrp = rmc->mp_pid;
 
+  /* Tell kernel and file system about the (now successful) FORK. */
+#ifdef ATARI_ST
+  sys_fork(who, child_nr, rmc->mp_pid, child_base);
+#else
+  sys_fork(who, child_nr, rmc->mp_pid);
+#endif
+
+  tell_fs(FORK, who, child_nr, rmc->mp_pid);
+
+#ifndef ATARI_ST
   /* Report child's memory map to kernel. */
   sys_newmap(child_nr, rmc->mp_seg);
+#endif
 
   /* Reply to child to wake it up. */
   reply(child_nr, 0, 0, NIL_PTR);
@@ -139,6 +152,11 @@ register struct mproc *rmp;	/* pointer to the process to be terminated */
 int exit_status;		/* the process' exit status (for parent) */
 {
 /* A process is done.  If parent is waiting for it, clean it up, else hang. */
+#ifdef ATARI_ST
+  phys_clicks base, size;
+#endif
+  phys_clicks s;
+  register int proc_nr = (int)(rmp - mproc);
 
   /* How to terminate a process is determined by whether or not the
    * parent process has already done a WAIT.  Test to see if it has.
@@ -151,11 +169,30 @@ int exit_status;		/* the process' exit status (for parent) */
 	rmp->mp_flags |= HANGING;	/* Parent not waiting.  Suspend proc */
 
   /* If the exited process has a timer pending, kill it. */
-  if (rmp->mp_flags & ALARM_ON) set_alarm(rmp - mproc, (unsigned) 0);
+  if (rmp->mp_flags & ALARM_ON) set_alarm(proc_nr, (unsigned) 0);
+
+#ifdef AM_KERNEL
+/* see if an amoeba transaction was pending or a putrep needed to be done */
+  am_check_sig(proc_nr, 1);
+#endif
 
   /* Tell the kernel and FS that the process is no longer runnable. */
-  sys_xit(rmp->mp_parent, rmp - mproc);
-  tell_fs(EXIT, rmp - mproc, 0, 0);  /* file system can free the proc slot */
+#ifdef ATARI_ST
+  sys_xit(rmp->mp_parent, proc_nr, &base, &size);
+  free_mem(base, size);
+#else
+  sys_xit(rmp->mp_parent, proc_nr);
+#endif
+  tell_fs(EXIT, proc_nr, 0, 0);  /* file system can free the proc slot */
+
+#ifndef ATARI_ST
+  /* Release the memory occupied by the child. */
+  s = (phys_clicks) rmp->mp_seg[S].mem_len;
+  s += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
+  if (rmp->mp_flags & SEPARATE) s += rmp->mp_seg[T].mem_len;
+  free_mem(rmp->mp_seg[T].mem_phys, s);	/* free the memory */
+#endif
+
 }
 
 
@@ -217,20 +254,14 @@ register struct mproc *child;	/* tells which process is exiting */
   register struct mproc *parent, *rp;
   int init_waiting, child_nr;
   unsigned int r;
-  phys_clicks s;
 
-  child_nr = child - mproc;
+  child_nr = (int)(child - mproc);
   parent = &mproc[child->mp_parent];
 
   /* Wakeup the parent. */
   r = child->mp_sigstatus & 0377;
   r = r | (child->mp_exitstatus << 8);
   reply(child->mp_parent, child->mp_pid, r, NIL_PTR);
-
-  /* Release the memory occupied by the child. */
-  s = (phys_clicks) child->mp_seg[S].mem_vir + child->mp_seg[S].mem_len;
-  if (child->mp_flags & SEPARATE) s += child->mp_seg[T].mem_len;
-  free_mem(child->mp_seg[T].mem_phys, s);	/* free the memory */
 
   /* Update flags. */
   child->mp_flags  &= ~HANGING;	/* turn off HANGING bit */

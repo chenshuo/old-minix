@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC int write(fd, buffer, nbytes)
 char *buffer;

@@ -90,7 +90,7 @@ message *m_ptr;			/* pointer to the newly arrived message */
 {
 /* The printer is used by sending TTY_WRITE messages to it. Process one. */
 
-  int i, j, r, value;
+  int i, j, r, value, old_state;
   struct proc *rp;
   phys_bytes phys;
   extern phys_bytes umap();
@@ -98,17 +98,17 @@ message *m_ptr;			/* pointer to the newly arrived message */
   r = OK;			/* so far, no errors */
 
   /* Reject command if printer is busy or count is not positive. */
-  if (pr_busy) r = EAGAIN;
+  if (pr_busy) r = EIO;
   if (m_ptr->COUNT <= 0) r = EINVAL;
 
   /* Compute the physical address of the data buffer within user space. */
   rp = proc_addr(m_ptr->PROC_NR);
-  phys = umap(rp, D, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT);
+  phys = umap(rp, D, (vir_bytes) m_ptr->ADDRESS, (vir_bytes)m_ptr->COUNT);
   if (phys == 0) r = E_BAD_ADDR;
 
   if (r == OK) {
   	/* Save information needed later. */
-	lock();			/* no interrupts now please */
+	old_state = lock();		/* no interrupts now please */
   	caller = m_ptr->m_source;
   	proc_nr = m_ptr->PROC_NR;
   	pcount = m_ptr->COUNT;
@@ -134,10 +134,11 @@ message *m_ptr;			/* pointer to the newly arrived message */
 			break;
 		}
 	}
+  restore(old_state);
   }
 
   /* Reply to FS, no matter what happened. */
-  if ((value&STATUS_MASK) == BUSY_STATUS) r = EAGAIN;
+  if ((value&STATUS_MASK) == BUSY_STATUS) r = EIO;
   reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 

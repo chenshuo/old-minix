@@ -46,6 +46,6 @@ PRIVATE flush()
   putchmsg.TTY_LINE = 0;
   putchmsg.ADDRESS  = printbuf;
   putchmsg.COUNT = bufcount;
-  sendrec(TTY, &putchmsg);
+  rw_dev(TTY, &putchmsg);
   bufcount = 0;
 }

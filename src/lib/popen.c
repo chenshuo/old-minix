@@ -10,6 +10,7 @@ popen(command, type)
 	int piped[2];
 	int Xtype = *type == 'r' ? 0 : *type == 'w' ? 1 : 2;
 	int pid;
+	extern FILE *fdopen();
 
 	if (Xtype == 2 ||
 	    pipe(piped) < 0 ||
@@ -26,7 +27,7 @@ popen(command, type)
 		dup2(piped[!Xtype], !Xtype);
 		close(piped[!Xtype]);
 		execl("/bin/sh", "sh", "-c", command, (char *) 0);
-		_exit(127);	/* like system() ??? */
+		exit(127);	/* like system() ??? */
 	}
 
 	pids[piped[Xtype]] = pid;

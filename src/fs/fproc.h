@@ -3,6 +3,7 @@
  * or even necessary to tell when a slot is free here.
  */
 
+
 EXTERN struct fproc {
   mask_bits fp_umask;		/* mask set by umask system call */
   struct inode *fp_workdir;	/* pointer to working directory's inode */
@@ -19,6 +20,8 @@ EXTERN struct fproc {
   char fp_suspended;		/* set to indicate process hanging */
   char fp_revived;		/* set to indicate process being revived */
   char fp_task;			/* which task is proc suspended on */
+  int fp_pid;			/* process id */
+  int fp_pgrp;			/* process group */
 } fproc[NR_PROCS];
 
 /* Field values. */

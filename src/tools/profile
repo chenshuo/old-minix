@@ -1,0 +1,5 @@
+HOME=/usr/ast
+PATH=:/bin:/usr/bin:user/bin:$HOME/bin:
+umask 022
+TERM=minix
+export PATH HOME PS1 PS2 TERM

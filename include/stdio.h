@@ -35,8 +35,8 @@ extern struct _io_buf {
 
 #define getchar() 		getc(stdin)
 #define putchar(c) 		putc(c,stdout)
-#define fgetc(f)		getc(f)
-#define fputc(c,f)		putc(c,f)
+#define getc(f)			fgetc(f)
+#define putc(c,f)		fputc(c,f)
 #define feof(p) 		(((p)->_flags & _EOF) != 0)
 #define ferror(p) 		(((p)->_flags & _ERR) != 0)
 #define fileno(p) 		((p)->_fd)
@@ -54,3 +54,9 @@ extern struct _io_buf {
 
 #define noperprintf(p)		((p)->_flags &= ~PERPRINTF)
 #define perprintf(p)		((p)->_flags |= PERPRINTF)
+
+extern FILE	*fopen();
+extern FILE	*freopen();
+extern long	ftell();
+extern char	*fgets();
+extern char	*gets();

@@ -1,5 +1,7 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
+extern int (*__cleanup)();
+extern int _cleanup();
 
 putc(ch, iop)
 char ch;
@@ -20,6 +22,7 @@ FILE *iop;
 		didwrite++;
 	}
 	else{
+		__cleanup = _cleanup;
 		*iop->_ptr++ = ch;
 		if ((++iop->_count) >= BUFSIZ && !testflag(iop,STRINGS) ){
 			n = write(iop->_fd,iop->_buf,iop->_count);
@@ -38,6 +41,6 @@ FILE *iop;
 		}
 		iop->_count=0;
 	}
-	return(ch & CMASK);
+	return(0);
 }
 

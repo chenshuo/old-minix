@@ -122,7 +122,7 @@ bit_nr origin;			/* number of bit to start searching at */
 			/* This word contains a free bit.  Allocate it. */
 			for (i = 0; i < INT_BITS; i++)
 				if (((k >> i) & 1) == 0) {
-					a = i + (wptr - &bp->b_int[0])*INT_BITS
+					a = i + (int)(wptr - &bp->b_int[0])*INT_BITS
 							+ (b << BIT_MAP_SHIFT);
 					/* If 'a' beyond map check other blks*/
 					if (a >= map_bits) {
@@ -150,7 +150,7 @@ PUBLIC free_bit(map_ptr, bit_returned)
 struct buf *map_ptr[];		/* pointer to array of bit block pointers */
 bit_nr bit_returned;		/* number of bit to insert into the map */
 {
-/* Return a zone or inode by turning on its bitmap bit. */
+/* Return a zone or inode by turning off its bitmap bit. */
 
   int b, r, w, bit;
   struct buf *bp;
@@ -163,7 +163,7 @@ bit_nr bit_returned;		/* number of bit to insert into the map */
   if (bp == NIL_BUF) return;
   if (((bp->b_int[w] >> bit)& 1)== 0)
        panic("freeing unused block or inode--check file sys",(int)bit_returned);
-  bp->b_int[w] &= ~(1 << bit);	/* turn the bit on */
+  bp->b_int[w] &= ~(1 << bit);	/* turn the bit off */
   bp->b_dirt = DIRTY;
 }
 

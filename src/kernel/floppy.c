@@ -3,7 +3,7 @@
  * write a block.  It accepts two messages, one for reading and one for
  * writing, both using message format m2 and with the same parameters:
  *
- *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
+ *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADDRESS
  * ----------------------------------------------------------------
  * |  DISK_READ | device  | proc nr |  bytes  |  offset | buf ptr |
  * |------------+---------+---------+---------+---------+---------|
@@ -120,7 +120,7 @@ PRIVATE struct floppy {		/* main drive struct, one entry per drive */
   vir_bytes fl_address;		/* user virtual address */
   char fl_results[MAX_RESULTS];	/* the controller can give lots of output */
   char fl_calibration;		/* CALIBRATED or UNCALIBRATED */
-  char fl_density;		/* 0 = 360K/360K; 1 = 360K/1.2M; 2= 1.2M/1.2M */
+  char fl_density;		/* 0 = 360K/360K; 1 = 360K/1.2M; 2= 1.2M/1.2M*/
 } floppy[NR_DRIVES];
 
 #define UNCALIBRATED       0	/* drive needs to be calibrated at next use */
@@ -158,7 +158,7 @@ PRIVATE int nr_blocks[NT] =
 PRIVATE int steps_per_cyl[NT] = 
 	{1,    1,    2,    1,    2,    1};   /* 2 = dbl step */
 PRIVATE int mtr_setup[NT] = 
-	{HZ/4,3*HZ/4,HZ/4,HZ/4,3*HZ/4,3*HZ/4};/* in ticks */
+	{HZ/4,3*HZ/4,HZ/4,2*HZ/4,3*HZ/4,3*HZ/4};/* in ticks */
 
 /*===========================================================================*
  *				floppy_task				     * 
@@ -204,7 +204,7 @@ message *m_ptr;			/* pointer to read or write message */
 {
 /* Carry out a read or write request from the disk. */
   register struct floppy *fp;
-  int r, drive, errors, stop_motor();
+  int r, sectors, drive, errors, stop_motor();
   long block;
 
   /* Decode the message parameters. */
@@ -218,7 +218,7 @@ message *m_ptr;			/* pointer to read or write message */
   if (block >= HC_SIZE) return(EOF);	/* sector is beyond end of 1.2M disk */
   d = fp->fl_density;		/* diskette/drive combination */
   fp->fl_cylinder = (int) (block / (NR_HEADS * nr_sectors[d]));
-  fp->fl_sector = (int) interleave[block % nr_sectors[d]];
+  fp->fl_sector = (int) interleave[(int)(block % nr_sectors[d])];
   fp->fl_head = (int) (block % (NR_HEADS*nr_sectors[d]) )/nr_sectors[d];
   fp->fl_count = m_ptr->COUNT;
   fp->fl_address = (vir_bytes) m_ptr->ADDRESS;
@@ -238,6 +238,10 @@ message *m_ptr;			/* pointer to read or write message */
  	if (errors % (MAX_ERRORS/NT) == 0) {
  		d = (d + 1) % NT;	/* try next density */
  		fp->fl_density = d;
+		sectors = nr_sectors[d];
+		fp->fl_cylinder = (int) (block / (NR_HEADS * sectors));
+		fp->fl_sector = (int) interleave[(int)(block % sectors)];
+		fp->fl_head = (int)(block%(NR_HEADS*sectors)) / sectors;
  		need_reset = 1;
 	}
   	if (block >= nr_blocks[d]) continue;
@@ -259,7 +263,6 @@ message *m_ptr;			/* pointer to read or write message */
 	r = transfer(fp);
 	if (r == OK) break;	/* if successful, exit loop */
 	if (r == ERR_WR_PROTECT) break;	/* retries won't help */
-
   }
 
   /* Start watch_dog timer to turn motor off in a few seconds */
@@ -283,7 +286,7 @@ struct floppy *fp;		/* pointer to the drive struct */
  * 512-byte block starting at physical address 65520).
  */
 
-  int mode, low_addr, high_addr, top_addr, low_ct, high_ct, top_end;
+  int mode, low_addr, high_addr, top_addr, low_ct, high_ct, top_end, s;
   vir_bytes vir, ct;
   phys_bytes user_phys;
   extern phys_bytes umap();
@@ -308,7 +311,7 @@ struct floppy *fp;		/* pointer to the drive struct */
   if (top_end != top_addr) panic("Trying to DMA across 64K boundary", top_addr);
 
   /* Now set up the DMA registers. */
-  lock();
+  s = lock();
   port_out(DMA_M2, mode);	/* set the DMA mode */
   port_out(DMA_M1, mode);	/* set it again */
   port_out(DMA_ADDR, low_addr);	/* output low-order 8 bits */
@@ -316,7 +319,7 @@ struct floppy *fp;		/* pointer to the drive struct */
   port_out(DMA_TOP, top_addr);	/* output highest 4 bits */
   port_out(DMA_COUNT, low_ct);	/* output low 8 bits of count - 1 */
   port_out(DMA_COUNT, high_ct);	/* output high 8 bits of count - 1 */
-  unlock();
+  restore(s);
   port_out(DMA_INIT, 2);	/* initialize DMA */
 }
 
@@ -335,13 +338,13 @@ struct floppy *fp;		/* pointer to the drive struct */
  * operation.  If a new operation is started in that interval, it need not be
  * turned on again.  If no new operation is started, a timer goes off and the
  * motor is turned off.  I/O port DOR has bits to control each of 4 drives.
- * Interrupts must be disabled temporarily to prevent clock interrupt from
+ * Interrupts must be disabled temporarily to prevent clock interrupts from
  * turning off motors while we are testing the bits.
  */
 
-  int motor_bit, running, send_mess();
+  int motor_bit, running, send_mess(), old_state;
 
-  lock();			/* no interrupts while checking out motor */
+  old_state = lock();		/* no interrupts while checking out motor */
   motor_bit = 1 << (fp->fl_drive + 4);	/* bit mask for this drive */
   motor_goal = motor_bit | ENABLE_INT | fp->fl_drive;
   if (motor_status & prev_motor) motor_goal |= prev_motor;
@@ -349,7 +352,7 @@ struct floppy *fp;		/* pointer to the drive struct */
   port_out(DOR, motor_goal);
   motor_status = motor_goal;
   prev_motor = motor_bit;	/* record motor started for next time */
-  unlock();
+  restore(old_state);
 
   /* If the motor was already running, we don't have to wait for it. */
   if (running) return;			/* motor was already running */
@@ -385,7 +388,7 @@ struct floppy *fp;		/* pointer to the drive struct */
  * positioned on the correct cylinder.
  */
 
-  int r;
+  int r, send_mess();
 
   /* Are we already on the correct cylinder? */
   if (fp->fl_calibration == UNCALIBRATED)
@@ -406,6 +409,11 @@ struct floppy *fp;		/* pointer to the drive struct */
   if (fp->fl_results[ST1] != fp->fl_cylinder * steps_per_cyl[d]) r = ERR_SEEK;
   if (r != OK) 
 	if (recalibrate(fp) != OK) return(ERR_SEEK);
+  fp->fl_curcyl = (r == OK ? fp->fl_cylinder : -1);
+  if (r == OK && ps) {		/* give head time to settle on PS/2 */
+	clock_mess(2, send_mess);
+	receive(CLOCK, &mess);
+  }
   return(r);
 }
 
@@ -428,7 +436,7 @@ register struct floppy *fp;	/* pointer to the drive struct */
   /* The PC-AT requires the date rate to be set to 250 or 500 kbps */
   if (pc_at) port_out(FDC_RATE, rate[d]);
 
-  /* The command is issued by outputing 9 bytes to the controller chip. */
+  /* The command is issued by outputting 9 bytes to the controller chip. */
   op = (fp->fl_opcode == DISK_READ ? FDC_READ : FDC_WRITE);
   fdc_out(op);			/* issue the read or write command */
   fdc_out( (fp->fl_head << 2) | fp->fl_drive);
@@ -473,12 +481,13 @@ register struct floppy *fp;	/* pointer to the drive struct */
 {
 /* Extract results from the controller after an operation. */
 
-  int i, j, status, ready;
+  int i, j, k, status, ready;
 
   /* Loop, extracting bytes from FDC until it says it has no more. */
   for (i = 0; i < MAX_RESULTS; i++) {
 	ready = FALSE;
 	for (j = 0; j < MAX_FDC_RETRY; j++) {
+		for (k = 0; k < 32; k++) ;	/* delay loop for 386 */
 		port_in(FDC_STATUS, &status);
 		if (status & MASTER) {
 			ready = TRUE;
@@ -565,6 +574,10 @@ register struct floppy *fp;	/* pointer tot he drive struct */
   } else {
 	/* Recalibration succeeded. */
 	fp->fl_calibration = CALIBRATED;
+	if (ps) {		/* give head time to settle on PS/2 */
+		clock_mess(2, send_mess);
+		receive(CLOCK, &mess);
+	}
 	return(OK);
   }
 }
@@ -579,16 +592,17 @@ PRIVATE reset()
  * like the controller refusing to respond.
  */
 
-  int i, r, status;
+  int i, r, status, old_state;
   register struct floppy *fp;
+
   /* Disable interrupts and strobe reset bit low. */
   need_reset = FALSE;
-  lock();
+  old_state = lock();
   motor_status = 0;
   motor_goal = 0;
   port_out(DOR, 0);		/* strobe reset bit low */
   port_out(DOR, ENABLE_INT);	/* strobe it high again */
-  unlock();			/* interrupts allowed again */
+  restore(old_state);		/* interrupts allowed again */
   receive(HARDWARE, &mess);	/* collect the RESET interrupt */
 
   /* Interrupt from the reset has been received.  Continue resetting. */
@@ -618,7 +632,7 @@ int (*func)();			/* function to call upon time out */
 
   mess.m_type = SET_ALARM;
   mess.CLOCK_PROC_NR = FLOPPY;
-  mess.DELTA_TICKS = ticks;
+  mess.DELTA_TICKS = (long) ticks;
   mess.FUNC_TO_CALL = func;
   sendrec(CLOCK, &mess);
 }
@@ -631,6 +645,5 @@ PRIVATE send_mess()
 {
 /* This routine is called when the clock task has timed out on motor startup.*/
 
-  mess.m_type = MOTOR_RUNNING;
   send(FLOPPY, &mess);
 }

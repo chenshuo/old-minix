@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 
 
@@ -13,7 +13,7 @@ FILE *iop;
 	if ( !testflag(iop, READMODE) ) 
 		return (EOF);
 
-	if (--iop->_count <= 0){
+	if (iop->_count <= 0){
 
 		if ( testflag(iop, UNBUFF) )
 			iop->_count = read(iop->_fd,&ch,1);
@@ -32,6 +32,7 @@ FILE *iop;
 			iop->_ptr = iop->_buf;
 	}
 
+	iop->_count--;		/* account one char */
 	if (testflag(iop,UNBUFF))
 		return (ch & CMASK);
 	else

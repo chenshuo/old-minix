@@ -1,70 +1,34 @@
 /* fsck - file system checker		Author: Robbert van Renesse */
 
-#include "/usr/include/const.h"
-#include "/usr/include/type.h"
-#include "../fs/const.h"
-#include "../fs/type.h"
-
-/* #define DOS			/* compile to run under MS-DOS */
-#define STANDALONE		/* compile for the boot-diskette */
-#define HERE			/* fixes for Adaptec ACB-2070a */
-
-/* Fsck may be compiled to run in any of two situations. For each
- * a different symbol must be defined:
- *
- *   STANDALONE	will compile fsck to be part of the boot-diskette and
- *		all necessary routines are contained in the program
- *   DOS	will compile fsck to run under MS-DOS, using
- *		the standard DOS library for your compiler.
- *
- * The assembler file fsck1.asm must be assembled correspondingly. It has
- * only one symbol defined, namely STANDALONE.
- *  The assembler file fsck.s is only used under PC/IX to produce
- * a version for the boot diskette.
- *  When you have a problem look at the preprocessor output to see
- * which lines will actually be compiled.
- *  To produce an executable/binary version issue one of the following
- * commands, depending on your development environment:
- *
- * Development system:	MS-DOS
- *
- * fsck to run under:	MS-DOS
- * defined symbols:	fsck.c:	   DOS
- *			fsck1.asm:  -
- * command:		link fsck+fsck1,,,DOS-lib
- *
- * fsck to run under:	BOOT
- * defined symbols:	fsck.c:	   STANDALONE
- *			fsck1.asm: STANDALONE
- * command:		link fsck1+fsck,fsck,, {Minix-lib || DOS-lib}
- *			dos2out -d fsck
- *
- * fsck to run under:	MINIX	   -not yet implemented-
- * command:		link crtso+fsck,fsck,,Minix-lib
- *			dos2out -d fsck
- *
- *
- * Development system:	PC/IX
- *
- * fsck to run under:	PC/IX
- * command:		ld fsck -lc
- *
- * fsck to run under:	BOOT
- * defined symbols:	fsck.c:	   STANDALONE
- *			fsck1.s:   -
- * command:		ld fsck1.o fsck.0 -l../lib/lib.a
- *
- * fsck to run under:	MINIX
- * command:		ld fsck.o -l../lib/lib.a
- *
- */
+#include <minix/const.h>
+#include <minix/type.h>
+#include <fs/const.h>
+#include <fs/type.h>
 
 
 #ifndef STANDALONE
-#  ifndef DOS
-    -error: no system defined.
-#  endif
+#include <stdio.h>
 #endif
+
+/* Fsck may be compiled to run in any of two situations.
+ *
+ *   - standalone, as part of the boot diskette used to bring MINIX up
+ *   - as a running MINIX program.
+ *
+ * When used for standalone operation, -DSTANDALONE must be used.
+ * The following commands can be used to build a standalone version:
+ *
+ *    cc -c -Di8088 -DSTANDALONE fsck.c
+ *    asld -o fsck fsck1.s fsck.s /usr/lib/libc.a /usr/lib/end.s
+ *
+ * Fsck1.s contains calls to the BIOS routines used by the standalone
+ * version.  The production version makes ordinary MINIX reads and writes.
+ */
+
+
+#define HEADS             4	/* # heads per cylinder */
+#define TRACKSIZE        17	/* # sectors per track */
+#define CYLSIZE (HEADS*TRACKSIZE) /* # sectors per cylinder */
 
 #define BITSHIFT	  4	/* = 2log(#bits(int)) */
 #define BITMAPSHIFT	 13	/* = 2log(#bits(block)); 13 means 1K blocks */
@@ -168,7 +132,7 @@ struct stack {
 	dir_struct *st_dir;
 	struct stack *st_next;
 	char st_presence;
-} *top;
+} *ftop;
 
 extern long lseek();
 
@@ -343,6 +307,9 @@ union types argp;
 			while (width-- > 0)
 				putchar(pad);
 		}
+#ifndef STANDALONE
+		fflush(stdout);
+#endif /*STANDALONE*/
 }
 
 
@@ -484,9 +451,9 @@ unsigned nelem, elsize;
 		*r = 0;
 	return(p);
 #else
-	extern char *calloc();
+	extern char *Calloc();
 
-	if ((p = calloc(nelem, elsize)) == 0)
+	if ((p = Calloc(nelem, elsize)) == 0)
 		fatal("out of memory");
 	return(p);
 #endif
@@ -501,7 +468,23 @@ char *p;
 {
 	free(p);
 }
-#endif
+
+/* Allocate and zero memory
+ */
+char *Calloc(nelem, elsize)
+unsigned nelem, elsize;
+{
+    register int i;
+    register char *mem;
+    extern char *malloc();
+
+    if ((mem = malloc(nelem * elsize)) != NULL) {
+        for (i = 0; i < nelem*elsize; ++i)
+            mem[i] = '\0';
+    }
+    return mem;
+}
+#endif /*STANDALONE*/
 
 
 /* Print the name in a directory entry.
@@ -535,13 +518,13 @@ struct stack *sp;
 /* Print the current pathname.
  */
 printpath(mode, nlcr){
-	if (top->st_next == 0)
+	if (ftop->st_next == 0)
 		printf("/");
 	else
-		printrec(top);
+		printrec(ftop);
 	switch (mode) {
-	case 1: printf(" (ino = %u, ", top->st_dir->d_inum);	break;
-	case 2: printf(" (ino = %u)", top->st_dir->d_inum);	break;
+	case 1: printf(" (ino = %u, ", ftop->st_dir->d_inum);	break;
+	case 2: printf(" (ino = %u)", ftop->st_dir->d_inum);	break;
 	}
 	if (nlcr)
 		printf("\n");
@@ -686,7 +669,7 @@ long offset;
 char *buf;
 {
 	devio((block_nr) (offset / BLOCK_SIZE), READING);
-	copy(&rwbuf[offset % BLOCK_SIZE], buf, size);
+	copy(&rwbuf[(int)(offset % BLOCK_SIZE)], buf, size);
 }
 
 
@@ -700,7 +683,7 @@ char *buf;
 		fatal("internal error (devwrite)");
 	if (size != BLOCK_SIZE)
 		devio((block_nr) (offset / BLOCK_SIZE), READING);
-	copy(buf, &rwbuf[offset % BLOCK_SIZE], size);
+	copy(buf, &rwbuf[(int)(offset % BLOCK_SIZE)], size);
 	devio((block_nr) (offset / BLOCK_SIZE), WRITING);
 	changed = 1;
 }
@@ -1031,7 +1014,7 @@ bit_nr bit;
 	first = &bitmap[bit >> BITSHIFT];
 	last = &bitmap[nblk * INTS_PER_BLOCK];
 	while (first < last)
-		*first++ = ~0;
+		*first++ = ~(unsigned)0;
 }
 
 
@@ -1097,13 +1080,13 @@ putbitmaps(){
 /* `w1' and `w2' are differing words from two bitmaps that should be
  * identical.  Print what's the matter with them.
  */
-chkword(w1, w2, bit, type, n, report)
+chkword(w1, w2, bit, nbit, type, n, report)
 unsigned w1, w2;
 char *type;
-bit_nr bit;
+bit_nr bit, nbit;
 int *n, *report;
 {
-	for (; w1 | w2; w1 >>= 1, w2 >>= 1, bit++)
+	for (; (w1 | w2) && bit < nbit; w1 >>= 1, w2 >>= 1, bit++)
 		if ((w1 ^ w2) & 1 && ++(*n) % MAXPRINT == 0 && *report &&
 			    (!repair || automatic || yes("stop this listing")))
 			*report = 0;
@@ -1135,7 +1118,7 @@ char *type;
 	loadbitmap(dmap, blkno, nblk);
 	do {
 		if (*p != *q)
-			chkword(*p, *q, bit, type, &nerr, &report);
+			chkword(*p, *q, bit, nbit, type, &nerr, &report);
 		p++;
 		q++;
 	} while ((bit += 8 * sizeof(unsigned)) < nbit);
@@ -1402,13 +1385,13 @@ dir_struct *dp;
 	}
 	count[dp->d_inum]++;
 	if (strcmp(dp->d_name, ".") == 0) {
-		top->st_presence |= DOT;
+		ftop->st_presence |= DOT;
 		return(chkdots(ino, pos, dp, ino));
 	}
 	if (strcmp(dp->d_name, "..") == 0) {
-		top->st_presence |= DOTDOT;
+		ftop->st_presence |= DOTDOT;
 		return(chkdots(ino, pos, dp, ino == ROOT_INODE ? ino :
-						top->st_next->st_dir->d_inum));
+						ftop->st_next->st_dir->d_inum));
 	}
 	if (!chkname(ino, dp))
 		return(0);
@@ -1617,12 +1600,12 @@ d_inode *ip;
 		printpath(2, 1);
 	}
 	ok = chkfile(ino, ip);
-	if (!(top->st_presence & DOT)) {
+	if (!(ftop->st_presence & DOT)) {
 		printf(". missing in ");
 		printpath(2, 1);
 		ok = 0;
 	}
-	if (!(top->st_presence & DOTDOT)) {
+	if (!(ftop->st_presence & DOTDOT)) {
 		printf(".. missing in ");
 		printpath(2, 1);
 		ok = 0;
@@ -1703,8 +1686,8 @@ dir_struct *dp;
 	int i;
 
 	stk.st_dir = dp;
-	stk.st_next = top;
-	top = &stk;
+	stk.st_next = ftop;
+	ftop = &stk;
 	if (bitset(spec_imap, (bit_nr) ino)) {
 		printf("found inode %u: ", ino);
 		printpath(0, 1);
@@ -1724,12 +1707,12 @@ dir_struct *dp;
 				cp2 = (char *) dp;
 				i = sizeof(dir_struct);
 				while (i--) *cp2++ = *cp1++;
-				top = top->st_next;
+				ftop = ftop->st_next;
 				return(0);
 			}
 		}
 	}
-	top = top->st_next;
+	ftop = ftop->st_next;
 	return(1);
 }
 
@@ -1833,6 +1816,8 @@ char **argv;
 	for (;;) {
 		printf("\nHit key as follows:\n\n");
 		printf("    =  start MINIX (root file system in drive 0)\n");
+		printf("    u  start MINIX on PS/2 Model 30, U.S. keyboard (root file sys in drive 0)\n");
+		printf("    d  start MINIX on PS/2 Model 30, Dutch keyboard (root file sys in drive 0)\n");
 		printf("    f  check the file system (first insert any file system diskette)\n");
 		printf("    l  check and list file system (first insert any file system diskette)\n");
 		printf("    m  make an (empty) file system (first insert blank, formatted diskette)\n");
@@ -1850,13 +1835,8 @@ char **argv;
 		case 'h':
 			get_partition();
 			drive = (partition < PARB ? 0x80 : 0x81);
-#ifdef HERE
-			cylsiz = 100;	/* 4 heads -- ST-238-specific */
-			tracksiz = 25;
-#else
-			cylsiz = 68;
-			tracksiz = 17;
-#endif
+			cylsiz = CYLSIZE;	/* sectors per cylinder */
+			tracksiz = TRACKSIZE;
 			printf("Checking hard disk.  %s\n", answer);
 			if (read_partition() < 0) continue;
 			repair = 1;
@@ -1887,6 +1867,8 @@ char **argv;
 			break;
 			
 		case '=': return((c >> 8) & 0xFF);
+		case 'u': return((c >> 8) & 0xFF);
+		case 'd': return((c >> 8) & 0xFF);
 		default:
 			printf("Illegal command\n");
 			continue;
@@ -1928,13 +1910,15 @@ char **argv;
 			zlist = 0;
 			devgiven = 1;
 		}
-	if (!devgiven)
-		chkdev("/dev/disk", clist, ilist, zlist);
+	if (!devgiven) {
+		printf("Usage: fsck [-acilmrsz] file\n");
+		exit(1);
+	}
 	return(0);
 #endif /*STANDALONE*/
 }
 
-
+#ifdef STANDALONE
 get_partition()
 {
 /* Ask for a partition number and wait for it. */
@@ -2021,3 +2005,4 @@ register long *first, *second;
   *first = *second;
   *second = tmp;
 }
+#endif /*STANDALONE*/

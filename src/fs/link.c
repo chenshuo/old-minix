@@ -11,6 +11,7 @@
 #include "../h/const.h"
 #include "../h/type.h"
 #include "../h/error.h"
+#include "../h/stat.h"
 #include "const.h"
 #include "type.h"
 #include "buf.h"
@@ -25,7 +26,7 @@
  *===========================================================================*/
 PUBLIC int do_link()
 {
-/* Perform the link(name, name2) system call. */
+/* Perform the link(name1, name2) system call. */
 
   register struct inode *ip, *rip;
   register int r;
@@ -144,16 +145,19 @@ register struct inode *rip;	/* pointer to inode to be truncated */
 {
 /* Remove all the zones from the inode 'rip' and mark it dirty. */
 
-  register file_pos position;
-  register zone_type zone_size;
   register block_nr b;
   register zone_nr z, *iz;
-  register int scale;
-  register struct buf *bp;
-  register dev_nr dev;
+  file_pos position;
+  zone_type zone_size;
+  int scale, file_type;
+  struct buf *bp;
+  dev_nr dev;
+  unshort modewd;
   extern struct buf *get_block();
   extern block_nr read_map();
 
+  file_type = rip->i_mode & S_IFMT;	/* check to see if file is special */
+  if (file_type == S_IFCHR || file_type == S_IFBLK) return;
   dev = rip->i_dev;		/* device on which inode resides */
   scale = scale_factor(rip);
   zone_size = (zone_type) BLOCK_SIZE << scale;

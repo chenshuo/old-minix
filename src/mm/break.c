@@ -1,5 +1,5 @@
 /* The MINIX model of memory allocation reserves a fixed amount of memory for
- * the combined text, data, and stack segements.  The amount used for a child
+ * the combined text, data, and stack segments.  The amount used for a child
  * process created by FORK is the same as the parent had.  If the child does
  * an EXEC later, the new size is taken from the header of the file EXEC'ed.
  *
@@ -37,10 +37,8 @@ PUBLIC int do_brk()
  *
  * The call is complicated by the fact that on some machines (e.g., 8088),
  * the stack pointer can grow beyond the base of the stack segment without
- * anybody noticing it.    For a file not using separate I & D space,
- * the parameter, 'addr' is to the total size, text + data.  For a file using
- * separate text and data spaces, it is just the data size. Files using
- * separate I & D space have the SEPARATE bit in mp_flags set.
+ * anybody noticing it.
+ * The parameter, 'addr' is the new virtual address in D space.
  */
 
   register struct mproc *rmp;
@@ -49,12 +47,17 @@ PUBLIC int do_brk()
   vir_clicks new_clicks;
 
   rmp = mp;
-  v = (vir_bytes) addr;		/* 'addr' is the new data segment size */
+  v = (vir_bytes) addr;
   new_clicks = (vir_clicks) ( ((long) v + CLICK_SIZE - 1) >> CLICK_SHIFT);
+  if (new_clicks < rmp->mp_seg[D].mem_vir) {
+	res_ptr = (char *) -1;
+	return(ENOMEM);
+  }
+  new_clicks -= rmp->mp_seg[D].mem_vir;
   sys_getsp(who, &new_sp);	/* ask kernel for current sp value */
   r = adjust(rmp, new_clicks, new_sp);
   res_ptr = (r == OK ? addr : (char *) -1);
-  return(r);			/* return new size or -1 */
+  return(r);			/* return new address or -1 */
 }
 
 
@@ -112,7 +115,7 @@ vir_bytes sp;			/* new value of sp */
   r = size_ok(ft, rmp->mp_seg[T].mem_len, rmp->mp_seg[D].mem_len, 
        rmp->mp_seg[S].mem_len, rmp->mp_seg[D].mem_vir, rmp->mp_seg[S].mem_vir);
   if (r == OK) {
-	if (changed) sys_newmap(rmp - mproc, rmp->mp_seg);
+	if (changed) sys_newmap((int)(rmp - mproc), rmp->mp_seg);
 	return(OK);
   }
 
@@ -145,6 +148,7 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
  * is needed, since the data and stack may not exceed 4096 clicks.
  */
 
+#ifndef ATARI_ST
   int pt, pd, ps;		/* segment sizes in pages */
 
   pt = ( (tc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;
@@ -156,6 +160,7 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
   } else {
 	if (pt + pd + ps > MAX_PAGES) return(ENOMEM);
   }
+#endif
 
   if (dvir + dc > s_vir) return(ENOMEM);
 
@@ -178,7 +183,10 @@ int proc_nr;			/* tells who got the stack fault */
   vir_bytes new_sp;
 
   rmp = &mproc[proc_nr];
-  sys_getsp(rmp - mproc, &new_sp);
+  sys_getsp((int)(rmp - mproc), &new_sp);
+#ifdef ATARI_ST
+  new_sp -= CLICK_SIZE;		/* one click margin between D and S */
+#endif
   r = adjust(rmp, rmp->mp_seg[D].mem_len, new_sp);
   if (r == OK) return;
 

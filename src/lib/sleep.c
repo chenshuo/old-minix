@@ -1,5 +1,5 @@
-#include "../include/lib.h"
-#include "../include/signal.h"
+#include "lib.h"
+#include <signal.h>
 
 PRIVATE alfun(){}		/* used with sleep() below */
 PUBLIC sleep(n)

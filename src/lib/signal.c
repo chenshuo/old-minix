@@ -1,7 +1,7 @@
-#include "../include/lib.h"
-#include "../include/signal.h"
+#include "lib.h"
+#include <signal.h>
 
-int (*vectab[NR_SIGS])();	/* array of functions to catch signals */
+int (*vectab[NSIG])();	/* array of functions to catch signals */
 
 /* The definition of signal really should be 
  *  PUBLIC int (*signal(signr, func))()
@@ -23,5 +23,7 @@ int (*func)();			/* pointer to function that catches signal */
   M.m6_i1 = signr;
   M.m6_f1 = ( (func == SIG_IGN || func == SIG_DFL) ? func : begsig);
   r = callx(MM, SIGNAL);
+  if (r == 1)
+	old = SIG_IGN;
   return( (r < 0 ? (int (*)()) r : old) );
 }

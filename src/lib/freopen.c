@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 FILE *freopen(name,mode,stream)
 char *name,*mode;

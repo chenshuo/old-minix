@@ -6,7 +6,7 @@
  * The entry points into this file are
  *   do_read:	 perform the READ system call by calling read_write
  *   read_write: actually do the work of READ and WRITE
- *   read_map:	 given an inode and file position, lookup its zone number
+ *   read_map:	 given an inode and file position, look up its zone number
  *   rw_user:	 call the kernel to read and write user space
  *   read_ahead: manage the block read ahead business
  */
@@ -53,7 +53,7 @@ int rw_flag;			/* READING or WRITING */
   register file_pos bytes_left, f_size;
   register unsigned off, cum_io;
   file_pos position;
-  int r, chunk, virg, mode_word, usr, seg;
+  int r, chunk, mode_word, usr, seg, block_spec, char_spec;
   struct filp *wf;
   extern struct super_block *get_super();
   extern struct filp *find_filp(), *get_filp();
@@ -70,24 +70,28 @@ int rw_flag;			/* READING or WRITING */
   }
 
   /* If the file descriptor is valid, get the inode, size and mode. */
-  if (nbytes == 0) return(0);	/* so char special files need not check for 0*/
-  if (who != MM_PROC_NR && nbytes < 0) return(EINVAL);	/* only MM > 32K */
+#ifdef i8088
+  if (who != MM_PROC_NR)	/* only MM > 32K */
+#endif
+  if (nbytes < 0) return(EINVAL);
   if ( (f = get_filp(fd)) == NIL_FILP) return(err_code);
   if ( ((f->filp_mode) & (rw_flag == READING ? R_BIT : W_BIT)) == 0)
 	return(EBADF);
+  if (nbytes == 0) return(0);	/* so char special files need not check for 0*/
   position = f->filp_pos;
   if (position < (file_pos) 0) return(EINVAL);
   rip = f->filp_ino;
   f_size = rip->i_size;
   r = OK;
   cum_io = 0;
-  virg = TRUE;
   mode_word = rip->i_mode & I_TYPE;
-  if (mode_word == I_BLOCK_SPECIAL && f_size == 0) f_size = MAX_P_LONG;
+  char_spec = (mode_word == I_CHAR_SPECIAL ? 1 : 0);
+  block_spec = (mode_word == I_BLOCK_SPECIAL ? 1 : 0);
+  if (block_spec && f_size == 0) f_size = MAX_P_LONG;
   rdwt_err = OK;		/* set to EIO if disk error occurs */
 
   /* Check for character special files. */
-  if (mode_word == I_CHAR_SPECIAL) {
+  if (char_spec) {
 	if ((r = dev_io(rw_flag, (dev_nr) rip->i_zone[0], (long) position,
 						nbytes, who, buffer)) >= 0) {
 		cum_io = r;
@@ -95,7 +99,7 @@ int rw_flag;			/* READING or WRITING */
 		r = OK;
 	}
   } else {
-	if (rw_flag == WRITING && mode_word != I_BLOCK_SPECIAL) {
+	if (rw_flag == WRITING && block_spec == 0) {
 		/* Check in advance to see if file will grow too big. */
 		if (position > get_super(rip->i_dev)->s_max_size - nbytes )
 			return(EFBIG);
@@ -108,16 +112,16 @@ int rw_flag;			/* READING or WRITING */
 	}
 
 	/* Pipes are a little different.  Check. */
-	if (rip->i_pipe && (r = pipe_check(rip, rw_flag, virg,
-				nbytes, &position)) <= 0) return(r);
-
+	if (rip->i_pipe &&
+	    (r = pipe_check(rip, rw_flag, nbytes, position)) <= 0)
+		return r;
 	/* Split the transfer into chunks that don't span two blocks. */
 	while (nbytes != 0) {
 		off = position % BLOCK_SIZE;	/* offset within a block */
 		chunk = MIN(nbytes, BLOCK_SIZE - off);
 		if (chunk < 0) chunk = BLOCK_SIZE - off;
 
-		if (rw_flag == READING) {
+		if (rw_flag == READING || (block_spec && rw_flag == WRITING)) {
 			if ((bytes_left = f_size - position) <= 0)
 				break;
 			else
@@ -134,29 +138,28 @@ int rw_flag;			/* READING or WRITING */
 		nbytes -= chunk;	/* bytes yet to be read */
 		cum_io += chunk;	/* bytes read so far */
 		position += chunk;	/* position within the file */
-		virg = FALSE; /* tells pipe_check() that data has been copied */
 	}
   }
 
   /* On write, update file size and access time. */
   if (rw_flag == WRITING) {
-	if (mode_word != I_CHAR_SPECIAL && mode_word != I_BLOCK_SPECIAL && 
-							position > f_size)
-		rip->i_size = position;
-	rip->i_modtime = clock_time();
-	rip->i_dirt = DIRTY;
+	if (char_spec == 0 && block_spec == 0) {
+		if (position > f_size) rip->i_size = position;
+		rip->i_modtime = clock_time();
+		rip->i_dirt = DIRTY;
+	}
   } else {
 	if (rip->i_pipe && position >= rip->i_size) {
 		/* Reset pipe pointers. */
 		rip->i_size = 0;	/* no data left */
 		position = 0;		/* reset reader(s) */
-		if ( (wf = find_filp(rip, W_BIT)) != NIL_FILP) wf->filp_pos = 0;
+		if ( (wf = find_filp(rip, W_BIT)) != NIL_FILP) wf->filp_pos =0;
 	}
   }
   f->filp_pos = position;
 
   /* Check to see if read-ahead is called for, and if so, set it up. */
-  if (rw_flag == READING && rip->i_seek == NO_SEEK && position % BLOCK_SIZE == 0
+  if (rw_flag == READING && rip->i_seek == NO_SEEK && position % BLOCK_SIZE== 0
 		&& (mode_word == I_REGULAR || mode_word == I_DIRECTORY)) {
 	rdahed_inode = rip;
 	rdahedpos = position;
@@ -217,7 +220,8 @@ int usr;			/* which user process */
 	 * the cache, acquire it, otherwise just acquire a free buffer.
 	 */
 	n = (rw_flag == WRITING && chunk == BLOCK_SIZE ? NO_READ : NORMAL);
-	if(rw_flag == WRITING && off == 0 && position >= rip->i_size) n=NO_READ;
+	if(rw_flag == WRITING && !block_spec && 
+		off == 0 && position >= rip->i_size) n=NO_READ;
 	bp = get_block(dev, b, n);
   }
 
@@ -260,7 +264,7 @@ file_pos position;		/* position in file whose blk wanted */
 
   /* Is 'position' to be found in the inode itself? */
   if (zone < NR_DZONE_NUM) {
-	if ( (z = rip->i_zone[zone]) == NO_ZONE) return(NO_BLOCK);
+	if ( (z = rip->i_zone[(int) zone]) == NO_ZONE) return(NO_BLOCK);
 	b = ((block_nr) z << scale) + boff;
 	return(b);
   }
@@ -277,17 +281,17 @@ file_pos position;		/* position in file whose blk wanted */
 	excess -= NR_INDIRECTS;			/* single indir doesn't count */
 	b = (block_nr) z << scale;
 	bp = get_block(rip->i_dev, b, NORMAL);	/* get double indirect block */
-	z = bp->b_ind[excess/NR_INDIRECTS];	/* z is zone # for single ind */
+	z = bp->b_ind[(int)(excess/NR_INDIRECTS)];/*z is zone # for single ind*/
 	put_block(bp, INDIRECT_BLOCK);		/* release double ind block */
 	excess = excess % NR_INDIRECTS;		/* index into single ind blk */
   }
 
-  /* 'z' is zone number for single indirect block; 'excess' is index into it. */
+  /* 'z' is zone num for single indirect block; 'excess' is index into it. */
   if (z == NO_ZONE) return(NO_BLOCK);
   b = (block_nr) z << scale;
   bp = get_block(rip->i_dev, b, NORMAL);	/* get single indirect block */
-  z = bp->b_ind[excess];
-  put_block(bp, INDIRECT_BLOCK);		/* release single indirect blk */
+  z = bp->b_ind[(int) excess];
+  put_block(bp, INDIRECT_BLOCK);		/* release single indir blk */
   if (z == NO_ZONE) return(NO_BLOCK);
   b = ((block_nr) z << scale) + boff;
   return(b);

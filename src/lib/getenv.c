@@ -1,14 +1,34 @@
-char *getenv(name)
-register char *name;
-{
-  extern char **environ;
-  register char **v = environ, *p, *q;
+/*  getenv(3)
+ *
+ *  Author: Terrence W. Holm          Aug. 1988
+ */
 
-  while ((p = *v++) != 0) {
-	q = name;
-	while (*q && *q++ == *p++) /* nothing */ ;
-	if (*q || *p != '=') continue;
-	return(p+1);
+#define  NULL   (char *) 0
+
+extern char **environ;
+
+
+char *getenv( name )
+  char *name;
+  {
+  char **v;
+  register char *n;
+  register char *p;
+
+  if ( environ == (char **) NULL  ||  name == NULL )
+    return(NULL);
+
+  for ( v = environ;  *v != NULL;  ++v )
+    {
+    n = name;
+    p = *v;
+
+    while ( *n == *p  &&  *n != '\0' )
+	++n, ++p;
+
+    if ( *n == '\0'  &&  *p == '=' )
+	return( p + 1 );
+    }
+
+  return(NULL);
   }
-  return(0);
-}

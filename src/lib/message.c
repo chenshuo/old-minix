@@ -1,4 +1,5 @@
-#include "../h/const.h"
-#include "../h/type.h"
+#include <minix/const.h>
+#include <minix/type.h>
 
-message M;
+/* some compilers require an initializer to force storage allocation */
+message M = {0};

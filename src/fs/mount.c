@@ -31,7 +31,7 @@ PUBLIC int do_mount()
   mask_bits bits;
   int r, found, loaded;
   extern struct inode *get_inode(), *eat_path();
-  extern dev_nr name_to_dev();
+  dev_nr name_to_dev();
 
   /* Only the super-user may do MOUNT. */
   if (!super_user) return(EPERM);
@@ -129,7 +129,7 @@ PUBLIC int do_umount()
   struct super_block *sp, *sp1;
   dev_nr dev;
   int count;
-  extern dev_nr name_to_dev();
+  dev_nr name_to_dev();
 
 
   /* Only the super-user may do UMOUNT. */

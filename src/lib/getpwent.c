@@ -6,7 +6,7 @@
  */
 
 
-#include "../include/pwd.h"
+#include <pwd.h>
 
 #define PRIVATE static
 

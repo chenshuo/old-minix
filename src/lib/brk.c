@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 extern char *brksize;
 
@@ -18,13 +18,14 @@ char *addr;
 
 
 PUBLIC char *sbrk(incr)
-char *incr;
+int incr;
 {
   char *newsize, *oldsize;
-  extern int endv, dorgv;
 
   oldsize = brksize;
-  newsize = brksize + (int) incr;
+  newsize = brksize + incr;
+  if (incr > 0 && newsize < oldsize || incr < 0 && newsize > oldsize)
+  	return( (char *) -1);
   if (brk(newsize) == 0)
 	return(oldsize);
   else

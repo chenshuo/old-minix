@@ -63,7 +63,7 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   }
 
   /* Desired block is not on available chain.  Take oldest block ('front').
-   * However, a block that is aready in use (b_count > 0) may not be taken.
+   * However, a block that is already in use (b_count > 0) may not be taken.
    */
   if (bufs_in_use == NR_BUFS) panic("All buffers in use", NR_BUFS);
   bufs_in_use++;		/* one more buffer in use now */

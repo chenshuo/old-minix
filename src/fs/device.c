@@ -9,6 +9,8 @@
  *   rw_dev:	 procedure that actually calls the kernel tasks
  *   rw_dev2:	 procedure that actually calls task for /dev/tty
  *   no_call:	 dummy procedure (e.g., used when device need not be opened)
+ *   tty_open:   a tty has been opened
+ *   tty_exit:   a process with pid=pgrp has exited.
  */
 
 #include "../h/const.h"
@@ -38,6 +40,7 @@ int mod;			/* how to open it */
 /* Special files may need special processing upon open. */
 
   find_dev(dev);
+  dev_mess.DEVICE = dev;
   (*dmap[major].dmap_open)(task, &dev_mess);
   return(dev_mess.REP_STATUS);
 }
@@ -109,6 +112,7 @@ PUBLIC do_ioctl()
   dev_mess.PROC_NR = who;
   dev_mess.TTY_LINE = minor;	
   dev_mess.TTY_REQUEST = m.TTY_REQUEST;
+  dev_mess.TTY_SPEED = m.TTY_SPEED;
   dev_mess.TTY_SPEK = m.TTY_SPEK;
   dev_mess.TTY_FLAGS = m.TTY_FLAGS;
 
@@ -135,7 +139,6 @@ dev_nr dev;			/* device */
   minor = (dev >> MINOR) & BYTE;	/* minor device number */
   if (major == 0 || major >= max_major) panic("bad major dev", major);
   task = dmap[major].dmap_task;	/* which task services the device */
-  dev_mess.DEVICE = minor;
 }
 
 
@@ -149,19 +152,18 @@ message *mess_ptr;		/* pointer to message for task */
 /* All file system I/O ultimately comes down to I/O on major/minor device
  * pairs.  These lead to calls on the following routines via the dmap table.
  */
+  int r;
+  message m;
 
-  int proc_nr;
-
-  proc_nr = mess_ptr->PROC_NR;
-
-  if (sendrec(task_nr, mess_ptr) != OK) panic("rw_dev: can't send", NO_NUM);
-  while (mess_ptr->REP_PROC_NR != proc_nr) {
-	/* Instead of the reply to this request, we got a message for an
-	 * earlier request.  Handle it and go receive again.
+  while ((r = sendrec(task_nr, mess_ptr)) == E_LOCKED) {
+	/* sendrec() failed to avoid deadlock. The task 'task_nr' is
+	 * trying to send a REVIVE message for an earlier request.
+	 * Handle it and go try again.
 	 */
-	revive(mess_ptr->REP_PROC_NR, mess_ptr->REP_STATUS);
-	receive(task_nr, mess_ptr);
+	if (receive(task_nr, &m) != OK) panic("rw_dev: can't receive", NO_NUM);
+	revive(m.REP_PROC_NR, m.REP_STATUS);
   }
+  if (r != OK) panic("rw_dev: can't send", NO_NUM);
 }
 
 
@@ -172,13 +174,18 @@ PUBLIC rw_dev2(dummy, mess_ptr)
 int dummy;			/* not used - for compatibility with rw_dev() */
 message *mess_ptr;		/* pointer to message for task */
 {
-/* This routine is only called for one device, namely /dev/tty.  It's job
+/* This routine is only called for one device, namely /dev/tty.  Its job
  * is to change the message to use the controlling terminal, instead of the
  * major/minor pair for /dev/tty itself.
  */
 
   int task_nr, major_device;
 
+  if (fp->fs_tty == 0) {
+	mess_ptr->DEVICE = NULL_DEV;
+	rw_dev(MEM, mess_ptr);
+	return;
+  }
   major_device = (fp->fs_tty >> MAJOR) & BYTE;
   task_nr = dmap[major_device].dmap_task;	/* task for controlling tty */
   mess_ptr->DEVICE = (fp->fs_tty >> MINOR) & BYTE;
@@ -197,3 +204,61 @@ message *m_ptr;			/* message pointer */
 
   m_ptr->REP_STATUS = OK;
 }
+
+/*===========================================================================*
+ *				tty_open				     *
+ *===========================================================================*/
+PUBLIC tty_open(task_nr, mess_ptr)
+int task_nr;
+message *mess_ptr;
+{
+  register struct fproc *rfp;
+  int major;
+
+  mess_ptr->REP_STATUS = OK;
+
+  /* Is this a process group leader? */
+  if (fp->fp_pid != fp->fp_pgrp) return;
+
+  /* Is there a current control terminal? */
+  if (fp->fs_tty != 0) return;
+  /* Is this one already allocated to another process? */
+  for (rfp = &fproc[INIT_PROC_NR + 1]; rfp < &fproc[NR_PROCS]; rfp++)
+	if (rfp->fs_tty == mess_ptr->DEVICE) return;
+
+  /* All conditions satisfied.  Make this a control terminal. */
+  fp->fs_tty = mess_ptr->DEVICE;
+  major = (mess_ptr->DEVICE >> MAJOR) & BYTE;
+  mess_ptr->DEVICE = (mess_ptr->DEVICE >> MINOR) & BYTE;
+  mess_ptr->m_type = TTY_SETPGRP;
+  mess_ptr->PROC_NR = who;
+  mess_ptr->TTY_PGRP = who;
+  (*dmap[major].dmap_rw)(task_nr, mess_ptr);
+}
+
+/*===========================================================================*
+ *				tty_exit				     *
+ *===========================================================================*/
+PUBLIC tty_exit()
+{
+/* Process group leader exits. Remove its control terminal
+ * from any processes currently running.
+ */
+
+  register struct fproc *rfp;
+  register dev_nr ttydev;
+
+  ttydev = fp->fs_tty;
+  for (rfp = &fproc[INIT_PROC_NR + 1]; rfp < &fproc[NR_PROCS]; rfp++)
+	if (rfp->fs_tty == ttydev)
+		rfp->fs_tty = 0;
+  /* Inform the terminal driver. */
+  find_dev(ttydev);
+  dev_mess.m_type = TTY_SETPGRP;
+  dev_mess.DEVICE = (ttydev >> MINOR) & BYTE;
+  dev_mess.PROC_NR = who;
+  dev_mess.TTY_PGRP = 0;
+  (*dmap[major].dmap_rw)(task, &dev_mess);
+  return(OK);
+}
+

@@ -5,6 +5,7 @@
  * small utilities do not need numeric printing, they all use prints.
  */
 
+static put();
 
 #define TRUNC_SIZE 128
 char Buf[TRUNC_SIZE], *Bufp;
@@ -37,16 +38,17 @@ int *arglist;
 
 	switch(*s) {
 	    case 'c':	k = *valp++; put(k); s++; continue;
-	    case 's':	p = (char *) *valp++; 
+	    case 's':	p = *((char **)valp);
+			valp += sizeof(char *) / sizeof(int);
 			p1 = p;
 			while(c = *p++) put(c); s++;
-			if ( (k = w - (p-p1-1)) > 0) while (k--) put(' ');
+			if ( (k = w - ((int)(p-p1)-1)) > 0) while (k--) put(' ');
 			continue;
 	    default:	put('%'); put(*s++); continue;
 	}
 
   }
-  write(OUT, Buf, Bufp - Buf);	/* write everything in one blow. */
+  write(OUT, Buf, (int)(Bufp - Buf));	/* write everything in one blow. */
 }
 
 static put(c)

@@ -1,0 +1,12 @@
+The MINIX documentation is contained in the appendices of the following book:
+	Title:     Operating Systems: Design and Implementation
+	Author:    Andrew S. Tanenbaum
+	Publisher: Prentice-Hall (1987)
+
+Please see 'doc/Read_me' for instructions about unpacking the documentation.
+Then read 'doc/USER_GUIDE' before using the system.
+  
+If your screen goes blank periodically, hit the F3 key (see 'doc/USER_GUIDE').
+
+Welcome to MINIX.
+

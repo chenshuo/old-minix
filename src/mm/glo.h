@@ -7,7 +7,7 @@ EXTERN int procs_in_use;	/* how many processes are marked as IN_USE */
 EXTERN message mm_in;		/* the incoming message itself is kept here. */
 EXTERN message mm_out;		/* the reply message is built up here. */
 EXTERN int who;			/* caller's proc number */
-EXTERN int mm_call;		/* caller's proc number */
+EXTERN int mm_call;		/* system call number */
 
 /* The following variables are used for returning results to the caller. */
 EXTERN int err_code;		/* temporary storage for error number */

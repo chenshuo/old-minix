@@ -1,8 +1,0 @@
-echo Rebuilding libc.a in this directory
-split -8 order
-for f in x??
-do
-  ar av libc.a `cat $f`
-done
-rm x??
-

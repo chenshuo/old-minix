@@ -39,6 +39,7 @@
 /* Constant definitions. */
 #define MILLISEC         100	/* how often to call the scheduler (msec) */
 #define SCHED_RATE (MILLISEC*HZ/1000)	/* number of ticks per schedule */
+#define FLUSH_MASK        07	/* bit mask used for flushing RS232 input */
 
 /* Clock parameters. */
 #define TIMER0          0x40	/* port address for timer channel 0 */
@@ -53,6 +54,7 @@ PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
 PRIVATE struct proc *prev_ptr;	/* last user process run by clock task */
 PRIVATE message mc;		/* message buffer for both input and output */
 PRIVATE int (*watch_dog[NR_TASKS+1])();	/* watch_dog functions to call */
+extern int flush_flag;		/* tells clock when to flush the tty buf */
 
 /*===========================================================================*
  *				clock_task				     *
@@ -149,7 +151,7 @@ message *m_ptr;			/* pointer to request message */
  *===========================================================================*/
 PRIVATE do_clocktick()
 {
-/* This routine called on every clock tick. */
+/* This routine is called on every clock tick. */
 
   register struct proc *rp;
   register int t, proc_nr;
@@ -190,6 +192,12 @@ PRIVATE do_clocktick()
 
   accounting();			/* keep track of who is using the cpu */
 
+  /* If input characters are accumulating on an RS232 line, process them. */
+  if (flush_flag) {
+	t = (int) realtime;		/* only low-order bits matter */
+	if ( (t & FLUSH_MASK) == 0) rs_flush();	/* flush tty input */
+  }
+
   /* If a user process has been running too long, pick another one. */
   if (--sched_ticks == 0) {
 	if (bill_ptr == prev_ptr) sched();	/* process has run too long */
@@ -203,21 +211,28 @@ PRIVATE do_clocktick()
 
 }
 
+
 /*===========================================================================*
  *				accounting				     *
  *===========================================================================*/
 PRIVATE accounting()
 {
-/* Update user and system accounting times.  The variable 'bill_ptr' is always
- * kept pointing to the process to charge for CPU usage.  If the CPU was in
- * user code prior to this clock tick, charge the tick as user time, otherwise
- * charge it as system time.
+/*
+ * Update user and system accounting times.  Charge the current process for 
+ * user time or system time.  In addition, if the current proces (i.e.
+ * prev_proc, because cur_proc is always CLOCK) is a task, charge it too.
+ * This is just for the F1 display.
  */
 
-  if (prev_proc >= LOW_USER)
-	bill_ptr->user_time++;	/* charge CPU time */
-  else
-	bill_ptr->sys_time++;	/* charge system time */
+  register struct proc *rp;
+
+  if (prev_proc >= LOW_USER) {
+	bill_ptr->user_time++;				/* user time */
+  } else {
+	bill_ptr->sys_time++;				/* system time */
+	rp = proc_addr(prev_proc);
+	if (prev_proc != IDLE) rp->sys_time++;
+  }
 }
 
 

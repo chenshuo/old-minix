@@ -111,7 +111,7 @@ mask_bits bits;			/* mode of the inode */
 
   /* Acquire an inode from the bit map. */
   sp = get_super(dev);		/* get pointer to super_block */
-  b=alloc_bit(sp->s_imap, (bit_nr)sp->s_ninodes+1, sp->s_imap_blocks,(bit_nr)0);
+  b=alloc_bit(sp->s_imap,(bit_nr)sp->s_ninodes+1, sp->s_imap_blocks,(bit_nr)0);
   if (b == NO_BIT) {
 	err_code = ENFILE;
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
@@ -129,14 +129,14 @@ mask_bits bits;			/* mode of the inode */
 	/* No inode table slots available.  Free the inode just allocated. */
 	free_bit(sp->s_imap, b);
   } else {
-	/* An inode slot is available.  Put the inode just allocated into it. */
+	/* An inode slot is available. Put the inode just allocated into it. */
 	rip->i_mode = bits;
 	rip->i_nlinks = (links) 0;
 	rip->i_uid = fp->fp_effuid;
 	rip->i_gid = fp->fp_effgid;
 	rip->i_dev = dev;	/* was provisionally set to NO_DEV */
 
-	/* The fields not cleared already are cleared in wipe_inode().  They have
+	/* Fields not cleared already are cleared in wipe_inode().  They have
 	 * been put there because truncate() needs to clear the same fields if
 	 * the file happens to be open while being truncated.  It saves space
 	 * not to repeat the code twice.
@@ -212,9 +212,9 @@ int rw_flag;			/* READING or WRITING */
 
   /* Do the read or write. */
   if (rw_flag == READING) {
-	copy((char *)rip, (char *) dip, INODE_SIZE); /* copy from blk to inode */
+	copy((char *)rip, (char *)dip, INODE_SIZE); /* copy from blk to inode*/
   } else {
-	copy((char *)dip, (char *) rip, INODE_SIZE); /* copy from inode to blk */
+	copy((char *)dip, (char *)rip, INODE_SIZE); /* copy from inode to blk*/
 	bp->b_dirt = DIRTY;
   }
 

@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 fread(ptr, size, count, file)
 char *ptr;

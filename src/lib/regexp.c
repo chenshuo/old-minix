@@ -26,8 +26,8 @@
  *	Andy Tanenbaum also made some changes.
  */
 
-#include "../include/stdio.h"
-#include "../include/regexp.h"
+#include <stdio.h>
+#include <regexp.h>
 
 /*
  * The first byte of the regexp internal "program" is actually this magic
@@ -121,7 +121,7 @@
  * but allows patterns to get big without disasters.
  */
 #define	OP(p)	(*(p))
-#define	NEXT(p)	(((*((p)+1)&0377)<<8) + *((p)+2)&0377)
+#define	NEXT(p)	(((*((p)+1)&0377)<<8) + (*((p)+2)&0377))
 #define	OPERAND(p)	((p) + 3)
 
 
@@ -1077,12 +1077,12 @@ regexp *r;
   s = r->program + 1;
   while (op != END) {	/* While that wasn't END last time... */
 	op = OP(s);
-	printf("%2d%s", s-r->program, regprop(s));	/* Where, what. */
+	printf("%2d%s", (int)(s-r->program), regprop(s));	/* Where, what. */
 	next = regnext(s);
 	if (next == NULL)		/* Next ptr. */
 		printf("(0)");
 	else 
-		printf("(%d)", (s-r->program)+(next-s));
+		printf("(%d)", (int)(s-r->program)+(int)(next-s));
 	s += 3;
 	if (op == ANYOF || op == ANYBUT || op == EXACTLY) {
 		/* Literal string, where present. */

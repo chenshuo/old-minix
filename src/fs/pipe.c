@@ -81,12 +81,11 @@ PUBLIC int do_pipe()
 /*===========================================================================*
  *				pipe_check				     *
  *===========================================================================*/
-PUBLIC int pipe_check(rip, rw_flag, virgin, bytes, position)
+PUBLIC int pipe_check(rip, rw_flag, bytes, position)
 register struct inode *rip;	/* the inode of the pipe */
 int rw_flag;			/* READING or WRITING */
-int virgin;			/* 1 if no data transferred yet, else 0 */
 register int bytes;		/* bytes to be read or written (all chunks) */
-register file_pos *position;	/* pointer to current file position */
+register file_pos position;	/* pointer to current file position */
 {
 /* Pipes are a little different.  If a process reads from an empty pipe for
  * which a writer still exists, suspend the reader.  If the pipe is empty
@@ -98,11 +97,11 @@ register file_pos *position;	/* pointer to current file position */
 
   /* If reading, check for empty pipe. */
   if (rw_flag == READING) {
-	if (*position >= rip->i_size) {
+	if (position >= rip->i_size) {
 		/* Process is reading from an empty pipe. */
 		if (find_filp(rip, W_BIT) != NIL_FILP) {
-			/* Writer exists; suspend rdr if no data already read.*/
-			if (virgin) suspend(XPIPE);	/* block reader */
+			/* Writer exists */
+			suspend(XPIPE);	/* block reader */
 
 			/* If need be, activate sleeping writer. */
 			if (susp_count > 0) release(rip, WRITE, 1);
@@ -113,21 +112,18 @@ register file_pos *position;	/* pointer to current file position */
 	/* Process is writing to a pipe. */
 	if (bytes > PIPE_SIZE) return(EFBIG);
 	if (find_filp(rip, R_BIT) == NIL_FILP) {
-		/* Tell MM to generate a SIGPIPE signal. */
-		mess.m_type = KSIG;
-		mess.PROC1 = fp - fproc;
-		mess.SIG_MAP = 1 << (SIGPIPE - 1);
-		send(MM_PROC_NR, &mess);
+		/* Tell kernel to generate a SIGPIPE signal. */
+		sys_kill((int)(fp - fproc), SIGPIPE);
 		return(EPIPE);
 	}
 
-	if (*position + bytes > PIPE_SIZE) {
+	if (position + bytes > PIPE_SIZE) {
 		suspend(XPIPE);	/* stop writer -- pipe full */
 		return(0);
 	}
 
 	/* Writing to an empty pipe.  Search for suspended reader. */
-	if (*position == 0) release(rip, READ, 1);
+	if (position == 0) release(rip, READ, 1);
   }
 
   return(1);
@@ -173,9 +169,11 @@ int count;			/* max number of processes to release */
 
   /* Search the proc table. */
   for (rp = &fproc[0]; rp < &fproc[NR_PROCS]; rp++) {
-	if (rp->fp_suspended == SUSPENDED && (rp->fp_fd & BYTE) == call_nr &&
-				rp->fp_filp[rp->fp_fd>>8]->filp_ino == ip) {
-		revive(rp - fproc, 0);
+	if (rp->fp_suspended == SUSPENDED &&
+			rp->fp_revived == NOT_REVIVING &&
+			(rp->fp_fd & BYTE) == call_nr &&
+			rp->fp_filp[rp->fp_fd>>8]->filp_ino == ip) {
+		revive((int)(rp - fproc), 0);
 		susp_count--;	/* keep track of who is suspended */
 		if (--count == 0) return;
 	}
@@ -247,12 +245,9 @@ PUBLIC int do_unpause()
 	dev = f->filp_ino->i_zone[0];	/* device on which proc is hanging */
 	mess.TTY_LINE = (dev >> MINOR) & BYTE;
 	mess.PROC_NR = proc_nr;
+	mess.COUNT = f->filp_mode;	/* tell kernel whether R or W */
 	mess.m_type = CANCEL;
-	if (sendrec(task, &mess) != OK) panic("unpause err 3", NO_NUM);
-	while (mess.REP_PROC_NR != proc_nr) {
-		revive(mess.REP_PROC_NR, mess.REP_STATUS);
-		if (receive(task, &m) != OK) panic("unpause err 4", NO_NUM);
-	}
+	rw_dev(task, &mess);
 	revive(proc_nr, EINTR);	/* signal interrupted call */
   }
 

@@ -4,7 +4,7 @@
  * By: Patrick van Kleef
  */
 
-#include "../include/grp.h"
+#include <grp.h>
 
 #define PRIVATE static
 
@@ -63,7 +63,7 @@ static getline ()
 
 static skip_period () 
 {
-        while (*_buf != ':')
+        while ((*_buf) && (*_buf != ':'))
 	        _buf++;
         *_buf++ = '\0';
 }
@@ -73,11 +73,11 @@ struct group   *getgrent ()
         if (getline () == 0)
                return (0);
 
-        grp.name = _buf;
+        grp.gr_name = _buf;
         skip_period ();
-        grp.passwd = _buf;
+        grp.gr_passwd = _buf;
         skip_period ();
-        grp.gid = atoi (_buf);
+        grp.gr_gid = atoi (_buf);
         skip_period ();
         return (&grp);
 }
@@ -89,7 +89,7 @@ char   *name;
 
         setgrent ();
         while ((grp = getgrent ()) != 0)
-	        if (!strcmp (grp -> name, name))
+	        if (!strcmp (grp -> gr_name, name))
 	                break;
         endgrent ();
         if (grp != 0)
@@ -105,7 +105,7 @@ int     gid;
 
         setgrent ();
         while ((grp = getgrent ()) != 0)
-	        if (grp -> gid == gid)
+	        if (grp -> gr_gid == gid)
 	                break;
         endgrent ();
         if (grp != 0)

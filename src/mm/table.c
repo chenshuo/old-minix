@@ -16,14 +16,26 @@
 
 /* Miscellaneous */
 char core_name[] = {"core"};	/* file name where core images are produced */
+#ifdef ATARI_ST
+/*
+ * Creating core files is disabled, except for SIGQUIT and SIGIOT.
+ * Set core_bits to 0x0EFC if you want compatibility with UNIX V7.
+ */
 unshort core_bits = 0x0EFC;	/* which signals cause core images */
+#else
+unshort core_bits = 0x0EFC;	/* which signals cause core images */
+#endif
 
 extern char mm_stack[];
 char *stackpt = &mm_stack[MM_STACK_BYTES];	/* initial stack pointer */
 
 extern do_mm_exit(), do_fork(), do_wait(), do_brk(), do_getset(), do_exec();
 extern do_signal(), do_kill(), do_pause(), do_alarm();
-extern no_sys(), unpause(), do_ksig(), do_brk2();
+extern no_sys(), do_ksig(), do_brk2();
+
+#ifdef AM_KERNEL
+extern do_amoeba();
+#endif
 
 int (*call_vec[NCALLS])() = {
 	no_sys,		/*  0 = unused	*/
@@ -95,5 +107,12 @@ int (*call_vec[NCALLS])() = {
 	no_sys,		/* 65 = UNPAUSE	*/
 	do_brk2, 	/* 66 = BRK2 (used to tell MM size of FS,INIT) */
 	no_sys,		/* 67 = REVIVE	*/
-	no_sys		/* 68 = TASK_REPLY	*/
+	no_sys,		/* 68 = TASK_REPLY	*/
+#ifdef i8088
+#ifdef AM_KERNEL
+	do_amoeba,	/* 69 = AMOEBA SYSTEM CALL */
+#else
+	no_sys,		/* 69 = AMOEBA SYSTEM CALL */
+#endif
+#endif i8088
 };

@@ -42,8 +42,10 @@ PUBLIC real_time clock_time()
 
   /* Since we now have the time, update the super block.  It is almost free. */
   sp = get_super(ROOT_DEV);
-  sp->s_time = clock_mess.NEW_TIME;	/* update super block time */
-  if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
+  if (sp) {
+	sp->s_time = clock_mess.NEW_TIME;	/* update super block time */
+	if (sp->s_rd_only == FALSE) sp->s_dirt = DIRTY;
+  }
 
   return (real_time) clock_mess.NEW_TIME;
 }

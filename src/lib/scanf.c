@@ -1,6 +1,6 @@
 /* scanf - formatted input conversion	Author: Patrick van Kleef */
 
-#include "stdio.h"
+#include <stdio.h>
 
 
 int scanf (format, args)
@@ -162,7 +162,6 @@ union ptr_union *argp;		/* our argument list */
 				goto all_done;
 			++format;
 			rnc ();
-			++done;
 			continue;
 		}
 		++format;
@@ -234,8 +233,9 @@ union ptr_union *argp;		/* our argument list */
 				else
 					*(argp++)->uint_p = (unsigned) val;
 			}
-			if (done_some)
-				++done;
+			if (done_some) {
+				if(do_assign) ++done;
+			}
 			else
 				goto all_done;
 			break;
@@ -250,7 +250,7 @@ union ptr_union *argp;		/* our argument list */
 			}
 			if (do_assign)
 				argp++;	/* done with this one */
-			if (done_some)
+			if (done_some && do_assign)
 				++done;
 			break;
 		case 's':
@@ -264,9 +264,9 @@ union ptr_union *argp;		/* our argument list */
 			}
 			if (do_assign)		/* terminate the string */
 				*(argp++)->chr_p = '\0';	
-			if (done_some)
-				++done;
-			else
+			if (done_some) {
+				if(do_assign) ++done;
+			} else
 				goto all_done;
 			break;
 		case '[':
@@ -299,9 +299,9 @@ union ptr_union *argp;		/* our argument list */
 			*format = ']';		/* put it back */
 			if (do_assign)		/* terminate the string */
 				*(argp++)->chr_p = '\0';	
-			if (done_some)
-				++done;
-			else
+			if (done_some) {
+				if(do_assign) ++done;
+			} else
 				goto all_done;
 			break;
 		}		/* end switch */

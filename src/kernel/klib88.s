@@ -3,33 +3,39 @@
 |
 |   phys_copy:	copies data from anywhere to anywhere in memory
 |   cp_mess:	copies messages from source to destination
-|   port_out:	outputs data on an I/O port
-|   port_in:	inputs data from an I/O port
 |   lock:	disable interrupts
-|   unlock:	enable interrupts
 |   restore:	restore interrupts (enable/disabled) as they were before lock()
 |   build_sig:	build 4 word structure pushed onto stack for signals
 |   csv:	procedure prolog to save the registers
 |   cret:	procedure epilog to restore the registers
-|   get_chrome:	returns 0 is display is monochrome, 1 if it is color
+|   get_chrome:	returns 0 if display is monochrome, 1 if it is color
+|   get_ega:	returns 1 if display is EGA, 0 otherwise
 |   vid_copy:	copy data to video ram (on color display during retrace only)
+|   scr_up:	scroll screen a line up (in software, by copying)
+|   scr_down:	scroll screen a line down (in software, by copying)
 |   get_byte:	reads a byte from a user program and returns it as value
 |   reboot:	reboot for CTRL-ALT-DEL
 |   wreboot:	wait for character then reboot 
 |   dma_read:	transfer data between HD controller and memory
 |   dma_write:	transfer data between memory and HD controller
+|   em_xfer:	read or write AT extended memory using the BIOS
+|   wait_retrace: waits for retrace interval, and returns int disabled
+|   ack_char:	acknowledge character from keyboard
+|   save_tty_vec: save tty interrupt vector 0x71 for PS/2
 
 | The following procedures are defined in this file and called from outside it.
-.globl _phys_copy, _cp_mess, _port_out, _port_in, _lock, _unlock, _restore
+.globl _phys_copy, _cp_mess, _lock, _restore
 .globl _build_sig, csv, cret, _get_chrome, _vid_copy, _get_byte, _reboot
-.globl _wreboot, _dma_read, _dma_write
+.globl _wreboot, _dma_read, _dma_write, _em_xfer, _scr_up, _scr_down
+.globl _ack_char, _save_tty_vec, _get_ega, _wait_retrace
 
-| The following external procedure is called in this file.
+
+| The following external procedures are called in this file.
 .globl _panic
 
 | Variables and data structures
-.globl _color, _cur_proc, _proc_ptr, splimit, _vec_table, _vid_mask
-
+.globl _color, _cur_proc, _proc_ptr, splimit
+.globl _port_65, _ps, _vec_table, _vid_mask, _vid_port
 
 |*===========================================================================*
 |*				phys_copy				     *
@@ -39,7 +45,8 @@
 
 _phys_copy:
 	pushf			| save flags
-	cli			| disable interrupts
+|	cli			| disable interrupts
+	cld			| clear direction flag
 	push bp			| save the registers
 	push ax			| save ax
 	push bx			| save bx
@@ -137,109 +144,63 @@ L7:	mov 32(bp),dx		| store decremented byte count back in mem
 | Note that the message size, 'Msize' is in WORDS (not bytes) and must be set
 | correctly.  Changing the definition of message the type file and not changing
 | it here will lead to total disaster.
-| This routine destroys ax.  It preserves the other registers.
+| 
+| This routine only preserves the registers the 'C' compiler
+| expects to be preserved (es, ds, si, di, sp, bp).
 
 Msize = 12			| size of a message in 16-bit words
 _cp_mess:
-	push bp			| save bp
 	push es			| save es
 	push ds			| save ds
-	mov bp,sp		| index off bp because machine can't use sp
+	mov bx,sp		| index off bx because machine can't use sp
 	pushf			| save flags
 	cli			| disable interrupts
-	push cx			| save cx
 	push si			| save si
 	push di			| save di
-
-	mov ax,8(bp)		| ax = process number of sender
-	mov di,16(bp)		| di = offset of destination buffer
-	mov es,14(bp)		| es = clicks of destination
-	mov si,12(bp)		| si = offset of source message
-	mov ds,10(bp)		| ds = clicks of source message
+	mov di,14(bx)		| di = offset of destination buffer
+	les si,10(bx)		| use 32 bit load(ds is our base)
+				| si = offset of source message
+				| es = clicks of destination 
+	lds ax,6(bx)		| use 32 bit load ....
+				| ax = process number of sender
+				| ds = clicks of source message
 	seg es			| segment override prefix
   	mov (di),ax		| copy sender's process number to dest message
 	add si,*2		| don't copy first word
 	add di,*2		| don't copy first word
 	mov cx,*Msize-1		| remember, first word doesn't count
+	cld			| clear direction flag
 	rep			| iterate cx times to copy 11 words
 	movw			| copy the message
-
 	pop di			| restore di
 	pop si			| restore si
-	pop cx			| restore cs
-	popf			| restore flags
+	popf			| restore flags (resets interrupts to old state)
 	pop ds			| restore ds
-	pop es			| restore es
-	pop bp			| restore bp
+	pop es			| restore es	
 	ret			| that's all folks!
-
-
-|*===========================================================================*
-|*				port_out				     *
-|*===========================================================================*
-| port_out(port, value) writes 'value' on the I/O port 'port'.
-
-_port_out:
-	push bx			| save bx
-	mov bx,sp		| index off bx
-	push ax			| save ax
-	push dx			| save dx
-	mov dx,4(bx)		| dx = port
-	mov ax,6(bx)		| ax = value
-	out			| output 1 byte
-	pop dx			| restore dx
-	pop ax			| restore ax
-	pop bx			| restore bx
-	ret			| return to caller
-
-
-|*===========================================================================*
-|*				port_in					     *
-|*===========================================================================*
-| port_in(port, &value) reads from port 'port' and puts the result in 'value'.
-_port_in:
-	push bx			| save bx
-	mov bx,sp		| index off bx
-	push ax			| save ax
-	push dx			| save dx
-	mov dx,4(bx)		| dx = port
-	in			| input 1 byte
-	xorb ah,ah		| clear ah
-	mov bx,6(bx)		| fetch address where byte is to go
-	mov (bx),ax		| return byte to caller in param
-	pop dx			| restore dx
-	pop ax			| restore ax
-	pop bx			| restore bx
-	ret			| return to caller
 
 
 |*===========================================================================*
 |*				lock					     *
 |*===========================================================================*
-| Disable CPU interrupts.
+| Disable CPU interrupts.  Return old psw as function value.
 _lock:  
 	pushf			| save flags on stack
 	cli			| disable interrupts
-	pop lockvar		| save flags for possible restoration later
-	ret			| return to caller
-
-
-|*===========================================================================*
-|*				unlock					     *
-|*===========================================================================*
-| Enable CPU interrupts.
-_unlock:
-	sti			| enable interrupts
+	pop ax	 		| return flags for restoration later
 	ret			| return to caller
 
 
 |*===========================================================================*
 |*				restore					     *
 |*===========================================================================*
-| Restore enable/disable bit to the value it had before last lock.
+| restore enable/disable bit to the value it had before last lock.
 _restore:
-	push lockvar		| push flags as they were before previous lock
+	push bp			| save it
+	mov bp,sp		| set up base for indexing
+	push 4(bp)		| bp is the psw to be restored
 	popf			| restore flags
+	pop bp			| restore bp
 	ret			| return to caller
 
 
@@ -334,6 +295,23 @@ getchr1: xor ax,ax		| mono = 0
 	ret			| monochrome return
 
 |*===========================================================================*
+|*				get_ega  				     *
+|*===========================================================================*
+| This routine calls the BIOS to find out if the display is ega.  This
+| is needed because scrolling is different.
+_get_ega:
+	movb bl,*0x10
+	movb ah,*0x12
+	int 0x10		| call the BIOS to get equipment type
+
+	cmpb bl,*0x10		| if reg is unchanged, it failed
+	je notega
+	mov ax,#1		| color = 1
+	ret			| color return
+notega: xor ax,ax		| mono = 0
+	ret			| monochrome return
+
+|*===========================================================================*
 |*				dma_read				     *
 |*===========================================================================*
 _dma_read:
@@ -352,7 +330,7 @@ _dma_read:
 	pop	es
 	pop	di
 	pop	dx
-	pop	dx
+	pop	cx
 	mov	sp,bp
 	pop	bp
 	ret
@@ -376,7 +354,7 @@ _dma_write:
 	pop	ds
 	pop	si
 	pop	dx
-	pop	dx
+	pop	cx
 	mov	sp,bp
 	pop	bp
 	ret
@@ -394,9 +372,7 @@ _dma_write:
 |     'videobase' is 0xB800 for color and 0xB000 for monochrome displays
 |     'offset'    tells where within video ram to copy the data
 |     'words'     tells how many words to copy
-| if buffer is zero, the fill char (BLANK) is used
-
-BLANK = 0x0700			| controls color of cursor on blank screen
+| if buffer is zero, the fill char (blank_color) is used
 
 _vid_copy:
 	push bp			| we need bp to access the parameters
@@ -425,6 +401,8 @@ vid.0:	mov si,4(bp)		| si = pointer to data to be copied
 
 vid.1:	test _color,*1		| skip vertical retrace test if display is mono
 	jz vid.4		| if monochrome then go to vid.2
+	test _ega,*1		| if ega also don't need to wait
+	jnz vid.4
 
 |vid.2:	in			| with a color display, you can only copy to
 |	test al,*010		| the video ram during vertical retrace, so
@@ -434,7 +412,8 @@ vid.3:	in			| 0x3DA is set during retrace.  First wait
 	jz vid.3		| until it comes on (start of retrace)
 
 vid.4:	pushf			| copying may now start; save flags
-	cli			| interrupts just get in the way: disable them
+|	cli			| interrupts just get in the way: disable them
+	cld			| clear direction flag
 	mov es,6(bp)		| load es now: int routines may ruin it
 
 	cmp si,#0		| si = 0 means blank the screen
@@ -465,10 +444,114 @@ vid.6:	pop es			| restore registers
 	pop bp			| restore bp
 	ret			| return to caller
 
-vid.7:	mov ax,#BLANK		| ax = blanking character
+vid.7:	mov ax,_blank_color	| ax = blanking character
 	rep			| copy loop
 	stow			| blank screen
 	jmp vid.5		| done
+
+|*===========================================================================*
+|*			      wait_retrace				     *
+|*===========================================================================*
+| Wait until we're in the retrace interval.  Return locked (ints off).
+| But enable them during the wait.
+
+_wait_ret: push dx
+	pushf
+	mov dx,_vid_port
+	or dx,#0x000A
+wtre.3:	sti
+	nop
+	nop
+	cli	
+	in			| 0x3DA bit 3 is set during retrace.
+	testb al,*010		| Wait until it is on.
+	jz wtre.3
+
+	pop ax	 		| return flags for restoration later
+	pop dx
+	ret			| return to caller
+
+|*===========================================================================*
+|*				scr_up  				     *
+|*===========================================================================*
+| This routine scrolls the screen up one line on an EGA display 
+| 
+| The call is:
+|     scr_up(org,source,dest,count)
+| where
+|     'org'       is the video segment origin of the desired page
+
+_scr_up:
+	push bp			| we need bp to access the parameters
+	mov bp,sp		| set bp to sp for indexing
+	push si			| save the registers
+	push di			| save di
+	push cx			| save cx
+	push es			| save es
+	push ds			| save ds
+	mov si,6(bp)		| si = pointer to data to be copied
+	mov di,8(bp)		| di = offset within video ram
+	mov cx,10(bp)		| cx = word count for copy loop
+
+	pushf			| copying may now start; save flags
+|	cli			| interrupts just get in the way: disable them
+	cld			| clear diretion flag
+	mov ax,4(bp)
+	mov es,ax		| load es now: int routines may ruin it
+	mov ds,ax
+
+	rep			| this is the copy loop
+	movw			| ditto
+
+	popf			| restore flags
+	pop ds			| restore ds
+	pop es			| restore es
+	pop cx			| restore cx
+	pop di			| restore di
+	pop si			| restore si
+	pop bp			| restore bp
+	ret			| return to caller
+
+|*===========================================================================*
+|*				  scr_down				     *
+|*===========================================================================*
+| This routine scrolls the screen down one line on an EGA display 
+| 
+| The call is:
+|     scr_down(org)
+| where
+|     'org'       is the video segment origin of the desired page
+
+_scr_down:
+	push bp			| we need bp to access the parameters
+	mov bp,sp		| set bp to sp for indexing
+	push si			| save the registers
+	push di			| save di
+	push cx			| save cx
+	push es			| save es
+	push ds			| save ds
+	mov si,6(bp)		| si = pointer to data to be copied
+	mov di,8(bp)		| di = offset within video ram
+	mov cx,10(bp)		| cx = word count for copy loop
+
+	pushf			| copying may now start; save flags
+|	cli			| interrupts just get in the way: disable them
+	mov ax,4(bp)
+	mov es,ax		| load es now: int routines may ruin it
+	mov ds,ax
+
+	std
+	rep			| this is the copy loop
+	movw			| ditto
+
+	popf			| restore flags
+	pop ds			| restore ds
+	pop es			| restore es
+	pop cx			| restore cx
+	pop di			| restore di
+	pop si			| restore si
+	pop bp			| restore bp
+	ret			| return to caller
 
 |*===========================================================================*
 |*				get_byte				     *
@@ -492,8 +575,186 @@ _get_byte:
 	pop bp			| restore bp
 	ret			| return to caller
 
+|===========================================================================
+|                		em_xfer
+|===========================================================================
+|
+|  This file contains one routine which transfers words between user memory
+|  and extended memory on an AT or clone.  A BIOS call (INT 15h, Func 87h)
+|  is used to accomplish the transfer.  The BIOS call is "faked" by pushing
+|  the processor flags on the stack and then doing a far call to the actual
+|  BIOS location.  An actual INT 15h would get a MINIX complaint from an
+|  unexpected trap.
+|
+|  NOTE:  WARNING:  CAUTION: ...
+|  Before using this routine, you must find your BIOS address for INT 15h.
+|  The debug command "d 0:54 57" will give you the segment and address of
+|  the BIOS call.  On my machine this generates:
+|      0000:0050      59 F8 00 F0                          Y...
+|  These values are then plugged into the two strange ".word xxxx" lines
+|  near the end of this routine.  They correspond to offset=0xf859 and
+|  seg=0xf000.  The offset is the first two bytes and the segment is the
+|  last two bytes (Note the byte swap).
+|
+|  This particular BIOS routine runs with interrupts off since the 80286
+|  must be placed in protected mode to access the memory above 1 Mbyte.
+|  So there should be no problems using the BIOS call.
+|
+	.text
+gdt:				| Begin global descriptor table
+					| Dummy descriptor
+	.word 0		| segment length (limit)
+	.word 0		| bits 15-0 of physical address
+	.byte 0		| bits 23-16 of physical address
+	.byte 0		| access rights byte
+	.word 0		| reserved
+					| descriptor for GDT itself
+	.word 0		| segment length (limit)
+	.word 0		| bits 15-0 of physical address
+	.byte 0		| bits 23-16 of physical address
+	.byte 0		| access rights byte
+	.word 0		| reserved
+src:					| source descriptor
+srcsz:	.word 0		| segment length (limit)
+srcl:	.word 0		| bits 15-0 of physical address
+srch:	.byte 0		| bits 23-16 of physical address
+	.byte 0x93	| access rights byte
+	.word 0		| reserved
+tgt:					| target descriptor
+tgtsz:	.word 0		| segment length (limit)
+tgtl:	.word 0		| bits 15-0 of physical address
+tgth:	.byte 0		| bits 23-16 of physical address
+	.byte 0x93	| access rights byte
+	.word 0		| reserved
+					| BIOS CS descriptor
+	.word 0		| segment length (limit)
+	.word 0		| bits 15-0 of physical address
+	.byte 0		| bits 23-16 of physical address
+	.byte 0		| access rights byte
+	.word 0		| reserved
+					| stack segment descriptor
+	.word 0		| segment length (limit)
+	.word 0		| bits 15-0 of physical address
+	.byte 0		| bits 23-16 of physical address
+	.byte 0		| access rights byte
+	.word 0		| reserved
+
+|
+|
+|  Execute a transfer between user memory and extended memory.
+|
+|  status = em_xfer(source, dest, count);
+|
+|    Where:
+|       status => return code (0 => OK)
+|       source => Physical source address (32-bit)
+|       dest   => Physical destination address (32-bit)
+|       count  => Number of words to transfer
+|
+|
+|
+_em_xfer:
+
+	push	bp		| Save registers
+	mov	bp,sp
+	push	si
+	push	es
+	push	cx
+|
+|  Pick up source and destination addresses and update descriptor tables
+|
+	mov ax,4(bp)
+	seg cs
+	mov srcl,ax
+	mov ax,6(bp)
+	seg cs
+	movb srch,al
+	mov ax,8(bp)
+	seg cs
+	mov tgtl,ax
+	mov ax,10(bp)
+	seg cs
+	movb tgth,al
+|
+|  Update descriptor table segment limits
+|
+	mov cx,12(bp)
+	mov ax,cx
+	add ax,ax
+	seg cs
+	mov tgtsz,ax
+	seg cs
+	mov srcsz,ax
+|
+|  Now do actual DOS call
+|
+	push cs
+	pop es
+	seg cs
+	mov si,#gdt
+	movb ah,#0x87
+	pushf
+	int 0x15		| Do a far call to BIOS routine
+|
+|  All done, return to caller.
+|
+
+	pop	cx		| restore registers
+	pop	es
+	pop	si
+	mov	sp,bp
+	pop	bp
+	ret
+
+|*===========================================================================
+|*				ack_char
+|*===========================================================================
+| Acknowledge character from keyboard for PS/2
+
+_ack_char:
+	push dx
+	mov dx,#0x69
+	in
+	xor ax,#0x10
+	out
+	xor ax,#0x10
+	out
+
+	mov dx,#0x66
+	movb ah,#0x10
+	in
+	notb ah
+	andb al,ah
+	out
+	jmp frw1
+frw1:	notb ah
+	orb al,ah
+	out
+	jmp frw2
+frw2:	notb ah
+	andb al,ah
+	out
+	
+	pop dx
+	ret
 
 
+|*===========================================================================*
+|*				save_tty_vec				     *
+|*===========================================================================*
+| Save the tty vector 0x71 (PS/2)
+_save_tty_vec:
+	push es
+	xor ax,ax
+	mov es,ax
+	seg es
+	mov ax,452
+	mov tty_vec1,ax
+	seg es
+	mov ax,454
+	mov tty_vec2,ax
+	pop es
+	ret
 
 |*===========================================================================*
 |*				reboot & wreboot			     *
@@ -504,11 +765,16 @@ _reboot:
 	cli			| disable interrupts
 	mov ax,#0x20		| re-enable interrupt controller
 	out 0x20
+	call _eth_stp		| stop the ethernet chip
 	call resvec		| restore the vectors in low core
 	mov ax,#0x40
+	push ds
 	mov ds,ax
 	mov ax,#0x1234
 	mov 0x72,ax
+	pop ds
+	test _ps,#0xFFFF
+	jnz r.1
 	mov ax,#0xFFFF
 	mov ds,ax
 	mov ax,3
@@ -516,18 +782,32 @@ _reboot:
 	mov ax,1
 	push ax
 	reti
+r.1:
+	mov ax,_port_65		| restore port 0x65
+	mov dx,#0x65
+	out
+	mov dx,#0x21		| restore interrupt mask port
+	mov ax,#0xBC
+	out
+	sti			| enable interrupts
+	int 0x19		| for PS/2 call bios to reboot
 
 _wreboot:
 	cli			| disable interrupts
 	mov ax,#0x20		| re-enable interrupt controller
 	out 0x20
+	call _eth_stp		| stop the ethernet chip
 	call resvec		| restore the vectors in low core
 	xor ax,ax		| wait for character before continuing
 	int 0x16		| get char
 	mov ax,#0x40
+	push ds
 	mov ds,ax
 	mov ax,#0x1234
 	mov 0x72,ax
+	pop ds
+	test _ps,#0xFFFF
+	jnz wr.1
 	mov ax,#0xFFFF
 	mov ds,ax
 	mov ax,3
@@ -535,6 +815,16 @@ _wreboot:
 	mov ax,1
 	push ax
 	reti
+wr.1:
+	mov ax,_port_65		| restore port 0x65
+	mov dx,#0x65
+	out
+	mov dx,#0x21		| restore interrupt mask port
+	mov ax,#0xBC
+	out
+	sti			| enable interrupts
+	int 0x19		| for PS/2 call bios to reboot
+		
 
 | Restore the interrupt vectors in low core.
 resvec:	cld
@@ -544,6 +834,14 @@ resvec:	cld
 	mov es,di
 	rep
 	movw
+
+	mov ax,tty_vec1		| Restore keyboard interrupt vector for PS/2
+	seg es
+	mov 452,ax
+	mov ax,tty_vec2
+	seg es
+	mov 454,ax
+
 	ret
 
 | Some library routines use exit, so this label is needed.
@@ -553,9 +851,10 @@ _exit:	sti
 	jmp _exit
 
 .data
-lockvar:	.word 0		| place to store flags for lock()/restore()
 vidlock:	.word 0		| dummy variable for use with lock prefix
 splimit:	.word 0		| stack limit for current task (kernel only)
 tmp:		.word 0		| count of bytes already copied
 stkoverrun:	.asciz "Kernel stack overrun, task = "
 _vec_table:	.zerow 142	| storage for interrupt vectors
+tty_vec1:	.word 0		| sorage for vector 0x71 (offset)
+tty_vec2:	.word 0		| sorage for vector 0x71 (segment)

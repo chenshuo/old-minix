@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 fwrite(ptr, size, count, file)
 unsigned size, count;

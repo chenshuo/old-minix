@@ -8,7 +8,7 @@
 EXTERN struct proc {
   int p_reg[NR_REGS];		/* process' registers */
   int *p_sp;			/* stack pointer */
-  struct pc_psw p_pcpsw;		/* pc and psw as pushed by interrupt */
+  struct pc_psw p_pcpsw;	/* pc and psw as pushed by interrupt */
   int p_flags;			/* P_SLOT_FREE, SENDING, RECEIVING, etc. */
   struct mem_map p_map[NR_SEGS];/* memory map */
   int *p_splimit;		/* lowest legal stack value */
@@ -34,6 +34,7 @@ EXTERN struct proc {
 #define NO_MAP           002	/* keeps unmapped forked child from running */
 #define SENDING          004	/* set when process blocked trying to send */
 #define RECEIVING        010	/* set when process blocked trying to recv */
+#define PENDING          020	/* set when process has signals pending */
 
 #define proc_addr(n) &proc[NR_TASKS + n]
 #define NIL_PROC (struct proc *) 0

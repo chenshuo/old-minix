@@ -1,98 +1,268 @@
-/* This is a special version of printf.  It is used only by the operating
- * system itself, and should never be included in user programs. The name
- * printk never appears in the operating system, because the macro printf
- * has been defined as printk there.
+/*
+ * three compile time options:
+ *	STACKUP		fetch arguments using *p-- instead of *p++
+ *	NO_LONGD	%d and %ld/%D are equal
+ *	NO_FLOAT	abort on %e, %f and %g
  */
 
+#define	NO_FLOAT
 
-#define MAXDIGITS         12
+#ifdef NO_FLOAT
+#define	MAXDIG		11	/* 32 bits in radix 8 */
+#else
+#define	MAXDIG		128	/* this must be enough */
+#endif
 
-printk(s, arglist)
-char *s;
-int *arglist;
+static char *
+itoa(p, num, radix)
+register char *p;
+register unsigned num;
+register radix;
 {
-  int w, k, r, *valp;
-  unsigned u;
-  char **pp;
-  long l, *lp;
-  char a[MAXDIGITS], *p, *p1, c;
+	register	i;
+	register char	*q;
 
-  valp = (int *)  &arglist;
-  while (*s != '\0') {
-	if (*s !=  '%') {
-		putc(*s++);
-		continue;
-	}
-
-	w = 0;
-	s++;
-	while (*s >= '0' && *s <= '9') {
-		w = 10 * w + (*s - '0');
-		s++;
-	}
-
-	lp = (long *) valp;
-	pp = (char **) valp;
-
-	switch(*s) {
-	    case 'd':	k = *valp++; l = k;  r = 10;  break;
-	    case 'o':	k = *valp++; u = k; l = u;  r = 8;  break;
-	    case 'x':	k = *valp++; u = k; l = u;  r = 16;  break;
-	    case 'D':	l = *lp++;  r = 10; valp = (int *) lp; break;
-	    case 'O':	l = *lp++;  r = 8;  valp = (int *) lp; break;
-	    case 'X':	l = *lp++;  r = 16; valp = (int *) lp; break;
-	    case 'c':	k = *valp++; putc(k); s++; continue;
-	    case 's':	p = *pp++; valp = (int *) pp;
-			p1 = p;
-			while(c = *p++) putc(c); s++;
-			if ( (k = w - (p-p1-1)) > 0) while (k--) putc(' ');
-			continue;
-	    default:	putc('%'); putc(*s++); continue;
-	}
-
-	k = bintoascii(l, r, a);
-	if ( (r = w - k) > 0) while(r--) putc(' ');
-	for (r = k - 1; r >= 0; r--) putc(a[r]);
-	s++;
-  }
+	q = p + MAXDIG;
+	do {
+		i = (int)(num % radix);
+		i += '0';
+		if (i > '9')
+			i += 'A' - '0' - 10;
+		*--q = i;
+	} while (num = num / radix);
+	i = p + MAXDIG - q;
+	do
+		*p++ = *q++;
+	while (--i);
+	return(p);
 }
 
-
-
-static int bintoascii(num, radix, a)
-long num;
-int radix;
-char a[MAXDIGITS];
+#ifndef NO_LONGD
+static char *
+ltoa(p, num, radix)
+register char *p;
+register unsigned long num;
+register radix;
 {
+	register	i;
+	register char	*q;
 
-  int i, n, hit, negative;
+	q = p + MAXDIG;
+	do {
+		i = (int)(num % radix);
+		i += '0';
+		if (i > '9')
+			i += 'A' - '0' - 10;
+		*--q = i;
+	} while (num = num / radix);
+	i = p + MAXDIG - q;
+	do
+		*p++ = *q++;
+	while (--i);
+	return(p);
+}
+#endif
 
-  negative = 0;
-  if (num == 0) {a[0] = '0'; return(1);}
-  if (num < 0 && radix == 10) {num = -num; negative++;}
-  for (n = 0; n < MAXDIGITS; n++) a[n] = 0;
-  n = 0;
+#ifndef NO_FLOAT
+extern char	*_ecvt();
+extern char	*_fcvt();
+extern char	*_gcvt();
+#endif
 
-  do {
-	if (radix == 10) {a[n] = num % 10; num = (num -a[n])/10;}
-	if (radix ==  8) {a[n] = num & 0x7;  num = (num >> 3) & 0x1FFFFFFF;}
-	if (radix == 16) {a[n] = num & 0xF;  num = (num >> 4) & 0x0FFFFFFF;}
-	n++;
-  } while (num != 0);
+#ifdef STACKUP
+#define	GETARG(typ)	*((typ *)args)--
+#else
+#define	GETARG(typ)	*((typ *)args)++
+#endif STACKUP
 
-  /* Convert to ASCII. */
-  hit = 0;
-  for (i = n - 1; i >= 0; i--) {
-	if (a[i] == 0 && hit == 0) {
-		a[i] = ' ';
-	} else {
-		if (a[i] < 10)
-			a[i] += '0';
-		else
-			a[i] += 'A' - 10;
-		hit++;
+printk(fmt, arg1)
+register char *fmt;
+{
+	char		buf[MAXDIG+1];	/* +1 for sign */
+	register int	*args = &arg1;
+	register char	*p;
+	register char	*s;
+	register	c;
+	register	i;
+	register short	width;
+	register short	ndigit;
+	register	ndfnd;
+	register	ljust;
+	register	zfill;
+#ifndef NO_LONGD
+	register	lflag;
+	register long	l;
+#endif
+
+	for (;;) {
+		c = *fmt++;
+		if (c == 0)
+			return;
+		if (c != '%') {
+			putc(c);
+			continue;
+		}
+		p = buf;
+		s = buf;
+		ljust = 0;
+		if (*fmt == '-') {
+			fmt++;
+			ljust++;
+		}
+		zfill = ' ';
+		if (*fmt == '0') {
+			fmt++;
+			zfill = '0';
+		}
+		for (width = 0;;) {
+			c = *fmt++;
+			if (c >= '0' && c <= '9')
+				c -= '0';
+			else if (c == '*')
+				c = GETARG(int);
+			else
+				break;
+			width *= 10;
+			width += c;
+		}
+		ndfnd = 0;
+		ndigit = 0;
+		if (c == '.') {
+			for (;;) {
+				c = *fmt++;
+				if (c >= '0' && c <= '9')
+					c -= '0';
+				else if (c == '*')
+					c = GETARG(int);
+				else
+					break;
+				ndigit *= 10;
+				ndigit += c;
+				ndfnd++;
+			}
+		}
+#ifndef NO_LONGD
+		lflag = 0;
+#endif
+		if (c == 'l' || c == 'L') {
+#ifndef NO_LONGD
+			lflag++;
+#endif
+			if (*fmt)
+				c = *fmt++;
+		}
+		switch (c) {
+		case 'X':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'x':
+			c = 16;
+			goto oxu;
+		case 'U':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'u':
+			c = 10;
+			goto oxu;
+		case 'O':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'o':
+			c = 8;
+		oxu:
+#ifndef NO_LONGD
+			if (lflag) {
+				p = ltoa(p, GETARG(long), c);
+				break;
+			}
+#endif
+			p = itoa(p, GETARG(int), c);
+			break;
+		case 'D':
+#ifndef NO_LONGD
+			lflag++;
+#endif
+		case 'd':
+#ifndef NO_LONGD
+			if (lflag) {
+				if ((l = GETARG(long)) < 0) {
+					*p++ = '-';
+					l = -l;
+				}
+				p = ltoa(p, l, 10);
+				break;
+			}
+#endif
+			if ((i = GETARG(int)) < 0) {
+				*p++ = '-';
+				i = -i;
+			}
+			p = itoa(p, i, 10);
+			break;
+#ifdef NO_FLOAT
+		case 'e':
+		case 'f':
+		case 'g':
+			zfill = ' ';
+			*p++ = '?';
+			break;
+#else
+		case 'e':
+			if (ndfnd == 0)
+				ndigit = 6;
+			ndigit++;
+			p = _ecvt(p, GETARG(double), ndigit);
+			break;
+		case 'f':
+			if (ndfnd == 0)
+				ndigit = 6;
+			p = _fcvt(p, GETARG(double), ndigit);
+			break;
+		case 'g':
+			if (ndfnd == 0)
+				ndigit = 6;
+			p = _gcvt(p, GETARG(double), ndigit);
+			break;
+#endif
+		case 'c':
+			zfill = ' ';
+			*p++ = GETARG(int);
+			break;
+		case 's':
+			zfill = ' ';
+			if ((s = GETARG(char *)) == 0)
+				s = "(null)";
+			if (ndigit == 0)
+				ndigit = 32767;
+			for (p = s; *p && --ndigit >= 0; p++)
+				;
+			break;
+		default:
+			*p++ = c;
+			break;
+		}
+		i = p - s;
+		if ((width -= i) < 0)
+			width = 0;
+		if (ljust == 0)
+			width = -width;
+		if (width < 0) {
+			if (*s == '-' && zfill == '0') {
+				putc(*s++);
+				i--;
+			}
+			do
+				putc(zfill);
+			while (++width != 0);
+		}
+		while (--i >= 0)
+			putc(*s++);
+		while (width) {
+			putc(zfill);
+			width--;
+		}
 	}
-  }
-  if (negative) a[n++] = '-';
-  return(n);
 }

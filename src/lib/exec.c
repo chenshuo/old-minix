@@ -1,12 +1,14 @@
-#include "../include/lib.h"
+#include "lib.h"
 
-char *nullptr[1];		/* the EXEC calls need a zero pointer */
+extern char **environ;			/* environment pointer */
+
+#define	PTRSIZE	sizeof(char *)
 
 PUBLIC int execl(name, arg0)
 char *name;
 char *arg0;
 {
-  return execve(name, &arg0, nullptr);
+  return execve(name, &arg0, environ);
 }
 
 PUBLIC int execle(name, argv)
@@ -21,7 +23,7 @@ char *name, *argv;
 PUBLIC int execv(name, argv)
 char *name, *argv[];
 {
-  return execve(name, argv, nullptr);
+  return execve(name, argv, environ);
 }
 
 
@@ -32,7 +34,8 @@ char *envp[];			/* pointer to environment */
 {
   char stack[MAX_ISTACK_BYTES];
   char **argorg, **envorg, *hp, **ap, *p;
-  int i, nargs, nenvps, stackbytes, ptrsize, offset;
+  int i, nargs, nenvps, stackbytes, offset;
+  extern errno;
 
   /* Count the argument pointers and environment pointers. */
   nargs = 0;
@@ -41,11 +44,13 @@ char *envp[];			/* pointer to environment */
   envorg = envp;
   while (*argorg++ != NIL_PTR) nargs++;
   while (*envorg++ != NIL_PTR) nenvps++;
-  ptrsize = sizeof(NIL_PTR);
 
   /* Prepare to set up the initial stack. */
-  hp = &stack[(nargs + nenvps + 3) * ptrsize];
-  if (hp + nargs + nenvps >= &stack[MAX_ISTACK_BYTES]) return(E2BIG);
+  hp = &stack[(nargs + nenvps + 3) * PTRSIZE];
+  if (hp + nargs + nenvps >= &stack[MAX_ISTACK_BYTES]) {
+	errno = E2BIG;
+	return(-1);
+  }
   ap = (char **) stack;
   *ap++ = (char *) nargs;
 
@@ -56,7 +61,10 @@ char *envp[];			/* pointer to environment */
 	p = *argv++;
 	while (*p) {
 		*hp++ = *p++;
-		if (hp >= &stack[MAX_ISTACK_BYTES]) return(E2BIG);
+		if (hp >= &stack[MAX_ISTACK_BYTES]) {
+			errno = E2BIG;
+			return(-1);
+		}
 	}
 	*hp++ = (char) 0;
   }
@@ -69,12 +77,15 @@ char *envp[];			/* pointer to environment */
 	p = *envp++;
 	while (*p) {
 		*hp++ = *p++;
-		if (hp >= &stack[MAX_ISTACK_BYTES]) return(E2BIG);
+		if (hp >= &stack[MAX_ISTACK_BYTES]) {
+			errno = E2BIG;
+			return(-1);
+		}
 	}
 	*hp++ = (char) 0;
   }
   *ap++ = NIL_PTR;
-  stackbytes = ( ( (hp - stack) + ptrsize - 1)/ptrsize) * ptrsize;
+  stackbytes = ( ( (int)(hp - stack) + PTRSIZE - 1)/PTRSIZE) * PTRSIZE;
   return callm1(MM_PROC_NR, EXEC, len(name), stackbytes, 0,name, stack,NIL_PTR);
 }
 
@@ -86,11 +97,7 @@ char *name;			/* pointer to file to be exec'd */
  * is principally used by INIT, to avoid having to allocate MAX_ISTACK_BYTES.
  */
 
-  char stack[4];
+  static char stack[3 * PTRSIZE];
 
-  stack[0] = 0;
-  stack[1] = 0;
-  stack[2] = 0;
-  stack[3] = 0;
-  return callm1(MM_PROC_NR, EXEC, len(name), 4, 0, name, stack, NIL_PTR);
+  return callm1(MM_PROC_NR, EXEC, len(name), sizeof(stack), 0, name, stack, NIL_PTR);
 }

@@ -1,7 +1,7 @@
-#include "../h/const.h"
-#include "../h/type.h"
-#include "../h/error.h"
-#include "../h/callnr.h"
+#include <minix/const.h>
+#include <minix/type.h>
+#include <minix/callnr.h>
+#include <errno.h>
 
 extern message M;
 

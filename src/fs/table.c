@@ -102,17 +102,23 @@ int (*call_vector[NCALLS])() = {
 	do_unpause,	/* 65 = UNPAUSE	*/
 	no_sys, 	/* 66 = BRK2 (used to tell MM size of FS,INIT)	*/
 	do_revive,	/* 67 = REVIVE	*/
-	no_sys		/* 68 = TASK_REPLY	*/
+	no_sys,		/* 68 = TASK_REPLY	*/
+#ifdef i8088
+	no_sys,		/* 69 = unused */
+#endif
 };
 
 
-extern rw_dev(), rw_dev2();
+extern rw_dev(), rw_dev2(), tty_open();
+
 
 /* The order of the entries here determines the mapping between major device
  * numbers and tasks.  The first entry (major device 0) is not used.  The
  * next entry is major device 1, etc.  Character and block devices can be
  * intermixed at random.  If this ordering is changed, BOOT_DEV and ROOT_DEV
- * must be changed to correspond to the new values.
+ * must be changed to correspond to the new values.  Note that the major
+ * device numbers used in /dev are NOT the same as the task numbers used
+ * inside the kernel (as defined in h/com.h).
  */
 struct dmap dmap[] = {
 /*  Open       Read/Write   Close       Task #      Device  File
@@ -121,9 +127,9 @@ struct dmap dmap[] = {
     no_call,   rw_dev,      no_call,    MEM,         /* 1 = /dev/mem  */
     no_call,   rw_dev,      no_call,    FLOPPY,      /* 2 = /dev/fd0  */
     no_call,   rw_dev,      no_call,    WINCHESTER,  /* 3 = /dev/hd0  */
-    no_call,   rw_dev,      no_call,    TTY,         /* 4 = /dev/tty0 */
+    tty_open,  rw_dev,      no_call,    TTY,         /* 4 = /dev/tty0 */
     no_call,   rw_dev2,     no_call,    TTY,         /* 5 = /dev/tty  */
-    no_call,   rw_dev,      no_call,    PRINTER      /* 6 = /dev/lp   */
+    no_call,   rw_dev,      no_call,    PRINTER,     /* 6 = /dev/lp   */
 };
 
 int max_major = sizeof(dmap)/sizeof(struct dmap);

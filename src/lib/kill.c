@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC int kill(proc, sig)
 int proc;			/* which process is to be sent the signal */

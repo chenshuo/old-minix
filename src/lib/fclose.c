@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 fclose(fp)
 FILE *fp;
@@ -16,7 +16,7 @@ FILE *fp;
 	close(fp->_fd);
 	if ( testflag(fp,IOMYBUF) && fp->_buf )
 		free( fp->_buf );
-	free(fp);
+	if (i > 2) free(fp);
 	return(NULL);
 }
 

@@ -28,13 +28,18 @@
 #define DATAB              3	/* location of data size in header */
 #define BSSB               4	/* location of bss size in header */
 #define TOTB               6	/* location of total size in header */
+#define SYMB               7	/* location of symbol size in header */
+
+#ifdef ATARI_ST
+PUBLIC long lseek();
+#endif
 
 /*===========================================================================*
  *				do_exec					     *
  *===========================================================================*/
 PUBLIC int do_exec()
 {
-/* Perform the exece(name, argv, envp) call.  The user library builds a
+/* Perform the execve(name, argv, envp) call.  The user library builds a
  * complete stack image, including pointers, args, environ, etc.  The stack
  * is copied to a buffer inside MM, and then to the new core image.
  */
@@ -49,6 +54,7 @@ PUBLIC int do_exec()
   char *new_sp;
   vir_bytes src, dst, text_bytes, data_bytes, bss_bytes, stk_bytes, vsp;
   phys_bytes tot_bytes;		/* total space for program, including gap */
+  long sym_bytes;
   vir_clicks sc;
   struct stat s_buf;
 
@@ -70,7 +76,8 @@ PUBLIC int do_exec()
 
   /* Read the file header and extract the segment sizes. */
   sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, &tot_bytes,sc);
+  m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, 
+						&tot_bytes, &sym_bytes, sc);
   if (m < 0) {
 	close(fd);		/* something wrong with header */
 	return(ENOEXEC);
@@ -95,6 +102,8 @@ PUBLIC int do_exec()
 
   /* Patch up stack and copy it from MM to new core image. */
   vsp = (vir_bytes) rmp->mp_seg[S].mem_vir << CLICK_SHIFT;
+  vsp += (vir_bytes) rmp->mp_seg[S].mem_len << CLICK_SHIFT;
+  vsp -= stk_bytes;
   patch_ptr(mbuf, vsp);
   src = (vir_bytes) mbuf;
   r = mem_copy(MM_PROC_NR, D, (long) src, who, D, (long) vsp, (long) stk_bytes);
@@ -103,6 +112,12 @@ PUBLIC int do_exec()
   /* Read in text and data segments. */
   load_seg(fd, T, text_bytes);
   load_seg(fd, D, data_bytes);
+#ifdef ATARI_ST
+  if (lseek(fd, sym_bytes, 1) < 0)
+	;	/* error */
+  if (relocate(fd, mbuf) < 0)
+	;	/* error */
+#endif
   close(fd);			/* don't need exec file any more */
 
   /* Take care of setuid/setgid bits. */
@@ -128,13 +143,15 @@ PUBLIC int do_exec()
 /*===========================================================================*
  *				read_header				     *
  *===========================================================================*/
-PRIVATE int read_header(fd, ft, text_bytes, data_bytes, bss_bytes, tot_bytes,sc)
+PRIVATE int read_header(fd, ft, text_bytes, data_bytes, bss_bytes, 
+						    tot_bytes, sym_bytes, sc)
 int fd;				/* file descriptor for reading exec file */
 int *ft;			/* place to return ft number */
 vir_bytes *text_bytes;		/* place to return text size */
 vir_bytes *data_bytes;		/* place to return initialized data size */
 vir_bytes *bss_bytes;		/* place to return bss size */
 phys_bytes *tot_bytes;		/* place to return total size */
+long *sym_bytes;		/* place to return symbol table size */
 vir_clicks sc;			/* stack size in clicks */
 {
 /* Read the header and extract the text, data, bss and total sizes from it. */
@@ -153,9 +170,9 @@ vir_clicks sc;			/* stack size in clicks */
    *	4: size of bss in bytes
    *	5: 0x00000000L
    *	6: total memory allocated to program (text, data and stack, combined)
-   *	7: 0x00000000L
-   * The longs are represented low-order byte first and high-order byte last.
-   * The first byte of the header is always 0x01, followed by 0x03.
+   *	7: size of symbol table in bytes
+   * The longs are represented in a machine dependent order,
+   * little-endian on the 8088, big-endian on the 68000.
    * The header is followed directly by the text and data segments, whose sizes
    * are given in the header.
    */
@@ -167,20 +184,38 @@ vir_clicks sc;			/* stack size in clicks */
   /* Get text and data sizes. */
   *text_bytes = (vir_bytes) buf[TEXTB];	/* text size in bytes */
   *data_bytes = (vir_bytes) buf[DATAB];	/* data size in bytes */
-  if (*ft != SEPARATE) {
-	/* If I & D space is not separated, it is all considered data. Text=0 */
-	*data_bytes += *text_bytes;
-	*text_bytes = 0;
-  }
-
-  /* Get bss and total sizes. */
   *bss_bytes = (vir_bytes) buf[BSSB];	/* bss size in bytes */
+  *sym_bytes = buf[SYMB];	/* symbol table size in bytes */
   *tot_bytes = buf[TOTB];	/* total bytes to allocate for program */
   if (*tot_bytes == 0) return(ENOEXEC);
 
+  if (*ft != SEPARATE) {
+#ifndef ATARI_ST
+	/* If I & D space is not separated, it is all considered data. Text=0 */
+	*data_bytes += *text_bytes;
+	*text_bytes = 0;
+#else
+	/*
+	 * Treating text as data increases the shadowing overhead.
+	 * Under the assumption that programs DO NOT MODIFY TEXT
+	 * we can share the text between father and child processes.
+	 * This is similar to the UNIX V7 -n option of ld(1).
+	 * However, for MINIX the linker did not provide alignment
+	 * to click boundaries, so an incomplete text click at the end
+	 * must be treated as data.
+	 * Correct tot_bytes, since it excludes the text segment.
+	 */
+	*data_bytes += *text_bytes;
+	*text_bytes = (*text_bytes >> CLICK_SHIFT) << CLICK_SHIFT;
+	*data_bytes -= *text_bytes;
+	*tot_bytes -= *text_bytes;
+#endif
+  }
+
+
   /* Check to see if segment sizes are feasible. */
-  tc = (*text_bytes + CLICK_SHIFT - 1) >> CLICK_SHIFT;
-  dc = (*data_bytes + *bss_bytes + CLICK_SHIFT - 1) >> CLICK_SHIFT;
+  tc = (*text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+  dc = (*data_bytes + *bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   totc = (*tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   if (dc >= totc) return(ENOEXEC);	/* stack must be at least 1 click */
   dvir = (*ft == SEPARATE ? 0 : tc);
@@ -209,13 +244,18 @@ int zs;				/* true size of 'bf' */
  */
 
   register struct mproc *rmp;
-  char *rzp;
-  vir_bytes vzb;
   vir_clicks text_clicks, data_clicks, gap_clicks, stack_clicks, tot_clicks;
-  phys_clicks new_base, old_clicks;
-  phys_bytes bytes, base, count, bss_offset;
+  phys_clicks new_base;
   extern phys_clicks alloc_mem();
   extern phys_clicks max_hole();
+#ifdef ATARI_ST
+  phys_clicks base, size;
+#else
+  char *rzp;
+  vir_bytes vzb;
+  phys_clicks old_clicks;
+  phys_bytes bytes, base, count, bss_offset;
+#endif
 
   /* Acquire the new memory.  Each of the 4 parts: text, (data+bss), gap,
    * and stack occupies an integral number of clicks, starting at click
@@ -237,24 +277,38 @@ int zs;				/* true size of 'bf' */
 
   /* There is enough memory for the new core image.  Release the old one. */
   rmp = mp;
-  old_clicks = (phys_clicks) rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len;
+#ifndef ATARI_ST
+  old_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
+  old_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
   if (rmp->mp_flags & SEPARATE) old_clicks += rmp->mp_seg[T].mem_len;
   free_mem(rmp->mp_seg[T].mem_phys, old_clicks);	/* free the memory */
+#endif
 
   /* We have now passed the point of no return.  The old core image has been
    * forever lost.  The call must go through now.  Set up and report new map.
    */
   new_base = alloc_mem(text_clicks + tot_clicks);	/* new core image */
   if (new_base == NO_MEM) panic("MM hole list is inconsistent", NO_NUM);
-  rmp->mp_seg[T].mem_vir = 0;
   rmp->mp_seg[T].mem_len = text_clicks;
   rmp->mp_seg[T].mem_phys = new_base;
-  rmp->mp_seg[D].mem_vir = 0;
   rmp->mp_seg[D].mem_len = data_clicks;
   rmp->mp_seg[D].mem_phys = new_base + text_clicks;
-  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
   rmp->mp_seg[S].mem_len = stack_clicks;
   rmp->mp_seg[S].mem_phys = rmp->mp_seg[D].mem_phys + data_clicks + gap_clicks;
+#ifdef ATARI_ST
+  rmp->mp_seg[T].mem_vir = rmp->mp_seg[T].mem_phys;
+  rmp->mp_seg[D].mem_vir = rmp->mp_seg[D].mem_phys;
+  rmp->mp_seg[S].mem_vir = rmp->mp_seg[S].mem_phys;
+#else
+  rmp->mp_seg[T].mem_vir = 0;
+  rmp->mp_seg[D].mem_vir = 0;
+  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
+#endif
+#ifdef ATARI_ST
+  sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
+			&base, &size);
+  free_mem(base, size);
+#else
   sys_newmap(who, rmp->mp_seg);	/* report new map to the kernel */
 
   /* Zero the bss, gap, and stack segment. Start just above text.  */
@@ -274,6 +328,7 @@ int zs;				/* true size of 'bf' */
 	base += count;
 	bytes -= count;
   }
+#endif
   return(OK);
 }
 
@@ -332,9 +387,85 @@ vir_bytes seg_bytes;		/* how big is the segment */
   int new_fd, bytes;
   char *ubuf_ptr;
 
-  if (seg_bytes == 0) return;	/* text size for combined I & D is 0 */
   new_fd = (who << 8) | (seg << 6) | fd;
-  ubuf_ptr = (char *) (mp->mp_seg[seg].mem_vir << CLICK_SHIFT);
-  bytes = (int) seg_bytes;
-  read(new_fd, ubuf_ptr, bytes);
+  ubuf_ptr = (char *) ((vir_bytes)mp->mp_seg[seg].mem_vir << CLICK_SHIFT);
+  while (seg_bytes) {
+	bytes = 31*1024;		/* <= 32767 */
+	if (seg_bytes < bytes)
+		bytes = (int)seg_bytes;
+	if (read(new_fd, ubuf_ptr, bytes) != bytes)
+		break;		/* error */
+	ubuf_ptr += bytes;
+	seg_bytes -= bytes;
+  }
 }
+
+#ifdef ATARI_ST
+/*===========================================================================*
+ *				relocate				     *
+ *===========================================================================*/
+PRIVATE int relocate(fd, buf)
+int fd;				/* file descriptor to read from */
+char *buf;			/* borrowed from do_exec() */
+{
+  register n;
+  register char *p;
+  register c;
+  register phys_bytes off;
+  register phys_bytes adr;
+  register struct mproc *rmp = mp;
+
+  /* Read in relocation info from the exec file and relocate.
+   * Relocation info is in GEMDOS format. Only longs can be relocated.
+   *
+   * The GEMDOS format starts with a long L: the offset to the
+   * beginning of text for the first long to be relocated.
+   * If L==0 then no relocations have to be made.
+   *
+   * The long is followed by zero or more bytes. Each byte B is
+   * processed separately, in one of the following ways:
+   *
+   * B==0:
+   *	end of relocation
+   * B==1:
+   *	no relocation, but add 254 to the current offset
+   * B==0bWWWWWWW0:
+   *	B is added to the current offset and the long addressed
+   *	is relocated. Note that 00000010 means 1 word distance.
+   * B==0bXXXXXXX1:
+   *	illegal
+   */
+  off = (phys_bytes)rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
+  p = buf;
+  n = read(fd, p, MAX_ISTACK_BYTES);
+  if (n < sizeof(long))
+	return(-1);	/* error */
+  if (*((long *)p) == 0)
+	return(0);	/* ok */
+  adr = off + *((long *)p);
+  n -= sizeof(long);
+  p += sizeof(long);
+
+  for (;;) {			/* once per relocation */
+	*((long *)adr) += off;
+	for (;;) {		/* once per byte */
+		if (--n < 0) {
+			p = buf;
+			n = read(fd, p, MAX_ISTACK_BYTES);
+			if (--n < 0)
+				return(-1);	/* error */
+		}
+		c = *p++ & 0xFF;
+		if (c != 1)
+			break;
+		adr += 254;
+	}
+	if (c == 0)
+		break;
+	if (c & 1)
+		return(-1);	/* error */
+	adr += c;
+  }
+  return(0);	/* ok */
+}
+#endif

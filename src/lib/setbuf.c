@@ -1,4 +1,4 @@
-#include	"../include/stdio.h"
+#include	<stdio.h>
 
 
 setbuf(iop, buffer)

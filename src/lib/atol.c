@@ -1,4 +1,4 @@
-#include "../include/ctype.h"
+#include <ctype.h>
 
 long atol(s)
 register char *s;

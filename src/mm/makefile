@@ -1,18 +1,24 @@
-CFLAGS = -Di8088 -w -F -T.
+# On a PC, cpp and cem are in /lib and will be removed to make space while
+# linking the kernel.  On an AT, they are in /usr/lib are are not removed.
+# This is because they have to be in /lib on a PC; the diskette is too small
+# for them to be in /usr/lib.
+#
+
 h=../h
 l=/usr/lib
+CFLAGS = -Di8088 -F -T.
 
 obj =	main.s forkexit.s break.s exec.s signal.s getset.s  \
-	alloc.s utility.s table.s putc.s 
+	alloc.s utility.s table.s putc.s
 
 mm:	makefile    $l/head.s $(obj) $l/libc.a $l/end.s
- 	@echo "Start linking MM."
- 	@echo "If RAM disk fills up, edit makefile to use asld -T. "
- 	@echo "On a PC, /lib/* will be removed to make space on RAM disk"
- 	@rm -f /lib/cem /tmp/*
- 	@asld -o mm $l/head.s $(obj) $l/libc.a $l/end.s
- 	@echo "MM done.  On a PC, please restore /lib/cem manually"
+	@echo "Start linking MM."
+	@echo "If disk fills up, remove some files"
+	@asld -o mm -T. $l/head.s $(obj) $l/libc.a $l/end.s
+	@echo "MM done. "
 
+clean:
+	rm -f $(obj)
 
 alloc.s:	const.h $h/const.h $h/type.h
 

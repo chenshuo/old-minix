@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC int mount(special, name, rwflag)
 char *name, *special;

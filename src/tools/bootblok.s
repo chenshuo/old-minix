@@ -48,30 +48,25 @@ begbss:
         mov     es,ax
         xor     di,di           | es:di - new block
         mov     cx,#256         | #  words to move
-        rep     
-	movw 		        | copy loop
-
+	rep
+	movw			| copy loop
+    
+	
 | start boot procedure
-        jmpi    start,BOOTSEG   | set cs to bootseg
+	jmpi	start, BOOTSEG	| set cs to BOOTSEG
 
 start:
-        mov     dx,cs
+	mov     dx,cs
         mov     ds,dx           | set ds to cs
         xor     ax,ax
         mov     es,ax           | set es to 0
         mov     ss,dx           | set ss to cs i.e., stack in high core
         mov     sp,#1536        | initialize sp to high core
 
-| initialize disk parameters
-	mov	ax,#atpar	| tenatively assume 1.2M diskette
-	seg	es
-	mov	DSKBASE,ax	
-	seg	es
-	mov	DSKBASE+2,dx
-
 | print greeting
-	mov 	ax,#2		| reset video
-	int  	0x10
+	mov	ax,#2		| reset video
+	int	0x10
+
         mov     ax,#0x0200	| BIOS call in put cursor in ul corner
         xor     bx,bx
         xor     dx,dx
@@ -79,26 +74,71 @@ start:
         mov     bx,#greet
         call    print
 
-| Determine if this is a 1.2M diskette by trying to read sector 15.
-	xor	ax,ax
-	int	0x13
+| Initialize disk parameters
+| Try 1.2M diskette by trying to read sector 15
+
 	xor	ax,ax
 	mov	es,ax
-	mov	ax,#0x0201
-	mov	bx,#0x0600
-	mov	cx,#0x000F
-	mov	dx,#0x0000
+	mov	dx,ds
+	mov	ax,#atpar
+	seg	es
+	mov	DSKBASE,ax
+	seg	es
+	mov	DSKBASE+2,dx
+
+	xor	ax,ax	| reset drive
+	int	0x13
+
+	xor	ax,ax
+	mov	es,ax
+	mov	ax,#0x0201	| read sector, #sector = 1
+	mov	bx,#0x0600	| es:bx buffer
+	mov	cx,#0x000F	| track 0, sector 15
+	mov	dx,#0x0000	| drive 0, head 0
 	int	0x13
 	jnb	L1
 
-| Error.  It wasn't 1.2M.  Now set up for 360K.
-	mov	tracksiz,#9	| 360K uses 9 sectors/track
+| Error. It wasn't 1.2M. Now set up for 720K
+
+	mov	tracksiz,#9
+	xor	ax,ax		| ps disk parameters are in ROM F01520
+	mov	es,ax
+	mov	ax,#0x1520
+	seg	es
+	mov	DSKBASE,ax
+	mov	ax,#0xF000	
+	seg	es
+	mov	DSKBASE+2,ax
+
+| Try 720K by trying to read track 64.
+| 360K has 40 tracks, 720 has 80 tracks.
+
+	xor	ax,ax	| diskette reset
+	int	0x13
+	mov	tracksiz,#9
+
 	xor	ax,ax
 	mov	es,ax
+	mov	ax,#0x0201	| read sector, number of sectors is 1
+	mov	bx,#0x0600	| es:bx buffer
+	mov	cx,#0x4001	| track 64, sector 1
+	mov	dx,#0x0000	| drive 0, head 0
+	int	0x13
+	jnb	L1
+
+| Error. It wasn't 720K either. Now set up for 360K
+
+	xor	ax,ax
+	mov	es,ax
+	mov	dx,ds
 	mov	ax,#pcpar
 	seg	es
 	mov	DSKBASE,ax
-	int	0x13		| diskette reset
+	seg	es
+	mov	DSKBASE+2,dx
+	xor	ax,ax		| diskette reset
+	int	0x13
+
 L1:
 
 | Load the operating system from diskette.
@@ -202,26 +242,23 @@ print:                          | print string (bx)
         testb   al,al           | null char?
         jne     prt1            | no
         ret                     | else return
-prt1:   movb    ah,*14          | 14 = print char
+prt1:   movb    ah,#14          | 14 = print char
         inc     bx              | increment string pointer
         push    bx              | save bx
-        movb    bl,*1           | foreground color
+        movb    bl,#1           | foreground color
 	xorb	bh,bh		| page 0
         int     0x10            | call BIOS VIDEO_IO
         pop     bx              | restore bx
         jmp     print           | next character
 
 
-
 disksec:.word 1
-tracksiz:	.word 15	| changed to 9 for 360K diskettes
-pcpar:	.byte	0xDF, 0x02, 25, 2, 9, 0x2A, 0xFF, 0x50, 0xF6, 1, 3   | for PC
-atpar:	.byte	0xDF, 0x02, 25, 2,15, 0x1B, 0xFF, 0x54, 0xF6, 1, 8   | for AT
+pcpar:	.byte	0xDF, 0x02, 25, 2, 9, 0x2A, 0xFF, 0x50, 0xF6, 1, 3 | for pc
+atpar:	.byte	0xDF, 0x02, 25, 2,15, 0x1B, 0xFF, 0x54, 0xF6, 1, 8 | for at
 
-fderr:	.asciz	"Read error.  Automatic reboot.\r\n"
-greet:	.asciz "\rBooting MINIX 1.2.  Copyright 1987 Prentice-Hall, Inc.\r\n"
-
-
+fderr:	.asciz "Read error.  Automatic reboot.\r\n"
+greet:	.asciz "\rBooting MINIX 1.3.  Copyright 1988 Prentice-Hall, Inc.\r\n"
+tracksiz:.word 15	| changed to 9 for ps and pc
 
 | Don't forget that words 504 - 510 are filled in by build.  The regular
 | code had better not get that far.

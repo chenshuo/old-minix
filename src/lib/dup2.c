@@ -1,4 +1,4 @@
-#include "../include/lib.h"
+#include "lib.h"
 
 PUBLIC int dup2(fd, fd2)
 int fd, fd2;

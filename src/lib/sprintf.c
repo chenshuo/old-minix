@@ -1,4 +1,4 @@
-#include "../include/stdio.h"
+#include <stdio.h>
 
 char *sprintf(buf,format,args)
 char *buf, *format;

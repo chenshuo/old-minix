@@ -1,4 +1,4 @@
-#include "../include/ctype.h"
+#include <ctype.h>
 
 char _ctype_[] = {
 	0,

@@ -113,7 +113,7 @@ char *format;			/* format string */
 int num;			/* number to go with format string */
 {
 /* Something awful has happened.  Panics are caused when an internal
- * inconsistency is detected, e.g., a programm_ing error or illegal value of a
+ * inconsistency is detected, e.g., a programming error or illegal value of a
  * defined constant.
  */
 

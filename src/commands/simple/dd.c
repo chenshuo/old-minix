@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
 
 #define EOS '\0'
 #define BOOLEAN int
@@ -111,7 +113,11 @@ void puto()
   else
 	nopartial++;
   if ((n = write(ofd, obuf, obc)) != obc) {
-	fprintf(stderr, "dd: write error\n");
+	if (n == -1) {
+		fprintf(stderr, "dd: Write error: %s\n", strerror(errno));
+	} else {
+		fprintf(stderr, "dd: Short write, %d instead of %d\n", n, obc);
+	}
 	exit(1);
   }
   obc = 0;
@@ -226,21 +232,20 @@ char *argv[];
 		}
 		if (*pch == EOS) continue;
 	}
-	fprintf(stderr, "dd: bad argument: %s \n",
-		pch);
+	fprintf(stderr, "dd: bad argument: %s\n", pch);
 	exit(1);
   }
   if ((convert == null) && (convflag & (UCASE | LCASE))) convert = cnull;
   if ((ifd = ((ifilename) ? open(ifilename, O_RDONLY) : dup(0))) < 0) {
-	fprintf(stderr, "dd: cannot open %s\n",
-		(ifilename) ? ifilename : "stdin");
+	fprintf(stderr, "dd: Can't open %s: %s\n",
+		(ifilename) ? ifilename : "stdin", strerror(errno));
 	exit(1);
   }
-  if ((ofd = ((ofilename) ?
-	    open(ofilename, seekseen ? O_WRONLY | O_CREAT : O_WRONLY | O_CREAT | O_TRUNC,
-		 0666) : dup(1))) < 0) {
-	fprintf(stderr, "dd: cannot creat %s\n",
-		(ofilename) ? ofilename : "stdout");
+  if ((ofd = ((ofilename) ? open(ofilename, seekseen ? O_WRONLY | O_CREAT
+					: O_WRONLY | O_CREAT | O_TRUNC, 0666)
+			: dup(1))) < 0) {
+	fprintf(stderr, "dd: Can't open %s: %s\n",
+		(ofilename) ? ofilename : "stdout", strerror(errno));
 	exit(1);
   }
   if (bs) {
@@ -270,12 +275,23 @@ char *argv[];
 	struct stat st;
 	if (fstat(ifd,&st) < 0 || !(S_ISREG(st.st_mode) || S_ISBLK(st.st_mode))
 	   || lseek(ifd, (off_t) ibs * (off_t) skip, SEEK_SET) == (off_t) -1) {
-		do
-			read(ifd, ibuf, ibs);
-		while (--skip != 0);
+		do {
+			if (read(ifd, ibuf, ibs) == -1) {
+				fprintf(stderr,
+					"dd: Error skipping input: %s\n",
+					strerror(errno));
+				exit(1);
+			}
+		} while (--skip != 0);
 	}
   }
-  if (nseek != 0) lseek(ofd, (off_t) obs * (off_t) nseek, SEEK_SET);
+  if (nseek != 0) {
+	if (lseek(ofd, (off_t) obs * (off_t) nseek, SEEK_SET) == (off_t) -1) {
+		fprintf(stderr, "dd: Seeking on output failed: %s\n",
+			strerror(errno));
+		exit(1);
+	}
+  }
 
 outputall:
   if (ibc-- == 0) {
@@ -286,7 +302,7 @@ outputall:
 		ibc = read(ifd, ibuf, ibs);
 	}
 	if (ibc == -1) {
-		fprintf(stderr, "dd: read error\n");
+		fprintf(stderr, "dd: Read error: %s\n", strerror(errno));
 		if ((convflag & NOERROR) == 0) {
 			puto();
 			over(0);
@@ -366,9 +382,13 @@ void extra()
   }
 }
 
-void over(dummy)
-int dummy;			/* to keep the compiler happy */
+void over(sig)
+int sig;
 {
   statistics();
+  if (sig != 0) {
+	signal(sig, SIG_DFL);
+	raise(sig);
+  }
   exit(0);
 }

@@ -18,7 +18,7 @@ PUBLIC int do_getset()
 /* Handle GETUID, GETGID, GETPID, GETPGRP, SETUID, SETGID, SETSID.  The four
  * GETs and SETSID return their primary results in 'r'.  GETUID, GETGID, and
  * GETPID also return secondary results (the effective IDs, or the parent
- * process ID) in 'result2', which is returned to the user.
+ * process ID) in 'reply_res2', which is returned to the user.
  */
 
   register struct mproc *rmp = mp;
@@ -27,17 +27,17 @@ PUBLIC int do_getset()
   switch(mm_call) {
 	case GETUID:
 		r = rmp->mp_realuid;
-		result2 = rmp->mp_effuid;
+		rmp->reply_res2 = rmp->mp_effuid;
 		break;
 
 	case GETGID:
 		r = rmp->mp_realgid;
-		result2 = rmp->mp_effgid;
+		rmp->reply_res2 = rmp->mp_effgid;
 		break;
 
 	case GETPID:
 		r = mproc[who].mp_pid;
-		result2 = mproc[rmp->mp_parent].mp_pid;
+		rmp->reply_res2 = mproc[rmp->mp_parent].mp_pid;
 		break;
 
 	case SETUID:

@@ -8,11 +8,15 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <limits.h>
+#include <signal.h>
+#include <errno.h>
 
 #define	STARTDAY	0	/* see ctime(3)	 */
 #define	LEAPDAY		STARTDAY+59
 #define	MAXDAYNR	STARTDAY+365
 #define	NODAY		-2
+char CRONPID[]	=	"/usr/run/cron.pid";
 
 _PROTOTYPE(int main, (int argc, char **argv, char **envp));
 _PROTOTYPE(int getltim, (char *t));
@@ -23,11 +27,12 @@ int main(argc, argv, envp)
 int argc;
 char **argv, **envp;
 {
-  int i, c, count, ltim, year, lday = NODAY;
-  char buf[10], job[30], *dp, *sp;
+  int i, c, mask, ltim, year, lday = NODAY;
+  char buf[64], job[30], pastjob[35], *dp, *sp;
   struct tm *p;
   long clk;
-  FILE *fp, *pin;
+  FILE *fp;
+  char pwd[PATH_MAX+1];
 
 /*-------------------------------------------------------------------------*
  *	check arguments	& pipe to "pwd"				           *
@@ -48,8 +53,9 @@ char **argv, **envp;
 	fprintf(stderr, "%s: cannot find: %s\n", argv[0], argv[argc - 1]);
 	exit(1);
   }
-  if ((pin = popen("pwd", "r")) == NULL) {
-	fprintf(stderr, "%s: cannot open pipe to cmd 'pwd'\n", argv[0]);
+  if (getcwd(pwd, sizeof(pwd)) == NULL) {
+	fprintf(stderr, "%s: cannot determine current directory: %s\n",
+		argv[0], strerror(errno));
 	exit(1);
   }
 
@@ -97,8 +103,12 @@ char **argv, **envp;
 	}
   sprintf(job, "/usr/spool/at/%02d.%03d.%04d.%02d",
 	year % 100, lday, ltim, getpid() % 100);
-  if ((fp = fopen(job, "w")) == NULL) {
-	fprintf(stderr, "%s: cannot create %s\n", argv[0], job);
+  sprintf(pastjob, "/usr/spool/at/past/%02d.%03d.%04d.%02d",
+	year % 100, lday, ltim, getpid() % 100);
+  mask= umask(0077);
+  if ((fp = fopen(pastjob, "w")) == NULL) {
+	fprintf(stderr, "%s: cannot create %s: %s\n",
+		argv[0], pastjob, strerror(errno));
 	exit(1);
   }
 
@@ -106,26 +116,57 @@ char **argv, **envp;
  *	write environment and command(s) to 'at'job file		   *
  *-------------------------------------------------------------------------*/
   i = 0;
-  while (envp[i] != NULL) {
-	count = 1;
+  while ((sp= envp[i++]) != NULL) {
 	dp = buf;
-	sp = envp[i];
-	while ((*dp++ = *sp++) != '=') count++;
-	*--dp = '\0';
-	fprintf(fp, "%s='%s'; export %s\n", buf, &envp[i++][count], buf);
+	while ((c= *sp++) != '\0' && c != '=' && dp < buf+sizeof(buf)-1)
+		*dp++ = c;
+	if (c != '=') continue;
+	*dp = '\0';
+	fprintf(fp, "%s='", buf);
+	while (*sp != 0) {
+		if (*sp == '\'')
+			fprintf(fp, "'\\''");
+		else
+			fputc(*sp, fp);
+		sp++;
+	}
+	fprintf(fp, "'; export %s\n", buf);
   }
-  fprintf(fp, "cd ");
-  while ((c = getc(pin)) != EOF) putc(c, fp);
-  fprintf(fp, "umask %o\n", umask(0));
+  fprintf(fp, "cd '%s'\n", pwd);
+  fprintf(fp, "umask %o\n", mask);
   if (argc == 3 || argc == 5)
 	fprintf(fp, "%s\n", argv[argc - 1]);
   else				/* read from stdinput */
 	while ((c = getchar()) != EOF) putc(c, fp);
   fclose(fp);
 
-  if (chown(job, getuid(), getgid()) == -1)
-	unlink(job);		 /* else there could be a security hole */
+  if (chown(pastjob, getuid(), getgid()) == -1) {
+	fprintf(stderr, "%s: cannot set ownership of %s: %s\n",
+		argv[0], pastjob, strerror(errno));
+	unlink(pastjob);
+	exit(1);
+  }
+  /* "Arm" the job. */
+  if (rename(pastjob, job) == -1) {
+	fprintf(stderr, "%s: cannot move %s to %s: %s\n",
+		argv[0], pastjob, job, strerror(errno));
+	unlink(pastjob);
+	exit(1);
+  }
   printf("%s: %s created\n", argv[0], job);
+
+  /* Alert cron to the new situation. */
+  if ((fp= fopen(CRONPID, "r")) != NULL) {
+	unsigned long pid;
+
+	pid= 0;
+	while ((c= fgetc(fp)) != EOF && c != '\n') {
+		if ((unsigned) (c - '0') >= 10) { pid= 0; break; }
+		pid= 10*pid + (c - '0');
+		if (pid >= 30000) { pid= 0; break; }
+	}
+	if (pid > 1) kill((pid_t) pid, SIGHUP);
+  }
   return(0);
 }
 
@@ -155,11 +196,10 @@ char *m, *d;
   static struct date {
 	char *mon;
 	int dcnt;
-  } *pc,
-   kal[] = {
-	"Jan", 31, "Feb", 29, "Mar", 31, "Apr", 30,
-	"May", 31, "Jun", 30, "Jul", 31, "Aug", 31,
-	"Sep", 30, "Oct", 31, "Nov", 30, "Dec", 31
+  } *pc, kal[] = {
+	{ "Jan", 31 }, { "Feb", 29 }, { "Mar", 31 }, { "Apr", 30 },
+	{ "May", 31 }, { "Jun", 30 }, { "Jul", 31 }, { "Aug", 31 },
+	{ "Sep", 30 }, { "Oct", 31 }, { "Nov", 30 }, { "Dec", 31 },
   };
 
   pc = kal;

@@ -65,7 +65,7 @@ INIT_ASSERT
 #include "config.h"
 #endif
 
-#if ENABLE_NETWORKING || __minix_vmd
+#if ENABLE_DP8390 || __minix_vmd
 
 #define DE_PORT_NR	2
 
@@ -81,14 +81,13 @@ typedef struct dp_conf
 	int dpc_irq;
 	phys_bytes dpc_mem;
 	char *dpc_envvar;
-	segm_t dpc_prot_sel;
 } dp_conf_t;
 
 dp_conf_t dp_conf[]=	/* Card addresses */
 {
-	/* I/O port, IRQ,  Buffer address,  Env. var,   Buf selector. */
-	{  0x280,     3,    0xD0000,        "DPETH0",  DP_ETH0_SELECTOR },
-	{  0x300,     5,    0xCC000,        "DPETH1",  DP_ETH1_SELECTOR },
+	/* I/O port, IRQ,  Buffer address,  Env. var. */
+	{  0x280,     3,    0xD0000,        "DPETH0"	},
+	{  0x300,     5,    0xC8000,        "DPETH1"	},
 };
 
 /* Test if dp_conf has exactly DE_PORT_NR entries.  If not then you will see
@@ -175,18 +174,8 @@ void dp8390_task()
 
 	while (TRUE)
 	{
-#ifdef SHOW_EVENT
-		if (debug)
-			show_event(16, ' ');
-#endif
-
 		if ((r= receive(ANY, &m)) != OK)
 			panic("dp8390: receive failed", r);
-
-#ifdef SHOW_EVENT
-		if (debug)
-			show_event(16, 'E');
-#endif
 
 		switch (m.m_type)
 		{
@@ -210,6 +199,7 @@ void dp8390_task()
 					int_pending[irq]= 0;
 					dp_check_ints(dep);
 					do_int(dep);
+					enable_irq(irq);
 				}
 			}
 			break;
@@ -266,6 +256,12 @@ void dp_dump()
 		isr= inb_reg0(dep, DP_ISR);
 		printf("dp_isr = 0x%x + 0x%x, de_flags = 0x%x\n", isr,
 					inb_reg0(dep, DP_ISR), dep->de_flags);
+
+		if (debug)
+		{
+			int_pending[dep->de_irq]= 1;
+			interrupt(dpeth_tasknr);
+		}
 	}
 }
 
@@ -500,12 +496,8 @@ message *mp;
 
 	if (dep->de_mode == DEM_SINK)
 	{
-		dep->de_address.ea_addr[0] = 
-			dep->de_address.ea_addr[1] = 
-			dep->de_address.ea_addr[2] = 
-			dep->de_address.ea_addr[3] = 
-			dep->de_address.ea_addr[4] = 
-			dep->de_address.ea_addr[5] = 0;
+		strncpy((char *) dep->de_address.ea_addr, "ZDP", 6);
+		dep->de_address.ea_addr[5] = port;
 		dp_confaddr(dep);
 		reply_mess.m_type = DL_INIT_REPLY;
 		reply_mess.m3_i1 = mp->DL_PORT;
@@ -835,7 +827,14 @@ dpeth_t *dep;
 				tsr = inb_reg0(dep, DP_TSR);
 
 				if (tsr & TSR_PTX) dep->de_stat.ets_packetT++;
-				if (tsr & TSR_DFR) dep->de_stat.ets_transDef++;
+				if (!(tsr & TSR_DFR))
+				{
+					/* In most (all?) implementations of
+					 * the dp8390, this bit is set
+					 * when the packet is not deferred
+					 */
+					dep->de_stat.ets_transDef++;
+				}
 				if (tsr & TSR_COL) dep->de_stat.ets_collision++;
 				if (tsr & TSR_ABT) dep->de_stat.ets_transAb++;
 				if (tsr & TSR_CRS) dep->de_stat.ets_carrSense++;
@@ -884,7 +883,11 @@ dpeth_t *dep;
 		}
 
 		if (isr & ISR_PRX)
-			dp_recv(dep);
+		{
+			/* Only call dp_recv if there is a read request */
+			if (dep->de_flags & DEF_READING)
+				dp_recv(dep);
+		}
 		
 		if (isr & ISR_RXE) dep->de_stat.ets_recvErr++;
 		if (isr & ISR_CNT)
@@ -895,9 +898,16 @@ dpeth_t *dep;
 		}
 		if (isr & ISR_OVW)
 		{
+			dep->de_stat.ets_OVW++;
 #if DEBUG
  { printW(); printf("%s: got overwrite warning\n", dep->de_name); }
 #endif
+			if (dep->de_flags & DEF_READING)
+			{
+				printf(
+"dp_check_ints: strange: overwrite warning and pending read request\n");
+				dp_recv(dep);
+			}
 		}
 		if (isr & ISR_RDC)
 		{
@@ -960,7 +970,7 @@ dpeth_t *dep;
 		length = (header.dr_rbcl | (header.dr_rbch << 8)) -
 			sizeof(dp_rcvhdr_t);
 		next = header.dr_next;
-		if (length < 60 || length > 1514)
+		if (length < ETH_MIN_PACK_SIZE || length > ETH_MAX_PACK_SIZE)
 		{
 			printf("%s: packet with strange length arrived: %d\n",
 				dep->de_name, (int) length);
@@ -986,7 +996,6 @@ dpeth_t *dep;
 					ntohs(eth_ign_proto));
 			}
 			dep->de_stat.ets_packetR++;
-			next = curr;
 		}
 		else if (header.dr_status & RSR_FO)
 		{
@@ -1057,7 +1066,7 @@ void *dst;
 	assert(!(size & 1));
 	for (i= 0; i<size; i+=2)
 	{
-		*ha = mem_rdw(dep->de_memsegm, offset+i);
+		*ha = mem_rdw(dep->de_memseg, dep->de_memoff + (offset+i));
 		ha++;
 	}
 }
@@ -1579,23 +1588,13 @@ iovec_dat_t *iovp;
 static int dp_handler(irq)
 int irq;
 {
-/* DP8390 interrupt, send message and reenable interrupts. */
-
-#ifdef SHOW_EVENT
-	if (debug)
-		show_event(irq, 'E');
-#endif
+/* DP8390 interrupt, send message and keep interrupts disabled. */
 
 	assert(irq >= 0 && irq < NR_IRQ_VECTORS);
 	int_pending[irq]= 1;
 	interrupt(dpeth_tasknr);
 
-#ifdef SHOW_EVENT
-	if (debug)
-		show_event(irq, ' ');
-#endif
-
-	return 1;
+	return 0;
 }
 
 /*===========================================================================*
@@ -1615,7 +1614,7 @@ dpeth_t *dep;
 	dcp= &dp_conf[ifnr];
 	update_conf(dep, dcp);
 	if (dep->de_mode != DEM_ENABLED)
-			return;
+		return;
 	if (!wdeth_probe(dep) && !ne_probe(dep) && !el2_probe(dep))
 	{
 		printf("%s: No ethernet card found at 0x%x\n", 
@@ -1624,22 +1623,12 @@ dpeth_t *dep;
 		return;
 	}
 
-	/* Allocate a memory segment, programmed I/O should set the
+	/* Find a memory segment, programmed I/O should set the
 	 * memory segment (linmem) to zero.
 	 */
 	if (dep->de_linmem != 0)
 	{
-		if (protected_mode)
-		{
-			init_dataseg(&gdt[dcp->dpc_prot_sel / DESC_SIZE],
-				dep->de_linmem, dep->de_ramsize,
-				TASK_PRIVILEGE);
-			dep->de_memsegm= dcp->dpc_prot_sel;
-		}
-		else
-		{
-			dep->de_memsegm= physb_to_hclick(dep->de_linmem);
-		}
+		phys2seg(&dep->de_memseg, &dep->de_memoff, dep->de_linmem);
 	}
 
 /* XXX */ if (dep->de_linmem == 0) dep->de_linmem= 0xFFFF0000;
@@ -1662,7 +1651,7 @@ dp_conf_t *dcp;
 	/* Get the default settings and modify them from the environment. */
 	dep->de_mode= DEM_SINK;
 	v= dcp->dpc_port;
-	switch (env_parse(dcp->dpc_envvar, dpc_fmt, 0, &v, 0x0000L, 0x3FFL)) {
+	switch (env_parse(dcp->dpc_envvar, dpc_fmt, 0, &v, 0x0000L, 0xFFFFL)) {
 	case EP_OFF:
 		dep->de_mode= DEM_DISABLED;
 		break;
@@ -1743,11 +1732,15 @@ int may_block;
 	reply.DL_COUNT = dep->de_read_s;
 	reply.DL_CLCK = get_uptime();
 	r= send(dep->de_client, &reply);
-#if 0
-	/* XXX  What is the reason that this doesn't happen? */
-	if (result == ELOCKED && may_block)
-		return;
+
+	if (r == ELOCKED && may_block)
+	{
+#if DEBUG
+		printW(); printf("send locked\n");
 #endif
+		return;
+	}
+
 	if (r < 0)
 		panic("dp8390: send failed:", r);
 	
@@ -1805,7 +1798,7 @@ void *loc_addr;
 	phys_copy(vir2phys(loc_addr), dst, (phys_bytes) count);
 }
 
-#endif /* ENABLE_NETWORKING */
+#endif /* ENABLE_DP8390 */
 
 /*
  * $PchId: dp8390.c,v 1.5 1996/01/19 22:56:35 philip Exp $

@@ -17,64 +17,119 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 void write_log _ARGS(( void ));
+void usage _ARGS(( void ));
 int main _ARGS(( int argc, char *argv[] ));
 
 char *prog;
+
+void
+usage()
+{
+  fprintf(stderr, "Usage: %s [-hrRf] [-x reboot-code]\n", prog);
+  exit(1);
+}
 
 int
 main(argc,argv)
 int argc;
 char **argv;
 {
-  int flag = RBT_HALT;		/* halting system is default */
-  int fast = 0;			/* fast halt/reboot, don't kill all. */
+  int flag = -1;		/* default action unknown */
+  int fast = 0;			/* fast halt/reboot, don't bother being nice. */
+  int i;
   struct stat dummy;
+  char *monitor_code = "";
+  pid_t pid;
 
-  prog = strrchr(*argv,'/');
-  if (prog == (char *)0)
-    prog = *argv;
-  else
-    prog++;
+  if ((prog = strrchr(argv[0],'/')) == NULL) prog = argv[0]; else prog++;
 
-  if (argc > 1) {
-    if (strcmp(argv[1], "-f") == 0)
-      fast = 1;
-    else {
-      fprintf(stderr, "Usage: %s [-f]\n", prog);
-      exit(1);
+  if (strcmp(prog, "halt") == 0) flag = RBT_HALT;
+  if (strcmp(prog, "reboot") == 0) flag = RBT_REBOOT;
+
+  i = 1;
+  while (i < argc && argv[i][0] == '-') {
+    char *opt = argv[i++] + 1;
+
+    if (*opt == '-' && opt[1] == 0) break;	/* -- */
+
+    while (*opt != 0) switch (*opt++) {
+      case 'h':
+	flag = RBT_HALT;
+	break;
+      case 'r':
+	flag = RBT_REBOOT;
+	break;
+      case 'R':
+	flag = RBT_RESET;
+	break;
+      case 'f':
+	fast = 1;
+	break;
+      case 'x':
+	flag = RBT_MONITOR;
+	if (*opt == 0) {
+	  if (i == argc) usage();
+	  opt = argv[i++];
+	}
+	monitor_code = opt;
+	opt = "";
+	break;
+      default:
+	usage();
     }
   }
 
-  /* Make sure that we don't die. */
-  signal(SIGHUP, SIG_IGN);
-  signal(SIGTERM, SIG_IGN);
+  if (i != argc) usage();
+
+  if (flag == -1) {
+    fprintf(stderr, "Don't know what to do when named '%s'\n", prog);
+    exit(1);
+  }
 
   if (stat("/usr/bin", &dummy) < 0) {
     /* It seems that /usr isn't present, let's assume "-f." */
     fast = 1;
   }
 
+  write_log();
+
   if (fast) {
-    sleep(1);	/* Not too fast, people like to see it "do something". */
+    /* But not too fast... */
+    sleep(1);
+
   } else {
+    /* Run the shutdown scripts. */
+    signal(SIGHUP, SIG_IGN);
+    signal(SIGTERM, SIG_IGN);
+
+    switch ((pid = fork())) {
+      case -1:
+	fprintf(stderr, "%s: can't fork(): %s\n", prog, strerror(errno));
+	exit(1);
+      case 0:
+	execl("/bin/sh", "sh", "/etc/rc", "down", (char *) NULL);
+	fprintf(stderr, "%s: can't execute: /bin/sh: %s\n",
+	  prog, strerror(errno));
+	exit(1);
+      default:
+	while (waitpid(pid, NULL, 0) != pid) {}
+    }
+
     /* Tell init to stop spawning getty's. */
     kill(1, SIGTERM);
+
     /* Give everybody a chance to die peacefully. */
     kill(-1, SIGTERM);
-    sleep(2);
+    sleep(3);
   }
 
-  if (strcmp(prog,"reboot"))
-    flag=RBT_HALT;
-  else
-    flag=RBT_REBOOT;
-  
-  write_log();
-  reboot(flag);
-  fprintf(stderr, "reboot call failed\n");
+  reboot(flag, monitor_code, strlen(monitor_code));
+  fprintf(stderr, "%s: reboot(): %s\n", strerror(errno));
   return 1;
 }

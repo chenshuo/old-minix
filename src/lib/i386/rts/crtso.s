@@ -61,8 +61,9 @@ ___main:				! for GCC
 	ret
 
 .sect .rom
-	.data4	0			! Common I&D: *NULL == 0
-
+	.data4	0			! Separate I&D: *NULL == 0
+					! Also keeps the first string in the
+					! program from appearing at location 0!
 .sect .data
 __penviron:
 	.data4	__penvp			! Pointer to environ, or hidden pointer

@@ -155,11 +155,6 @@ message *m_ptr;
 	}
 	break;
 
-    case DEV_IOCTL:
-	/* No ioctl's allowed on the pty side. */
-	r = ENOTTY;
-	break;
-
     case DEV_OPEN:
 	r = pp->state != 0 ? EIO : OK;
 	pp->state |= PTY_ACTIVE;

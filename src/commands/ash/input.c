@@ -83,7 +83,6 @@ int pushednleft;		/* copy of parsenleft when text pushed back */
 
 #if READLINE
 char *readline __P((const char *prompt));
-void add_history __P((char *line));
 char *r_use_prompt = NULL;	/* the prompt to use with readline */
 #endif
 
@@ -199,7 +198,6 @@ preadbuffer() {
                 parsenleft = EOF_NLEFT;
                 return PEOF;
 	}
-	add_history(line);
 	strcpy(p, line);
 	free(line);
 	i = strlen(p);

@@ -152,7 +152,8 @@ Word *p;
 
   for (w = p; w; w = w->next) {
 	printf("%s", w->string);
-	if (ISCSYM(w->string[0]) && i > 0) printf(" ");
+	if (ISCSYM(w->string[0]) && i > 0
+			&& w->next && w->next->string[0] != ',') printf(" ");
 	i++;
   }
 }
@@ -500,7 +501,7 @@ long startline;
   Word *w;
   int count = 0;
 
-  if (doold == 0) printf("_PROTOTYPE(");
+  if (doold == 0) printf("_PROTOTYPE( ");
   if (dodiff) {
 	printf("%lda%ld,%ld\n", startline - 1, startline, startline +2);
 	printf("> #ifdef __STDC__\n> ");
@@ -513,20 +514,24 @@ long startline;
   printlist(wlist);
   if (docond) {
 	if (doold)
-		printf("P((");
+		printf(" P((");
 	else
 		printf(", (");
   } else {
-	printf("( ");
+	printf("(");
   }
 
   printlist(plist);
   printlist(endlist);
 
-  if (docond)
-	printf("))");
-  else
+  if (docond) {
+	if (doold)
+		printf("))");
+	else
+		printf(") )");
+  } else {
 	printf(")");
+  }
 
   if (!dodiff)
 	printf(";\n");
@@ -619,6 +624,7 @@ char **argv;
 			doold =1;
 		else if (*t == 'd') {
 			dodiff = 1;
+			doold = 1;
 			docond = 0;
 			donum = 0;
 			dostatic = 1;
@@ -630,9 +636,9 @@ char **argv;
 
   if (docond && doold) {
 	printf("#ifdef __STDC__\n");
-	printf("# define\tP(s) s\n");
+	printf("# define P(args)\targs\n");
 	printf("#else\n");
-	printf("# define P(s) ()\n");
+	printf("# define P(args)\t()\n");
 	printf("#endif\n\n");
   }
   if (argc == 0)
@@ -643,6 +649,7 @@ char **argv;
 			perror(*argv);
 			exit(EXIT_FAILURE);
 		}
+#if 0
 		if (dodiff) {
 			(void) sprintf(newname, "%sdif", *argv);
 			(void) fclose(g);
@@ -651,6 +658,7 @@ char **argv;
 				exit(EXIT_FAILURE);
 			}
 		}
+#endif
 		if (doold && dohead && !dodiff) printf("\n/* %s */\n", *argv);
 		linenum = 1;
 		newline_seen = 1;

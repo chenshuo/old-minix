@@ -55,6 +55,7 @@
 static char *program;		/* program name */
 static char flags[26];		/* invocation flags */
 static regexp *expression;	/* compiled search pattern */
+static char *rerr;              /* error message */
 
 /* External variables. */
 extern int optind;
@@ -65,21 +66,23 @@ _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(static int match, (FILE *input, char *label, char *filename));
 _PROTOTYPE(static char *get_line, (FILE *input));
 _PROTOTYPE(static char *map_nocase, (char *line));
-_PROTOTYPE(static void error_exit, (char *msg));
 _PROTOTYPE(void regerror , (char *s ) );
-
+_PROTOTYPE(static void tov8, (char *v8pattern, char *pattern));
 
 int main(argc, argv)
 int argc;
 char *argv[];
 {
   int opt;			/* option letter from getopt() */
+  int egrep=0;			/* using extended regexp operators */
   char *pattern;		/* search pattern */
+  char *v8pattern;		/* v8 regexp search pattern */
   int exit_status = NO_MATCH;	/* exit status for our caller */
   int file_status;		/* status of search in one file */
   FILE *input;			/* input file (if not stdin) */
 
   program = argv[0];
+  if (strlen(program)>=5 && strcmp(program+strlen(program)-5,"egrep")==0) egrep=1;
   memset(flags, 0, sizeof(flags));
   pattern = NULL;
 
@@ -95,8 +98,10 @@ char *argv[];
   }
 
 /* Detect a few problems. */
-  if ((exit_status == FAILURE) || (optind == argc && pattern == NULL))
-	error_exit("Usage: %s [-cilnsv] [-e] expression [file ...]\n");
+  if ((exit_status == FAILURE) || (optind == argc && pattern == NULL)) {
+	fprintf(stderr,"Usage: %s [-cilnsv] [-e] expression [file ...]\n",program);
+	exit(FAILURE);
+  }
 
 /* Ensure we have a usable pattern. */
   if (pattern == NULL)
@@ -111,8 +116,21 @@ char *argv[];
 	}
   }
 
-  if ((expression = regcomp(pattern)) == NULL)
-	error_exit("%s: bad regular expression\n");
+  if (!egrep) {
+	  if ((v8pattern=malloc(2*strlen(pattern)))==(char*)0) {
+		fprintf(stderr,"%s: out of memory\n");
+		exit(FAILURE);
+	  }
+	  tov8(v8pattern,pattern);
+  } else v8pattern=pattern;
+
+  rerr=(char*)0;
+  if ((expression = regcomp(v8pattern)) == NULL) {
+	fprintf(stderr,"%s: bad regular expression",program);
+	if (rerr) fprintf(stderr," (%s)",rerr);
+	fprintf(stderr,"\n");
+	exit(FAILURE);
+  }
 
 /* Process the files appropriately. */
   if (optind == argc) {		/* no file names - find pattern in stdin */
@@ -236,8 +254,10 @@ FILE *input;
   size_t new_size;
 
   if (buf_size == 0) {
-	if ((buf = (char *) malloc(FIRST_BUFFER)) == NULL)
-		error_exit("%s: not enough memory\n");
+	if ((buf = (char *) malloc(FIRST_BUFFER)) == NULL) {
+		fprintf(stderr,"%s: not enough memory\n",program);
+		exit(FAILURE);
+	}
 	buf_size = FIRST_BUFFER;
   }
 
@@ -277,19 +297,15 @@ FILE *input;
 static char *map_nocase(line)
 char *line;
 {
-  static char *mapped;
+  static char *mapped=(char*)0;
   static size_t map_size = 0;
   char *mp;
 
   if (map_size < buf_size) {
-	if (map_size == 0) {
-		mapped = (char *) malloc(buf_size);
-	} else {
-		mapped = (char *) realloc(mapped, buf_size);
+	if ((mapped=realloc(mapped,map_size=buf_size)) == NULL) {
+		fprintf(stderr,"%s: not enough memory\n",program);
+		exit(FAILURE);
 	}
-	if (mapped == NULL)
-		error_exit("%s: not enough memory\n");
-	map_size = buf_size;
   }
 
   mp = mapped;
@@ -300,21 +316,64 @@ char *line;
   return mapped;
 }
 
+/* In basic regular expressions, the characters ?, +, |, (, and )
+   are taken literally; use the backslashed versions for RE operators.
+   In v8 regular expressions, things are the other way round, so
+   we have to swap those characters and their backslashed versions.
+*/
+static void tov8(char *v8, char *basic)
+{
+  while (*basic) switch (*basic)
+  {
+    case '?':
+    case '+':
+    case '|':
+    case '(':
+    case ')':        
+    {        
+      *v8++='\\';
+      *v8++=*basic++;
+      break;
+    }                    
+    case '\\':
+    {
+      switch (*(basic+1))
+      {
+        case '?':
+        case '+':
+        case '|':
+        case '(': 
+        case ')':
+        {
+          *v8++=*++basic;
+          ++basic;
+          break;
+        }
+        case '\0':
+        {
+          *v8++=*basic++;
+          break;
+        }
+        default:
+        {       
+          *v8++=*basic++;
+          *v8++=*basic++;
+        }                
+      }     
+      break;
+    }       
+    default:
+    {
+      *v8++=*basic++;
+    }                
+  }   
+  *v8++='\0';
+}
 
 /* Regular expression code calls this routine to print errors. */
 
 void regerror(s)
 char *s;
 {
-  fprintf(stderr, "regexp: %s\n", s);
-}
-
-
-/* Common exit point for outrageous errors. */
-
-static void error_exit(msg)
-char *msg;
-{
-  fprintf(stderr, msg, program);
-  exit(FAILURE);
+  rerr=s;
 }

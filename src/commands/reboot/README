@@ -26,7 +26,7 @@ mm.cd -	   I have added the do_reboot code to mm/getset.c but
 Now edit log.c and search for ``host''. Change this into your
 systemname or make it empty.
 
-Shutdown and halt log their actions in /usr/adm/authlog, edit the
+Shutdown and halt log their actions in /usr/adm/log, edit the
 makefile and undefine -DLOG if you don't want this (this at the end of
 the makefile). You can change SHUT_LOG in shutdown.c and log.c if you
 want it in another file.

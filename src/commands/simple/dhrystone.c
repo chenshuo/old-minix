@@ -119,8 +119,8 @@
 
 #ifdef TIMES
 /* Define the granularity of your times(2) function */
-/*#define HZ	50 */		/* times(2) returns 1/50 second (europe?) */
-#define HZ	60		/* times(2) returns 1/60 second (most) */
+/*#define HZ	50	*/	/* times(2) returns 1/50 second (europe?) */
+/*#define HZ	60	*/	/* times(2) returns 1/60 second (most) */
 /*#define HZ	100 	*/	/* times(2) returns 1/100 second (WECo) */
 #endif
 
@@ -189,6 +189,10 @@ typedef int boolean;
 
 #ifdef TIMES
 #include <sys/times.h>
+#endif
+
+#ifndef _PROTOTYPE
+#define _PROTOTYPE(fun, args)	fun args
 #endif
 
 _PROTOTYPE(int main, (void));
@@ -263,8 +267,15 @@ void Proc0()
   unsigned long nulltime;
   unsigned long nullloops;
   unsigned long benchloops;
+  unsigned long ticks_per_sec;
 #ifdef TIMES
   struct tms tms;
+#endif
+
+#ifdef HZ
+#define ticks_per_sec	HZ
+#else
+  ticks_per_sec = sysconf(_SC_CLK_TCK);
 #endif
 
   i = 0;
@@ -369,10 +380,11 @@ void Proc0()
   benchtime -= nulltime / (nullloops / benchloops);
 
   printf("Dhrystone(%s) time for %lu passes = %lu.%02lu\n",
-         Version,
-         benchloops, benchtime / HZ, benchtime % HZ * 100 / HZ);
+	Version,
+	benchloops, benchtime / ticks_per_sec,
+	benchtime % ticks_per_sec * 100 / ticks_per_sec);
   printf("This machine benchmarks at %lu dhrystones/second\n",
-         benchloops * HZ / benchtime);
+	benchloops * ticks_per_sec / benchtime);
 }
 
 

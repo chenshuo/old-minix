@@ -16,6 +16,10 @@
 #ifndef _WAIT_H
 #define _WAIT_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 #define _LOW(v)		( (v) & 0377)
 #define _HIGH(v)	( ((v) >> 8) & 0377)
 
@@ -30,10 +34,6 @@
 #define WSTOPSIG(s)	(_HIGH(s) & 0377)		    /* stop signal */
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( pid_t wait, (int *_stat_loc)			   	   );
 _PROTOTYPE( pid_t waitpid, (pid_t _pid, int *_stat_loc, int _options)	   );
 

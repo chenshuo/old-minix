@@ -3,6 +3,10 @@
 #ifndef _PWD_H
 #define _PWD_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 struct passwd {
   char *pw_name;		/* login name */
   uid_t pw_uid;			/* uid corresponding to the name */
@@ -17,10 +21,6 @@ struct passwd {
 
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( struct passwd *getpwnam, (const char *_name)		);
 _PROTOTYPE( struct passwd *getpwuid, (Uid_t _uid)			);
 

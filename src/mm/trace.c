@@ -42,7 +42,7 @@ PUBLIC int do_trace()
    */
   if (request == T_OK) {/* enable tracing by parent for this process */
 	mp->mp_flags |= TRACED;
-	mm_out.m2_l2 = 0;
+	mp->mp_reply.m2_l2 = 0;
 	return(OK);
   }
   if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
@@ -54,7 +54,7 @@ PUBLIC int do_trace()
   switch (request) {
   case T_EXIT:		/* exit */
 	mm_exit(child, (int)data);
-	mm_out.m2_l2 = 0;
+	mp->mp_reply.m2_l2 = 0;
 	return(OK);
   case T_RESUME: 
   case T_STEP: 		/* resume execution */
@@ -69,7 +69,7 @@ PUBLIC int do_trace()
   }
   if (sys_trace(request, (int) (child - mproc), taddr, &data) != OK)
 	return(-errno);
-  mm_out.m2_l2 = data;
+  mp->mp_reply.m2_l2 = data;
   return(OK);
 }
 
@@ -101,7 +101,8 @@ int signo;
   rmp->mp_flags |= STOPPED;
   if (rpmp->mp_flags & WAITING) {
 	rpmp->mp_flags &= ~WAITING;	/* parent is no longer waiting */
-	reply(rmp->mp_parent, rmp->mp_pid, 0177 | (signo << 8), NIL_PTR);
+	rpmp->reply_res2 = 0177 | (signo << 8);
+	setreply(rmp->mp_parent, rmp->mp_pid);
   } else {
 	rmp->mp_sigstatus = signo;
   }

@@ -11,6 +11,7 @@
  *   do_exit:	  a process has exited; note that in the tables
  *   do_set:	  set uid or gid for some process
  *   do_revive:	  revive a process that was waiting for something (e.g. TTY)
+ *   do_svrctl:	  file system control
  */
 
 #include "fs.h"
@@ -18,7 +19,7 @@
 #include <unistd.h>	/* cc runs out of memory with unistd.h :-( */
 #include <minix/callnr.h>
 #include <minix/com.h>
-#include <minix/boot.h>
+#include <sys/svrctl.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
@@ -231,9 +232,7 @@ PUBLIC int do_exit()
   register struct fproc *rfp;
   register struct filp *rfilp;
   register struct inode *rip;
-  int major;
   dev_t dev;
-  message dev_mess;
 
   /* Only MM may do the EXIT call directly. */
   if (who != MM_PROC_NR) return(EGENERIC);
@@ -279,14 +278,13 @@ PUBLIC int do_exit()
 		rip = rfilp->filp_ino;
 		if ((rip->i_mode & I_TYPE) != I_CHAR_SPECIAL) continue;
 		if ((dev_t) rip->i_zone[0] != dev) continue;
-		dev_mess.m_type = DEV_CLOSE;
-		dev_mess.DEVICE = dev;
-		major = (dev >> MAJOR) & BYTE;	/* major device nr */
-		task = dmap[major].dmap_task;	/* device task nr */
-		(*dmap[major].dmap_close)(task, &dev_mess);
+		dev_close(dev);
 		rfilp->filp_mode = FILP_CLOSED;
 	}
   }
+
+  /* Truly exiting, or becoming a server? */
+  fp->fp_pid = PID_FREE;
   return(OK);
 }
 
@@ -331,11 +329,48 @@ PUBLIC int do_revive()
  * in revive().
  */
 
-#if !ALLOW_USER_SEND
-  if (who >= LOW_USER) return(EPERM);
-#endif
+  if (who >= LOW_USER && fp->fp_pid != PID_SERVER) return(EPERM);
 
   revive(m.REP_PROC_NR, m.REP_STATUS);
   dont_reply = TRUE;		/* don't reply to the TTY task */
   return(OK);
+}
+
+/*===========================================================================*
+ *				do_svrctl				     *
+ *===========================================================================*/
+PUBLIC int do_svrctl()
+{
+  switch (svrctl_req) {
+  case FSSIGNON: {
+	/* A server in user space calls in to manage a device. */
+	struct fssignon device;
+	int r, major;
+	struct dmap *dp;
+
+	if (fp->fp_effuid != SU_UID) return(EPERM);
+
+	r = sys_copy(who, D, (phys_bytes) svrctl_argp,
+		FS_PROC_NR, D, (phys_bytes) &device,
+		(phys_bytes) sizeof(device));
+	if (r != OK) return(r);
+
+	major= (device.dev >> MAJOR) & BYTE;
+	if (major >= max_major) return(ENODEV);
+	dp = &dmap[major];
+	if (dp->dmap_task != ANY) return(EBUSY);
+
+	switch (device.style) {
+	case STYLE_DEV:		dp->dmap_opcl = gen_opcl;	break;
+	case STYLE_TTY:		dp->dmap_opcl = tty_opcl;	break;
+	case STYLE_CLONE:	dp->dmap_opcl = clone_opcl;	break;
+	default:		return(EINVAL);
+	}
+	dp->dmap_io = gen_io;
+	dp->dmap_task = who;
+	fp->fp_pid = PID_SERVER;
+	return(OK); }
+  default:
+	return(EINVAL);
+  }
 }

@@ -12,6 +12,7 @@ Copyright 1995 Philip Homburg
 
 /* Prototypes */
 
+void icmp_prep ARGS(( void ));
 void icmp_init ARGS(( void ));
 
 

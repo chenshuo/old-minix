@@ -11,9 +11,7 @@ Copyright 1995 Philip Homburg
 #ifndef PSIP_H
 #define PSIP_H
 
-#define PSIP0	0
-#define PSIP1	1
-
+void psip_prep ARGS(( void ));
 void psip_init ARGS(( void ));
 int psip_enable ARGS(( int port_nr, int ip_port_nr ));
 int psip_send ARGS(( int port_nr, acc_t *pack ));

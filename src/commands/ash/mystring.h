@@ -51,6 +51,7 @@ int strcmp(const char *, const char *);	/* from C library */
 char *strcpy(char *, const char *);	/* from C library */
 int strlen(const char *);		/* from C library */
 char *strcat(char *, const char *);	/* from C library */
+char *strerror(int);			/* from C library */
 #else
 void scopyn();
 char *strchr();
@@ -62,6 +63,7 @@ int strcmp();
 char *strcpy();
 int strlen();
 char *strcat();
+char *strerror();
 #endif
 
 #define equal(s1, s2)	(strcmp(s1, s2) == 0)

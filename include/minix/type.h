@@ -1,7 +1,9 @@
 #ifndef _TYPE_H
 #define _TYPE_H
-#ifndef _MINIX_TYPE_H
-#define _MINIX_TYPE_H
+
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
 
 /* Type definitions. */
 typedef unsigned int vir_clicks; /* virtual  addresses and lengths in clicks */
@@ -92,14 +94,6 @@ struct mem_map {
   vir_clicks mem_len;		/* length */
 };
 
-struct iorequest_s {
-  long io_position;		/* position in device file (really off_t) */
-  char *io_buf;			/* buffer in user space */
-  int io_nbytes;		/* size of request */
-  unsigned short io_request;	/* read, write (optionally) */
-};
-#endif /* _TYPE_H */
-
 typedef struct {
   vir_bytes iov_addr;		/* address of an I/O buffer */
   vir_bytes iov_size;		/* sizeof an I/O buffer */
@@ -132,4 +126,4 @@ struct psinfo {		/* information for the ps(1) program */
   vir_bytes proc, mproc, fproc;	/* addresses of the main process tables. */
 };
 
-#endif /* _MINIX_TYPE_H */
+#endif /* _TYPE_H */

@@ -56,6 +56,7 @@ FindMatches(dir, file, avp)
     SIZE_T	len;
     SIZE_T	choices;
     SIZE_T	total;
+#define MAX_TOTAL	(256 << sizeof(char *))
 
     if ((dp = opendir(dir)) == NULL)
 	return 0;
@@ -73,7 +74,7 @@ FindMatches(dir, file, avp)
 	    continue;
 
 	choices++;
-	if ((total += strlen(p)) > 1024) {
+	if ((total += strlen(p)) > MAX_TOTAL) {
 	    /* This is a bit too much. */
 	    while (ac > 0) DISPOSE(av[--ac]);
 	    continue;
@@ -102,7 +103,7 @@ FindMatches(dir, file, avp)
 
     /* Clean up and return. */
     (void)closedir(dp);
-    if (total > 1024) {
+    if (total > MAX_TOTAL) {
 	char many[sizeof(total) * 3];
 	p = many + sizeof(many);
 	*--p = '\0';
@@ -247,3 +248,7 @@ rl_list_possib(pathname, avp)
     DISPOSE(file);
     return ac;
 }
+
+/*
+ * $PchId: complete.c,v 1.3 1996/02/22 21:18:51 philip Exp $
+ */

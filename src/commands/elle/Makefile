@@ -1,6 +1,6 @@
 # Makefile for elle
 
-CFLAGS = -O -DIGN_JOB_CONTROL -D_POSIX_SOURCE -m -wa
+CFLAGS = -O -DIGN_JOB_CONTROL -D_POSIX_SOURCE -wa
 LDFLAGS= -i
 
 all:	elle ellec

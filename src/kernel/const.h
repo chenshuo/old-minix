@@ -122,13 +122,7 @@
 #define TASK_Q             0	/* ready tasks are scheduled via queue 0 */
 #define SERVER_Q           1	/* ready servers are scheduled via queue 1 */
 #define USER_Q             2	/* ready users are scheduled via queue 2 */
-
-#if (MACHINE == ATARI)
-#define SHADOW_Q           3	/* runnable, but shadowed processes */
-#define NQ                 4	/* # of scheduling queues */
-#else
 #define NQ                 3	/* # of scheduling queues */
-#endif
 
 /* Env_parse() return values. */
 #define EP_UNSET	0	/* variable not set */
@@ -140,5 +134,3 @@
  * the same as umap(proc_ptr, D, vir, sizeof(*vir)), but a lot less costly.
  */
 #define vir2phys(vir)	(data_base + (vir_bytes) (vir))
-
-#define printf        printk	/* the kernel really uses printk, not printf */

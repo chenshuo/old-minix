@@ -16,7 +16,6 @@
 
 #include "fs.h"
 #include <minix/com.h>
-#include <minix/boot.h>
 #include "buf.h"
 
 #if ENABLE_CACHE2
@@ -75,8 +74,8 @@ int only_search;		/* if NO_READ, do nothing, else act normal */
   }
 
   /* Block is in the cache, get it. */
-  if (dev_io(DEV_READ, 0, DEV_RAM, (off_t) b * BLOCK_SIZE, BLOCK_SIZE,
-					FS_PROC_NR, bp->b_data) == BLOCK_SIZE) {
+  if (dev_io(DEV_READ, DEV_RAM, FS_PROC_NR, bp->b_data,
+			(off_t) b * BLOCK_SIZE, BLOCK_SIZE, 0) == BLOCK_SIZE) {
 	return(1);
   }
   return(0);
@@ -100,8 +99,8 @@ struct buf *bp;			/* buffer to store in the 2nd level cache */
 
   bp2 = &buf2[b];
 
-  if (dev_io(DEV_WRITE, 0, DEV_RAM, (off_t) b * BLOCK_SIZE, BLOCK_SIZE,
-					FS_PROC_NR, bp->b_data) == BLOCK_SIZE) {
+  if (dev_io(DEV_WRITE, DEV_RAM, FS_PROC_NR, bp->b_data,
+			(off_t) b * BLOCK_SIZE, BLOCK_SIZE, 0) == BLOCK_SIZE) {
 	if (bp2->b2_dev != NO_DEV) buf2[hash2(bp2->b2_blocknr)].b2_count--;
 	bp2->b2_dev = bp->b_dev;
 	bp2->b2_blocknr = bp->b_blocknr;

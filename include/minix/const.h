@@ -1,7 +1,5 @@
-/* Copyright (C) 1998 by Prentice-Hall, Inc.  Permission is hereby granted
- * to redistribute the binary and source programs of this system for
- * educational or research purposes.  For other use, written permission from
- * Prentice-Hall is required.  
+/* Copyright (C) 2001 by Prentice-Hall, Inc.  See the copyright notice in
+ * the file /usr/src/LICENSE.
  */
 
 #ifndef CHIP
@@ -36,11 +34,8 @@
 /* Process numbers of some important processes. */
 #define MM_PROC_NR         0	/* process number of memory manager */
 #define FS_PROC_NR         1	/* process number of file system */
-#define INET_PROC_NR       2	/* process number of the TCP/IP server */
-#define INIT_PROC_NR	(INET_PROC_NR + ENABLE_NETWORKING)
-				/* init -- the process that goes multiuser */
-#define LOW_USER	(INET_PROC_NR + ENABLE_NETWORKING)
-				/* first user not part of operating system */
+#define INIT_PROC_NR	   2	/* init -- the process that goes multiuser */
+#define LOW_USER  INIT_PROC_NR	/* first user not part of operating system */
 
 /* Miscellaneous */
 #define BYTE            0377	/* mask for 8 bits */
@@ -55,26 +50,18 @@
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
 /* Number of tasks. */
-#define NR_TASKS	(9 + ENABLE_WINI + ENABLE_SCSI + ENABLE_CDROM \
-			+ ENABLE_DOSDSK + ENABLE_NETWORKING + 2 * ENABLE_AUDIO)
+#define NR_TASKS	(8 + NR_CTRLRS + ENABLE_DP8390 + ENABLE_PRINTER \
+				+ 2 * ENABLE_SB16)
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)
-#define CLICK_SIZE       256	/* unit in which memory is allocated */
-#define CLICK_SHIFT        8	/* log2 of CLICK_SIZE */
+#define CLICK_SIZE      1024	/* unit in which memory is allocated */
+#define CLICK_SHIFT       10	/* log2 of CLICK_SIZE */
 #endif
 
 #if (CHIP == SPARC) || (CHIP == M68000)
 #define CLICK_SIZE	4096	/* unit in which memory is alocated */
 #define CLICK_SHIFT	  12	/* 2log of CLICK_SIZE */
-#endif
-
-#define click_to_round_k(n) \
-	((unsigned) ((((unsigned long) (n) << CLICK_SHIFT) + 512) / 1024))
-#if CLICK_SIZE < 1024
-#define k_to_click(n) ((n) * (1024 / CLICK_SIZE))
-#else
-#define k_to_click(n) ((n) / (CLICK_SIZE / 1024))
 #endif
 
 #define ABS             -999	/* this process means absolute memory */

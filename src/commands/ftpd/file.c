@@ -232,7 +232,7 @@ char dir[128];
    if(getcwd(dir, sizeof(dir)) == (char *)NULL)
 	printf(msg550, buff, strerror(errno));
    else
-	printf("251 \"%s\" is current directory.\r\n", dir);
+	printf("257 \"%s\" is current directory.\r\n", dir);
 
    return(GOOD);
 }
@@ -542,7 +542,7 @@ static int fdxcmd(xcmd, args)
 char *xcmd;
 char *args;
 {
-char cmd[128];
+char cmd[512];
 char *argv[5];
 int fds[2];
 char *smallenv[] = { "PATH=/bin:/usr/bin:/usr/local/bin", NULL, NULL };
@@ -721,34 +721,58 @@ char *name;
 int fd;
 char *name2;
 static char command[512];
+char *cdcmd, *cmdfmt;
+int ftype;
 
-   switch(cnvtfile(name, &name2)) {
+   ftype = cnvtfile(name, &name2);
+ 
+   /* don't let tar use a full pathname */
+   cdcmd = "";
+   switch(ftype) {
 	case CNVT_TAR:
-		fd = fdxcmd("tar cf -", name2);
+	case CNVT_TAR_Z:
+	case CNVT_TAR_GZ:
+		if (name2[0] == '/') {
+			while (*name2 == '/') name2++;
+			cdcmd = "cd / &&";
+		}
+   }
+
+   /* format for a command to run; use two %s arguments for a 'cd /' and the
+    * file to process
+    */
+   switch(ftype) {
+	case CNVT_TAR:
+		cmdfmt = "%s tar cf - %s";
 		break;
 	case CNVT_TAR_Z:
-		sprintf(command, "tar cf - %s | compress -q", name2);
-		fd = fdxcmd(command, "");
+		cmdfmt = "%s tar cf - %s | compress -q";
 		break;
 	case CNVT_COMP:
-		fd = fdxcmd("compress -cq", name2);
+		cmdfmt = "%s compress -cq %s";
 		break;
 	case CNVT_TAR_GZ:
-		sprintf(command, "tar cf - %s | gzip", name2);
-		fd = fdxcmd(command, "");
+		cmdfmt = "%s tar cf - %s | gzip";
 		break;
 	case CNVT_GZIP:
-		fd = fdxcmd("gzip -c", name2);
+		cmdfmt = "%s gzip -c %s";
 		break;
 	case CNVT_UNCOMP:
-		fd = fdxcmd("compress -dcq", name2);
+		cmdfmt = "%s compress -dcq %s";
 		break;
 	case CNVT_NONE:
-		fd = open(name, O_RDONLY);
+		cmdfmt = NULL;
 		break;
 	case CNVT_ERROR:
 	default:
 		return(-1);
+   }
+
+   if(cmdfmt != NULL) {
+	sprintf(command, cmdfmt, cdcmd, name2);
+	fd = fdxcmd(command, "");
+   } else {
+	fd = open(name, O_RDONLY);
    }
 
    if(fd < 0)
@@ -792,10 +816,16 @@ int doascii;
 	default:
 		fname = name;
 		fd = procfile(name);
-		if(fd < 0)
+		if(fd < 0) {
 			logit("FAIL", path(fname));
-		else
+		} else {
 			logit("SEND", path(fname));
+			if (anonymous) {
+				loganon(1);
+				logit("SEND", path(fname));
+				loganon(0);
+			}
+		}
    }
 
    if(fd < 0)
@@ -1070,16 +1100,17 @@ char *fname;
 {
 char dir[128];
 
-   if(getcwd(dir, sizeof(dir)) == (char *)NULL)
-	sprintf(dir, "???");
-
    if(fname[0] == '/')
-	sprintf((char *)spath, "%s%s", newroot, fname);
-   else
+	sprintf((char *)spath, "%s", fname);
+   else {
+	if(getcwd(dir, sizeof(dir)) == (char *)NULL)
+		sprintf(dir, "???");
+
 	if(dir[1] == '\0')
-		sprintf((char *)spath, "%s%s%s", newroot, dir, fname);
+		sprintf((char *)spath, "/%s", fname);
 	else
-		sprintf((char *)spath, "%s%s/%s", newroot, dir, fname);
+		sprintf((char *)spath, "%s/%s", dir, fname);
+   }
 
    return((char *)spath);
 }

@@ -4,9 +4,7 @@ add_route.c
 Created August 7, 1991 by Philip Homburg
 */
 
-#ifndef _POSIX2_SOURCE
-#define _POSIX2_SOURCE	1
-#endif
+#define _POSIX_C_SOURCE	2
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -23,20 +21,20 @@ Created August 7, 1991 by Philip Homburg
 #include <net/gen/in.h>
 #include <net/gen/inet.h>
 #include <net/gen/route.h>
+#include <net/gen/socket.h>
 #include <net/gen/ip_io.h>
 
-char *prog_name;
+static char *prog_name;
+static enum { ADD, DEL } action;
 
-void main _ARGS(( int argc, char *argv[] ));
-void usage _ARGS(( void ));
+static void usage(void);
+static int name_to_ip(char *name, ipaddr_t *addr);
+static int parse_cidr(char *cidr, ipaddr_t *addr, ipaddr_t *mask);
 
-void main(argc, argv)
-int argc;
-char *argv[];
+void main(int argc, char *argv[])
 {
-	struct hostent *hostent;
 	struct netent *netent;
-	ipaddr_t gateway, destination, netmask;
+	ipaddr_t gateway, destination, netmask, defaultmask=0;
 	u8_t high_byte;
 	nwio_route_t route;
 	int ip_fd, itab;
@@ -47,19 +45,33 @@ char *argv[];
 	char *netmask_str, *metric_str, *destination_str, *gateway_str;
 	int c;
 	char *d_arg, *g_arg, *m_arg, *n_arg, *I_arg;
-	int i_flag, o_flag, v_flag;
+	int i_flag, o_flag, D_flag, v_flag;
+	int cidr;
 
-	prog_name= argv[0];
+	prog_name= strrchr(argv[0], '/');
+	if (prog_name == NULL) prog_name= argv[0]; else prog_name++;
+
+	if (strcmp(prog_name, "add_route") == 0)
+		action= ADD;
+	else if (strcmp(prog_name, "del_route") == 0)
+		action= DEL;
+	else
+	{
+		fprintf(stderr, "Don't know what to do when named '%s'\n",
+			prog_name);
+		exit(1);
+	}
 
 	i_flag= 0;
 	o_flag= 0;
+	D_flag= 0;
 	v_flag= 0;
 	g_arg= NULL;
 	d_arg= NULL;
 	m_arg= NULL;
 	n_arg= NULL;
 	I_arg= NULL;
-	while ((c= getopt(argc, argv, "iovg:d:m:n:I:?")) != -1)
+	while ((c= getopt(argc, argv, "iovDg:d:m:n:I:?")) != -1)
 	{
 		switch(c)
 		{
@@ -77,6 +89,11 @@ char *argv[];
 			if (v_flag)
 				usage();
 			v_flag= 1;
+			break;
+		case 'D':
+			if (D_flag)
+				usage();
+			D_flag= 1;
 			break;
 		case 'g':
 			if (g_arg)
@@ -123,8 +140,7 @@ char *argv[];
 	}
 	else
 	{
-		if (g_arg == NULL || (d_arg == NULL && n_arg != NULL) ||
-			m_arg != NULL)
+		if (g_arg == NULL || (d_arg == NULL && n_arg != NULL))
 		{
 			usage();
 		}
@@ -136,25 +152,26 @@ char *argv[];
 	netmask_str= n_arg;
 	ip_device= I_arg;
 
-	hostent= gethostbyname(gateway_str);
-	if (!hostent)
+	if (!name_to_ip(gateway_str, &gateway))
 	{
 		fprintf(stderr, "%s: unknown host '%s'\n", prog_name,
 								gateway_str);
 		exit(1);
 	}
-	gateway= *(ipaddr_t *)(hostent->h_addr);
 
 	destination= 0;
 	netmask= 0;
+	cidr= 0;
 
 	if (destination_str)
 	{
-		if ((netent= getnetbyname(destination_str)) != NULL)
+		if (parse_cidr(destination_str, &destination, &netmask))
+			cidr= 1;
+		else if (inet_aton(destination_str, &destination))
+			;
+		else if ((netent= getnetbyname(destination_str)) != NULL)
 			destination= netent->n_net;
-		else if ((hostent= gethostbyname(destination_str)) != NULL)
-			destination= *(ipaddr_t *)(hostent->h_addr);
-		else
+		else if (!name_to_ip(destination_str, &destination))
 		{
 			fprintf(stderr, "%s: unknown network/host '%s'\n",
 				prog_name, destination_str);
@@ -164,31 +181,35 @@ char *argv[];
 		if (!(high_byte & 0x80))	/* class A or 0 */
 		{
 			if (destination)
-				netmask= HTONL(0xff000000);
+				defaultmask= HTONL(0xff000000);
 		}
 		else if (!(high_byte & 0x40))	/* class B */
 		{
-			netmask= HTONL(0xffff0000);
+			defaultmask= HTONL(0xffff0000);
 		}
 		else if (!(high_byte & 0x20))	/* class C */
 		{
-			netmask= HTONL(0xffffff00);
+			defaultmask= HTONL(0xffffff00);
 		}
 		else				/* class D is multicast ... */
 		{
-			fprintf(stderr, "%s: warning martian address '%s'\n",
+			fprintf(stderr, "%s: Warning: Martian address '%s'\n",
 				prog_name, inet_ntoa(destination));
-			netmask= HTONL(0xffffffff);
+			defaultmask= HTONL(0xffffffff);
 		}
-		if (destination & ~netmask)
+		if (destination & ~defaultmask)
 		{
 			/* host route */
-			netmask= HTONL(0xffffffff);
+			defaultmask= HTONL(0xffffffff);
 		}
+		if (!cidr)
+			netmask= defaultmask;
 	}
 
 	if (netmask_str)
 	{
+		if (cidr)
+			usage();
 		if (inet_aton(netmask_str, &netmask) == 0)
 		{
 			fprintf(stderr, "%s: illegal netmask'%s'\n", prog_name,
@@ -224,40 +245,103 @@ char *argv[];
 
 	if (v_flag)
 	{
-		printf("adding %s route to %s ", itab ? "input" : "output",
+		printf("%s %s route to %s ",
+			action == ADD ? "adding" : "deleting",
+			itab ? "input" : "output",
 			inet_ntoa(destination));
 		printf("with netmask %s ", inet_ntoa(netmask));
 		printf("using gateway %s", inet_ntoa(gateway));
-		if (itab)
+		if (itab && action == ADD)
 			printf(" at distance %d", metric);
 		printf("\n");
 	}
 
+	route.nwr_ent_no= 0;
 	route.nwr_dest= destination;
 	route.nwr_netmask= netmask;
 	route.nwr_gateway= gateway;
-	route.nwr_dist= metric;
-	route.nwr_flags= NWRF_STATIC;
+	route.nwr_dist= action == ADD ? metric : 0;
+	route.nwr_flags= (action == DEL && D_flag) ? 0 : NWRF_STATIC;
+	route.nwr_pref= 0;
+	route.nwr_mtu= 0;
 
-	if (itab)
-		r= ioctl(ip_fd, NWIOSIPIROUTE, &route);
+	if (action == ADD)
+		r= ioctl(ip_fd, itab ? NWIOSIPIROUTE : NWIOSIPOROUTE, &route);
 	else
-		r= ioctl(ip_fd, NWIOSIPOROUTE, &route);
+		r= ioctl(ip_fd, itab ? NWIODIPIROUTE : NWIODIPOROUTE, &route);
 	if (r == -1)
 	{
-		fprintf(stderr, "%s: NWIOSIPxROUTE: %s\n",
-			prog_name, strerror(errno));
+		fprintf(stderr, "%s: NWIO%cIP%cROUTE: %s\n",
+			prog_name,
+			action == ADD ? 'S' : 'D',
+			itab ? 'I' : 'O',
+			strerror(errno));
 		exit(1);
 	}
 	exit(0);
 }
 
-void usage()
+static void usage(void)
 {
-	fprintf(stderr, "Usage: %s\n", prog_name);
 	fprintf(stderr,
-"\t[-o] -g <gw> [-d <dst> [-n <netmask> ]] [-m metric] [-I <ipdev>] [-v]\n");
-	fprintf(stderr,
-"\t-i -g <gw> -d <dst> -m metric [-n <netmask>] [-I <ipdev>] [-v]\n");
+		"Usage: %s\n"
+		"\t[-o] %s-g gw [-d dst [-n netmask]] %s[-I ipdev] [-v]\n"
+		"\t-i %s-g gw -d dst [-n netmask] %s[-I ipdev] [-v]\n"
+		"Note: <dst> may be in CIDR notation\n",
+		prog_name,
+		action == DEL ? "[-D] " : "",
+		action == ADD ? "[-m metric] " : "",
+		action == DEL ? "[-D] " : "",
+		action == ADD ? "-m metric " : ""
+	);
 	exit(1);
 }
+
+static int name_to_ip(char *name, ipaddr_t *addr)
+{
+	/* Translate a name to an IP address.  Try first with inet_aton(), then
+	 * with gethostbyname().  (The latter can also recognize an IP address,
+	 * but only decimals with at least one dot).)
+	 */
+	struct hostent *hostent;
+
+	if (!inet_aton(name, addr)) {
+		if ((hostent= gethostbyname(name)) == NULL) return 0;
+		if (hostent->h_addrtype != AF_INET) return 0;
+		if (hostent->h_length != sizeof(*addr)) return 0;
+		memcpy(addr, hostent->h_addr, sizeof(*addr));
+	}
+	return 1;
+}
+
+static int parse_cidr(char *cidr, ipaddr_t *addr, ipaddr_t *mask)
+{
+	char *slash, *check;
+	ipaddr_t a;
+	int ok;
+	unsigned long len;
+
+	if ((slash= strchr(cidr, '/')) == NULL)
+		return 0;
+
+	*slash++= 0;
+	ok= 1;
+
+	if (!inet_aton(cidr, &a))
+		ok= 0;
+
+	len= strtoul(slash, &check, 10);
+	if (check == slash || *check != 0 || len > 32)
+		ok= 0;
+
+	*--slash= '/';
+	if (!ok)
+		return 0;
+	*addr= a;
+	*mask= htonl(len == 0 ? 0 : (0xFFFFFFFF << (32-len)) & 0xFFFFFFFF);
+	return 1;
+}
+
+/*
+ * $PchId: add_route.c,v 1.6 2001/04/20 10:45:07 philip Exp $
+ */

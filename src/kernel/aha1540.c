@@ -15,33 +15,33 @@
  *
  * The supported device numbers are as follows:
  *   #	Name	Device
- *   0	sd0	disk 0, entire disk
- *   1	sd1	disk 0, partition 1
- *   2	sd2	disk 0, partition 2
- *   3	sd3	disk 0, partition 3
- *   4	sd4	disk 0, partition 4
- *   5	sd5	disk 1, entire disk
- *   6	sd6	disk 1, partition 1
+ *   0	d0	disk 0
+ *   1	d0p0	disk 0, partition 0
+ *   2	d0p0	disk 0, partition 1
+ *   3	d0p0	disk 0, partition 2
+ *   4	d0p0	disk 0, partition 3
+ *   5	d1	disk 1
+ *   6	d1p0	disk 1, partition 0
  *  ..	....	....
- *  39	sd39	disk 7, partition 4
+ *  39	d7p3	disk 7, partition 3
  *
- *  64	nrst0	tape 0, no rewind
- *  65	rst0	tape 0, rewind
- *  66	nrst1	tape 1, no rewind
+ *  64	t0n	tape 0, no rewind
+ *  65	t0	tape 0, rewind
+ *  66	t1n	tape 1, no rewind
  *  ..	....	....
- *  79	rst7	tape 7, rewind
+ *  79	t7	tape 7, rewind
  *
- * 128	sd1a	disk 0, partition 1, subpartition 1
- * 129	sd1b	disk 0, partition 1, subpartition 2
+ * 128	d0p0s0	disk 0, partition 0, subpartition 0
+ * 129	d0p0s1	disk 0, partition 0, subpartition 1
  * ...	....	....
- * 255	sd39d	disk 7, partition 4, subpartition 4
+ * 255	d7p3s3	disk 7, partition 3, subpartition 3
  *
  * The translation of device numbers to targets and logical units is very
  * simple:  The target is the same as the disk or tape number, the logical
  * unit is always zero.  Devices with logical unit numbers other then zero
- * are virtually extinct.  If you happen to have such a dinosaur device,
- * then you can reprogram (e.g.) sd35 and st7 to target 0, lun 1 from the
- * Boot Monitor with 'sd35=0,1'.
+ * are usually RAID enclosures.  If you happen to be so lucky to have such
+ * a thing, then you can reprogram (e.g.) d7 and t7 to target 0, lun 1
+ * from the Boot Monitor with 'aha1540-d7=:0,1'.
  *
  *
  * The file contains one entry point:
@@ -54,6 +54,7 @@
  *	 7 Jul 1992 by Kees J. Bot: speedup & features.
  *	28 Dec 1992 by Kees J. Bot: completely remodeled & virtual memory.
  *	18 Sep 1994 by Kees J. Bot: removed "send 2 commands at once" junk.
+ *	14 May 2000 by Kees J. Bot: d-d/i rewrite.
  */
 #include "kernel.h"
 #include "driver.h"
@@ -62,13 +63,11 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mtio.h>
-#include "assert.h"
-INIT_ASSERT
 
 
 #ifndef AHA_DEBUG
 #define AHA_DEBUG	0	/* 1=print all SCSI errors | 2=dump ccb
-				 * 4=show request | 8=dump scsi cmd
+				 * 4=show iov&request | 8=dump scsi cmd
 				 */
 #endif
 
@@ -314,11 +313,10 @@ typedef struct {
 #define NR_GENDEVS	 (MAX_DEVICES)
 #define SUB_PER_DRIVE	 (NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	 (MAX_DEVICES * SUB_PER_DRIVE)
-#define MINOR_st0	  64
 
-#define TYPE_SD		   0	/* disk device number */
-#define TYPE_NRST	   1	/* non rewind-on-close tape device */
-#define TYPE_RST	   2	/* rewind-on-close tape device */
+#define TYPE_D		   0	/* disk device number */
+#define TYPE_TN		   1	/* non rewind-on-close tape device */
+#define TYPE_T		   2	/* rewind-on-close tape device */
 
 
 /* Variables */
@@ -343,8 +341,8 @@ PRIVATE struct scsi {	/* Per-device table */
 	    struct device dummypart;  /* something for s_prepare to return */
 	} tape;
 	struct {		/* Disk data */
-	    struct device part[DEV_PER_DRIVE];    /* primaries: sd[0-4] */
-	    struct device subpart[SUB_PER_DRIVE]; /* subparts: sd[1-4][a-d] */
+	    struct device part[DEV_PER_DRIVE];	  /* disks and partitions */
+	    struct device subpart[SUB_PER_DRIVE]; /* subpartitions */
 	} disk;
     } u;
 } scsi[MAX_DEVICES];
@@ -386,14 +384,14 @@ PRIVATE char *str_scsi_sense[] = {
 
 /* Administration for one SCSI request. */
 typedef struct request {
+  int opcode;			/* DEV_GATHER or DEV_SCATTER */
   unsigned count;		/* number of bytes to transfer */
   unsigned retry;		/* number of tries allowed if retryable */
-  unsigned long pos;		/* first byte on the device to transfer */
+  u64_t position;		/* first byte on the device to transfer */
   ccb_t ccb;			/* Command Control Block */
   dma_t dmalist[NR_IOREQS];	/* scatter/gather dma list */
   dma_t *dmaptr;		/* to add scatter/gather entries */
   dma_t *dmalimit;		/* adapter model dependent limit to list */
-  struct iorequest_s *iov[NR_IOREQS];	/* affected I/O requests */
 } request_t;
 
 PRIVATE request_t request;
@@ -408,11 +406,7 @@ PRIVATE int aha_basereg;	/* base I/O register */
 PRIVATE int aha_model;		/* board model */
 PRIVATE struct scsi *s_sp;	/* active SCSI device struct */
 PRIVATE struct device *s_dv;	/* active partition */
-PRIVATE int s_type;		/* sd, rst, nrst? */
-PRIVATE unsigned long s_nextpos;/* next byte on the device to transfer */
-PRIVATE unsigned long s_buf_blk;/* disk block currently in tmp_buf */
-PRIVATE int s_opcode;		/* DEV_READ or DEV_WRITE */
-PRIVATE int s_must;		/* must finish the current request? */
+PRIVATE int s_type;		/* disk, nonrewind tape, rewind tape? */
 PRIVATE int aha_irq;		/* configured IRQ */
 PRIVATE mailbox_t mailbox[2];	/* out and in mailboxes */
 PRIVATE inquiry_t inqdata;	/* results of Inquiry command */
@@ -420,6 +414,7 @@ PRIVATE inquiry_t inqdata;	/* results of Inquiry command */
 
 /* Functions */
 
+FORWARD _PROTOTYPE( void s_init, (void) );
 FORWARD _PROTOTYPE( struct device *s_prepare, (int device) );
 FORWARD _PROTOTYPE( char *s_name, (void) );
 FORWARD _PROTOTYPE( int s_do_open, (struct driver *dp, message *m_ptr) );
@@ -428,10 +423,10 @@ FORWARD _PROTOTYPE( int scsi_sense, (void) );
 FORWARD _PROTOTYPE( int scsi_inquiry, (void) );
 FORWARD _PROTOTYPE( int scsi_ndisk, (void) );
 FORWARD _PROTOTYPE( int scsi_ntape, (void) );
-FORWARD _PROTOTYPE( int s_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int s_finish, (void) );
-FORWARD _PROTOTYPE( int s_rdcdrom, (int proc_nr, struct iorequest_s *iop,
-		unsigned long pos, unsigned nbytes, phys_bytes user_phys) );
+FORWARD _PROTOTYPE( int s_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
+FORWARD _PROTOTYPE( int s_rdcdrom, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( int s_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int s_do_ioctl, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int scsi_simple, (int opcode, int count) );
@@ -458,9 +453,11 @@ FORWARD _PROTOTYPE( void errordump, (void) );
 #endif
 
 #if AHA_DEBUG & 4
+FORWARD _PROTOTYPE( void show_iov, (iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( void show_req, (void) );
 #else
-#define show_req()
+#define show_iov(iov, nr_req)	((void)0)
+#define show_req()		((void)0)
 #endif
 
 #if AHA_DEBUG & 8
@@ -479,8 +476,7 @@ PRIVATE struct driver s_dtab = {
   s_do_close,	/* release device */
   s_do_ioctl,	/* tape and partition ioctls */
   s_prepare,	/* prepare for I/O on a given minor device */
-  s_schedule,	/* precompute SCSI transfer parameters, etc. */
-  s_finish,	/* do the I/O */
+  s_transfer,	/* do the I/O */
   nop_cleanup,	/* no cleanup needed */
   s_geometry	/* tell the geometry of the disk */
 };
@@ -491,14 +487,25 @@ PRIVATE struct driver s_dtab = {
  *===========================================================================*/
 PUBLIC void aha1540_scsi_task()
 {
-/* Set target and logical unit numbers, then call the generic main loop. */
+/* Initialize special parameters, then call the generic main loop. */
+
+  aha_tasknr = proc_number(proc_ptr);
+  s_init();
+  driver_task(&s_dtab);
+}
+
+
+/*===========================================================================*
+ *				s_init					     *
+ *===========================================================================*/
+PRIVATE void s_init()
+{
+/* Set target and logical unit numbers. */
   int i;
   struct scsi *sp;
   long v;
   char *name;
-  static char fmt[] = "d,d";
-
-  aha_tasknr = proc_number(proc_ptr);
+  static char fmt[] = "d:d,d";
 
   for (i = 0; i < MAX_DEVICES; i++) {
 	(void) s_prepare(i * DEV_PER_DRIVE);
@@ -508,14 +515,13 @@ PUBLIC void aha1540_scsi_task()
 	name = s_name();
 
 	v = i;
-	(void) env_parse(name, fmt, 0, &v, 0L, 7L);
+	(void) env_parse(name, fmt, 1, &v, 0L, 7L);
 	sp->targ = v;
 
 	v = 0;
-	(void) env_parse(name, fmt, 1, &v, 0L, 7L);
+	(void) env_parse(name, fmt, 2, &v, 0L, 7L);
 	sp->lun = v;
   }
-  driver_task(&s_dtab);
 }
 
 
@@ -527,24 +533,20 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  rq->count = 0;	/* no requests as yet */
-  s_must = TRUE;	/* the first transfers must be done */
-  s_buf_blk = -1;	/* invalidate s_buf_blk */
-
-  if (device < NR_DISKDEVS) {			/* sd0, sd1, ... */
-	s_type = TYPE_SD;
+  if (device < NR_DISKDEVS) {			/* d0, d0p[0-3], d1, ... */
+	s_type = TYPE_D;
 	s_sp = &scsi[device / DEV_PER_DRIVE];
 	s_dv = &s_sp->part[device % DEV_PER_DRIVE];
   } else
-  if ((unsigned) (device - MINOR_hd1a) < NR_SUBDEVS) {	/* sd1a, sd1b, ... */
-	device -= MINOR_hd1a;
-	s_type = TYPE_SD;
+  if ((unsigned) (device - MINOR_d0p0s0) < NR_SUBDEVS) {/* d[0-7]p[0-3]s[0-3] */
+	device -= MINOR_d0p0s0;
+	s_type = TYPE_D;
 	s_sp = &scsi[device / SUB_PER_DRIVE];
 	s_dv = &s_sp->subpart[device % SUB_PER_DRIVE];
   } else
-  if ((unsigned) (device - MINOR_st0) < NR_TAPEDEVS) {	/* nrst0, rst0, ... */
-	device -= MINOR_st0;
-	s_type = device & 1 ? TYPE_RST : TYPE_NRST;
+  if ((unsigned) (device - MINOR_t0) < NR_TAPEDEVS) {	/* t[0-7] */
+	device -= MINOR_t0;
+	s_type = (device & 1) ? TYPE_T : TYPE_TN;
 	s_sp = &scsi[device >> 1];
 	s_dv = &s_sp->dummypart;
   } else {
@@ -561,26 +563,10 @@ int device;
 PRIVATE char *s_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "sd35";
-  int n = (s_sp - scsi);
+  static char name[] = "aha1540-d0";
 
-  switch (s_type) {
-  case TYPE_SD:			/* Disk device: sd* */
-	name[1] = 'd';
-	n *= DEV_PER_DRIVE;
-	break;
-  case TYPE_RST:		/* Tape device: st* */
-  case TYPE_NRST:
-	name[1] = 't';
-	break;
-  }
-  if (n < 10) {
-	name[2] = '0' + n;
-	name[3] = 0;
-  } else {
-	name[2] = '0' + n / 10;
-	name[3] = '0' + n % 10;
-  }
+  name[8]= "dtt"[s_type];
+  name[9]= '0' + (s_sp - scsi);
   return name;
 }
 
@@ -809,7 +795,7 @@ PRIVATE int scsi_ndisk()
   byte *buf = tmp_buf;
 
   /* Minor device type must be for a disk. */
-  if (s_type != TYPE_SD) return(EIO);
+  if (s_type != TYPE_D) return(EIO);
 
   if (sp->devtype == SCSI_DEVCDROM) {
 	/* Read-only by definition. */
@@ -847,18 +833,10 @@ PRIVATE int scsi_ndisk()
   }
 
   sp->block_size = block_size;
-#if _WORD_SIZE > 2
-  /* Keep it within reach of a group 0 command. */
-  sp->count_max = 0x100 * block_size;
-#else
-  sp->count_max = block_size > UINT_MAX/0x100 ? UINT_MAX : 0x100 * block_size;
-#endif
+  sp->part[0].dv_size = mul64u(capacity, block_size);
 
-  /* The fun ends at 4GB. */
-  if (capacity > ((unsigned long) -1) / block_size)
-	sp->part[0].dv_size = -1;
-  else
-	sp->part[0].dv_size = capacity * block_size;
+  /* Keep it within reach of a group 0 command, and within 'unsigned'. */
+  sp->count_max = block_size > UINT_MAX/0x100 ? UINT_MAX : 0x100 * block_size;
 
   /* Finally we recognize its existence. */
   sp->state |= S_PRESENT|S_READY;
@@ -879,7 +857,7 @@ PRIVATE int scsi_ntape()
   byte *buf = tmp_buf;
 
   /* Minor device type must be for a tape. */
-  if (s_type != TYPE_RST && s_type != TYPE_NRST) return(EIO);
+  if (s_type != TYPE_T && s_type != TYPE_TN) return(EIO);
 
   /* Read limits. */
   if (scsi_simple(SCSI_RDLIMITS, 6) != SENSE_NO_SENSE) return(EIO);
@@ -936,352 +914,345 @@ PRIVATE int scsi_ntape()
 
 
 /*===========================================================================*
- *				s_schedule				     *
+ *				s_transfer				     *
  *===========================================================================*/
-PRIVATE int s_schedule(proc_nr, iop)
+PRIVATE int s_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-/* Gather I/O requests on consecutive blocks so they may be read/written
- * in one SCSI command using scatter/gather DMA.
- */
   struct scsi *sp = s_sp;
-  int r, opcode, spanning;
-  unsigned nbytes, count;
-  unsigned long pos;
-  phys_bytes user_phys, dma_phys;
-  static unsigned dma_count;
-  static struct iorequest_s **iopp;	/* to add I/O request pointers */
-  static phys_bytes dma_last;	/* address of end of the last added entry */
-
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-
-  /* From/to this position on the device */
-  pos = iop->io_position;
-
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read or write? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-
-  switch (sp->devtype) {
-  case SCSI_DEVCDROM:
-  case SCSI_DEVWORM:
-  case SCSI_DEVDISK:
-  case SCSI_DEVOPTICAL:
-	/* Which block on disk and how close to EOF? */
-	if (pos >= s_dv->dv_size) return(OK);		/* At EOF */
-	if (pos + nbytes > s_dv->dv_size) nbytes = s_dv->dv_size - pos;
-	pos += s_dv->dv_base;
-
-	if ((nbytes % sp->block_size) != 0 || (pos % sp->block_size) != 0) {
-		/* Not on a device block boundary.  CD-ROM? */
-		return(s_rdcdrom(proc_nr, iop, pos, nbytes, user_phys));
-	}
-	break;
-
-  case SCSI_DEVTAPE:
-	if ((nbytes % sp->block_size) != 0)
-		return(iop->io_nbytes = EINVAL);
-
-	/* Old error condition? */
-	if (sp->tstat.mt_dsreg == DS_ERR) return(iop->io_nbytes = EIO);
-
-	if (opcode == DEV_READ && sp->at_eof) return(OK);
-
-	s_nextpos = pos = 0;	/* pos is ignored */
-	break;
-
-  default:
-	return(iop->io_nbytes = EIO);
-  }
-
-  /* Probe a device that isn't ready. */
-  if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
-
-  if (rq->count > 0 && pos != s_nextpos) {
-	/* This new request can't be chained to the job being built. */
-	if ((r = s_finish()) != OK) return(r);
-  }
-
-  /* The next consecutive block starts at byte position... */
-  s_nextpos = pos + nbytes;
-
-  spanning = FALSE;	/* set if a request spans several DMA vectors */
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	dma_phys = user_phys;
-
-	if (rq->count > 0 && (
-		rq->count == sp->count_max
-		|| rq->dmaptr == rq->dmalimit
-		|| !DMA_CHECK(dma_last, dma_phys)
-	)) {
-		/* This request can not be added to the scatter/gather list. */
-		if ((r = s_finish()) != OK) return(r);
-		s_must = spanning;
-
-		continue;	/* try again */
-	}
-
-	if (rq->count == 0) {
-		/* The first request in a row, initialize. */
-		rq->pos = pos;
-		s_opcode = opcode;
-		iopp = rq->iov;
-		rq->dmaptr = rq->dmalist;
-		rq->retry = 2;
-	}
-
-	count = nbytes;
-
-	/* Don't exceed the maximum transfer count. */
-	if (rq->count + count > sp->count_max)
-		count = sp->count_max - rq->count;
-
-	/* New scatter/gather entry. */
-	h2b24(rq->dmaptr->dataptr, dma_phys);
-	h2b24(rq->dmaptr->datalen, (u32_t) (dma_count = count));
-	rq->dmaptr++;
-	dma_last = dma_phys + count;
-
-	/* Which I/O request? */
-	*iopp++ = iop;
-
-	/* Update counters. */
-	rq->count += count;
-	pos += count;
-	user_phys += count;
-	nbytes -= count;
-	if (!(iop->io_request & OPTIONAL_IO)) s_must = TRUE;
-
-	spanning = TRUE;	/* the rest of the request must be done */
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				s_finish				     *
- *===========================================================================*/
-PRIVATE int s_finish()
-{
-/* Send the I/O requests gathered in *rq to the host adapter. */
-
-  struct scsi *sp = s_sp;
-  unsigned long block;
-  struct iorequest_s **iopp, *iop;
+  iovec_t *iop, *iov_end = iov + nr_req;
   int key;
+  unsigned nbytes, dma_count;
+  vir_bytes addr, size;
+  phys_bytes dma_phys;
+  phys_bytes last_phys;
+  unsigned last_count;
+  unsigned long block;
+  unsigned long dv_size = cv64ul(s_dv->dv_size);
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
-  if (rq->count == 0) return(OK);	/* spurious finish */
+  rq->opcode = opcode;
+  rq->retry = 2;
 
-  show_req();
+  while (nr_req > 0) {
+	/* Probe the device if it isn't ready. */
+	if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
 
-  /* If all the requests are optional then don't do just a few. */
-  if (!s_must && rq->count < 0x2000) {
+	show_iov(iov, nr_req);
+
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) nbytes += iop->iov_size;
+
+	switch (sp->devtype) {
+	case SCSI_DEVCDROM:
+	case SCSI_DEVWORM:
+	case SCSI_DEVDISK:
+	case SCSI_DEVOPTICAL:
+		/* Which block on disk and how close to EOF? */
+		if (position >= dv_size) return(OK);	/* EOF */
+		if (position + nbytes > dv_size) nbytes = dv_size - position;
+		rq->position = add64ul(s_dv->dv_base, position);
+
+		if ((nbytes % sp->block_size) != 0
+				|| rem64u(rq->position, sp->block_size) != 0) {
+			/* Not on a device block boundary.  CD-ROM? */
+			return(s_rdcdrom(proc_nr, opcode, position, iov,
+								nr_req));
+		}
+		break;
+
+	case SCSI_DEVTAPE:
+		if ((nbytes % sp->block_size) != 0) return(EINVAL);
+
+		/* Old error condition? */
+		if (sp->tstat.mt_dsreg == DS_ERR) return(EIO);
+
+		if (opcode == DEV_GATHER && sp->at_eof) return(OK);
+		break;
+
+	default:
+		return(EIO);
+	}
+
+	/* Construct a DMA scatter/gather vector from the I/O vector. */
 	rq->count = 0;
-	return(OK);
-  }
+	rq->dmaptr = rq->dmalist;
+	for (iop = iov; iop < iov_end; iop++) {
+		addr = iop->iov_addr;
+		size = iop->iov_size;
 
-  iopp = rq->iov;
-  iop = *iopp++;
+		while (size > 0) {
+			/* DMA addresses. */
+			dma_phys = user_base + addr;
+			dma_count = size;
 
-retry:
-  switch (sp->devtype) {
-  case SCSI_DEVCDROM:
-  case SCSI_DEVWORM:
-  case SCSI_DEVDISK:
-  case SCSI_DEVOPTICAL:
-	/* A read or write SCSI command for a random access device. */
-	block = rq->pos / sp->block_size;
+			/* Several constraints... */
+			if (rq->count + dma_count > nbytes)
+				dma_count = nbytes - rq->count;
+			if (rq->count + dma_count > sp->count_max)
+				dma_count = sp->count_max - rq->count;
 
-	if (block < (1L << 21)) {
-		/* We can use a group 0 command for small disks. */
+			if (rq->count > 0 && dma_phys == last_phys) {
+				/* Two blocks are adjacent! */
+				h2b24(rq->dmaptr[-1].datalen,
+					(u32_t) (last_count += dma_count));
+			} else
+			if (rq->dmaptr < rq->dmalimit
+				&& (rq->count == 0
+					|| DMA_CHECK(last_phys, dma_phys))
+			) {
+				/* New scatter/gather entry. */
+				h2b24(rq->dmaptr->dataptr, dma_phys);
+				h2b24(rq->dmaptr->datalen,
+					(u32_t) (last_count = dma_count));
+				rq->dmaptr++;
+			} else {
+				/* End of DMA vector, or addresses not
+				 * compatible.
+				 */
+				goto dma_vec_done;
+			}
+			last_phys = dma_phys + dma_count;
+
+			/* Update counters. */
+			rq->count += dma_count;
+			addr += dma_count;
+			size -= dma_count;
+
+			if (rq->count == nbytes) goto dma_vec_done;
+			if (rq->count == sp->count_max) goto dma_vec_done;
+		}
+	}
+  dma_vec_done:
+
+	show_req();
+
+	switch (sp->devtype) {
+	case SCSI_DEVCDROM:
+	case SCSI_DEVWORM:
+	case SCSI_DEVDISK:
+	case SCSI_DEVOPTICAL:
+		/* A read or write SCSI command for a random access device. */
+		block = div64u(rq->position, sp->block_size);
+
+		if (block < (1L << 21)) {
+			/* We can use a group 0 command for small disks. */
+			group0();
+			rq->ccb.opcode = CCB_SCATTER;
+			ccb_cmd0(rq).scsi_op = opcode == DEV_SCATTER
+						? SCSI_WRITE : SCSI_READ;
+			h2b24(ccb_cmd0(rq).lba, block);
+			ccb_cmd0(rq).nblocks = rq->count / sp->block_size;
+		} else {
+			/* Large disks require a group 1 command. */
+			group1();
+			rq->ccb.opcode = CCB_SCATTER;
+			ccb_cmd1(rq).scsi_op = opcode == DEV_SCATTER
+						? SCSI_WRITE1 : SCSI_READ1;
+			h2b32(ccb_cmd1(rq).lba, block);
+			h2b16(ccb_cmd1(rq).nblocks, rq->count / sp->block_size);
+		}
+
+		key = scsi_command(0L, 0);
+
+		if (key == SENSE_NO_SENSE) {
+			/* fine */;
+		} else
+		if (key == SENSE_UNIT_ATT || key == SENSE_ABORTED_CMD) {
+			/* Check condition?  Bus reset most likely. */
+			/* Aborted command?  Maybe retrying will help. */
+			if (--rq->retry > 0) continue;
+			return(EIO);
+		} else
+		if (key == SENSE_RECOVERED) {
+			/* Disk drive managed to recover from a read error. */
+			printf("%s: soft read error at block %lu (recovered)\n",
+				s_name(), b2h32(ccb_sense(rq).info));
+			key = SENSE_NO_SENSE;
+			break;
+		} else {
+			/* A fatal error occurred, bail out. */
+			return(EIO);
+		}
+		break;
+
+	case SCSI_DEVTAPE:
+		/* A read or write SCSI command for a sequential access device.
+		 */
 		group0();
 		rq->ccb.opcode = CCB_SCATTER;
-		ccb_cmd0(rq).scsi_op =
-			s_opcode == DEV_WRITE ? SCSI_WRITE : SCSI_READ;
-		h2b24(ccb_cmd0(rq).lba, block);
-		ccb_cmd0(rq).nblocks = rq->count / sp->block_size;
-	} else {
-		/* Large disks require a group 1 command. */
-		group1();
-		rq->ccb.opcode = CCB_SCATTER;
-		ccb_cmd1(rq).scsi_op =
-			s_opcode == DEV_WRITE ? SCSI_WRITE1 : SCSI_READ1;
-		h2b32(ccb_cmd1(rq).lba, block);
-		h2b16(ccb_cmd1(rq).nblocks, rq->count / sp->block_size);
-	}
+		ccb_cmd0(rq).scsi_op = opcode == DEV_SCATTER
+						? SCSI_WRITE : SCSI_READ;
+		ccb_cmd0(rq).fixed = sp->tfixed;
+		h2b24(ccb_cmd0(rq).trlength, rq->count / sp->block_size);
 
-	key = scsi_command(0L, 0);
+		key = scsi_command(0L, 0);
 
-	if (key == SENSE_NO_SENSE) {
-		/* fine */;
-	} else
-	if (key == SENSE_UNIT_ATT || key == SENSE_ABORTED_CMD) {
-		/* Check condition?  Bus reset most likely. */
-		/* Aborted command?  Maybe retrying will help. */
-		if (--rq->retry > 0) goto retry;
-		return(iop->io_nbytes = EIO);
-	} else
-	if (key == SENSE_RECOVERED) {
-		/* Disk drive managed to recover from a read error. */
-		printf("%s: soft read error at block %lu (recovered)\n",
-			s_name(), b2h32(ccb_sense(rq).info));
-		key = SENSE_NO_SENSE;
-		break;
-	} else {
-		/* A fatal error occurred, bail out. */
-		return(iop->io_nbytes = EIO);
-	}
-	break;
+		if (key != SENSE_NO_SENSE) {
+			/* Either near/at EOF or EOM, or an I/O error. */
 
-  case SCSI_DEVTAPE:
-	/* A read or write SCSI command for a sequential access device. */
-	group0();
-	rq->ccb.opcode = CCB_SCATTER;
-	ccb_cmd0(rq).scsi_op = s_opcode == DEV_WRITE ? SCSI_WRITE : SCSI_READ;
-	ccb_cmd0(rq).fixed = sp->tfixed;
-	h2b24(ccb_cmd0(rq).trlength, rq->count / sp->block_size);
+			if (sense_eof(key) || sense_eom(key)) {
+				/* Not an error, but near/at EOF or EOM.  The
+				 * residual tells how much has not been read.
+				 */
+				rq->count -= sp->tstat.mt_resid
+							* sp->block_size;
 
-	key = scsi_command(0L, 0);
+				if (opcode == DEV_SCATTER
+					&& sense_key(key) == SENSE_NO_SENSE
+				) {
+					/* Early warning, ignore. */
+					sp->tstat.mt_dsreg = DS_OK;
+				} else {
+					/* EOF or EOM. */
+					sp->at_eof = TRUE;
+					sp->tstat.mt_dsreg = DS_EOF;
 
-	if (key != SENSE_NO_SENSE) {
-		/* Either at EOF or EOM, or an I/O error. */
-
-		if (sense_eof(key) || sense_eom(key)) {
-			/* Not an error, but EOF or EOM. */
-			sp->at_eof = TRUE;
-			sp->tstat.mt_dsreg = DS_EOF;
-
-			/* The residual tells how much has not been read. */
-			rq->count -= sp->tstat.mt_resid * sp->block_size;
-
-			if (sense_eof(key)) {
-				/* Went over a filemark. */
-				sp->tstat.mt_blkno = !sp->tfixed ? -1 :
-					- (int) (rq->count / sp->block_size);
-				sp->tstat.mt_fileno++;
+					if (sense_eof(key)) {
+						/* Went over a filemark. */
+						sp->tstat.mt_blkno = - (int)
+						  (rq->count / sp->block_size);
+						if (!sp->tfixed)
+							sp->tstat.mt_blkno = -1;
+						sp->tstat.mt_fileno++;
+					}
+				}
 			}
-		}
-		if (sense_ili(key)) {
-			/* Incorrect length on a variable block length tape. */
+			if (sense_ili(key)) {
+				/* Incorrect length on a variable block length
+				 * tape.
+				 */
 
-			if (sp->tstat.mt_resid <= 0) {
-				/* Large block could not be read. */
-				return(iop->io_nbytes = EIO);
+				if (sp->tstat.mt_resid <= 0) {
+					/* Large block could not be read. */
+					return(EIO);
+				}
+				/* Small block read, this is ok. */
+				rq->count -= sp->tstat.mt_resid;
+				sp->tstat.mt_dsreg = DS_OK;
 			}
-			/* Small block read, this is ok. */
-			rq->count -= sp->tstat.mt_resid;
+			if (key == SENSE_RECOVERED) {
+				/* Tape drive managed to recover from an error.
+				 */
+				printf("%s: soft %s error (recovered)\n",
+					s_name(), opcode == DEV_GATHER
+							? "read" : "write");
+				key = SENSE_NO_SENSE;
+				sp->tstat.mt_dsreg = DS_OK;
+			}
+			if (sp->tstat.mt_dsreg == DS_ERR) {
+				/* Error was fatal. */
+				return(EIO);
+			}
+		} else {
 			sp->tstat.mt_dsreg = DS_OK;
 		}
-		if (key == SENSE_RECOVERED) {
-			/* Tape drive managed to recover from an error. */
-			printf("%s: soft %s error (recovered)\n",
-				s_name(),
-				s_opcode == DEV_READ ? "read" : "write");
-			key = SENSE_NO_SENSE;
-			sp->tstat.mt_dsreg = DS_OK;
+		if (!sp->tfixed) {
+			/* Variable block length tape reads record by record.
+			 */
+			sp->tstat.mt_blkno++;
+		} else {
+			/* Fixed length tape, multiple blocks transferred. */
+			sp->tstat.mt_blkno += rq->count / sp->block_size;
 		}
-		if (sp->tstat.mt_dsreg == DS_ERR) {
-			/* Error was fatal. */
-			return(iop->io_nbytes = EIO);
-		}
-	} else {
-		sp->tstat.mt_dsreg = DS_OK;
-	}
-	if (!sp->tfixed) {
-		/* Variable block length tape reads record by record. */
-		sp->tstat.mt_blkno++;
-	} else {
-		/* Fixed length tape, multiple blocks transferred. */
-		sp->tstat.mt_blkno += rq->count / sp->block_size;
-	}
-	sp->need_eof = (s_opcode == DEV_WRITE);
-	break;
-
-  default:
-	assert(0);
-  }
-
-  /* Remove bytes transferred from the I/O requests. */
-  for (;;) {
-	if (rq->count > iop->io_nbytes) {
-		rq->count -= iop->io_nbytes;
-		iop->io_nbytes = 0;
-	} else {
-		iop->io_nbytes -= rq->count;
-		rq->count = 0;
+		sp->need_eof = (opcode == DEV_SCATTER);
 		break;
 	}
-	iop = *iopp++;
+
+	/* Book the bytes successfully transferred. */
+	position += rq->count;
+	for (;;) {
+		if (rq->count < iov->iov_size) {
+			/* Not done with this one yet. */
+			iov->iov_addr += rq->count;
+			iov->iov_size -= rq->count;
+			break;
+		}
+		rq->count -= iov->iov_size;
+		iov->iov_addr += iov->iov_size;
+		iov->iov_size = 0;
+		if (rq->count == 0) {
+			/* The rest is optional, so we return to give FS a
+			 * chance to think it over.
+			 */
+			return(OK);
+		}
+		iov++;
+		nr_req--;
+	}
   }
-  return(key == SENSE_NO_SENSE ? OK : EIO);	/* may return EIO for EOF */
+  return(OK);
 }
 
 
 /*===========================================================================*
  *				s_rdcdrom				     *
  *===========================================================================*/
-PRIVATE int s_rdcdrom(proc_nr, iop, pos, nbytes, user_phys)
+PRIVATE int s_rdcdrom(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
-unsigned long pos;		/* byte position */
-unsigned nbytes;		/* number of bytes */
-phys_bytes user_phys;		/* user address */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
 /* CD-ROM's have a basic block size of 2k.  We could try to set a smaller
  * virtual block size, but many don't support it.  So we use this function.
  */
   struct scsi *sp = s_sp;
-  int r, key;
-  unsigned offset, count;
-  unsigned long block;
+  int key;
+  unsigned nbytes, offset, count;
+  unsigned long block, curblock;
+  unsigned long dv_size = cv64ul(s_dv->dv_size);
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
   /* Only do reads. */
-  if ((iop->io_request & ~OPTIONAL_IO) != DEV_READ)
-	return(iop->io_nbytes = EINVAL);
+  if (opcode != DEV_GATHER) return(EINVAL);
 
-  /* Finish any outstanding I/O. */
-  if ((r = s_finish()) != OK) return(r);
+  rq->retry = 2;
+  curblock = -1;
 
-  do {
-	/* Probe a device that isn't ready. */
-	if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
+  while (nr_req > 0) {
+	/* Number of bytes to transfer. */
+	nbytes = iov->iov_size;
 
-	block = pos / sp->block_size;
-	if (block == s_buf_blk) {
-		/* Some of the requested bytes are in the buffer. */
-		offset = pos % sp->block_size;
-		count = sp->block_size - offset;
-		if (count > nbytes) count = nbytes;
-		phys_copy(tmp_phys + offset, user_phys, (phys_bytes) count);
-		pos += count;
-		user_phys += count;
-		nbytes -= count;
-		iop->io_nbytes -= count;
-	} else {
+	/* Which position on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);	/* EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+	rq->position = add64ul(s_dv->dv_base, position);
+
+	block = div64u(rq->position, sp->block_size);
+	if (curblock != block) {
 		/* Read a block that contains (some of) the bytes wanted. */
-		rq->retry = 2;
-		do {
-			group1();
-			rq->ccb.opcode = CCB_INIT;
-			ccb_cmd1(rq).scsi_op = SCSI_READ1;
-			h2b32(ccb_cmd1(rq).lba, block);
-			h2b16(ccb_cmd1(rq).nblocks, 1);
-			key = scsi_command(tmp_phys, sp->block_size);
-		} while (key == SENSE_UNIT_ATT && --rq->retry > 0);
+		group1();
+		rq->ccb.opcode = CCB_INIT;
+		ccb_cmd1(rq).scsi_op = SCSI_READ1;
+		h2b32(ccb_cmd1(rq).lba, block);
+		h2b16(ccb_cmd1(rq).nblocks, 1);
+		key = scsi_command(tmp_phys, sp->block_size);
 
-		if (key != SENSE_NO_SENSE) return(iop->io_nbytes = EIO);
-
-		s_buf_blk = block;	/* remember block in buffer */
+		if (key != SENSE_NO_SENSE) {
+			if (key == SENSE_UNIT_ATT && --rq->retry > 0)
+				continue;	/* retry */
+			return(EIO);
+		}
+		curblock = block;
 	}
-  } while (nbytes > 0);
+
+	/* Copy the bytes wanted to user space. */
+	offset = rem64u(rq->position, sp->block_size);
+	count = sp->block_size - offset;
+	if (count > nbytes) count = nbytes;
+	phys_copy(tmp_phys + offset, user_base + iov->iov_addr,
+							(phys_bytes) count);
+	position += count;
+	iov->iov_addr += count;
+	if ((iov->iov_size -= count) == 0) { iov++; nr_req--; }
+  }
   return(OK);
 }
 
@@ -1317,7 +1288,7 @@ message *m_ptr;
   }
 
   /* Rewind if rewind device. */
-  if (s_type == TYPE_RST) {
+  if (s_type == TYPE_T) {
 	if (scsi_simple(SCSI_REWIND, 1) != SENSE_NO_SENSE) {
 		printf("%s: failed to rewind\n", s_name());
 	} else {
@@ -1370,15 +1341,13 @@ message *m_ptr;
 
   if (m_ptr->REQUEST == MTIOCTOP) {
 	struct mtop op;
-	phys_bytes op_phys;
 	long delta;
 	int key;
 	byte *buf = tmp_buf;
 
 	/* Basic tape commands: rewind, space, write eof marks, ... */
-	op_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, sizeof(op));
-	if (op_phys == 0) return(EINVAL);
-	phys_copy(op_phys, vir2phys(&op), (phys_bytes) sizeof(op));
+	if (vir_copy(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+		aha_tasknr, (vir_bytes) &op, sizeof(op)) != OK) return(EINVAL);
 
 	switch(op.mt_op) {
 	case MTREW:
@@ -1581,19 +1550,15 @@ message *m_ptr;
   } else
   if (m_ptr->REQUEST == MTIOCGET) {
 	/* Request tape status. */
-	phys_bytes get_phys;
-
-	get_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-							sizeof(sp->tstat));
-	if (get_phys == 0) return(EINVAL);
 
 	if (sp->tstat.mt_dsreg == DS_OK) {
 		/* Old error data is never cleared (until now). */
 		sp->tstat.mt_erreg = 0;
 		sp->tstat.mt_resid = 0;
 	}
-	phys_copy(vir2phys(&sp->tstat), get_phys,
-					(phys_bytes) sizeof(sp->tstat));
+	if (vir_copy(aha_tasknr, (vir_bytes) &sp->tstat,
+		m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+		sizeof(sp->tstat)) != OK) return(EINVAL);
   } else {
 	/* Not implemented. */
 	return(ENOTTY);
@@ -1694,7 +1659,7 @@ vir_bytes len;
 
   if (rq->ccb.opcode == CCB_SCATTER) {
 	/* Device read/write; add checks and use scatter/gather vector. */
-	rq->ccb.addrcntl |= s_opcode == DEV_READ ? CCB_INCHECK : CCB_OUTCHECK;
+	rq->ccb.addrcntl |= rq->opcode==DEV_GATHER ? CCB_INCHECK : CCB_OUTCHECK;
 	data = vir2phys(rq->dmalist);
 	len = (byte *) rq->dmaptr - (byte *) rq->dmalist;
 	if (aha_model == AHA1540) {
@@ -2108,33 +2073,41 @@ PRIVATE void errordump()
 
 #if AHA_DEBUG & 4
 /*===========================================================================*
+ *				show_iov				     *
+ *===========================================================================*/
+PRIVATE void show_iov(iov, nr_req)
+iovec_t *iov;
+unsigned nr_req;
+{
+  printf("iov:");
+  while (nr_req > 0) {
+	printf(" [%lx,%u]",
+		(unsigned long) iov->iov_addr, (unsigned) iov->iov_size);
+	iov++;
+	nr_req--;
+  }
+  printf("\n");
+}
+
+
+/*===========================================================================*
  *				show_req				     *
  *===========================================================================*/
 PRIVATE void show_req()
 {
-  struct iorequest_s **iopp;
   dma_t *dmap;
-  unsigned count, nbytes, len;
+  unsigned count, len;
 
-  iopp = rq->iov;
   dmap = rq->dmalist;
   count = rq->count;
-  nbytes = 0;
 
-  printf("%lu:%u", rq->pos, count);
+  printf("%lu:%u", cv64ul(rq->position), count);
 
   while (count > 0) {
-	if (iopp == rq->iov || *iopp != iopp[-1])
-		nbytes = (*iopp)->io_nbytes;
-
-	printf(" (%u,%lx,%u)", nbytes, b2h24(dmap->dataptr),
-					len = b2h24(dmap->datalen));
+	printf(" (%lx,%lu)", b2h24(dmap->dataptr), len = b2h24(dmap->datalen));
 	dmap++;
-	iopp++;
 	count -= len;
-	nbytes -= len;
   }
-  if (nbytes > 0) printf(" ...(%u)", nbytes);
   printf("\n");
 }
 #endif /* AHA_DEBUG & 4 */
@@ -2169,10 +2142,10 @@ struct partition *entry;
  * head and sector numbers in the partition table, so fdisk needs to know the
  * geometry.
  */
-  unsigned long size = s_sp->part[0].dv_size;
+  u64_t size = s_sp->part[0].dv_size;
   unsigned heads, sectors;
 
-  if (size < 1024L * 64 * 32 * 512) {
+  if (cmp64ul(size, 1024L * 64 * 32 * 512) < 0) {
 	/* Small drive. */
 	heads = 64;
 	sectors = 32;
@@ -2181,7 +2154,7 @@ struct partition *entry;
 	heads = 255;
 	sectors = 63;
   }
-  entry->cylinders = (size >> SECTOR_SHIFT) / (heads * sectors);
+  entry->cylinders = div64u(size, SECTOR_SIZE) / (heads * sectors);
   entry->heads = heads;
   entry->sectors = sectors;
 }

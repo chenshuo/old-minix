@@ -27,9 +27,9 @@ prtso:
 	mov	ebx, _environ
 	cmp	ebx, __edata		! within initialized data?
 	jae	0f
-	testb	al, 3			! aligned?
+	testb	bl, 3			! aligned?
 	jnz	0f
-	cmp	(ebx), 0x53535353	! is it our _environ?
+	cmp	(ebx), 0x53535353	! is it our environ?
 	jne	0f
 	mov	(__penviron), ebx	! _penviron = &environ;
 0:	mov	ebx, (__penviron)
@@ -55,12 +55,10 @@ prtso:
 	hlt				! force a trap if exit fails
 
 .sect .rom
-	.data4	0			! Common I&D: *NULL == 0
-
+	.data4	0			! Separate I&D: *NULL == 0
+					! Also keeps the first string in the
+					! program from appearing at location 0!
 .sect .data
-hol0:
-	.data4	0, 0
-	.data4	0, 0
 __penviron:
 	.data4	__penvp			! Pointer to environ, or hidden pointer
 

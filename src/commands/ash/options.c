@@ -100,9 +100,12 @@ procargs(argc, argv)
 		if (*p == 2)
 			*p = 0;
 	arg0 = argv[0];
-	if (sflag == 0 && minusc == NULL) {
-		commandname = arg0 = *argptr++;
-		setinputfile(commandname, 0);
+	if (sflag == 0) {
+		arg0 = *argptr++;
+		if (minusc == NULL) {
+			commandname = arg0;
+			setinputfile(commandname, 0);
+		}
 	}
 	shellparam.p = argptr;
 	/* assert(shellparam.malloc == 0 && shellparam.nparam == 0); */

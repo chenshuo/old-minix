@@ -2,7 +2,7 @@
 
 all: rz sz
 
-CFLAGS= -m -DPOSIX -D_MINIX -D_POSIX_SOURCE -O -wo
+CFLAGS= -DPOSIX -D_MINIX -D_POSIX_SOURCE -O -wo
 
 rz: rz.c rbsb.c zm.c zmodem.h
 	cc $(CFLAGS) -i -o rz rz.c

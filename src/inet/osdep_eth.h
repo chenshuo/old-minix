@@ -16,7 +16,7 @@ Copyright 1995 Philip Homburg
 
 typedef struct osdep_eth_port
 {
-	int etp_minor;
+	int etp_task;
 	int etp_port;
 	int etp_recvconf;
 	iovec_t etp_wr_iovec[IOVEC_NR];

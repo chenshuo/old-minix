@@ -1,3 +1,5 @@
+/* V1 and V2 file system disk to/from memory support functions. */
+
 _PROTOTYPE( int bitmapsize, (bit_t _nr_bits)				);
 _PROTOTYPE( unsigned conv2, (int _norm, int _w)				);
 _PROTOTYPE( long conv4, (int _norm, long _x)				);

@@ -2,7 +2,9 @@
 #define SEND		   1	/* function code for sending messages */
 #define RECEIVE		   2	/* function code for receiving messages */
 #define BOTH		   3	/* function code for SEND + RECEIVE */
-#define ANY   (NR_PROCS+100)	/* receive(ANY, buf) accepts from any source */
+#define ANY		0x7ace	/* a magic, invalid process number.
+				 * receive(ANY, buf) accepts from any source
+				 */
 
 /* Task numbers, function codes and reply codes. */
 
@@ -15,7 +17,7 @@
  * tasks.
  */
 
-#define TTY		(DL_ETH - 1)
+#define TTY		(DP8390 - 1)
 				/* terminal I/O class */
 #	define CANCEL       0	/* general req to force a task to cancel */
 #	define HARD_INT     2	/* fcn code for all hardware interrupts */
@@ -24,13 +26,13 @@
 #	define DEV_IOCTL    5	/* fcn code for ioctl */
 #	define DEV_OPEN     6	/* fcn code for opening tty */
 #	define DEV_CLOSE    7	/* fcn code for closing tty */
-#	define SCATTERED_IO 8	/* fcn code for multiple reads/writes */
-#	define TTY_SETPGRP  9	/* fcn code for setpgroup */
-#	define TTY_EXIT	   10	/* a process group leader has exited */	
-#	define OPTIONAL_IO 16	/* modifier to DEV_* codes within vector */
+#	define DEV_SCATTER  8	/* fcn code for writing from a vector */
+#	define DEV_GATHER   9	/* fcn code for reading into a vector */
+#	define TTY_SETPGRP 10	/* fcn code for setpgroup */
+#	define TTY_EXIT	   11	/* a process group leader has exited */	
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#define DL_ETH		(DOSDSK - ENABLE_NETWORKING)
+#define DP8390		(SB16 - ENABLE_DP8390)
 				/* networking task */
 
 /* Message type for data link layer reqests. */
@@ -72,27 +74,19 @@
 #	define NW_IOCTL		DEV_IOCTL
 #	define NW_CANCEL	CANCEL
 
-#define DOSDSK		(CDROM - ENABLE_DOSDSK)
-				/* DOS virtual disk device task */
+#define SB16		(SB16MIXER - ENABLE_SB16)
+#define SB16MIXER	(PRINTER - ENABLE_SB16)
+				/* sb16 & mixer device tasks */
 
-#define CDROM		(AUDIO - ENABLE_CDROM)
-				/* cd-rom device task */
+#define PRINTER		(CTRLR(NR_CTRLRS-1) - ENABLE_PRINTER)
+				/* printer I/O class */
 
-#define AUDIO		(MIXER - ENABLE_AUDIO)
-#define MIXER		(SCSI - ENABLE_AUDIO)
-				/* audio & mixer device tasks */
+#define CTRLR(n)	 (-8 - (n))
+				/* task number of controller n */
 
-#define SCSI		(WINCHESTER - ENABLE_SCSI)
-				/* scsi device task */
+#define SYN_ALRM_TASK     -7	/* task to send CLOCK_INT messages */
 
-#define WINCHESTER	(SYN_ALRM_TASK - ENABLE_WINI)
-				/* winchester (hard) disk class */
-
-#define SYN_ALRM_TASK     -8	/* task to send CLOCK_INT messages */
-
-#define IDLE              -7	/* task to run when there's nothing to run */
-
-#define PRINTER           -6	/* printer I/O class */
+#define IDLE              -6	/* task to run when there's nothing to run */
 
 #define FLOPPY            -5	/* floppy disk class */
 
@@ -120,24 +114,26 @@
 #	define SYS_XIT        1	/* fcn code for sys_xit(parent, proc) */
 #	define SYS_GETSP      2	/* fcn code for sys_sp(proc, &new_sp) */
 #	define SYS_OLDSIG     3	/* fcn code for sys_oldsig(proc, sig) */
-#	define SYS_FORK       4	/* fcn code for sys_fork(parent, child) */
+#	define SYS_FORK       4	/* fcn code for sys_fork(parent, child, pid) */
 #	define SYS_NEWMAP     5	/* fcn code for sys_newmap(procno, map_ptr) */
 #	define SYS_COPY       6	/* fcn code for sys_copy(ptr) */
 #	define SYS_EXEC       7	/* fcn code for sys_exec(procno, new_sp) */
 #	define SYS_TIMES      8	/* fcn code for sys_times(procno, bufptr) */
 #	define SYS_ABORT      9	/* fcn code for sys_abort() */
-#	define SYS_FRESH     10	/* fcn code for sys_fresh()  (Atari only) */
-#	define SYS_KILL      11	/* fcn code for sys_kill(proc, sig) */
-#	define SYS_GBOOT     12	/* fcn code for sys_gboot(procno, bootptr) */
-#	define SYS_UMAP      13	/* fcn code for sys_umap(procno, etc) */
-#	define SYS_MEM       14	/* fcn code for sys_mem() */
-#	define SYS_TRACE     15	/* fcn code for sys_trace(req,pid,addr,data) */
-#	define SYS_VCOPY     16	/* fnc code for sys_vcopy(src_proc, dest_proc,
+#	define SYS_KILL      10	/* fcn code for sys_kill(proc, sig) */
+#	define SYS_UMAP      11	/* fcn code for sys_umap(procno, etc) */
+#	define SYS_MEM       12	/* fcn code for sys_mem() */
+#	define SYS_TRACE     13	/* fcn code for sys_trace(req,pid,addr,data) */
+#	define SYS_VCOPY     14	/* fnc code for sys_vcopy(src_proc, dest_proc,
 				   vcopy_s, vcopy_ptr) */
-#	define SYS_SENDSIG   17	/* fcn code for sys_sendsig(&sigmsg) */
-#	define SYS_SIGRETURN 18	/* fcn code for sys_sigreturn(&sigmsg) */
-#	define SYS_ENDSIG    19	/* fcn code for sys_endsig(procno) */
-#	define SYS_GETMAP    20	/* fcn code for sys_getmap(procno, map_ptr) */
+#	define SYS_SENDSIG   15	/* fcn code for sys_sendsig(&sigmsg) */
+#	define SYS_SIGRETURN 16	/* fcn code for sys_sigreturn(&sigmsg) */
+#	define SYS_ENDSIG    17	/* fcn code for sys_endsig(procno) */
+#	define SYS_GETMAP    18	/* fcn code for sys_getmap(procno, map_ptr) */
+#	define SYS_SYSCTL    19	/* fcn code for sys_sysctl(proc, req, argp) */
+#	define SYS_PUTS      20	/* fcn code for sys_puts(count, buf) */
+#	define SYS_FINDPROC  21	/* fcn code for sys_findproc(name, &task_nr,
+				   flags) */
 
 #define HARDWARE          -1	/* used as source on interrupt generated msgs*/
 

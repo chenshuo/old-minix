@@ -13,7 +13,6 @@
 
 #include "fs.h"
 #include <string.h>
-#include <minix/boot.h>
 #include "buf.h"
 #include "inode.h"
 #include "super.h"
@@ -174,7 +173,7 @@ register struct inode *rip;	/* pointer to inode */
   register dev_t dev;
 
   dev = (dev_t) rip->i_zone[0];
-  if (dev == ROOT_DEV) return(TRUE);	/* inode is on root file system */
+  if (dev == root_dev) return(TRUE);	/* inode is on root file system */
 
   for (sp = &super_block[0]; sp < &super_block[NR_SUPERS]; sp++)
 	if (sp->s_dev == dev) return(TRUE);

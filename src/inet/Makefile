@@ -11,9 +11,9 @@ g = generic
 # Programs, flags, and libraries
 CC =		cc
 CPPFLAGS =	-I. -I..
-CFLAGS =	$(OPT) $(CPPFLAGS) -m -wo
+CFLAGS =	$(OPT) $(CPPFLAGS) -m
 LDFLAGS =	-i
-LIBS =		
+LIBS =		-lsys
 
 OBJ = 	buf.o clock.o inet.o inet_config.o \
 	mnx_eth.o mq.o sr.o stacktrace.o \
@@ -24,18 +24,23 @@ OBJ = 	buf.o clock.o inet.o inet_config.o \
 	$g/tcp_recv.o $g/tcp_send.o $g/ip_eth.o \
 	$g/ip_ps.o $g/psip.o
 
-inet:	inet.a putk.o
-	$(CC) -o $@ $(LDFLAGS) inet.a putk.o version.c $(LIBS)
-	install -S 1kw $@
+all:	inet
 
-all install:	# Nothing
+inet:	inet.a
+	$(CC) -o $@ $(LDFLAGS) inet.a version.c $(LIBS)
+	install -S 2kw $@
+
+install:	/usr/bin/inet
+
+/usr/bin/inet:	inet
+	install -cs $? $@
 
 inet.a:	$(OBJ)
 	@rm -f $@
 	aal cr $@ $(OBJ)
 
 clean:
-	rm -f $(OBJ) inet.a putk.o inet *.bak .all
+	rm -f $(OBJ) inet.a inet *.bak .all
 
 # Depencencies
 .all:	$h/com.h
@@ -104,21 +109,15 @@ inet.o:	$g/tcp.h
 inet.o:	$g/type.h
 inet.o:	$g/udp.h
 inet.o:	$i/unistd.h
-inet.o:	$s/stat.h
+inet.o:	$s/svrctl.h
 inet.o:	inet.h
 inet.o:	mq.h
 inet.o:	proto.h
 inet.o:	$a
 
-inet_config.o:	$g/buf.h
-inet_config.o:	$g/eth.h
-inet_config.o:	$g/event.h
-inet_config.o:	$g/ip.h
-inet_config.o:	$g/ip_int.h
-inet_config.o:	$g/psip.h
-inet_config.o:	$g/sr.h
-inet_config.o:	$g/type.h
-inet_config.o:	inet.h
+inet_config.o:	$i/unistd.h
+inet_config.o:	$i/fcntl.h
+inet_config.o:	$s/stat.h
 inet_config.o:	$a
 
 mnx_eth.o:	$g/assert.h
@@ -138,9 +137,6 @@ mq.o:	$g/assert.h
 mq.o:	inet.h
 mq.o:	mq.h
 mq.o:	$a
-
-putk.o:	inet.h
-putk.o:	$a
 
 sr.o:	$g/assert.h
 sr.o:	$g/buf.h

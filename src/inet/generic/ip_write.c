@@ -22,7 +22,6 @@ Copyright 1995 Philip Homburg
 THIS_FILE
 
 FORWARD void error_reply ARGS(( ip_fd_t *fd, int error ));
-FORWARD int chk_dstaddr ARGS(( ipaddr_t dst ));
 
 PUBLIC int ip_write (fd, count)
 int fd;
@@ -60,7 +59,7 @@ size_t data_len;
 	ip_port_t *ip_port;
 	ip_fd_t *ip_fd;
 	ip_hdr_t *ip_hdr, *tmp_hdr;
-	ipaddr_t dstaddr, netmask, nexthop;
+	ipaddr_t dstaddr, netmask, nexthop, hostrep_dst;
 	u8_t *addrInBytes;
 	acc_t *tmp_pack, *tmp_pack1;
 	int hdr_len, hdr_opt_len, r;
@@ -168,7 +167,6 @@ size_t data_len;
 		ttl= ip_hdr->ih_ttl;
 	}
 	
-	assert (!(ip_hdr->ih_flags_fragoff & HTONS(IH_DONT_FRAG)));
 	ip_hdr->ih_vers_ihl= (ip_hdr->ih_vers_ihl & IH_IHL_MASK) |
 		(IP_VERSION << 4);
 	ip_hdr->ih_length= htons(data_len);
@@ -180,18 +178,28 @@ size_t data_len;
 	ip_hdr->ih_src= ip_fd->if_port->ip_ipaddr;
 	if (ip_fd->if_ipopt.nwio_flags & NWIO_REMSPEC)
 		ip_hdr->ih_dst= ip_fd->if_ipopt.nwio_rem;
-	else
+
+	dstaddr= ip_hdr->ih_dst;
+	hostrep_dst= ntohl(dstaddr);
+	r= 0;
+	if (hostrep_dst == (ipaddr_t)-1)
+		;	/* OK, local broadcast */
+	else if ((hostrep_dst & 0xe0000000l) == 0xe0000000l)
+		;	/* OK, Multicast */
+	else if ((hostrep_dst & 0xf0000000l) == 0xf0000000l)
+		r= EBADDEST;	/* Bad class */
+	else if ((dstaddr ^ ip_port->ip_ipaddr) & ip_port->ip_subnetmask)
+		;	/* OK, remote destination */
+	else if (!(dstaddr & ~ip_port->ip_subnetmask))
+		r= EBADDEST;	/* Zero host part */
+	if (r<0)
 	{
-		r= chk_dstaddr(ip_hdr->ih_dst);
-		if (r<0)
-		{
-			DIFBLOCK(1, r == EBADDEST,
-				printf("bad destination: ");
-				writeIpAddr(ip_hdr->ih_dst);
-				printf("\n"));
-			bf_afree(data);
-			return r;
-		}
+		DIFBLOCK(1, r == EBADDEST,
+			printf("bad destination: ");
+			writeIpAddr(ip_hdr->ih_dst);
+			printf("\n"));
+		bf_afree(data);
+		return r;
 	}
 	ip_hdr_chksum(ip_hdr, hdr_len);
 
@@ -199,7 +207,6 @@ size_t data_len;
 	assert (data->acc_length >= IP_MIN_HDR_SIZE);
 	ip_hdr= (ip_hdr_t *)ptr2acc_data(data);
 
-	dstaddr= ip_hdr->ih_dst;
 	addrInBytes= (u8_t *)&dstaddr;
 
 	if ((addrInBytes[0] & 0xff) == 0x7f)	/* local loopback */
@@ -331,7 +338,7 @@ int first_size;
 
 	if (first_hdr->ih_flags_fragoff & HTONS(IH_DONT_FRAG))
 	{
-		icmp_snd_unreachable(ip_port-ip_port_table, first_pack,
+		icmp_snd_unreachable(ip_port->ip_port, first_pack,
 			ICMP_FRAGM_AND_DF);
 		return NULL;
 	}
@@ -433,26 +440,12 @@ int error;
 	if ((*ip_fd->if_get_userdata)(ip_fd->if_srfd, (size_t)error,
 		(size_t)0, FALSE))
 	{
+#if !CRAMPED
 		ip_panic(( "can't error_reply" ));
+#endif
 	}
 }
 
-PRIVATE int chk_dstaddr (dst)
-ipaddr_t dst;
-{
-	ipaddr_t hostrep_dst, netmask;
-
-	hostrep_dst= ntohl(dst);
-	if (hostrep_dst == (ipaddr_t)-1)
-		return NW_OK;
-	if ((hostrep_dst & 0xe0000000l) == 0xe0000000l)
-		return EBADDEST;
-	netmask= ip_get_netmask(dst);
-	if (!(dst & ~netmask))
-		return EBADDEST;
-	return NW_OK;
-}
-
 /*
- * $PchId: ip_write.c,v 1.7 1996/08/02 07:08:49 philip Exp $
+ * $PchId: ip_write.c,v 1.7.1.1.1.1 2001/01/22 19:59:07 philip Exp $
  */

@@ -1,30 +1,29 @@
 # Makefile for commands/simple.
 
 CFLAGS	= -D_MINIX -D_POSIX_SOURCE
+SYS	= ../..
 CCLD	= $(CC) -i $(CFLAGS)
-MAKE	= exec make -$(MAKEFLAGS) install
 
 # This Makefile is large, but that is because it lists all actions that must
 # be taken to compile and install all the simple commands.  If there were only
 # one command then it would look like this:
 #
-# all:	bin \			need the 'bin' subdir
-#	bin/cat \		need the 'bin/cat' executable
+# ALL	= \
+#	cat \			need the 'cat' executable
 #
-# bin:
-#	mkdir bin		make the 'bin' subdir
+# all:	$(ALL)			default rule, make all binaries
 #
-# bin/cat:	cat.c		'bin/cat' is made from 'cat.c'
-#	$(CCLD) -o $@ $?	compile 'cat.c' ($?) to 'bin/cat' ($@)
+# cat:	cat.c			'cat' is made from 'cat.c'
+#	$(CCLD) -o $@ $?	compile 'cat.c' ($?) to 'cat' ($@)
 #	install -S 4kw $@	stack size is 8k (8086) or 16k (others)
 #
-# install:	bin \		rule to install all binaries
+# install:	\		rule to install all binaries
 #	/usr/bin/cat \		one can find 'cat' in /usr/bin
 #	/bin/cat \		important binaries are also in /bin
 #
-# /usr/bin/cat:	bin/cat
-#	install -cs -o bin $? $@	copy 'bin/cat' to '/usr/bin/cat',
-#					strip symbol table
+# /usr/bin/cat:	cat
+#	install -cs -o bin $? $@	copy 'cat' to '/usr/bin/cat' (-c),
+#					strip symbol table (-s)
 #
 # /bin/cat:	/usr/bin/cat
 #	install -lcs $? $@	install '/bin/cat' by linking (if possible)
@@ -38,767 +37,773 @@ MAKE	= exec make -$(MAKEFLAGS) install
 # Observe four key things:
 #	What to make, how to make, what to install, how to install.
 
-all:	bin \
-	bin/add_route \
-	bin/at \
-	bin/atrun \
-	bin/backup \
-	bin/badblocks \
-	bin/banner \
-	bin/basename \
-	bin/cal \
-	bin/calendar \
-	bin/cat \
-	bin/cdiff \
-	bin/cgrep \
-	bin/chmem \
-	bin/chmod \
-	bin/chown \
-	bin/ci \
-	bin/cksum \
-	bin/clr \
-	bin/cmp \
-	bin/co \
-	bin/comm \
-	bin/compress \
-	bin/cp \
-	bin/crc \
-	bin/cron \
-	bin/cut \
-	bin/date \
-	bin/dd \
-	bin/decomp16 \
-	bin/df \
-	bin/dhrystone \
-	bin/diff \
-	bin/dirname \
-	bin/du \
-	bin/echo \
-	bin/ed \
-	bin/eject \
-	bin/env \
-	bin/expand \
-	bin/expr \
-	bin/factor \
-	bin/fgrep \
-	bin/file \
-	bin/find \
-	bin/finger \
-	bin/fix \
-	bin/fold \
-	bin/fortune \
-	bin/fsck \
-	bin/fsck1 \
-	bin/getty \
-	bin/gomoku \
-	bin/grep \
-	bin/head \
-	bin/host \
-	bin/hostaddr \
-	bin/id \
-	bin/ifconfig \
-	bin/ifdef \
-	bin/in.fingerd \
-	bin/in.rld \
-	bin/in.rshd \
-	bin/install \
-	bin/irdpd \
-	bin/isoread \
-	bin/join \
-	bin/kill \
-	bin/last \
-	bin/leave \
-	bin/life \
-	bin/login \
-	bin/look \
-	bin/lp \
-	bin/lpd \
-	bin/ls \
-	bin/mail \
-	bin/man \
-	bin/mesg \
-	bin/mkdir \
-	bin/mkfifo \
-	bin/mkfs \
-	bin/mknod \
-	bin/mkproto \
-	bin/modem \
-	bin/mount \
-	bin/mt \
-	bin/nm \
-	bin/nonamed \
-	bin/od \
-	bin/passwd \
-	bin/paste \
-	bin/ping \
-	bin/pr \
-	bin/pr_routes \
-	bin/prep \
-	bin/printroot \
-	bin/proto \
-	bin/pwd \
-	bin/pwdauth \
-	bin/rarpd \
-	bin/rcp \
-	bin/readall \
-	bin/readfs \
-	bin/remsync \
-	bin/rlogin \
-	bin/rmdir \
-	bin/rsh \
-	bin/sed \
-	bin/shar \
-	bin/size \
-	bin/sleep \
-	bin/slip \
-	bin/sort \
-	bin/split \
-	bin/strings \
-	bin/strip \
-	bin/stty \
-	bin/su \
-	bin/sum \
-	bin/swapfs \
-	bin/sync \
-	bin/synctree \
-	bin/tail \
-	bin/tar \
-	bin/tcpd \
-	bin/tee \
-	bin/term \
-	bin/termcap \
-	bin/test \
-	bin/tget \
-	bin/time \
-	bin/touch \
-	bin/tr \
-	bin/tsort \
-	bin/ttt \
-	bin/tty \
-	bin/umount \
-	bin/uname \
-	bin/unexpand \
-	bin/uniq \
-	bin/update \
-	bin/uud \
-	bin/uue \
-	bin/vol \
-	bin/wc \
-	bin/which \
-	bin/who \
-	bin/whoami \
-	bin/write \
-	bin/xargs \
-	bin/yes \
+ALL	= \
+	add_route \
+	at \
+	atrun \
+	backup \
+	badblocks \
+	banner \
+	basename \
+	cal \
+	calendar \
+	cat \
+	cdiff \
+	cgrep \
+	chmem \
+	chmod \
+	chown \
+	ci \
+	cksum \
+	cleantmp \
+	cmp \
+	co \
+	comm \
+	compress \
+	cp \
+	crc \
+	cut \
+	date \
+	dd \
+	decomp16 \
+	df \
+	dhrystone \
+	diff \
+	dirname \
+	du \
+	ed \
+	eject \
+	env \
+	expand \
+	factor \
+	fgrep \
+	file \
+	find \
+	finger \
+	fix \
+	fold \
+	fortune \
+	fsck \
+	fsck1 \
+	getty \
+	gomoku \
+	grep \
+	head \
+	host \
+	hostaddr \
+	id \
+	ifconfig \
+	ifdef \
+	in.fingerd \
+	in.rshd \
+	installx \
+	intr \
+	irdpd \
+	isoread \
+	join \
+	kill \
+	last \
+	leave \
+	life \
+	login \
+	look \
+	lp \
+	lpd \
+	ls \
+	mail \
+	man \
+	mesg \
+	mkdir \
+	mkfifo \
+	mkfs \
+	mknod \
+	mkproto \
+	mkswap \
+	modem \
+	mount \
+	mt \
+	nm \
+	nonamed \
+	od \
+	passwd \
+	paste \
+	ping \
+	pr \
+	pr_routes \
+	prep \
+	printf \
+	printroot \
+	proto \
+	pwd \
+	pwdauth \
+	rarpd \
+	rcp \
+	readall \
+	readfs \
+	remsync \
+	rlogin \
+	rmdir \
+	rsh \
+	sed \
+	shar \
+	size \
+	sleep \
+	slip \
+	sort \
+	split \
+	stat \
+	strings \
+	strip \
+	stty \
+	su \
+	sum \
+	swapfs \
+	sync \
+	synctree \
+	sysenv \
+	tail \
+	tar \
+	tcpd \
+	tcpdp \
+	tee \
+	term \
+	termcap \
+	tget \
+	time \
+	touch \
+	tr \
+	tsort \
+	ttt \
+	tty \
+	umount \
+	uname \
+	unexpand \
+	uniq \
+	update \
+	uud \
+	uue \
+	vol \
+	wc \
+	which \
+	who \
+	whoami \
+	write \
+	xargs \
+	yes \
+	#
 
-bin:
-	mkdir bin
+all:	$(ALL)
 
-bin/add_route:	add_route.c
+add_route:	add_route.c
 	$(CCLD) -o $@ add_route.c
 	install -S 4kw $@
 
-bin/at:	at.c
+at:	at.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/atrun:	atrun.c
+atrun:	atrun.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/backup:	backup.c
+backup:	backup.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/badblocks:	badblocks.c
+badblocks:	badblocks.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/banner:	banner.c
+banner:	banner.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/basename:	basename.c
+basename:	basename.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cal:	cal.c
+cal:	cal.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/calendar:	calendar.c
+calendar:	calendar.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cat:	cat.c
+cat:	cat.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cdiff:	cdiff.c
+cdiff:	cdiff.c
 	$(CCLD) -o $@ $?
 	install -S 28kw $@
 
-bin/cgrep:	cgrep.c
+cgrep:	cgrep.c
 	$(CCLD) -o $@ $?
 	install -S 5kw $@
 
-bin/chmem:	chmem.c
+chmem:	chmem.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/chmod:	chmod.c
+chmod:	chmod.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/chown:	chown.c
+chown:	chown.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/ci:	ci.c
+ci:	ci.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cksum:	cksum.c
+cksum:	cksum.c
+	$(CCLD) -o $@ $?
+	install -S 8kw $@
+
+cleantmp:	cleantmp.c
+	$(CCLD) -o $@ $?
+	install -S 8kw $@
+
+cmp:	cmp.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/clr:	clr.c
+co:	co.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cmp:	cmp.c
+comm:	comm.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/co:	co.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/comm:	comm.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/compress:	compress.c
+compress:	compress.c
 	$(CCLD) -o $@ $?
 	install -S 450k $@
 
-bin/cp:    cp.c
+cp:    cp.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/crc:	crc.c
+crc:	crc.c
+	$(CCLD) -o $@ $?
+	install -S 8kw $@
+
+cut:	cut.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cron:	cron.c
+date:	date.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/cut:	cut.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/date:	date.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/dd:	dd.c
+dd:	dd.c
 	$(CCLD) -o $@ $?
 	install -S 20kw $@
 
-bin/decomp16:	decomp16.c
+decomp16:	decomp16.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/df:	df.c
+df:	df.c
+	$(CCLD) -I$(SYS) -o $@ $?
+	install -S 4kw $@
+
+dhrystone:	dhrystone.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/dhrystone:	dhrystone.c
+diff:	diff.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/diff:	diff.c
-	$(CCLD) -m -o $@ $?
 	install -S 40kw $@
 
-bin/dirname:	dirname.c
+dirname:	dirname.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/du:	du.c
+du:	du.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/echo:	echo.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/ed:	ed.c
+ed:	ed.c
 	$(CCLD) -o $@ $?
 	install -S 32kw $@
 
-bin/eject:	eject.c
+eject:	eject.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/env:	env.c
+env:	env.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/expand:	expand.c
+expand:	expand.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/expr:	expr.c
+factor:	factor.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/factor:	factor.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/fgrep:	fgrep.c
+fgrep:	fgrep.c
 	$(CCLD) -o $@ $?
 	install -S 10kw $@
 
-bin/file:	file.c
+file:	file.c
 	$(CCLD) -o $@ $?
 	install -S 25kw $@
 
-bin/find:	find.c
+find:	find.c
 	$(CCLD) -o $@ $?
 	install -S 25kw $@
 
-bin/finger:	finger.c
-	$(CCLD) -m -o $@ finger.c
+finger:	finger.c
+	$(CCLD) -o $@ finger.c
 	install -S 8kw $@
 
-bin/fix:	fix.c
-	$(CCLD) -m -o $@ fix.c
+fix:	fix.c
+	$(CCLD) -o $@ fix.c
 	install -S 32kw $@
 
-bin/fold:	fold.c
+fold:	fold.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/fortune:	fortune.c
+fortune:	fortune.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/fsck:	fsck.c
-	$(CCLD) -m -o $@ $?
+fsck:	fsck.c
+	$(CCLD) -o $@ $?
 	install -S 384k $@
 
-bin/fsck1:	fsck1.c
-	$(CCLD) -m -o $@ $?
+fsck1:	fsck1.c
+	$(CCLD) -o $@ $?
 	install -S 32kw $@
 
-bin/getty:	getty.c /usr/include/minix/config.h
+getty:	getty.c /usr/include/minix/config.h
 	$(CCLD) -o $@ getty.c
 	install -S 4kw $@
 
-bin/gomoku:	gomoku.c
+gomoku:	gomoku.c
 	$(CCLD) -o $@ $? -lcurses
 	install -S 8kw $@
 
-bin/grep:	grep.c
+grep:	grep.c
 	$(CCLD) -o $@ $?
 	install -S 32kw $@
 
-bin/head:	head.c
+head:	head.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/host:	host.c
-	$(CCLD) -m -wo -o $@ host.c
+host:	host.c
+	$(CCLD) -wo -o $@ host.c
 	install -S 4kw $@
 
-bin/hostaddr:	hostaddr.c
+hostaddr:	hostaddr.c
 	$(CCLD) -o $@ hostaddr.c
-	install -S 4kw $@
+	install -S 8kw $@
 
-bin/id:	id.c
+id:	id.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/ifconfig:	ifconfig.c
+ifconfig:	ifconfig.c
 	$(CCLD) -o $@ ifconfig.c
 	install -S 4kw $@
 
-bin/ifdef:	ifdef.c
+ifdef:	ifdef.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/in.fingerd:	in.fingerd.c
+in.fingerd:	in.fingerd.c
 	$(CCLD) -o $@ in.fingerd.c
 	install -S 4kw $@
 
-bin/in.rld:	in.rld.c
-	$(CCLD) -m -o $@ in.rld.c
-	install -S 4kw $@
-
-bin/in.rshd:	in.rshd.c
+in.rshd:	in.rshd.c
 	$(CCLD) -o $@ in.rshd.c
 	install -S 4kw $@
 
-bin/install:	install.c
+installx:	install.c	# Note: avoided confict with 'install' rule.
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/irdpd:	irdpd.c
-	$(CCLD) -m -o $@ $?
+intr:	intr.c
+	$(CCLD) -o $@ intr.c
 	install -S 4kw $@
 
-bin/isoread:	isoread.c
+irdpd:	irdpd.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/join:	join.c
+isoread:	isoread.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/kill:	kill.c
+join:	join.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/last:	last.c
+kill:	kill.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+last:	last.c
 	$(CCLD) -o $@ $?
 	install -S 5kw $@
 
-bin/leave:	leave.c
+leave:	leave.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/life:	life.c
-	$(CCLD) -m -o $@ $? -lcurses
+life:	life.c
+	$(CCLD) -o $@ $? -lcurses
 	install -S 15kw $@
 
-bin/login:	login.c
+login:	login.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/look:	look.c
+look:	look.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/lp:	lp.c
+lp:	lp.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/lpd:	lpd.c
+lpd:	lpd.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/ls:	ls.c
-	$(CCLD) -m -o $@ $?
+ls:	ls.c
+	$(CCLD) -o $@ $?
 	install -S 20kw $@
 
-bin/mail:	mail.c
+mail:	mail.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/man:	man.c
+man:	man.c
 	$(CCLD) -o $@ $?
 	install -S 10kw $@
 
-bin/mesg:	mesg.c
+mesg:	mesg.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mkdir:	mkdir.c
+mkdir:	mkdir.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mkfifo:	mkfifo.c
+mkfifo:	mkfifo.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mkfs:	mkfs.c
-	$(CCLD) -m -o $@ $?
-	install -S 20kw $@
-
-bin/mknod:	mknod.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/mkproto:	mkproto.c
+mkfs:	mkfs.c
 	$(CCLD) -o $@ $?
 	install -S 20kw $@
 
-bin/modem:	modem.c
+mknod:	mknod.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mount:	mount.c
+mkproto:	mkproto.c
+	$(CCLD) -o $@ $?
+	install -S 20kw $@
+
+mkswap:	mkswap.c
+	$(CCLD) -I$(SYS) -o $@ $?
+	install -S 4kw $@
+
+modem:	modem.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mt:	mt.c
+mount:	mount.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/nm:	nm.c
+mt:	mt.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+nm:	nm.c
 	$(CCLD) -o $@ $?
 	install -S 32kw $@
 
-bin/nonamed:	nonamed.c
-	$(CCLD) -m -o $@ $?
-	install -S 4kw $@
+nonamed:	nonamed.c
+	$(CCLD) -o $@ $?
+	install -S 8kw $@
 
-bin/od:	od.c
+od:	od.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/passwd:	passwd.c
+passwd:	passwd.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/paste:	paste.c
+paste:	paste.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/ping:	ping.c
+ping:	ping.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/pr:	pr.c
+pr:	pr.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/pr_routes:	pr_routes.c
+pr_routes:	pr_routes.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/prep:	prep.c
+prep:	prep.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/printroot:	printroot.c
+printf:	printf.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/proto:	proto.c
+printroot:	printroot.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+proto:	proto.c
 	$(CCLD) -o $@ $?
 	install -S 15kw $@
 
-bin/pwd:	pwd.c
+pwd:	pwd.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/pwdauth:	pwdauth.c
+pwdauth:	pwdauth.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/rarpd:	rarpd.c
-	$(CCLD) -m -o $@ rarpd.c
+rarpd:	rarpd.c
+	$(CCLD) -o $@ rarpd.c
 	install -S 4kw $@
 
-bin/rcp:	rcp.c
+rcp:	rcp.c
 	$(CCLD) -o $@ rcp.c
 	install -S 8kw $@
 
-bin/readall:	readall.c
+readall:	readall.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/readfs:	readfs.c
+readfs:	readfs.c
 	$(CCLD) -o $@ $?
 	install -S 25kw $@
 
-bin/remsync:	remsync.c
+remsync:	remsync.c
 	$(CCLD) -o $@ $?
 	install -S 256k $@
 
-bin/rlogin:	rlogin.c
-	$(CCLD) -o $@ -m $?
+rlogin:	rlogin.c
+	$(CCLD) -o $@ $?
 	install -S 8kw $@
 
-bin/rmdir:	rmdir.c
+rmdir:	rmdir.c
 	$(CCLD) -o $@ $?
 	install -S 15kw $@
 
-bin/rsh:	rsh.c
+rsh:	rsh.c
 	$(CCLD) -o $@ rsh.c
 	install -S 8kw $@
 
-bin/sed:	sed.c
+sed:	sed.c
 	$(CCLD) -o $@ $?
 	install -S 8kw $@
 
-bin/shar:	shar.c
+shar:	shar.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/size:	size.c
+size:	size.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/sleep:	sleep.c
+sleep:	sleep.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/slip:	slip.c
+slip:	slip.c
 	$(CCLD) -o $@ $?
 	install -S 20k $@
 
-bin/sort:	sort.c
+sort:	sort.c
 	$(CCLD) -o $@ $?
 	install -S 30kw $@
 
-bin/split:	split.c
+split:	split.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/strings:	strings.c
+stat:	stat.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+strings:	strings.c
 	$(CCLD) -o $@ $?
 	install -S 8kw $@
 
-bin/strip:	strip.c
+strip:	strip.c
 	$(CCLD) -o $@ $?
 	install -S 8kw $@
 
-bin/stty:	stty.c
+stty:	stty.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/su:	su.c
+su:	su.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/sum:	sum.c
+sum:	sum.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/swapfs:	swapfs.c
+swapfs:	swapfs.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/sync:	sync.c
+sync:	sync.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/synctree:	synctree.c
-	$(CCLD) -m -o $@ -wo $?
+synctree:	synctree.c
+	$(CCLD) -o $@ -wo $?
 	install -S 32kw $@
 
-bin/tail:	tail.c
+sysenv:	sysenv.c
+	$(CCLD) -o $@ -wo $?
+	install -S 4kw $@
+
+tail:	tail.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/tar:	tar.c
+tar:	tar.c
 	$(CCLD) -o $@ $?
 	install -S 30kw $@
 
-bin/tcpd:	tcpd.c
-	$(CCLD) -o $@ tcpd.c
-	install -S 2kw $@
+tcpd:	tcpd.c
+	$(CCLD) -o $@ -DPARANOID=0 tcpd.c
+	install -S 4kw $@
 
-bin/tee:	tee.c
+tcpdp:	tcpd.c
+	$(CCLD) -o $@ -DPARANOID=1 tcpd.c
+	install -S 8kw $@
+
+tee:	tee.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/term:	term.c
+term:	term.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/termcap:	termcap.c
+termcap:	termcap.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/test:	test.c
+tget:	tget.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/tget:	tget.c
+time:	time.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/time:	time.c
+touch:	touch.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/touch:	touch.c
+tr:	tr.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/tr:	tr.c
+tsort:	tsort.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/tsort:	tsort.c
+ttt:	ttt.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/ttt:	ttt.c
+tty:	tty.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/tty:	tty.c
+umount:	umount.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/umount:	umount.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/uname:	uname.c /usr/include/minix/config.h
+uname:	uname.c /usr/include/minix/config.h
 	$(CCLD) -o $@ uname.c
 	install -S 4kw $@
 
-bin/unexpand:	unexpand.c
+unexpand:	unexpand.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/uniq:	uniq.c
+uniq:	uniq.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/update:	update.c
+update:	update.c
 	$(CCLD) -o $@ $?
 	install -S 1kw $@
 
-bin/uud:	uud.c
+uud:	uud.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/uue:	uue.c
+uue:	uue.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/vol:	vol.c
+vol:	vol.c
 	$(CCLD) -o $@ $?
 	install -S 80k $@	# note: '-S' is upper limit to 'vol -m'
 
-bin/wc:	wc.c
+wc:	wc.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/which:	which.c
+which:	which.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/who:	who.c
+who:	who.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/whoami:	whoami.c
+whoami:	whoami.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/write:	write.c
+write:	write.c
 	$(CCLD) -o $@ $?
 
-bin/xargs:	xargs.c
+xargs:	xargs.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/yes:	yes.c
+yes:	yes.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-install:	bin \
+install:	\
 	/usr/bin/add_route \
+		/usr/bin/del_route \
 	/usr/bin/at \
 	/usr/bin/atrun \
 	/usr/bin/backup \
@@ -817,7 +822,7 @@ install:	bin \
 		/usr/bin/chgrp \
 	/usr/bin/ci \
 	/usr/bin/cksum \
-	/usr/bin/clr \
+	/usr/bin/cleantmp \
 	/usr/bin/cmp \
 	/usr/bin/co \
 	/usr/bin/comm \
@@ -831,7 +836,6 @@ install:	bin \
 		/usr/bin/mv \
 		/usr/bin/rm \
 	/usr/bin/crc \
-	/usr/bin/cron \
 	/usr/bin/cut \
 	/usr/bin/date \
 	/usr/bin/dd \
@@ -841,12 +845,10 @@ install:	bin \
 	/usr/bin/diff \
 	/usr/bin/dirname \
 	/usr/bin/du \
-	/usr/bin/echo \
 	/usr/bin/ed \
 	/usr/bin/eject \
 	/usr/bin/env \
 	/usr/bin/expand \
-	/usr/bin/expr \
 	/usr/bin/factor \
 	/usr/bin/fgrep \
 	/usr/bin/file \
@@ -860,6 +862,7 @@ install:	bin \
 	/usr/bin/getty \
 	/usr/bin/gomoku \
 	/usr/bin/grep \
+		/usr/bin/egrep \
 	/usr/bin/head \
 	/usr/bin/host \
 	/usr/bin/hostaddr \
@@ -867,9 +870,9 @@ install:	bin \
 	/usr/bin/ifconfig \
 	/usr/bin/ifdef \
 	/usr/bin/in.fingerd \
-	/usr/bin/in.rld \
 	/usr/bin/in.rshd \
 	/usr/bin/install \
+	/usr/bin/intr \
 	/usr/bin/irdpd \
 	/usr/bin/isoread \
 		/usr/bin/isodir \
@@ -893,6 +896,7 @@ install:	bin \
 	/usr/bin/mkfs \
 	/usr/bin/mknod \
 	/usr/bin/mkproto \
+	/usr/bin/mkswap \
 	/usr/bin/modem \
 	/usr/bin/mount \
 	/usr/bin/mt \
@@ -907,6 +911,7 @@ install:	bin \
 	/usr/bin/pr \
 	/usr/bin/pr_routes \
 	/usr/bin/prep \
+	/usr/bin/printf \
 	/usr/bin/printroot \
 	/usr/bin/proto \
 	/usr/bin/pwd \
@@ -926,6 +931,8 @@ install:	bin \
 	/usr/bin/slip \
 	/usr/bin/sort \
 	/usr/bin/split \
+	/usr/bin/stat \
+		/usr/bin/fstat \
 	/usr/bin/strings \
 	/usr/bin/strip \
 	/usr/bin/stty \
@@ -934,14 +941,14 @@ install:	bin \
 	/usr/bin/swapfs \
 	/usr/bin/sync \
 	/usr/bin/synctree \
+	/usr/bin/sysenv \
 	/usr/bin/tail \
 	/usr/bin/tar \
 	/usr/bin/tcpd \
+	/usr/bin/tcpdp \
 	/usr/bin/tee \
 	/usr/bin/term \
 	/usr/bin/termcap \
-	/usr/bin/test \
-		/usr/bin/[ \
 	/usr/bin/tget \
 	/usr/bin/time \
 	/usr/bin/touch \
@@ -969,502 +976,509 @@ install:	bin \
 	/usr/bin/yes \
 	/bin/cat \
 	/bin/date \
-	/bin/echo \
-	/bin/expr \
 	/bin/fsck \
+	/bin/intr \
 	/bin/mount \
 	/bin/printroot \
 	/bin/pwd \
 	/bin/sync \
-	/bin/test \
-		/bin/[ \
 	/bin/umount \
+	#
 
-/usr/bin/add_route:	bin/add_route
+/usr/bin/add_route:	add_route
 	install -cs -o bin $? $@
 
-/usr/bin/at:	bin/at
+/usr/bin/del_route:	/usr/bin/add_route
+	install -l $? $@
+
+/usr/bin/at:	at
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/atrun:	bin/atrun
+/usr/bin/atrun:	atrun
 	install -cs -o bin $? $@
 
-/usr/bin/backup:	bin/backup
+/usr/bin/backup:	backup
 	install -cs -o bin $? $@
 
 /usr/bin/restore:	/usr/bin/backup
 	install -l $? $@
 
-/usr/bin/badblocks:	bin/badblocks
+/usr/bin/badblocks:	badblocks
 	install -cs -o bin $? $@
 
-/usr/bin/banner:	bin/banner
+/usr/bin/banner:	banner
 	install -cs -o bin $? $@
 
-/usr/bin/basename:	bin/basename
+/usr/bin/basename:	basename
 	install -cs -o bin $? $@
 
-/usr/bin/cal:	bin/cal
+/usr/bin/cal:	cal
 	install -cs -o bin $? $@
 
-/usr/bin/calendar:	bin/calendar
+/usr/bin/calendar:	calendar
 	install -cs -o bin $? $@
 
-/usr/bin/cat:	bin/cat
+/usr/bin/cat:	cat
 	install -cs -o bin $? $@
 
-/usr/bin/cdiff:	bin/cdiff
+/usr/bin/cdiff:	cdiff
 	install -cs -o bin $? $@
 
-/usr/bin/cgrep:	bin/cgrep
+/usr/bin/cgrep:	cgrep
 	install -cs -o bin $? $@
 
-/usr/bin/chmem:	bin/chmem
+/usr/bin/chmem:	chmem
 	install -cs -o bin $? $@
 
-/usr/bin/chmod:	bin/chmod
+/usr/bin/chmod:	chmod
 	install -cs -o bin $? $@
 
-/usr/bin/chown:	bin/chown
+/usr/bin/chown:	chown
 	install -cs -o bin $? $@
 
 /usr/bin/chgrp:	/usr/bin/chown
 	install -l $? $@
 
-/usr/bin/ci:	bin/ci
+/usr/bin/ci:	ci
 	install -cs -o bin $? $@
 
-/usr/bin/cksum:	bin/cksum
+/usr/bin/cksum:	cksum
 	install -cs -o bin $? $@
 
-/usr/bin/clr:	bin/clr
+/usr/bin/cleantmp:	cleantmp
 	install -cs -o bin $? $@
 
-/usr/bin/cmp:	bin/cmp
+/usr/bin/cmp:	cmp
 	install -cs -o bin $? $@
 
-/usr/bin/co:	bin/co
+/usr/bin/co:	co
 	install -cs -o bin $? $@
 
-/usr/bin/comm:	bin/comm
+/usr/bin/comm:	comm
 	install -cs -o bin $? $@
 
-/usr/bin/compress:	bin/compress
+/usr/bin/compress:	compress
 	install -cs -o bin $? $@
 
 /usr/bin/uncompress /usr/bin/zcat:	/usr/bin/compress
 	install -l $? $@
 
-/usr/bin/cp:    bin/cp
+/usr/bin/cp:	cp
 	install -cs -o bin $? $@
 
 /usr/bin/clone /usr/bin/cpdir \
 /usr/bin/ln /usr/bin/mv /usr/bin/rm:	/usr/bin/cp
 	install -l $? $@
 
-/usr/bin/crc:	bin/crc
+/usr/bin/crc:	crc
 	install -cs -o bin $? $@
 
-/usr/bin/cron:	bin/cron
+/usr/bin/cut:	cut
 	install -cs -o bin $? $@
 
-/usr/bin/cut:	bin/cut
+/usr/bin/date:	date
 	install -cs -o bin $? $@
 
-/usr/bin/date:	bin/date
+/usr/bin/dd:	dd
 	install -cs -o bin $? $@
 
-/usr/bin/dd:	bin/dd
+/usr/bin/decomp16:	decomp16
 	install -cs -o bin $? $@
 
-/usr/bin/decomp16:	bin/decomp16
-	install -cs -o bin $? $@
-
-/usr/bin/df:	bin/df
+/usr/bin/df:	df
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/dhrystone:	bin/dhrystone
+/usr/bin/dhrystone:	dhrystone
 	install -cs -o bin $? $@
 
-/usr/bin/diff:	bin/diff
+/usr/bin/diff:	diff
 	install -cs -o bin $? $@
 
-/usr/bin/dirname:	bin/dirname
+/usr/bin/dirname:	dirname
 	install -cs -o bin $? $@
 
-/usr/bin/du:	bin/du
+/usr/bin/du:	du
 	install -cs -o bin $? $@
 
-/usr/bin/echo:	bin/echo
+/usr/bin/ed:	ed
 	install -cs -o bin $? $@
 
-/usr/bin/ed:	bin/ed
+/usr/bin/eject:	eject
 	install -cs -o bin $? $@
 
-/usr/bin/eject:	bin/eject
+/usr/bin/env:	env
 	install -cs -o bin $? $@
 
-/usr/bin/env:	bin/env
+/usr/bin/expand:	expand
 	install -cs -o bin $? $@
 
-/usr/bin/expand:	bin/expand
+/usr/bin/factor:	factor
 	install -cs -o bin $? $@
 
-/usr/bin/expr:	bin/expr
+/usr/bin/fgrep:	fgrep
 	install -cs -o bin $? $@
 
-/usr/bin/factor:	bin/factor
+/usr/bin/file:	file
 	install -cs -o bin $? $@
 
-/usr/bin/fgrep:	bin/fgrep
+/usr/bin/find:	find
 	install -cs -o bin $? $@
 
-/usr/bin/file:	bin/file
+/usr/bin/finger:	finger
 	install -cs -o bin $? $@
 
-/usr/bin/find:	bin/find
+/usr/bin/fix:	fix
 	install -cs -o bin $? $@
 
-/usr/bin/finger:	bin/finger
+/usr/bin/fold:	fold
 	install -cs -o bin $? $@
 
-/usr/bin/fix:	bin/fix
+/usr/bin/fortune:	fortune
 	install -cs -o bin $? $@
 
-/usr/bin/fold:	bin/fold
+/usr/bin/fsck:	fsck
 	install -cs -o bin $? $@
 
-/usr/bin/fortune:	bin/fortune
+/usr/bin/fsck1:	fsck1
 	install -cs -o bin $? $@
 
-/usr/bin/fsck:	bin/fsck
+/usr/bin/getty:	getty
 	install -cs -o bin $? $@
 
-/usr/bin/fsck1:	bin/fsck1
+/usr/bin/gomoku:	gomoku
 	install -cs -o bin $? $@
 
-/usr/bin/getty:	bin/getty
+/usr/bin/grep:	grep
 	install -cs -o bin $? $@
 
-/usr/bin/gomoku:	bin/gomoku
+/usr/bin/egrep:	/usr/bin/grep
+	install -l $? $@
+
+/usr/bin/head:	head
 	install -cs -o bin $? $@
 
-/usr/bin/grep:	bin/grep
+/usr/bin/host:	host
 	install -cs -o bin $? $@
 
-/usr/bin/head:	bin/head
-	install -cs -o bin $? $@
-
-/usr/bin/host:	bin/host
-	install -cs -o bin $? $@
-
-/usr/bin/hostaddr:	bin/hostaddr
+/usr/bin/hostaddr:	hostaddr
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/id:	bin/id
+/usr/bin/id:	id
 	install -cs -o bin $? $@
 
-/usr/bin/ifconfig:	bin/ifconfig
-	install -cs -o bin $? $@
-
-/usr/bin/ifdef:	bin/ifdef
-	install -cs -o bin $? $@
-
-/usr/bin/in.fingerd:	bin/in.fingerd
-	install -cs -o bin $? $@
-
-/usr/bin/in.rld:	bin/in.rld
-	install -cs -o bin $? $@
-
-/usr/bin/in.rshd:	bin/in.rshd
-	install -cs -o bin $? $@
-
-/usr/bin/install:	bin/install
+/usr/bin/ifconfig:	ifconfig
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/irdpd:	bin/irdpd
+/usr/bin/ifdef:	ifdef
 	install -cs -o bin $? $@
 
-/usr/bin/isoread:	bin/isoread
+/usr/bin/in.fingerd:	in.fingerd
+	install -cs -o bin $? $@
+
+/usr/bin/in.rshd:	in.rshd
+	install -cs -o bin $? $@
+
+/usr/bin/install:	installx
+	install -cs -o root -m 4755 $? $@
+
+/usr/bin/intr:	intr
+	install -cs -o bin $? $@
+
+/usr/bin/irdpd:	irdpd
+	install -cs -o bin $? $@
+
+/usr/bin/isoread:	isoread
 	install -cs -o bin $? $@
 
 /usr/bin/isodir /usr/bin/isoinfo:	/usr/bin/isoread
 	install -l $? $@
 
-/usr/bin/join:	bin/join
+/usr/bin/join:	join
 	install -cs -o bin $? $@
 
-/usr/bin/kill:	bin/kill
+/usr/bin/kill:	kill
 	install -cs -o bin $? $@
 
-/usr/bin/last:	bin/last
+/usr/bin/last:	last
 	install -cs -o bin $? $@
 
 /usr/bin/uptime:	/usr/bin/last
 	install -l $? $@
 
-/usr/bin/leave:	bin/leave
+/usr/bin/leave:	leave
 	install -cs -o bin $? $@
 
-/usr/bin/life:	bin/life
+/usr/bin/life:	life
 	install -cs -o bin $? $@
 
-/usr/bin/login:	bin/login
+/usr/bin/login:	login
 	install -cs -o bin $? $@
 
-/usr/bin/look:	bin/look
+/usr/bin/look:	look
 	install -cs -o bin $? $@
 
-/usr/bin/lp:	bin/lp
+/usr/bin/lp:	lp
 	install -cs -o bin $? $@
 
-/usr/bin/lpd:	bin/lpd
+/usr/bin/lpd:	lpd
 	install -cs -o daemon -m 4755 $? $@
 
-/usr/bin/ls:	bin/ls
+/usr/bin/ls:	ls
 	install -cs -o bin $? $@
 
-/usr/bin/mail:	bin/mail
+/usr/bin/mail:	mail
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/man:	bin/man
+/usr/bin/man:	man
 	install -cs -o bin $? $@
 
-/usr/bin/mesg:	bin/mesg
+/usr/bin/mesg:	mesg
 	install -cs -o bin $? $@
 
-/usr/bin/mkdir:	bin/mkdir
+/usr/bin/mkdir:	mkdir
 	install -cs -o bin $? $@
 
-/usr/bin/mkfifo:	bin/mkfifo
+/usr/bin/mkfifo:	mkfifo
 	install -cs -o bin $? $@
 
-/usr/bin/mkfs:	bin/mkfs
+/usr/bin/mkfs:	mkfs
 	install -cs -o bin $? $@
 
-/usr/bin/mknod:	bin/mknod
+/usr/bin/mknod:	mknod
 	install -cs -o bin $? $@
 
-/usr/bin/mkproto:	bin/mkproto
+/usr/bin/mkproto:	mkproto
 	install -cs -o bin $? $@
 
-/usr/bin/modem:	bin/modem
+/usr/bin/mkswap:	mkswap
 	install -cs -o bin $? $@
 
-/usr/bin/mount:	bin/mount
+/usr/bin/modem:	modem
+	install -cs -o bin $? $@
+
+/usr/bin/mount:	mount
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/mt:	bin/mt
+/usr/bin/mt:	mt
 	install -cs -o bin $? $@
 
-/usr/bin/nm:	bin/nm
+/usr/bin/nm:	nm
 	install -cs -o bin $? $@
 
-/usr/bin/nonamed:	bin/nonamed
+/usr/bin/nonamed:	nonamed
 	install -cs -o bin $? $@
 
-/usr/bin/od:	bin/od
+/usr/bin/od:	od
 	install -cs -o bin $? $@
 
-/usr/bin/passwd:	bin/passwd
+/usr/bin/passwd:	passwd
 	install -cs -o root -m 4755 $? $@
 
 /usr/bin/chfn /usr/bin/chsh:	/usr/bin/passwd
 	install -l $? $@
 
-/usr/bin/paste:	bin/paste
+/usr/bin/paste:	paste
 	install -cs -o bin $? $@
 
-/usr/bin/ping:	bin/ping
+/usr/bin/ping:	ping
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/pr:	bin/pr
+/usr/bin/pr:	pr
 	install -cs -o bin $? $@
 
-/usr/bin/pr_routes:	bin/pr_routes
-	install -cs -o bin $? $@
-
-/usr/bin/prep:	bin/prep
-	install -cs -o bin $? $@
-
-/usr/bin/printroot:	bin/printroot
-	install -cs -o bin $? $@
-
-/usr/bin/proto:	bin/proto
-	install -cs -o bin $? $@
-
-/usr/bin/pwd:	bin/pwd
-	install -cs -o bin $? $@
-
-/usr/lib/pwdauth:	bin/pwdauth
+/usr/bin/pr_routes:	pr_routes
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/rarpd:	bin/rarpd
+/usr/bin/prep:	prep
 	install -cs -o bin $? $@
 
-/usr/bin/rcp:	bin/rcp
+/usr/bin/printf:	printf
 	install -cs -o bin $? $@
 
-/usr/bin/readall:	bin/readall
+/usr/bin/printroot:	printroot
 	install -cs -o bin $? $@
 
-/usr/bin/readfs:	bin/readfs
+/usr/bin/proto:	proto
 	install -cs -o bin $? $@
 
-/usr/bin/remsync:	bin/remsync
+/usr/bin/pwd:	pwd
 	install -cs -o bin $? $@
 
-/usr/bin/rlogin:	bin/rlogin
-	install -cs -o bin $? $@
-
-/usr/bin/rmdir:	bin/rmdir
-	install -cs -o bin $? $@
-
-/usr/bin/rsh:	bin/rsh
-	install -cs -o bin $? $@
-
-/usr/bin/sed:	bin/sed
-	install -cs -o bin $? $@
-
-/usr/bin/shar:	bin/shar
-	install -cs -o bin $? $@
-
-/usr/bin/size:	bin/size
-	install -cs -o bin $? $@
-
-/usr/bin/sleep:	bin/sleep
-	install -cs -o bin $? $@
-
-/usr/bin/slip:	bin/slip
-	install -cs -o bin $? $@
-
-/usr/bin/sort:	bin/sort
-	install -cs -o bin $? $@
-
-/usr/bin/split:	bin/split
-	install -cs -o bin $? $@
-
-/usr/bin/strings:	bin/strings
-	install -cs -o bin $? $@
-
-/usr/bin/strip:	bin/strip
-	install -cs -o bin $? $@
-
-/usr/bin/stty:	bin/stty
-	install -cs -o bin $? $@
-
-/usr/bin/su:	bin/su
+/usr/lib/pwdauth:	pwdauth
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/sum:	bin/sum
+/usr/bin/rarpd:	rarpd
 	install -cs -o bin $? $@
 
-/usr/bin/swapfs:	bin/swapfs
+/usr/bin/rcp:	rcp
 	install -cs -o bin $? $@
 
-/usr/bin/sync:	bin/sync
+/usr/bin/readall:	readall
 	install -cs -o bin $? $@
 
-/usr/bin/synctree:	bin/synctree
+/usr/bin/readfs:	readfs
 	install -cs -o bin $? $@
 
-/usr/bin/tail:	bin/tail
+/usr/bin/remsync:	remsync
 	install -cs -o bin $? $@
 
-/usr/bin/tar:	bin/tar
+/usr/bin/rlogin:	rlogin
 	install -cs -o bin $? $@
 
-/usr/bin/tcpd:	bin/tcpd
+/usr/bin/rmdir:	rmdir
 	install -cs -o bin $? $@
 
-/usr/bin/tee:	bin/tee
+/usr/bin/rsh:	rsh
 	install -cs -o bin $? $@
 
-/usr/bin/term:	bin/term
-	install -cs -o bin -g uucp -m 2755 $? $@
-
-/usr/bin/termcap:	bin/termcap
+/usr/bin/sed:	sed
 	install -cs -o bin $? $@
 
-/usr/bin/test:	bin/test
+/usr/bin/shar:	shar
 	install -cs -o bin $? $@
 
-/usr/bin/[:	/usr/bin/test
+/usr/bin/size:	size
+	install -cs -o bin $? $@
+
+/usr/bin/sleep:	sleep
+	install -cs -o bin $? $@
+
+/usr/bin/slip:	slip
+	install -cs -o bin $? $@
+
+/usr/bin/sort:	sort
+	install -cs -o bin $? $@
+
+/usr/bin/split:	split
+	install -cs -o bin $? $@
+
+/usr/bin/stat:	stat
+	install -cs -o bin $? $@
+
+/usr/bin/fstat:	/usr/bin/stat
 	install -l $? $@
 
-/usr/bin/tget:	bin/tget
+/usr/bin/strings:	strings
 	install -cs -o bin $? $@
 
-/usr/bin/time:	bin/time
+/usr/bin/strip:	strip
 	install -cs -o bin $? $@
 
-/usr/bin/touch:	bin/touch
+/usr/bin/stty:	stty
 	install -cs -o bin $? $@
 
-/usr/bin/tr:	bin/tr
-	install -cs -o bin $? $@
-
-/usr/bin/tsort:	bin/tsort
-	install -cs -o bin $? $@
-
-/usr/bin/ttt:	bin/ttt
-	install -cs -o bin $? $@
-
-/usr/bin/tty:	bin/tty
-	install -cs -o bin $? $@
-
-/usr/bin/umount:	bin/umount
+/usr/bin/su:	su
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/uname:	bin/uname
+/usr/bin/sum:	sum
+	install -cs -o bin $? $@
+
+/usr/bin/swapfs:	swapfs
+	install -cs -o bin $? $@
+
+/usr/bin/sync:	sync
+	install -cs -o bin $? $@
+
+/usr/bin/synctree:	synctree
+	install -cs -o bin $? $@
+
+/usr/bin/sysenv:	sysenv
+	install -cs -o bin $? $@
+
+/usr/bin/tail:	tail
+	install -cs -o bin $? $@
+
+/usr/bin/tar:	tar
+	install -cs -o bin $? $@
+
+/usr/bin/tcpd:	tcpd
+	install -cs -o bin $? $@
+
+/usr/bin/tcpdp:	tcpdp
+	install -cs -o bin $? $@
+
+/usr/bin/tee:	tee
+	install -cs -o bin $? $@
+
+/usr/bin/term:	term
+	install -cs -o bin -g uucp -m 2755 $? $@
+
+/usr/bin/termcap:	termcap
+	install -cs -o bin $? $@
+
+/usr/bin/tget:	tget
+	install -cs -o bin $? $@
+
+/usr/bin/time:	time
+	install -cs -o bin $? $@
+
+/usr/bin/touch:	touch
+	install -cs -o bin $? $@
+
+/usr/bin/tr:	tr
+	install -cs -o bin $? $@
+
+/usr/bin/tsort:	tsort
+	install -cs -o bin $? $@
+
+/usr/bin/ttt:	ttt
+	install -cs -o bin $? $@
+
+/usr/bin/tty:	tty
+	install -cs -o bin $? $@
+
+/usr/bin/umount:	umount
+	install -cs -o root -m 4755 $? $@
+
+/usr/bin/uname:	uname
 	install -cs -o bin $? $@
 
 /usr/bin/arch:	/usr/bin/uname
 	install -l $? $@
 
-/usr/bin/unexpand:	bin/unexpand
+/usr/bin/unexpand:	unexpand
 	install -cs -o bin $? $@
 
-/usr/bin/uniq:	bin/uniq
+/usr/bin/uniq:	uniq
 	install -cs -o bin $? $@
 
-/usr/bin/update:	bin/update
+/usr/bin/update:	update
 	install -cs -o bin $? $@
 
-/usr/bin/uud:	bin/uud
+/usr/bin/uud:	uud
 	install -cs -o bin $? $@
 
 /usr/bin/uudecode:	/usr/bin/uud
 	install -l $? $@
 
-/usr/bin/uue:	bin/uue
+/usr/bin/uue:	uue
 	install -cs -o bin $? $@
 
 /usr/bin/uuencode:	/usr/bin/uue
 	install -l $? $@
 
-/usr/bin/vol:	bin/vol
+/usr/bin/vol:	vol
 	install -cs -o bin $? $@
 
-/usr/bin/wc:	bin/wc
+/usr/bin/wc:	wc
 	install -cs -o bin $? $@
 
-/usr/bin/which:	bin/which
+/usr/bin/which:	which
 	install -cs -o bin $? $@
 
-/usr/bin/who:	bin/who
+/usr/bin/who:	who
 	install -cs -o bin $? $@
 
-/usr/bin/whoami:	bin/whoami
+/usr/bin/whoami:	whoami
 	install -cs -o bin $? $@
 
-/usr/bin/write:	bin/write
+/usr/bin/write:	write
 	install -cs -o bin -g tty -m 2755 $? $@
 
-/usr/bin/xargs:	bin/xargs
+/usr/bin/xargs:	xargs
 	install -cs -o bin $? $@
 
-/usr/bin/yes:	bin/yes
+/usr/bin/yes:	yes
 	install -cs -o bin $? $@
 
 /bin/cat:	/usr/bin/cat
@@ -1473,13 +1487,10 @@ install:	bin \
 /bin/date:	/usr/bin/date
 	install -lcs $? $@
 
-/bin/echo:	/usr/bin/echo
-	install -lcs $? $@
-
-/bin/expr:	/usr/bin/expr
-	install -lcs $? $@
-
 /bin/fsck:	/usr/bin/fsck
+	install -lcs $? $@
+
+/bin/intr:	/usr/bin/intr
 	install -lcs $? $@
 
 /bin/mount:	/usr/bin/mount
@@ -1494,14 +1505,8 @@ install:	bin \
 /bin/sync:	/usr/bin/sync
 	install -lcs $? $@
 
-/bin/test:	/usr/bin/test
-	install -lcs $? $@
-
-/bin/[:	/bin/test
-	install -l $? $@
-
 /bin/umount:	/usr/bin/umount
 	install -lcs $? $@
 
 clean:
-	rm -rf a.out bin
+	rm -rf $(ALL) a.out core

@@ -143,7 +143,7 @@ PUBLIC void tty_task()
   for (tp = FIRST_TTY; tp < END_TTY; tp++) tty_init(tp);
 
   /* Display the Minix startup banner. */
-  printf("Minix %s.%s  Copyright 1998 Prentice-Hall, Inc.\n\n",
+  printf("Minix %s.%s  Copyright 2001 Prentice-Hall, Inc.\n\n",
 						OS_RELEASE, OS_VERSION);
 
 #if (CHIP == INTEL)
@@ -183,8 +183,10 @@ PUBLIC void tty_task()
 	} else
 	if ((line - PTYPX_MINOR) < NR_PTYS) {
 		tp = tty_addr(line - PTYPX_MINOR + NR_CONS + NR_RS_LINES);
-		do_pty(tp, &tty_mess);
-		continue;			/* this is a pty, not a tty */
+		if (tty_mess.m_type != DEV_IOCTL) {
+			do_pty(tp, &tty_mess);
+			continue;
+		}
 	} else {
 		tp = NULL;
 	}
@@ -682,6 +684,9 @@ register tty_t *tp;		/* pointer to terminal to read from */
   int count;
   phys_bytes buf_phys, user_base;
   char buf[64], *bp;
+
+  /* Force read to succeed if the line is hung up, looks like EOF to reader. */
+  if (tp->tty_termios.c_ospeed == B0) tp->tty_min = 0;
 
   /* Anything to do? */
   if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;

@@ -84,14 +84,14 @@ struct state orig;
 extern struct state _res;
 static u8_t *cname = NULL;
 int getclass = C_IN;
-int gettype;
+int gettype, getdeftype = T_A;
 int verbose = 0;
 int list = 0;
 int server_specified = 0;
 
 union querybuf;
 
-void main _ARGS(( int c, char *v[] ));
+int main _ARGS(( int c, char *v[] ));
 
 static int parsetype _ARGS(( char *s ));
 static int parseclass _ARGS(( char *s ));
@@ -110,23 +110,25 @@ static char *pr_class _ARGS(( int class ));
 static char *pr_type _ARGS(( int type ));
 static int tcpip_writeall _ARGS(( int fd, char *buf, unsigned siz ));
 
-void
+int
 main(c, v)
 	char **v;
 {
+	char *domain;
 	ipaddr_t addr;
 	register struct hostent *hp;
-	register char *s;
+	register char *s, *p;
 	register inverse = 0;
 	register waitmode = 0;
 	u8_t *oldcname;
 	int ncnames;
+	int isaddr;
 
 	res_init();
 	_res.retrans = 5;
 
 	if (c < 2) {
-		fprintf(stderr, "Usage: host [-w] [-v] [-r] [-d] [-t querytype] [-c class] [-a] host [server]\n  -w to wait forever until reply\n  -v for verbose output\n  -r to disable recursive processing\n  -d to turn on debugging output\n  -t querytype to look for a specific type of information\n  -c class to look for non-Internet data\n  -a is equivalent to '-v -t *'\n");
+		fprintf(stderr, "Usage: host [-w] [-v] [-r] [-d] [-V] [-t querytype] [-c class] [-a] host [server]\n  -w to wait forever until reply\n  -v for verbose output\n  -r to disable recursive processing\n  -d to turn on debugging output\n  -t querytype to look for a specific type of information\n  -c class to look for non-Internet data\n  -a is equivalent to '-v -t *'\n  -V to always use a virtual circuit\n");
 		exit(1);
 	}
 	while (c > 2 && v[1][0] == '-') {
@@ -177,13 +179,20 @@ main(c, v)
 			v++;
 			c--;
 		}		
+		else if (strcmp (v[1], "-V") == 0) {
+			_res.options |= RES_USEVC;
+			v++;
+			c--;
+		}
         }
 	if (c > 2) {
 		s = v[2];
 		server_specified++;
 		
-		addr = inet_addr(s);
-		if (addr == -1) {
+		if ((p = strchr(s, ':')) != NULL) *p++ = 0;
+		isaddr = inet_aton(s, &addr);
+		if (p != NULL) p[-1] = ':';
+		if (!isaddr) {
 		  hp = gethostbyname(s);
 		  if (hp == NULL) {
 		    fprintf(stderr,"Error in looking up server name:\n");
@@ -197,14 +206,27 @@ main(c, v)
 		else {
 		  _res.nsaddr_list[0]= addr;
 		  _res.nsport_list[0]= htons(NAMESERVER_PORT);
-		  printf("Using domain server %s:\n",
+		  printf("Using domain server %s",
 			 inet_ntoa(_res.nsaddr));
+		  if (p != NULL) {
+		    printf(" on port %d", atoi(p));
+		    _res.nsport_list[0]= htons(atoi(p));
+		  }
+		  printf(":\n");
 		}
 	      }
-	if (strcmp (v[1], ".") == 0)
-	  addr = -1;
-	else
-	  addr = inet_addr(v[1]);
+	domain = v[1];
+	if (strcmp (domain, ".") != 0 && inet_aton(domain, &addr)) {
+	  static char ipname[sizeof("255.255.255.255.in-addr.arpa.")];
+	  sprintf(ipname, "%d.%d.%d.%d.in-addr.arpa.",
+	    ((unsigned char *) &addr)[3],
+	    ((unsigned char *) &addr)[2],
+	    ((unsigned char *) &addr)[1],
+	    ((unsigned char *) &addr)[0]);
+	  domain = ipname;
+	  getdeftype = T_PTR;
+	}
+
 	hp = NULL;
 	h_errno = TRY_AGAIN;
 /*
@@ -213,31 +235,24 @@ main(c, v)
 	_res.options &= ~RES_DEFNAMES;
 
         if (list)
-	  exit(ListHosts(v[1], gettype ? gettype : T_A));
+	  exit(ListHosts(domain, gettype ? gettype : getdeftype));
 	oldcname = NULL;
 	ncnames = 5;
 	while (hp == NULL && h_errno == TRY_AGAIN) {
-	  if (addr == -1) {
-	      cname = NULL;
-	      if (oldcname == NULL)
-		hp = (struct hostent *)gethostinfo(v[1]);
-	      else
-		hp = (struct hostent *)gethostinfo((char *)oldcname);
-	      if (cname) {
-		if (ncnames-- == 0) {
-		  printf("Too many cnames.  Possible loop.\n");
-		  exit(1);
-		}
-		oldcname = cname;
-		hp = NULL;
-		h_errno = TRY_AGAIN;
-		continue;
-	      }
-	  }
-	  else {
-	    hp = gethostbyaddr((char *)&addr, 4, AF_INET);
-	    if (hp)
-	      printanswer(hp);
+	  cname = NULL;
+	  if (oldcname == NULL)
+	    hp = (struct hostent *)gethostinfo(domain);
+	  else
+	    hp = (struct hostent *)gethostinfo((char *)oldcname);
+	  if (cname) {
+	    if (ncnames-- == 0) {
+	      printf("Too many cnames.  Possible loop.\n");
+	      exit(1);
+	    }
+	    oldcname = cname;
+	    hp = NULL;
+	    h_errno = TRY_AGAIN;
+	    continue;
 	  }
 	  if (!waitmode)
 	    break;
@@ -312,6 +327,8 @@ parseclass(s)
 {
 if (strcmp(s,"in") == 0)
   return(C_IN);
+if (strcmp(s,"chaos") == 0)
+  return(C_CHAOS);
 if (strcmp(s,"hs") == 0)
   return(C_HS);
 if (strcmp(s,"any") == 0)
@@ -354,7 +371,7 @@ switch(errno) {
 		fprintf(stderr,"No recovery, Host not found.\n");
 		break;
 	case NO_ADDRESS:
-		fprintf(stderr,"There is an entry for this host, but it doesn't have an Internet address.\n");
+		fprintf(stderr,"There is an entry for this host, but it doesn't have what you requested.\n");
 		break;
 	}
 }
@@ -434,8 +451,8 @@ getdomaininfo(name, domain)
   if (gettype)
     return getinfo(name, domain, gettype);
   else {
-    val1 = getinfo(name, domain, T_A);
-    if (cname || verbose)
+    val1 = getinfo(name, domain, getdeftype);
+    if (cname || verbose || getdeftype != T_A)
       return val1;
     val2 = getinfo(name, domain, T_MX);
     return val1 || val2;
@@ -662,8 +679,11 @@ pr_rr(cp, msg, file, filter)
 		break;
 	case T_CNAME:
 		if (dn_expand(msg, msg + 512, cp, cnamebuf, 
-			      sizeof(cnamebuf)) >= 0)
-		  cname = cnamebuf;				
+			      sizeof(cnamebuf)-1) >= 0) {
+			strcat((char *) cnamebuf, ".");
+			if (gettype != T_CNAME && gettype != T_ANY)
+				cname = cnamebuf;				
+		}
 	case T_MB:
 #ifdef OLDRR
 	case T_MD:
@@ -884,7 +904,9 @@ pr_class(class)
 	switch (class) {
 	case C_IN:		/* internet class */
 		return(verbose? " IN" : "");
-	case C_HS:		/* internet class */
+	case C_CHAOS:		/* chaos class */
+		return(verbose? " CHAOS" : "");
+	case C_HS:		/* Hesiod class */
 		return(verbose? " HS" : "");
 	case C_ANY:		/* matches any class */
 		return(" ANY");
@@ -1190,7 +1212,7 @@ again:
 		tcpconf.nwtc_flags= NWTC_EXCL | NWTC_LP_SEL | NWTC_SET_RA | 
 								NWTC_SET_RP;
 		tcpconf.nwtc_remaddr= *(ipaddr_t *)nsipaddr[thisns];
-		tcpconf.nwtc_remport= HTONS(NAMESERVER_PORT);
+		tcpconf.nwtc_remport= _res.nsport_list[0];
 		result= ioctl(tcp_fd, NWIOSTCPCONF, &tcpconf);
 		if (result == -1)
 		{

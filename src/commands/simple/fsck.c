@@ -51,9 +51,6 @@
 #include "../../fs/inode.h"
 #include "../../fs/type.h"
 #include <minix/fslib.h>
-
-#undef printf			/* defined as printk in "../fs/const.h" */
-
 #include <stdio.h>
 
 #define BITSHIFT	  4	/* = log2(#bits(int)) */
@@ -746,7 +743,7 @@ void chkilist()
 					 INODE_SIZE);
 		}
 	}
-  while (++ino <= sb.s_ninodes);
+  while (++ino <= sb.s_ninodes && ino != 0);
   printf("\n");
 }
 
@@ -790,7 +787,7 @@ void chkcount()
 {
   register ino_t ino;
 
-  for (ino = 1; ino <= sb.s_ninodes; ino++)
+  for (ino = 1; ino <= sb.s_ninodes && ino != 0; ino++)
 	if (count[ino] != 0) counterror(ino);
   if (!firstcnterr) printf("\n");
 }

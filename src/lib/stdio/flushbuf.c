@@ -1,7 +1,7 @@
 /*
  * flushbuf.c - flush a buffer
  */
-/* $Header: flushbuf.c,v 1.6 91/06/10 17:07:10 ceriel Exp $ */
+/* $Id: flushbuf.c,v 1.9 1996/04/24 13:06:00 ceriel Exp $ */
 
 #include	<stdio.h>
 #include	<stdlib.h>
@@ -10,7 +10,7 @@
 #include	<sys/types.h>
 
 off_t _lseek(int fildes, off_t offset, int whence);
-ssize_t _write(int d, const char *buf, size_t nbytes);
+ssize_t _write(int d, const char *buf, int nbytes);
 int _isatty(int d);
 extern void (*_clean)(void);
 
@@ -33,7 +33,7 @@ int
 __flushbuf(int c, FILE * stream)
 {
 	_clean = __cleanup;
-	if (fileno(stream) < 0) return EOF;
+	if (fileno(stream) < 0) return (unsigned char) c;
 	if (!io_testflag(stream, _IOWRITE)) return EOF;
 	if (io_testflag(stream, _IOREADING) && !feof(stream)) return EOF;
 
@@ -80,10 +80,16 @@ __flushbuf(int c, FILE * stream)
 			stream->_flags |= _IOERR;
 			return EOF;
 		}
-		return c;
+		return (unsigned char) c;
 	} else if (io_testflag(stream, _IOLBF)) {
 		*stream->_ptr++ = c;
+		/* stream->_count has been updated in putc macro. */
 		if (c == '\n' || stream->_count == -stream->_bufsiz) {
+			int count = -stream->_count;
+
+			stream->_ptr  = stream->_buf;
+			stream->_count = 0;
+
 			if (io_testflag(stream, _IOAPPEND)) {
 				if (_lseek(fileno(stream), 0L, SEEK_END) == -1) {
 					stream->_flags |= _IOERR;
@@ -91,12 +97,9 @@ __flushbuf(int c, FILE * stream)
 				}
 			}
 			if (! do_write(fileno(stream), (char *)stream->_buf,
-					-stream->_count)) {
+					count)) {
 				stream->_flags |= _IOERR;
 				return EOF;
-			} else {
-				stream->_ptr  = stream->_buf;
-				stream->_count = 0;
 			}
 		}
 	} else {
@@ -120,5 +123,5 @@ __flushbuf(int c, FILE * stream)
 		}
 		*(stream->_buf) = c;
 	}
-	return c;
+	return (unsigned char) c;
 }

@@ -35,7 +35,7 @@ typedef struct eth_port
 #define EPS_PROMISC	0x8
 #endif
 
-extern eth_port_t eth_port_table[ETH_PORT_NR];
+extern eth_port_t *eth_port_table;
 
 void osdep_eth_init ARGS(( void ));
 int eth_get_stat ARGS(( eth_port_t *eth_port, eth_stat_t *eth_stat ));

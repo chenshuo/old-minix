@@ -49,7 +49,8 @@ void strrealloc(strs)
 struct str *strs;
 {
   strs->len *= 2;
-  if( (*strs->ptr = (char *) realloc( *strs->ptr, strs->len)) == (char *) NULL)
+  *strs->ptr = (char *) realloc(*strs->ptr, strs->len + 16);
+  if(*strs->ptr == (char *) NULL)
        fatal("No memory for string reallocation",(char *)0,0);
 }
 
@@ -335,29 +336,24 @@ FILE *fd;
 		continue;
 	}
 
-	/* Search for commands on target line --- do not expand them ! */
-	q = str1;
-	cp = (struct cmd *)0;
-	if ((a = strchr(q, ';')) != (char *)0) {
-		*a++ = '\0';	/*  Separate dependents and commands */
-		if ( a) cp = newcmd(a, cp);
-	}
-
-	expand(&str1s);
-	p = str1;
-
-	while (isspace(*p))  p++;
-
 	/* include? */
+	p = str1;
+	while (isspace(*p)) p++;
 	if (strncmp(p, "include", 7) == 0 && isspace(p[7])) {
 		char *old_makefile = makefile;
 		int old_lineno = lineno;
 		FILE *ifd;
 
-		if ((q = malloc(strlen(p+8)+1)) == (char *)0)
+		p += 8;
+		memmove(str1, p, strlen(p)+1);
+		expand(&str1s);
+		p = str1;
+		while (isspace(*p)) p++;
+
+		if ((q = malloc(strlen(p)+1)) == (char *)0)
 			fatal("No memory for include",(char *)0,0);
 
-		strcpy(q, p+8);
+		strcpy(q, p);
 		p = q;
 		while ((makefile = gettok(&q)) != (char *)0) {
 			if ((ifd = fopen(makefile, "r")) == (FILE *)0)
@@ -374,6 +370,19 @@ FILE *fd;
 			return;
 		continue;
 	}
+
+	/* Search for commands on target line --- do not expand them ! */
+	q = str1;
+	cp = (struct cmd *)0;
+	if ((a = strchr(q, ';')) != (char *)0) {
+		*a++ = '\0';	/*  Separate dependents and commands */
+		if ( a) cp = newcmd(a, cp);
+	}
+
+	expand(&str1s);
+	p = str1;
+
+	while (isspace(*p)) p++;
 
 	while (((q = strchr(p, ':')) != (char *)0) &&
 	    (p != q) && (q[-1] == '\\'))	/*  Find dependents  */

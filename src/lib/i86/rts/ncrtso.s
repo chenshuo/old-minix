@@ -26,7 +26,7 @@ crtso:
 	jae	0f
 	testb	bl, #1			! aligned?
 	jnz	0f
-	cmp	(bx), #0x5353		! is it our _environ?
+	cmp	(bx), #0x5353		! is it our environ?
 	jne	0f
 	mov	__penviron, bx		! _penviron = &environ;
 0:	mov	bx, __penviron
@@ -47,7 +47,7 @@ crtso:
 begdata:
 	.data2	0			! for sep I&D: *NULL == 0
 __penviron:
-	.data4	__penvp			! Pointer to environ, or hidden pointer
+	.data2	__penvp			! Pointer to environ, or hidden pointer
 
 .bss
 begbss:

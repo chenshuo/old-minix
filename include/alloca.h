@@ -4,6 +4,10 @@
 #ifndef _ALLOCA_H
 #define _ALLOCA_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 #if __GNUC__
 
 /* The compiler recognizes this special keyword, and inlines the code. */
@@ -12,10 +16,6 @@
 #endif /* __GCC__ */
 
 #if __ACK__ || __CCC__
-
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
 
 _PROTOTYPE(void *alloca, (size_t _size)					);
 

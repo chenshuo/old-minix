@@ -6,6 +6,7 @@
 #include <minix/com.h>
 #include "proc.h"
 #include <minix/partition.h>
+#include <minix/u64.h>
 
 /* Info about and entry points into the device dependent code. */
 struct driver {
@@ -14,8 +15,8 @@ struct driver {
   _PROTOTYPE( int (*dr_close), (struct driver *dp, message *m_ptr) );
   _PROTOTYPE( int (*dr_ioctl), (struct driver *dp, message *m_ptr) );
   _PROTOTYPE( struct device *(*dr_prepare), (int device) );
-  _PROTOTYPE( int (*dr_schedule), (int proc_nr, struct iorequest_s *request) );
-  _PROTOTYPE( int (*dr_finish), (void) );
+  _PROTOTYPE( int (*dr_transfer), (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
   _PROTOTYPE( void (*dr_cleanup), (void) );
   _PROTOTYPE( void (*dr_geometry), (struct partition *entry) );
 };
@@ -30,19 +31,17 @@ struct driver {
 
 /* Base and size of a partition in bytes. */
 struct device {
-  unsigned long	dv_base;
-  unsigned long dv_size;
+  u64_t dv_base;
+  u64_t dv_size;
 };
 
 #define NIL_DEV		((struct device *) 0)
 
 /* Functions defined by driver.c: */
 _PROTOTYPE( void driver_task, (struct driver *dr) );
-_PROTOTYPE( int do_rdwt, (struct driver *dr, message *m_ptr) );
-_PROTOTYPE( int do_vrdwt, (struct driver *dr, message *m_ptr) );
 _PROTOTYPE( char *no_name, (void) );
 _PROTOTYPE( int do_nop, (struct driver *dp, message *m_ptr) );
-_PROTOTYPE( int nop_finish, (void) );
+_PROTOTYPE( struct device *nop_prepare, (int device) );
 _PROTOTYPE( void nop_cleanup, (void) );
 _PROTOTYPE( void clock_mess, (int ticks, watchdog_t func) );
 _PROTOTYPE( int do_diocntl, (struct driver *dr, message *m_ptr) );

@@ -29,12 +29,18 @@ all:	sh
 
 sh:	$(OBJS)
 	$(CC) $(CFLAGS) -o sh $(OBJS) $(LIBS)
-	install -S 64k sh
+	install -S 12kw sh
 
-install:	/usr/bin/ash
+install:	/usr/bin/ash /usr/bin/sh /bin/sh
 
 /usr/bin/ash:	sh
-	install -cs -o bin sh $@
+	install -cs -o bin $? $@
+
+/usr/bin/sh:	/usr/bin/ash
+	install -l $? $@
+
+/bin/sh:	/usr/bin/ash
+	install -lcs $? $@
 
 clean:
 	rm -f $(CLEANFILES) sh core

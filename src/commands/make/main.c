@@ -138,10 +138,10 @@ char **argv;
   if (makefile && strcmp(makefile, "-") == 0)  /*   use stdin as makefile  */
 	ifd = stdin;
   else if (!makefile) {    /*  If no file, then use default */
-	if ((ifd = fopen(DEFN1, "r")) == (FILE *)0) {
+	if ((ifd = fopen(makefile = DEFN1, "r")) == (FILE *)0) {
 		if (errno != MNOENT || !DEFN2)
 			fatal("Can't open %s: %s", DEFN1, errno);
-		else if ((ifd = fopen(DEFN2, "r")) == (FILE *)0)
+		else if ((ifd = fopen(makefile = DEFN2, "r")) == (FILE *)0)
 			fatal("Can't open %s: %s", DEFN2, errno);
 	}
   }

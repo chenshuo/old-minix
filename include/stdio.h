@@ -9,6 +9,10 @@
 #ifndef _STDIO_H
 #define	_STDIO_H
 
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
 /*
  * Focus point of all stdio activity.
  */
@@ -64,10 +68,6 @@ typedef unsigned int	size_t;		/* type returned by sizeof */
 
 extern FILE	*__iotab[FOPEN_MAX];
 extern FILE	__stdin, __stdout, __stderr;
-
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
 
 _PROTOTYPE( int remove, (const char *_filename)				);
 _PROTOTYPE( int rename, (const char *_old, const char *_new)		);
@@ -145,6 +145,9 @@ _PROTOTYPE (FILE *fdopen, (int _fildes, const char *_types) );
 #ifdef _MINIX
 _PROTOTYPE(FILE *popen, (const char *_command, const char *_type));
 _PROTOTYPE(int pclose, (FILE *_stream));
+_PROTOTYPE(int snprintf, (char *_s, size_t _n, const char *_format, ...));
+_PROTOTYPE(int vsnprintf, (char *_s, size_t _n, const char *_format,
+							char *_arg)	);
 #endif
 
 #endif /* _STDIO_H */

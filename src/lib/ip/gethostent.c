@@ -1,25 +1,6 @@
-/*
- * Copyright (c) 1985, 1988 Regents of the University of California.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms are permitted
- * provided that: (1) source distributions retain this entire copyright
- * notice and comment, and (2) distributions including binaries display
- * the following acknowledgement:  ``This product includes software
- * developed by the University of California, Berkeley and its contributors''
- * in the documentation or other materials provided with the distribution
- * and in all advertising materials mentioning features or use of this
- * software. Neither the name of the University nor the names of its
- * contributors may be used to endorse or promote products derived
- * from this software without specific prior written permission.
- * THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR
- * IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+/*	gethostent() - Interface to /etc/hosts		Author: Kees J. Bot
+ *								31 May 1999
  */
-
-#if defined(LIBC_SCCS) && !defined(lint)
-static char sccsid[] = "@(#)gethostnamadr.c	6.41 (Berkeley) 6/1/90";
-#endif /* LIBC_SCCS and not lint */
 
 /* Prefix the functions defined here with underscores to distinguish them
  * from the newer replacements in the resolver library.
@@ -30,158 +11,158 @@ static char sccsid[] = "@(#)gethostnamadr.c	6.41 (Berkeley) 6/1/90";
 #define gethostbyname	_gethostbyname
 #define gethostbyaddr	_gethostbyaddr
 
-#ifdef _MINIX
+#define nil 0
 #include <sys/types.h>
-#include <ctype.h>
-#include <errno.h>
 #include <stdio.h>
 #include <string.h>
-
-#include <net/hton.h>
-#include <net/gen/nameser.h>
 #include <net/gen/netdb.h>
 #include <net/gen/in.h>
 #include <net/gen/inet.h>
-#include <net/gen/resolv.h>
 #include <net/gen/socket.h>
-#else
-#include <sys/param.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <ctype.h>
-#include <netdb.h>
-#include <stdio.h>
-#include <errno.h>
-#include <arpa/inet.h>
-#include <arpa/nameser.h>
-#include <resolv.h>
-#endif /* !_MINIX */
 
-#define	MAXALIASES	35
-#define	MAXADDRS	35
+#define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
+#define arraylimit(a)	((a) + arraysize(a))
+#define isspace(c)	((unsigned) (c) <= ' ')
 
-#ifdef _MINIX
-typedef u32_t u_long;
-typedef u16_t u_short;
-typedef u8_t u_char;
+static char HOSTS[]= _PATH_HOSTS;
+static char *hosts= HOSTS;	/* Current hosts file. */
+static FILE *hfp;		/* Open hosts file. */
 
-#define bcmp	memcmp
-#endif /* _MINIX */
-
-static struct hostent host;
-static char *host_aliases[MAXALIASES];
-static char hostbuf[BUFSIZ+1];
-static FILE *hostf = NULL;
-static u_long hostaddr[(MAXADDRS+sizeof(u_long)-1)/sizeof(u_long)];
-static char *host_addrs[2];
-static int stayopen = 0;
-
-#ifndef _MINIX
-char *strpbrk();
-#endif /* !_MINIX */
-
-void
-sethostent(f)
-	int f;
+void sethostent(int stayopen)
+/* Start search.  (Same as ending it.) */
 {
-	if (hostf == NULL)
-		hostf = fopen(_PATH_HOSTS, "r" );
-	else
-		rewind(hostf);
-	stayopen |= f;
+    endhostent();
 }
 
-void
-endhostent()
+void endhostent(void)
+/* End search and reinitialize. */
 {
-	if (hostf && !stayopen) {
-		(void) fclose(hostf);
-		hostf = NULL;
+    if (hfp != nil) {
+	fclose(hfp);
+	hfp= nil;
+    }
+    hosts= _PATH_HOSTS;
+}
+
+struct hostent *gethostent(void)
+/* Return the next entry from the hosts files. */
+{
+    static char line[256];	/* One line in a hosts file. */
+    static ipaddr_t addr;	/* IP address found first on the line. */
+    static char *names[16];	/* Pointers to the words on the line. */
+    static char *addrs[2]= {	/* List of IP addresses (just one.) */
+	(char *) &addr,
+	nil,
+    };
+    static struct hostent host = {
+	nil,			/* h_name, will set to names[1]. */
+	names + 2,		/* h_aliases, the rest of the names. */
+	AF_INET,		/* h_addrtype */
+	sizeof(ipaddr_t),	/* Size of an address in the address list. */
+	addrs,			/* List of IP addresses. */
+    };
+    static char nexthosts[128];	/* Next hosts file to include. */
+    char *lp, **np;
+    int c;
+
+    for (;;) {
+	if (hfp == nil) {
+	    /* No hosts file open, try to open the next one. */
+	    if (hosts == 0) return nil;
+	    if ((hfp= fopen(hosts, "r")) == nil) { hosts= nil; continue; }
 	}
+
+	/* Read a line. */
+	lp= line;
+	while ((c= getc(hfp)) != EOF && c != '\n') {
+	    if (lp < arraylimit(line)) *lp++= c;
+	}
+
+	/* EOF?  Then close and prepare for reading the next file. */
+	if (c == EOF) {
+	    fclose(hfp);
+	    hfp= nil;
+	    hosts= nil;
+	    continue;
+	}
+
+	if (lp == arraylimit(line)) continue;
+	*lp= 0;
+
+	/* Break the line up in words. */
+	np= names;
+	lp= line;
+	for (;;) {
+	    while (isspace(*lp) && *lp != 0) lp++;
+	    if (*lp == 0 || *lp == '#') break;
+	    if (np == arraylimit(names)) break;
+	    *np++= lp;
+	    while (!isspace(*lp) && *lp != 0) lp++;
+	    if (*lp == 0) break;
+	    *lp++= 0;
+	}
+
+	if (np == arraylimit(names)) continue;
+	*np= nil;
+
+	/* Special "include file" directive. */
+	if (np == names + 2 && strcmp(names[0], "include") == 0) {
+	    fclose(hfp);
+	    hfp= nil;
+	    hosts= nil;
+	    if (strlen(names[1]) < sizeof(nexthosts)) {
+		strcpy(nexthosts, names[1]);
+		hosts= nexthosts;
+	    }
+	    continue;
+	}
+
+	/* At least two words, the first of which is an IP address. */
+	if (np < names + 2) continue;
+	if (!inet_aton((char *) names[0], &addr)) continue;
+	host.h_name= (char *) names[1];
+
+	return &host;
+    }
 }
 
-struct hostent *
-gethostent()
+/* Rest kept in reserve, we probably never need 'em. */
+#if XXX
+struct hostent *gethostbyname(const char *name)
 {
-	char *p;
-	register char *cp, **q;
+    struct hostent *he;
+    char **pa;
+    char alias[256];
+    char *domain;
+    
+    sethostent(0);
+    while ((he= gethostent()) != nil) {
+	if (strcasecmp(he->h_name, name) == 0) goto found;
 
-	if (hostf == NULL && (hostf = fopen(_PATH_HOSTS, "r" )) == NULL)
-		return (NULL);
-again:
-	if ((p = fgets(hostbuf, BUFSIZ, hostf)) == NULL)
-		return (NULL);
-	if (*p == '#')
-		goto again;
-	cp = strpbrk(p, "#\n");
-	if (cp == NULL)
-		goto again;
-	*cp = '\0';
-	cp = strpbrk(p, " \t");
-	if (cp == NULL)
-		goto again;
-	*cp++ = '\0';
-	/* THIS STUFF IS INTERNET SPECIFIC */
-#if BSD >= 43 || defined(h_addr)	/* new-style hostent structure */
-	host.h_addr_list = host_addrs;
+	domain= strchr(he->h_name, '.');
+	for (pa= he->h_aliases; *pa != nil; pa++) {
+	    strcpy(alias, *pa);
+	    if (domain != nil && strchr(alias, '.') == nil) {
+		strcat(alias, domain);
+	    }
+	    if (strcasecmp(alias, name) == 0) goto found;
+	}
+    }
+  found:
+    endhostent();
+    return he;
+}
+
+struct hostent *gethostbyaddr(const char *addr, int len, int type)
+{
+    struct hostent *he;
+
+    sethostent(0);
+    while ((he= gethostent()) != nil) {
+	if (he->h_name[0] == '%') continue;
+	if (type == AF_INET && memcmp(he->h_addr, addr, len) == 0) break;
+    }
+    endhostent();
+    return he;
+}
 #endif
-	host.h_addr = (char *) hostaddr;
-	*((u_long *)host.h_addr) = inet_addr(p);
-	host.h_length = sizeof (u_long);
-	host.h_addrtype = AF_INET;
-	while (*cp == ' ' || *cp == '\t')
-		cp++;
-	host.h_name = cp;
-	q = host.h_aliases = host_aliases;
-	cp = strpbrk(cp, " \t");
-	if (cp != NULL) 
-		*cp++ = '\0';
-	while (cp && *cp) {
-		if (*cp == ' ' || *cp == '\t') {
-			cp++;
-			continue;
-		}
-		if (q < &host_aliases[MAXALIASES - 1])
-			*q++ = cp;
-		cp = strpbrk(cp, " \t");
-		if (cp != NULL)
-			*cp++ = '\0';
-	}
-	*q = NULL;
-	return (&host);
-}
-
-struct hostent *
-gethostbyname(name)
-	char *name;
-{
-	register struct hostent *p;
-	register char **cp;
-	
-	sethostent(0);
-	while (p = gethostent()) {
-		if (strcasecmp(p->h_name, name) == 0)
-			break;
-		for (cp = p->h_aliases; *cp != 0; cp++)
-			if (strcasecmp(*cp, name) == 0)
-				goto found;
-	}
-found:
-	endhostent();
-	return (p);
-}
-
-struct hostent *
-gethostbyaddr(addr, len, type)
-	const char *addr;
-	int len, type;
-{
-	register struct hostent *p;
-
-	sethostent(0);
-	while (p = gethostent())
-		if (p->h_addrtype == type && !bcmp(p->h_addr, addr, len))
-			break;
-	endhostent();
-	return (p);
-}

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 /* The default values for the prototype file */
 #define DEF_UID		2	/* bin */

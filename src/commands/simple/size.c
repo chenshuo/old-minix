@@ -57,8 +57,8 @@ char *name;
   dynam = exec.a_total - exec.a_text - exec.a_data - exec.a_bss;
   if (separate) dynam += exec.a_text;
   allmem = (separate ? exec.a_total + exec.a_text : exec.a_total);
-  if (heading++ == 0) printf("  text\t  data\t   bss\t stack\tmemory\n");
-  printf("%6ld\t%6ld\t%6ld\t%6ld\t%6ld\t%s\n",
+  if (heading++ == 0) printf("   text    data     bss    stack   memory\n");
+  printf("%7ld %7ld %7ld %8ld %8ld  %s\n",
          exec.a_text, exec.a_data, exec.a_bss, dynam, allmem, name);
   close(fd);
 }

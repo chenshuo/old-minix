@@ -3,7 +3,7 @@
 # 08/01/96 			Michael Temari, <temari@ix.netcom.com>
 #
 
-CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE -m
+CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE
 LDFLAGS=-i
 BINDIR=	/usr/bin
 PROG=	talk

@@ -58,8 +58,9 @@
 #define GA_VIDEO_ADDRESS	0xA0000L
 #define GA_FONT_SIZE		8192
 
-/* Global variables used by the console driver. */
-PUBLIC unsigned vid_seg;	/* video ram selector (0xB0000 or 0xB8000) */
+/* Global variables used by the console driver and assembly support. */
+PUBLIC u16_t vid_seg;
+PUBLIC vir_bytes vid_off;	/* video ram is found at vid_seg:vid_off */
 PUBLIC unsigned vid_size;	/* 0x2000 for color or 0x0800 for mono */
 PUBLIC unsigned vid_mask;	/* 0x1FFF for color or 0x07FF for mono */
 PUBLIC unsigned blank_color = BLANK_COLOR; /* display code for blank */
@@ -799,9 +800,8 @@ tty_t *tp;
   if (ega) vid_size = EGA_SIZE;
   wrap = !ega;
 
-  vid_seg = protected_mode ? VIDEO_SELECTOR : physb_to_hclick(vid_base);
-  init_dataseg(&gdt[VIDEO_INDEX], vid_base, (phys_bytes) vid_size,
-							TASK_PRIVILEGE);
+  phys2seg(&vid_seg, &vid_off, vid_base);
+
   vid_size >>= 1;		/* word count */
   vid_mask = vid_size - 1;
 
@@ -815,7 +815,7 @@ tty_t *tp;
   page_size = vid_size / nr_cons;
   cons->c_start = line * page_size;
   cons->c_limit = cons->c_start + page_size;
-  cons->c_org = cons->c_start;
+  cons->c_cur = cons->c_org = cons->c_start;
   cons->c_attr = cons->c_blank = BLANK_COLOR;
 
   /* Clear the screen. */

@@ -287,7 +287,7 @@ int main(int argc, char **argv)
 	unsigned media_size;
 	unsigned drive_size;
 	int verify= 0;
-	struct stat st;
+	struct stat st0, st;
 	FILE *mfp;
 	char special[PATH_MAX + 1], mounted_on[PATH_MAX + 1];
 	char version[10], rw_flag[10];
@@ -312,8 +312,15 @@ int main(int argc, char **argv)
 	 * set-uid root.
 	 */
 	device= argv[1];
-	if (access(device, R_OK|W_OK) < 0 || stat(device, &st) < 0)
+	if (stat(device, &st0) < 0
+		|| access(device, R_OK|W_OK) < 0
+		|| stat(device, &st) < 0
+		|| (errno= EACCES, 0)	/* set errno for following tests */
+		|| st.st_dev != st0.st_dev
+		|| st.st_ino != st0.st_ino
+	) {
 		fatal(device);
+	}
 
 	if ((!S_ISBLK(st.st_mode) && !S_ISCHR(st.st_mode))
 						|| !isfloppy(st.st_rdev)) {

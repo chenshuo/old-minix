@@ -1010,6 +1010,16 @@ readline(prompt)
     rl_ttyset(1);
     DISPOSE(Screen);
     DISPOSE(H.Lines[--H.Size]);
+
+    if (line != NULL && *line != '\0'
+#if	defined(UNIQUE_HISTORY)
+	&& !(H.Pos && strcmp((char *) line, (char *) H.Lines[H.Pos - 1]) == 0)
+#endif	/* defined(UNIQUE_HISTORY) */
+	&& !(H.Size && strcmp((char *) line, (char *) H.Lines[H.Size - 1]) == 0)
+    ) {
+	hist_add(line);
+    }
+
     if (Signal > 0) {
 	s = Signal;
 	Signal = 0;
@@ -1022,6 +1032,7 @@ void
 add_history(p)
     char	*p;
 {
+#ifdef obsolete		/* Made part of readline(). -- kjb */
     if (p == NULL || *p == '\0')
 	return;
 
@@ -1032,6 +1043,7 @@ add_history(p)
     if (H.Size && strcmp(p, (char *) H.Lines[H.Size - 1]) == 0)
 	return;
     hist_add((CHAR *)p);
+#endif
 }
 
 
@@ -1061,6 +1073,8 @@ end_line()
     return CSstay;
 }
 
+STATIC char	SEPS[] = "\"#$&'()*:;<=>?[\\]^`{|}~\n\t ";
+
 /*
 **  Move back to the beginning of the current word and return an
 **  allocated copy of it.
@@ -1068,18 +1082,33 @@ end_line()
 STATIC CHAR *
 find_word()
 {
-    static char	SEPS[] = "#:;&|^$=`'{}()<>\n\t ";
-    CHAR	*p;
+    CHAR	*p, *q;
     CHAR	*new;
     SIZE_T	len;
 
-    for (p = &Line[Point]; p > Line && strchr(SEPS, (char)p[-1]) == NULL; p--)
-	continue;
+    p = &Line[Point];
+    while (p > Line) {
+	p--;
+	if (p > Line && p[-1] == '\\') {
+	    p--;
+	} else {
+	    if (strchr(SEPS, (char) *p) != NULL) {
+		p++;
+		break;
+	    }
+	}
+    }
     len = Point - (p - Line) + 1;
     if ((new = NEW(CHAR, len)) == NULL)
 	return NULL;
-    COPYFROMTO(new, p, len);
-    new[len - 1] = '\0';
+    q = new;
+    while (p < &Line[Point]) {
+	if (*p == '\\') {
+	    if (++p == &Line[Point]) break;
+	}
+	*q++ = *p++;
+    }
+    *q = '\0';
     return new;
 }
 
@@ -1107,8 +1136,9 @@ c_possible()
 STATIC STATUS
 c_complete()
 {
-    CHAR	*p;
-    CHAR	*word;
+    CHAR	*p, *q;
+    CHAR	*word, *new;
+    SIZE_T	len;
     int		unique;
     STATUS	s;
 
@@ -1116,14 +1146,28 @@ c_complete()
     p = (CHAR *)rl_complete((char *)word, &unique);
     if (word)
 	DISPOSE(word);
-    if (p && *p) {
-	s = insert_string(p);
+    if (p) {
+	len = strlen((char *)p);
+	word = p;
+	new = q = NEW(CHAR, 2 * len + 1);
+	while (*p) {
+	    if ((*p < ' ' || strchr(SEPS, (char) *p) != NULL)
+				&& (!unique || p[1] != 0)) {
+		*q++ = '\\';
+	    }
+	    *q++ = *p++;
+	}
+	*q = '\0';
+	DISPOSE(word);
+	if (len > 0) {
+	    s = insert_string(new);
 #if ANNOYING_NOISE
-	if (!unique)
-	    (void)ring_bell();
+	    if (!unique)
+		(void)ring_bell();
 #endif
-	DISPOSE(p);
-	return s;
+	}
+	DISPOSE(new);
+	if (len > 0) return s;
     }
     return c_possible();
 }
@@ -1415,3 +1459,7 @@ STATIC KEYMAP	MetaMap[17]= {
     {	'w',		copy_region	},
     {	0,		NULL		}
 };
+
+/*
+ * $PchId: editline.c,v 1.4 1996/02/22 21:16:56 philip Exp $
+ */

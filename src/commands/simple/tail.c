@@ -58,11 +58,6 @@
 #include <stdio.h>
 
 /* External interfaces that should have been standardized into <getopt.h> */
-#ifdef _MINIX
-_PROTOTYPE(int getopt, (int argc, char **argv, char *options));
-#else
-extern int getopt();
-#endif
 extern char *optarg;
 extern int optind;
 
@@ -325,17 +320,34 @@ int read_until_killed;		/* keep reading at EOF */
  */
 int keep_reading()
 {
-  int c;
+  char buf[1024];
+  int n;
+  int i;
+  off_t pos;
+  struct stat st;
 
+  pos = lseek(0, (off_t) 0, SEEK_CUR);
   for (;;) {
-	sleep(SLEEP_INTERVAL);
-	clearerr(stdin);
-	while ((c = getchar()) != EOF) {
-		if (putchar(c) == EOF)
-			return FAILURE;
+  	for (i = 0; i < 60; i++) {
+  		while ((n = read(0, buf, sizeof(buf))) > 0) {
+  			if (write(1, buf, n) < 0) return FAILURE;
+  		}
+  		if (n < 0) return FAILURE;
+
+		sleep(SLEEP_INTERVAL);
 	}
-	if (ferror(stdin))
-		return FAILURE;
+
+	/* Rewind if suddenly truncated. */
+	if (pos != -1) {
+		if (fstat(0, &st) == -1) {
+			pos = -1;
+		} else
+		if (st.st_size < pos) {
+			pos = lseek(0, (off_t) 0, SEEK_SET);
+		} else {
+			pos = st.st_size;
+		}
+	}
   }
 }
 

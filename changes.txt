@@ -1,0 +1,968 @@
+Short list of differences between 2.0 and 2.0.3:
+
+  - The ability to run Minix under DOS.
+
+  - New and improved network task.  More stable then the old inet, and
+    allows for user-space serial IP (PPP).  ("Allows for" means that only
+    a simple SLIP daemon is supplied.  Look for PPP elsewhere.)
+
+  - Network configuration changed from behind the times RARP to modern DHCP,
+    see boot(8).
+
+  - Disk like devices (/dev/hd*, cd*, sd*) changed to generic controller
+    names (/dev/c0d*, /dev/c1d*, etc.).  Read controller(4) for the gory
+    details.  Example: /dev/c0d0p1s0 is now what used to be /dev/hd2a!
+    (It may not seem like it, but this is a simplification.)
+
+  - The 4 gigabyte disk limit has been replaced by a 2 terabyte limit.  (IDE
+    disks still limited to 128G though.  Individual partitions also still
+    limited to 4G.)
+
+  - The Minix /bin/sh is replaced by the BSD shell (formerly /usr/bin/ash.)
+    Makes life easier (always line editing), but is also more memory hungry,
+    which is why we have:
+
+  - A simple form of swapping that may make life on really old crates
+    bearable.  (Alas it isn't good enough to counter the memory need of
+    the BSD shell, so 2.0.3 needs more than 640K in 16-bit mode.  This
+    will be fixed in a next version, promise.)
+
+  - Console driver lines/columns is no longer fixed at 80x25.  (See boot
+    monitor's 'console' variable.)
+
+  - The 'cc' driver now does separate I&D by default.  You need 'cc -com' to
+    get common I&D binaries.  (Only the bootstraps really need this.)
+
+  - Its now enough to use 'cc -D_MINIX' to have all POSIX, common UNIX and
+    Minix extensions defined.  (One used to use -D_MINIX -D_POSIX_SOURCE).
+
+  - In 16-bit mode, what used to be 'cc -m' is now the default.  The new
+    'cc -m' behaviour is to change C code to K&R style before passing it to
+    the C compiler to reduce memory use even further.
+
+  - Support in MM for #! to name the interpreter in scripts.  Random scripts
+    are no longer seen as shell scripts, #!/bin/sh is required.
+
+  - Startup scripts (/etc/rc, /usr/etc/rc) rewritten.  Single user mode
+    (boot -s) to interrupt the boot process and do repairs.  Daily
+    cleanup scripts that are run each night from cron, not just at
+    reboot.  Minix can now run continuously.  (Ignoring the little fact
+    that the clock tick counter will overflow in 414 days.)
+
+Short list of changes in commands:
+
+  - pc, m2: Pascal and Modula-2 compilers.
+
+  - readclock -w: Write the current time into the CMOS clock.
+    readclock -2: Add 20 years to compensate for a clock with a Y2K bug.
+
+  - Several old, useless or minix-only commands removed.
+
+Short list of changes in manual pages:
+
+  - New:	pc(1), m2(1), env(1), uptime(1), xargs(1), crontab(1),
+		dosd(4), ACK(7), cron(8), config(8), dosminix(8),
+		serial-ip(8), slip(8).
+
+  - Changed:	cc(1), installation manuals.
+
+Long list of differences between 2.0 and 2.0.3:
+
+    (Warning: This list is riddled with lame jokes and other silly things that
+    happen to sneak in when doing something as boring as compiling this list.)
+
+    include/ansi.h
+	Sets _POSIX_SOURCE if _MINIX is set.  This means that just
+	'cc -D_MINIX' is enough to also add posix support.  (Makes no sense
+	without anyway.)
+
+    include/configfile.h
+	New header file for the common configuration file format.
+
+    include/dirent.h
+	Include <sys/types.h> by itself.  This fixes the bug that required
+	<sys/types.h> to be included before most things in C source files.
+	Many other standard include files also do this, but I won't bore
+	you by mentioning them here.
+
+    include/ibm/cmos.h
+    include/ibm/portio.h
+	Definitions for the CMOS clock and IBM port I/O routines.
+
+    include/minix/com.h
+	Appearance of the DOSDSK task.
+
+    include/ibm/int86.h
+	Defines 'union reg86', a type used to carry register values for
+	interrupt calls.  Used by the BIOS and DOS drivers, and by the
+	experimental user mode BIOS calls.
+
+    include/ibm/partition.h
+	Unused older Minix partition type removed.
+
+    include/minix/boot.h
+	Removed.  MM and FS use a new system call to get boot parameters, a
+	call that can also be used from user space (see svrctl and sysenv).
+
+    include/minix/callnr.h
+	New svrctl system call, an ioctl like call for servers and tasks.
+	Is used to implement small stuff for which a full blown system call
+	is too much honour.
+
+    include/minix/com.h
+	One task renamed (DL_ETH -> DP8390) and several changed from specific
+	names (CDROM, SCSI, WINCHESTER) to a generic controller name
+	(CTRLR(n)).  The OPTIONAL_IO attribute is replaced by DEV_SCATTER
+	and DEV_GATHER device codes to write to or read from an array of
+	blocks.
+
+    include/minix/config.h
+	Release and version number changed from 3 digits to just 2.  With
+	one release every so many years we don't need three levels.
+	ROBUST setting removed, because it is the opposite of robustness.
+	NR_CTRLRS added, specifying the number of controller tasks.
+	ENABLE_NETWORKING removed.  The inet server is no longer part of the
+	kernel image.  It is optionally started later as a program.
+	ENABLE_ATAPI added for the ATAPI (CDROM) support in the AT/IDE driver.
+	Cosmetic change of "ADAPTEC" in "AHA1540" in this and several other
+	files.
+	Added ENABLE_FATFILE and ENABLE_DOSFILE for two "file as disk" drivers.
+	ENABLE_DP8390 is a new master switch for the network drivers based
+	on the DP8390 chip.  Code for specific cards can be turned on with
+	ENABLE_WDETH, ENABLE_NE2000, and ENABLE_3C503.
+	Atari and shadowing code removed.  It's not used, so I can't maintain
+	it working with respect to other changes.
+
+    include/minix/const.h
+	Copyright changed to tell you that /usr/src/LICENSE contains the new
+	BSD style license.  "Do what you want with this, but don't mention
+	us, and don't blame us for anything" is what us normal people think
+	the lawyers are saying there.
+	CLICK_SIZE increased from 256 to 1024 to make swapping to disk more
+	efficient.  Has the side effect of increasing the maximum addressable
+	memory in 16-bit protected mode to 64 MB.  (You need 512 processes
+	of 128K to reach that amount.  The process tables can't possibly
+	be that big.)
+
+    include/minix/partition.h
+	Partition base and size are now u64_t, a structure posing as a 64
+	bit number.
+
+    include/minix/swap.h
+	Describes the header used on swap files/partitions.
+
+    include/minix/u64.h
+	A buch of routines for 64 bit operations.  There is no 'long long',
+	so we have to make do with this.
+
+    include/net/
+	Complete overhaul for the new network task.
+
+    include/signal.h
+	SIGCHLD signal (child terminated) added to the supported set.  _NSIG
+	raised from 16 to 17.
+
+    include/stdio.h
+	Added snprintf() and vsnprintf() to help code to combat buffer
+	overflows.
+
+    include/string.h
+	Added strncasecmp() and strnlen().
+
+    include/sys/ioctl.h
+	Some new calls for the network task.
+	New calls for user mode BIOS calls and manipulating LDT entries
+	(memory mapping.)
+	Mitsumi CD-ROM ioctls removed.
+
+    include/sys/svrctl.h
+	New svrctl for odd system calls: Calls for a program to sign on as
+	a server (inet), swapon/off, get boot parameter.
+
+    include/sys/types.h
+	New u64_t type defined as a struct of two u32_t's.
+
+    src/LICENSE
+	Removed: "Free for educational use" license.
+	Added: "Free for any use" BSD style license.
+
+    src/Makefile
+	You can now make 'world', 'libraries', 'all', and 'install'.  Just
+	type 'make' to see what each does.
+
+    src/boot/
+	Edparams command merged into boot.c, block caching removed to reduce
+	complexity, simply "one command" functions don't need {}, 'memsize'
+	and 'emssize' removed in favour of 'memory', new 'leader' and 'trailer'
+	functions to print greeting messages.
+	A20 enable/disable code in boothead.s has special code for PS/2
+	machines.
+	Bootblock no longer fiddles with the floppy parameters.  Really old
+	crates that expect this no longer boot without a workaround.  New
+	systems that do not expect this now work.
+	Sit in a HLT to save power while doing nothing.
+	Use new BIOS calls to break the old 8G BIOS barrier.  Limit now 2T.
+	BOOT.COM and MKFILE.COM code ported from Minix-vmd.
+	Extboot code replaced by more generic jumpboot bootstrap.
+	Knowledge of controller style devices added, while remaining
+	backwards compatible to I don't know when.
+
+    src/commands/aal/
+	Added 'u' flag to make aal more ar compatible.
+
+    src/commands/ash/
+	Ash no longer runs any old file as a script if it has executable bits.
+	It leaves this to execve(), and execve only runs scripts that start
+	with #!.
+	Don't turn on -e or -x until .profile is done.
+
+    src/commands/cron/
+	New cron backported from Minix-vmd.  Has per-user cronjobs and stuff.
+	See cron(8) and crontab(1).
+
+    src/commands/dhcpd/
+	New DHCP client/server program.  See dhcpd(8) and dhcp.conf(5).
+
+    src/commands/i386/asmconv/
+	GNU assembly parser added by R. Veldema, but still buggy.  Fixes
+	by Will Rose not yet incorporated.  (I totally forgot about this
+	until I saw it here while I compiled this list for 2.1.)
+
+    src/commands/i386/mtools-3.9.7/
+	New mtools command to operate on FAT file systems to replace the
+	buggy dos{dir,read,write} on 386+ systems with enough memory.
+	Type 'mtools' to see how it works.  The manual pages were junk,
+	so the're not added.  With -? you can figure it all out.
+	(I really should start a commands/big hierarchy.)
+
+    src/commands/i86/cc.c
+	ASCII EM parser added to translation tables.  "What's that?", you
+	say?  ACK translates from high level to an abstract machine, named
+	EM, which in turn is translated to the target machine.  The ability
+	to compile ASCII EM code is nice for machine independent libary
+	files written in EM assembly.
+	Made 'cc -m -i' the default.  Repaired the irrel pass (-m) to not
+	choke on big functions, and made it able to turn a standard C file
+	to K&R for the new -m flag.
+
+    src/commands/ibm/
+	Removed the Mitsumi stuff (cdplay, etc.).
+
+    src/commands/ibm/loadfont.c
+	Changed to be able to load the appropriate font from a combined font
+	file, a file that contains 8x8, 8x14, and 8x16 dot fonts.  Font
+	files in /usr/lib/fonts/ replaced by combined fonts.
+
+    src/commands/ibm/part.c
+	Changed to know about controller devices and 64 bit disk offsets.
+	Still user-hostile/expert-friendly.
+
+    src/commands/ibm/readclock.c
+	Revamped to properly set the clock (Philip read a data sheet), and
+	a Y2K kludge to add 20 years to a clock set 20 years back because it
+	can't run in 2000.  (Options -w and -2.)
+	Reads a TZ boot variable that tells the timezone of the hardware
+	clock.  Use 'TZ=GMT0' and forget about summer and winter time
+	changeovers.  (Windows will go bonkers, of course, which is why
+	my Windows systems use the timezone of Casablanca.  Windows doesn't
+	know what time it is no matter what timezone you use.)
+
+    src/commands/make/
+	An "include" command added to the syntax.  Timing problem on fast
+	machines fixed.
+
+    src/commands/reboot/
+	Log shutdown messages in /usr/adm/log instead of authlog.  (Reduces
+	the number of logfiles to one.)
+
+    src/commands/scripts/DESCRIBE.sh
+    src/commands/scripts/MAKEDEV.sh
+	Code to describe/create new ethernet and controller devices added.
+
+    src/commands/scripts/cd.sh
+	A script for all the commands builtin to the shell.  Simply lets
+	the shell do the work.  Thanks to the new #! stuff in MM this can
+	work.  Does [, cd, command, echo, expr, false, getopts, read, test,
+	true, umask, and wait.  Does away with any C code for same.
+
+    src/commands/scripts/clear.sh
+	Short for 'tget -str cl'.  Replaces clr.c thanks to #!.
+
+    src/commands/sh/
+	Old Minix shell.  Now installed as /usr/bin/msh.
+
+    src/commands/simple/at.c
+	Still puts an at job in /usr/spool/at/, but alerts cron to this
+	instead of letting the now dead atrun command run the job.
+
+    src/commands/simple/cleantmp.c
+	New command to carefully clean out /tmp directories.
+
+    src/commands/simple/cp.c
+	Uses a temp file for hard link administration so that it no longer
+	blows up trying to keep track of too many hard links.
+
+    src/commands/simple/crc.c
+	Use strerror() to print a meaningful error message instead of just
+	"cannot open".  Not a very spectacular change, but I wanted to pay
+	attention to this, as many programmers still have lousy error
+	reporting in their code.
+
+    src/commands/simple/date.c
+	Added a bit of silliness in the form of a -S flag.  It gives the
+	time as "eternal september".  September used to be the time that
+	new, uneducated, college students learned about the net.  With the
+	start of Prodigy and AOL close to september 1993 some say that
+	that month never ended.  It's Sun Sep 2805 17:28:16 CEST 1993 when
+	I write this.  :-)
+
+    src/commands/simple/df.c
+	Replaced by the Minix-vmd version that has many more options, including
+	POSIX mandated 'df -P'.
+
+    src/commands/simple/ed.c
+	Added 'ed -s' as a synonym for 'ed -'.  Fixed a bug with character
+	classes that went unnoticed for an amazing time.  (Using two regular
+	expressions went bad on the second.)
+
+    src/commands/simple/env.c
+	New environment manipulation command.  Not very useful, but POSIX
+	mandates it.
+
+    src/commands/simple/fsck.c
+	"Huge directory" warnings removed.  Directories really can get big.
+	Errors with overflows on filesystems with exactly 65535 inodes fixed.
+
+    src/commands/simple/getty.c
+	Run a shell on the console if you can't execute login.
+
+    src/commands/simple/grep.c
+	Grep fix to work properly as grep and also as egrep.  I believe
+	Michael Haardt gave me the patches.
+
+    src/commands/simple/hostaddr.c
+	Changed to use data gathered by DHCP.
+
+    src/commands/simple/intr.c
+	Used in /etc/rc to connect a program back to the console, because
+	/etc/rc is now run completely disconnected to keep programs from
+	having a process group and dying when /etc/rc is done.
+
+    src/commands/simple/irdpd.c
+	Old "look for a router" daemon.  Still available for odd cases, but
+	replaced by DHCP normally.
+
+    src/commands/simple/isoread.c
+	Fixed by Al Woodhull so that it now actually works.
+
+    src/commands/simple/kill.c
+	You can now use 'kill -HUP' instead of 'kill -1'.  See signal list
+	in sigaction(2).
+
+    src/commands/simple/last.c
+	Show time since boot if called as "uptime".
+
+    src/commands/simple/ls.c
+	The -T option shows time to the second.  -D (formerly -T) sorts by
+	file type.  This is a halfbaked ls, whole alfabet still far from
+	fully used as option letters.
+
+    src/commands/simple/mkdir.c
+	Allows you to write 'mkdir -m 755' too.  The -m option used to only
+	do symbolic modes, as if anyone can remember how.
+
+    src/commands/simple/mkswap.c
+	New command to initialize swap partitions or files as such.
+
+    src/commands/simple/mount.c
+    src/commands/simple/umount.c
+	Let mount and umount turn on/off swapping with -s.
+
+    src/commands/simple/nonamed.c
+	Use the name daemons found by DHCP for information.
+	Added a cache to make it useful for offline use.
+
+    src/commands/simple/printf.c
+	New command that is works like the printf() library function.  It's
+	a new echo that doesn't suffer from BSD vs SystemV incompatibilities.
+	(Under SystemV the behaviour of 'echo -e' is the default.)
+
+    src/commands/simple/rarpd.c
+	Dumbed down to be a pure RARP daemon.  It used to configure the
+	network devices, but that is now dhcpd's job.
+
+    src/commands/simple/slip.c
+	Implementation of the SLIP protocol, but no header compression.
+	Merely an example of Pseudo IP network device programming.  Real PPP
+	programs can be obtained at the other side of the world.
+
+    src/commands/simple/stat.c
+	New command that is the shell level equivalent of the stat(2) system
+	call.
+
+    src/commands/simple/stty.c
+	Taught about pixel sizes, mostly useful to guess the console font
+	size.
+
+    src/commands/simple/sysenv.c
+	New command to show the boot environment with the help of the svrctl(2)
+	system call.  Just type 'sysenv'.
+
+    src/commands/simple/tcpd.c
+	Has a normal and a paranoid version.  The latter is run if
+	/etc/serv.access exists to enable network access restrictions.
+
+    src/commands/simple/xargs.c
+	New xargs command obtained from BSD.
+
+    src/commands/urlget/
+	New command to get a file from a Web or FTP site.
+
+    src/etc/hostname.file
+	This and more files added as defaults to fill /etc/ with (mkdist).
+
+    src/etc/inet.conf
+	New configuration file for inet.
+
+    src/etc/profile
+	Timezone now by default GMT instead of CET.  (I happen to be in
+	The Netherlands, i.e. the CET timezone.  You shouldn't be bothered
+	by that fact.)
+
+    src/etc/rc
+	Large changes in system startup.  /etc/rc now knows a single user
+	mode (boot -s) and calls /usr/etc/rc to do the hard work.  (Inspired
+	by Minix-vmd.)
+
+    src/fs/Makefile
+	FS is now needs the -lsys library for calls to the system task.
+
+    src/fs/cache.c
+	The scatter/gather I/O has been rewritten.  It used to use a vector
+	of individual (position, buf, nbytes, read/write) requests.  This
+	was too rich for the way it was used.  Now a single starting disk
+	position is used, its all reads (GATHER) or all writes (SCATTER)
+	and the vector only describes memory as (address, size) pairs.
+	So one big disk block is read into a bunch of memory blocks, or
+	written from a bunch of memory blocks.  (In retrospect the gather
+	= read and scatter = write names should have been reversed.  "Gather"
+	just reminds one too much of reading and scatter of writing.)
+
+	One important point is that the device drivers only need to do the
+	first element of the memory vector, the rest is optional.  So
+	a floppy disk driver may stop at the end of a track.  The write
+	code in cache.c knows this and will repeat a scatter operation
+	until all the dirty blocks are written out.
+
+    src/fs/device.c
+	The interface to the devices has been improved.  In order to "open"
+	a device one used to do this:
+
+		major = (dev >> MAJOR) & BYTE;
+		task = dmap[major].dmap_task;
+		dev_mess.m_type = DEV_OPEN;
+		dev_mess.DEVICE = dev;
+		dev_mess.COUNT = R_BIT|W_BIT;
+		(*dmap[major].dmap_open)(task, &dev_mess);
+		r = dev_mess.REP_STATUS;
+
+	All this tedious code has been replaced by:
+
+		r = dev_open(dev, FS_PROC_NR, R_BIT|W_BIT);
+
+	In many places in FS one can find dev_open() and dev_close()
+	replacing the seven line equivalent.  The existing dev_io()
+	routine has had its arguments rearranged a bit, but is basically
+	unchanged.  (Only the specific "nonblock" flags became a generic
+	"flags" field.)
+
+	The dev_*() routines use the dmap[] table to interface to a several
+	kinds of devices.  Usually its gen_opcl() and gen_io() for generic
+	devices.  (Note that separate open and close routines have been
+	mapped to a single opcl.)  Some devices require special processing,
+	so there is tty_opcl() for terminals to do "controlling terminal"
+	stuff, ctty_*() for /dev/tty, and clone_opcl() for the TCP/IP
+	server.
+
+	Ergo:
+		dev_open(), ---> dmap_opcl ---> gen_opcl(), tty_opcl(),
+		dev_close()                     ctty_opcl(), clone_opcl()
+
+		dev_io() ---> dmap_io ---> gen_io(), ctty_io()
+
+	The *_opcl() functions also use dev_io()/dmap_io to pass there
+	request down to the device after doing special open/close processing.
+	(Whether they use dev_io() or dmap_io depends on what is convenient
+	at a given point in the code.  Dev_io() builds a message and chooses
+	the proper dmap[] entry, something one may have already done.)
+
+    src/fs/main.c
+	Main now uses the new sys_sysctl() call to get boot parameters out
+	of the kernel.  (Sys_sysctl() is the kernel interface of the new
+	svrctl() system call.) The old SYS_GBOOT call to get some boot
+	parameters is dead.  Variables like ROOT_DEV that aliased boot
+	parameter fields have been renamed to root_dev.
+
+	A special process ID value PID_SERVER has been invented to mark
+	processes that are or have become a server, like MM, FS and INET.
+
+	Many examples of the new dev_open() and dev_close() found here.
+
+    src/fs/misc.c
+	Addition of the FS side of the new svrctl() system call.  It
+	implements the FSSIGNON call that allows a process to tell FS that
+	it is becoming a server and that it wants to handle a given
+	group of devices in a given way.  (I.e. "generic", "as a terminal",
+	"clone on open".  The latter is for inet, where each open of a
+	TCP/IP devices causes a new device inode to spring to life for the
+	new TCP/IP connection.
+
+    src/fs/open.c
+	Pipe administration moved to the proper first two different zone
+	number slots in the in-core inode.  Leave last zone number free.
+
+    src/fs/pipe.c
+	The totally unused XOPEN code removed.  There is a dmap[] call
+	here that I dare not replace by dev_io().  Too strange.
+
+    src/fs/read.c
+	Unneeded check of rw position against MAX_FILE_POS removed.  It
+	caused I/O of more than 4G through character devices to fail.
+	(Many character devices don't even care about the position.)
+	(Found by people doing I/O speed tests.  Today's hardware is so
+	ridiculously fast that they ran into the limit in no time.)
+
+    src/fs/table.c
+	Svrctl call added.  Dosdisk table entry added.  Open and close dmap[]
+	entries merged into a single opcl field.  (They mostly contained
+	the same value already.)  The /dev/ip entry is now always unused,
+	but can be claimed by INET later.
+
+    src/inet/
+	Replaced by a much newer version.  Stable, two ethernets and two
+	pseudo IP networks for serial IP for instance.  For 2.0.3 the
+	startup code was changed to allow the program to start as an
+	ordinary program, to configure itself from /etc/inet.conf and to
+	become a server with a few svrctl() calls.
+
+    src/kernel/3c503.[ch]
+	Code and definitions for the 3C503 network adapter by G. Falzoni.
+
+    2.0.0/src/kernel/aha1540.c
+	The file aha_scsi.c is renamed to aha1540.c to better reflect the
+	type of card.  Useful if someone with lots of time writes a 2940
+	driver, so they won't clash in name.
+
+    src/kernel/*_wini.c
+	Each of the disk drivers can be tied to any of up to four controller
+	tasks through the boot monitor (c0=at, etc).  To make this possible
+	the task number is no longer hardcoded.
+
+	The schedule/finish routines have been replaced by a single transfer
+	function.  The abstraction went too far.  The schedule function
+	usually did nothing but recode the I/O vector in a different
+	structure (struct trans) and hand it over to finish.  Now this is
+	all done by transfer().  (Pity this schedule/finish mistake has been
+	immortalized in the second book.  That's the problem with such major
+	mistakes, they never really go away.)
+
+	The transfer function now has to work with the simplyfied I/O vector.
+	This makes these questions unnecessary:  "Byte positions still
+	consecutive?", "I/O direction still the same?", "Is this part of the
+	vector optional?"
+
+	64-bit byte position computations.  Common code like this:
+
+	    block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
+
+	Has due to the lack of a built-in 64-bit type been replaced by this:
+
+	    block = div64u(add64ul(w_dv->dv_base, position), SECTOR_SIZE);
+
+	See the int64(3) manual page for a list of these 64 bit routines.
+
+    src/kernel/at_wini.c
+	Addition of ATAPI CD-ROM code by Michael Temari.  (His changes were
+	fairly benign.  Blame me for the huge differences.)
+
+    src/kernel/bios_wini.c
+	Old bios13 calls removed in favour of the newer, more generic,
+	int86 call.  (Drivers can now make any BIOS call they want.)
+	This driver is still the most easily understood of all drivers.
+	Read it first if you want to study disk drivers.
+
+    src/kernel/clock.c
+	Old timer value returned by alarm(2) rounded up to the nearest second.
+	Alarm should never return 0 if the timer is still running.
+
+    src/kernel/console.c
+	Screen dimensions (rows/columns) now variable and obtained from the
+	BIOS tables.  This makes it possible to run the console in 132x43 if
+	the video card permits.  Reverse video bug fixed.  Report screen
+	pixel sizes in termios struct.
+
+    src/kernel/const.h
+	IRQ vectors renumbered to 0x50 (more or less free) and 0x70 (same
+	as BIOS).  This does not upset DOS.
+
+    src/kernel/dosfile.c
+	New driver to see a big DOS file as a Minix disk using DOS file I/O.
+
+    src/kernel/driver.c
+	Changes to allow one task to make I/O calls to another task, like
+	dosdisk to at_wini.  The do_rdwt and do_vrdwt rewritten to use
+	transfer instead of schedule/finish.
+
+    src/kernel/fatfile.c
+	New driver to see a big file on a FAT file system by interpreting
+	a FAT file system directly to find the blocks of a file.
+
+    src/kernel/floppy.c
+	Loose arrays carrying floppy parameters merged into one array of
+	structs.  Some parameters (like start times, head settle times)
+	increased a bit after observing reference manual.  (Not that the
+	old parameters ever seemed to be a problem.)  Series of fdc_out()
+	calls replaced by a single fdc_command() with better checking.
+
+    src/kernel/keyboard.c
+	Left and right versions of shift-type keys better kept apart.  (One
+	used to be able to press both control keys and release just one to
+	make the system think control was no longer active.)  CTLR-ALT-INS
+	has the same effect as CTRL-ALT-DEL for Minix in a Windows window.
+	Lock key state (caps, num and scroll lock) kept per virtual console.
+	Struct kb_s removed, since there is only one keyboard.  (Only
+	kb_lines[0] was used, wasting the rest.)  Better tracing of ALT keys
+	(CTRL + left-ALT is the same as right-ALT, also know als ALTGR
+	on national keyboards like the German one.)
+
+    src/kernel/keymaps/italian.src
+	Replaced by keymap supplied by Ernesto Del Prete.
+
+    src/kernel/keymaps/polish.src
+	Brand new keymap by Antek Sawicki.
+
+    src/kernel/klib386.s
+    src/kernel/klib88.s
+	BIOS disk I/O function bios13 replaced by more generic int86
+	interrupt call.  A20 enable/disable code in klib88 has special
+	code for PS/2 machines.
+	Video memory code changed to address video memory at vid_seg:vid_off
+	instead of vid_seg:0 to support different ways of handling segments.
+	16-bit p_cp_mess changed to handle any click size instead of just
+	256.  Both p_cp_mess and p_phys_copy compute full 32 bit physical
+	addresses.
+
+    src/kernel/main.c
+	Kernel, MM, FS, etc. information now comes from an array of a.out
+	headers supplied by the boot monitor.  Available memory comes from
+	the new 'memory' boot variable.  This allows Minix to start in an
+	arbitrary location in memory, for instance in the memory that DOS
+	offers as "free".
+
+    src/kernel/mcd.c
+	Mitsumi CD-ROM driver removed.  Not only is it obsolete, I couldn't
+	even test any changes, because the only drive we had has gone missing.
+
+    src/kernel/memory.c
+	"RAM disk is too big" message changed into "Not enough memory for
+	RAM disk".  The old message confused people, although either message
+	is equally right.
+	New user BIOS ioctl added that allows a user process to execute a BIOS
+	call if it doesn't mind being limited to the DMA buffer if it needs
+	memory for the call.
+	New LDT getting and setting ioctl.  A user process has two LDT entries
+	that it can set to any range of memory, video memory for instance.
+
+    src/kernel/misc.c
+	Get free memory list from the 'memory' boot variable.  "Shadow RAM"
+	feature removed, current machines don't have shadow RAM under 16M
+	anymore.
+
+    src/kernel/mpx386.s
+    src/kernel/mpx88.s
+	New feature flag bits: Don't patch any sizes into the kernel, offer
+	generic INT support, pass a memory list, new way to pass monitor code
+	back.
+	The IDLE task executes a HLT instruction to save power.  (Keeps my
+	new notebook from turning its fan on.  There is nothing like a
+	personal reason to add a feature.  It also makes VMWare happy.)
+
+    src/kernel/printer.c
+	Printer driver is made optional with an ENABLE_PRINTER switch.
+
+    src/kernel/proc.c
+    src/kernel/proc.h
+	Process type tests changed a bit.  The queue could be chosen easily
+	using the new p_priority field that tells if a process is a not there,
+	a task, a server, a user process or the IDLE task.  This field allows
+	that a user process can change into a server.  The static division
+	on slot number didn't allow this.
+	Almost forgot to mention this detail:  All the shadowing code has
+	been removed.  It got too difficult to maintain something that is
+	not currently used.  In such cases one should not hesitate.
+
+    src/kernel/protect.c
+    src/kernel/protect.h
+	Small interrupt vector / segment descriptor initialization changes.
+	Code and data bases moved to the early start code.
+	New phys2seg() routine that translates a physical address to a
+	segment/offset pair in real mode, or a selector/offset pair in
+	protected mode.  In 16-bit protected mode the selector must be chosen
+	among 64K segments starting at 0xA0000, 0xB0000, 0xC0000 and 0xD0000.
+	These selectors replace dedicated video and ethernet selectors that
+	also point in the those areas.  (Now there doesn't have to be added
+	new selectors if a new task needs a memory area.)
+	In 32-bit protected mode the flat 4G selector is simply used.
+
+    src/kernel/pty.c
+	It was so simple.  Just let ioctls on the pty side have the same
+	effect as ioctls on the tty side and rlogin is able to transmit the
+	window size.  Why didn't I figure this out before?  Now we are no
+	longer limited to exactly 80x24 windows to log into Minix.  (Only
+	Window size changes aren't automatic yet.  Needs SIGWINCH.)
+
+    src/kernel/rs232.c
+	Thanks to XXX the CLOCAL mode now works properly.
+
+    src/kernel/start.c
+	Changes to allow for the variable placement of the kernel in memory.
+	Boot parameters structure removed.  FS now uses svrctl calls to get
+	boot parameters.
+
+    src/kernel/system.c
+	Sys_sysctl, the kernel side of the svrctl call added.  Sys_puts that
+	allows MM and FS to send console messages instead of bothering the
+	TTY task (no problems anymore with ^S/^Q processing).  Sys_findproc
+	that allows a server to find a task by name, like the TCP/IP task
+	that needs DP8390.
+	Lots of small changes in process type tests.  Many "can't happen"
+	panics changed into asserts that are compiled out in 16-bit mode.
+	(So 16-bit code is smaller, but runs without checks, or as the
+	comment in assert.h says: "8086 must do without training wheels".)
+	The svrctl calls allow a process to become a server, and implements
+	a getenv() like call for boot parameters.
+	New vir_copy() call to copy bytes from one process' address space to
+	that of another.  Saves making umap calls in those places where
+	speed isn't required, and saving a few code bytes always is.
+
+    src/kernel/table.c
+	Changes in the driver choice code for controllers.  Mapdrivers()
+	function added to make those choices.
+
+    src/kernel/type.h
+	Interface declarations for the int86 routine using a big fat union
+	to be able to access 8086/386 registers in many different ways, i.e.
+	reg86.b.al, reg86.w.al, reg86.l.eax.
+
+    src/kernel/wini.c
+	Removed.  The disk driver selection code has been generalized and
+	moved to table.c
+
+    src/lib/ansi/atoi.c
+	Changed to simply call strtol().
+
+    src/lib/ansi/malloc.c
+	Malloc changed so that it no longer sets errno to ENOMEM if it
+	succeeds.  Should be no problem, except that a common bug in the
+	use of perror() causes "Not enough core" errors to appear instead
+	of the proper error message.
+
+    src/lib/ansi/misc.c
+	Fixed list of (outdated) time zone information removed.  One should
+	use a proper TZ definition.
+
+    src/lib/dummy/
+	Creates an empty dummy library that is used as libm.a so that -lm
+	works.  (Minix math code is in the C library.)
+
+    src/lib/editline/
+	Filename completion (if you hit TAB) changed to understand weird
+	characters in filenames.  They are simply quoted with a backslash.
+
+    src/lib/end/
+	End label declarations simplified a bit.
+
+    src/lib/i386/int64/
+    src/lib/i86/int64/
+	Assembly routines for 64-bit integers.
+
+    src/lib/i386/misc/oneC_sum.s
+    src/lib/i86/misc/oneC_sum.s
+	Assembly version of oneC_sum(), the Internet checksum.  It speeds
+	up networking quite nicely on not too fast machines.  (The problem
+	with fast machines is that you don't notice it at all if your code
+	is rotten.  That's why a certain Redmond based company should be
+	forced to develop on 486s.)
+
+    src/lib/i386/rts/crtso.s
+    src/lib/i86/rts/ncrtso.s
+	The variable '_penviron' is initialized to point to either 'environ'
+	or a hidden variable '_penvp'.  *_penviron is then used throughout
+	the library as the environment pointer.  Applications can now use
+	(and change) 'environ' as the environment pointer, or stupidly use
+	'environ' for other things without ill effect.
+
+    src/lib/i386/rts/m2rtso.s
+    src/lib/i386/rts/prtso.s
+    src/lib/i86/rts/nm2rtso.s
+    src/lib/i86/rts/nprtso.s
+	New Pascal and Modula-2 runtime startoffs.
+
+    src/lib/i86/em/
+	Files have em_ prefixed so they don't easily clash with other files
+	with the same name when put in the C library.
+
+    src/lib/i86/misc/getprocessor.s
+	286/386 detection code fixed.  It used a test that depended on
+	the top bits of a segment descriptor being 0xFF on a 286.  Some 386+
+	machines have this for the GDT.  We now use the IDT where this can't
+	happen.
+
+    src/lib/i86/misc/hton86.s
+	Assembly versions of hton[ls] and ntoh[ls].  Not faster or slower
+	than inlined macros, but saves many bytes of code.
+
+    src/lib/ip/
+	Several new and updated network library routines.
+
+    src/lib/libm2
+    src/lib/libp
+	New Pascal and Modula-2 library.
+
+    src/lib/other/_svrctl.c
+	For the new svrctl() system call.
+
+    src/lib/other/configfile.c
+	New "common config file" interpretation routine.
+
+    src/lib/posix/_exec*.c
+	New group of exec*() functions all interfacing to the execve()
+	system call.
+
+    src/lib/rts/
+	New machine independent runtime system stuff, currently containing
+	only setjmp.e moved here from the i386 directory.  An old
+	i86/setjmp.s has been removed.  Hopefully this code will end the
+	spurious "longj err" seen on some old XTs.  Make sure you're seated
+	properly before attempting to read setjmp.e.
+
+    src/lib/syslib/kmalloc.c
+	Small and simple malloc for small things such as the bootstrap.
+
+    src/lib/syslib/kprintf.c
+	Moved here from the 'other' directory.  It is now only put in the
+	-lsys library and only used for low level system code.  Simply as
+	printf, not as printk.  (So that the printf = prink macros is no
+	longer needed.)
+
+    src/lib/syslib/putk.c
+	Used by the kernel printf to put characters on the console with a
+	SYS_PUTS call to the SYSTEM task.  If that fails then a write()
+	system call is used.  The TCP/IP task needs this to be able to print
+	messages before and after it becomes a server.
+
+    src/mm/alloc.c
+	Swapping code added.  It works by treating swap space as memory that
+	sits above swap_base.  Alloc_mem() tries to get memory from a hole
+	below swap_base.  If that fails then the swapping code is called to
+	move blocked processes' data spaces away to holes above swap_base.
+	Only processes blocked on MM can be swapped out, and only their data
+	spaces.  (Alas this isn't good enough for 640K XTs, so next on the
+	agenda is swapping code spaces of any process.  This needs help from
+	the kernel, because the kernel isn't to run those processes.)
+
+	The max_hole() code is removed, because it was too difficult to
+	figure out what the biggest hole is after swapping everything out
+	that can be swapped out.  The exec code that needed it was simply
+	rewritten to immediately use alloc_mem() instead of first testing
+	with max_hole().  This is actually better because splitting the test
+	and the action over two separate calls is a bad style of programming
+	that leads to race conditions and/or security holes.
+
+	Mem_init() sets the swap_base to one click above the last normal
+	memory click.
+
+	Swap_on() opens a file through FS to use for swapping.
+
+	Swap_off() closes the swap file if all currently swapped out
+	processes can be swapped in.
+
+	Swap_inqueue() puts a process on a queue of processes that must be
+	swapped in as soon as possible because it is now runnable.
+
+	Swap_in() tries to swap all processes on the inswap queue in.  It
+	is called on each turn through the main loop of MM.
+
+	Swap_out() tries to find a process that is blocked on MM and to swap
+	it out.  It returns true if it could find one.  Alloc_mem loops over
+	this routine if it can't immediately find a big enough hole.
+
+    src/mm/exec.c
+	Code added to handle #! for executable scripts.  A patch_stack()
+	routine can prepend extra arguments to the argv[] array for optional
+	arguments and the name of the script.  This means that if a script
+	that starts with '#!/bin/sh -x' that is called with execle() as
+	'/bin/script script arg1 arg2' (path + argv[]) is executed as
+	'/bin/sh /bin/script -x arg1 arg2'.
+
+	Call to max_hole() trivially changed into directly calling alloc_mem().
+
+	Load_seg() function changed to rw_seg() that can both read and write
+	a segment for use by exec and the swapping code.
+
+    src/mm/main.c
+	Changes in the memory summary code to accomodate the no longer
+	fixed position of the Minix kernel in memory and the memory list.
+
+	The single reply message has been changed into one reply message
+	per process in the process table.  Processes may have to wait to be
+	swapped in so any reply message has to wait to be sent as well.
+
+	The 'dont_reply' flag as been removed and replaced by a special
+	error code, E_NO_MESSAGE, that indicates that no reply message must
+	be sent, or has already been sent.  "Sent" in this case means having
+	been placed in the outgoing message slot in the process table to
+	be actually sent when possible.
+
+	Extra reply codes such as 'result2' have been renamed to field names
+	in the per-process reply message.  A setreply() function replaced
+	reply() to just set a reply message and if needed move a swapped out
+	process to be inswap queue.
+
+	At the end of main()'s main loop it tries to swap processes on
+	the inswap queue in and tries to sent pending messages.
+
+	The SIGCHLD signal is added as a "default ignored" signal.
+
+    src/mm/misc.c
+	New file for miscellaneous system calls, reboot() and svrctl().
+	Svrctl() allows a process to do a semi-exit to become a server,
+	or to add or remove swapspace.
+
+    src/mm/mproc.h
+	The flag name "HANGING" has been renamed to "ZOMBIE", because that
+	is what everyone calls a process that is dead but unwaited for.
+	New flags REPLY (reply message waiting), ONSWAP (data segment swapped
+	out), and SWAPIN (waiting on the inswap queue).
+
+    src/mm/signal.c
+	Many off by one errors on _NSIG fixed.  (_NSIG equals the highest
+	signal number, so (sig <= _NSIG) is the proper test.)
+
+	Open a core file in nonblocking mode to avoid hanging MM on a named
+	pipe.  (Independently found by a few sharpeyed people.)
+
+    src/mm/utility.c
+	Open a file in nonblocking mode in allowed().  Like above, to not
+	hang on an execve of a named pipe.
+
+    src/tools/init.c
+	Query 'bootopts' from the boot environments, the flags given on the
+	boot command of the monitor (e.g. 'boot -s'.)  These flags are passed
+	to /etc/rc.
+
+    src/tools/ps.c
+	Changed to allow 'ps -ef' to do the same as 'ps alx'.  (System V
+	vs. BSD syntax.)
+
+Kees J. Bot <kjb@cs.vu.nl>

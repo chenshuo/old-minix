@@ -5,6 +5,8 @@
  */
 
 
+#define unix	1	/* (kjb) */
+
 #ifndef unix
 #define unix 0
 #endif 
@@ -255,7 +257,6 @@ _PROTOTYPE(void onintr, (int s ));
 _PROTOTYPE(void killdiv, (void));
 _PROTOTYPE(char *strsave, (char *s ));
 _PROTOTYPE(void usage, (void));
-_PROTOTYPE(int getopt, (int argc, char *argv [], char *optstring ));
 
 /* serv.c */
 

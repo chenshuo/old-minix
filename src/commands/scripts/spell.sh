@@ -1,17 +1,35 @@
-case $# in
-1)	prep $1 | sort -u | comm -23 - /usr/lib/dict/words
-	;;
+#!/bin/sh
+#
+#	spell 1.1 - show unknown words			Author: Kees J. Bot
+#								28 Apr 1995
 
-3)	if [ x$1 = "x-d" ]
-	then if [ ! -r /usr/lib/dict/$2 ]
-	     then echo The dictionary file /usr/lib/dict/$2 is not readable
-		  exit
-	     fi
-	     prep $3 | sort -u | comm -23 - /usr/lib/dict/$2
-	else echo Usagex: spell [-d dict] file
-	fi
-	;;
+dict=words
 
-*)	echo Usage: spell [-d dict] file
-	;;
+while getopts 'd:' opt
+do
+	case $opt in
+	d)	dict="$OPTARG"
+		;;
+	?)	echo "Usage: spell [-d dict] [file ...]" >&2; exit 1
+	esac
+done
+shift `expr $OPTIND - 1`
+
+case "$dict" in
+*/*)	;;
+*)	dict="/usr/lib/dict/$dict"
 esac
+
+{
+	if [ $# = 0 ]
+	then
+		prep
+	else
+		for file
+		do
+			prep "$file"
+		done
+	fi
+} | {
+	sort -u | comm -23 - "$dict"
+}

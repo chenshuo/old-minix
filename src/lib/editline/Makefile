@@ -33,8 +33,7 @@ SOURCES	= editline.c complete.c sysunix.c
 LIBRARY = ../libedit.a
 OBJECTS	= $(LIBRARY)(editline.o) $(LIBRARY)(complete.o) $(LIBRARY)(sysunix.o)
 SHARFILES =	README Makefile editline.3 editline.h unix.h editline.c \
-		complete.c sysunix.c testit.c \
-		Make.os9 os9.h sysos9.c
+		complete.c sysunix.c testit.c
 
 install:	$(LIBRARY)
 

@@ -107,7 +107,8 @@ char *argv[];
 			port= (tcpport_t)(servent->s_port);
 	}
 
-	printf("connecting to %s %u\r\n", inet_ntoa(host), ntohs(port));
+	fprintf(stderr, "Connecting to %s:%u...\r\n",
+		inet_ntoa(host), ntohs(port));
 
 	tcp_device= getenv("TCP_DEVICE");
 	if (tcp_device == NULL)
@@ -146,7 +147,7 @@ char *argv[];
 		perror ("unable to NWIOTCPCONN");
 		exit(1);
 	}
-	printf("Connected\r\n");
+	fprintf(stderr, "Connected\r\n");
 	ppid= getpid();
 	pid= fork();
 	switch(pid)
@@ -180,7 +181,6 @@ int fd;
 char *buf;
 unsigned len;
 {
-#if __minix_vmd
 	nwio_tcpopt_t tcpopt;
 	int count;
 
@@ -204,9 +204,6 @@ unsigned len;
 		}
 		return count;
 	}
-#else
-	return read(fd, buf, len);
-#endif
 }
 
 static void screen()
@@ -325,7 +322,7 @@ assert (iac == IAC);
 	case IAC_NOP:
 		break;
 	case IAC_DataMark:
-fprintf(stderr, "got a DataMark\r\n");
+		/* Ought to flush input queue or something. */
 		break;
 	case IAC_BRK:
 fprintf(stderr, "got a BRK\r\n");

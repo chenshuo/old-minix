@@ -113,3 +113,7 @@ rl_add_slash(path, p)
     if (stat(path, &Sb) >= 0)
 	(void)strcat(p, S_ISDIR(Sb.st_mode) ? "/" : " ");
 }
+
+/*
+ * $PchId: sysunix.c,v 1.4 1996/02/22 21:16:56 philip Exp $
+ */

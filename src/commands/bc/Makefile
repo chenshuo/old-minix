@@ -19,7 +19,7 @@ YACC = yacc
 LEX = flex -I8
 #LEX = lex
 CC = cc
-CFLAGS = -m -D_POSIX_SOURCE
+CFLAGS = -D_POSIX_SOURCE
 LDFLAGS = -i
 #
 #
@@ -61,6 +61,9 @@ clean:
 scan.c: scan.l
 	$(LEX) scan.l
 	mv lex.yy.c scan.c
+
+scan.o:	scan.c
+	$(CC) -c $(CFLAGS) -wa scan.c
 
 y.tab.h bc.c: bc.y
 	@echo "expect 1 shift/reduce conflict"

@@ -139,7 +139,7 @@
  * dropped.
  */
 #define devhup(rs)	\
-	(in_byte(rs->modem_status_port) & (MS_RLSD|MS_DRLSD) == MS_DRLSD)
+	((in_byte(rs->modem_status_port) & (MS_RLSD|MS_DRLSD)) == MS_DRLSD)
 
 #else /* MACHINE == ATARI */
 
@@ -258,6 +258,7 @@ FORWARD _PROTOTYPE( void rs_icancel, (tty_t *tp)			);
 FORWARD _PROTOTYPE( void rs_ocancel, (tty_t *tp)			);
 FORWARD _PROTOTYPE( void rs_ostart, (rs232_t *rs)			);
 FORWARD _PROTOTYPE( void rs_break, (tty_t *tp)				);
+FORWARD _PROTOTYPE( void rs_close, (tty_t *tp)				);
 FORWARD _PROTOTYPE( void out_int, (rs232_t *rs)				);
 
 
@@ -295,7 +296,7 @@ register tty_t *tp;
 	count = bufend(rs->obuf) - rs->ohead;
 	if (count > ocount) count = ocount;
 	if (count > tp->tty_outleft) count = tp->tty_outleft;
-	if (count == 0 || tp->tty_inhibited) return;
+	if (count == 0 || tp->tty_inhibited) break;
 
 	/* Copy from user space to the RS232 output buffer. */
 	user_phys = proc_vir2phys(proc_addr(tp->tty_outproc), tp->tty_out_vir);
@@ -323,6 +324,11 @@ register tty_t *tp;
 					tp->tty_outproc, tp->tty_outcum);
 		tp->tty_outcum = 0;
 	}
+  }
+  if (tp->tty_outleft > 0 && tp->tty_termios.c_ospeed == B0) {
+	/* Oops, the line has hung up. */
+	tty_reply(tp->tty_outrepcode, tp->tty_outcaller, tp->tty_outproc, EIO);
+	tp->tty_outleft = tp->tty_outcum = 0;
   }
 }
 
@@ -448,7 +454,7 @@ rs232_t *rs;			/* which line */
   /* Change the line controls and reselect the usual registers. */
   out_byte(rs->line_ctl_port, line_controls);
 
-  rs->ostate |= ORAW;
+  rs->ostate = devready(rs) | ORAW | OSWREADY;	/* reads modem_ctl_port */
   if ((tp->tty_termios.c_lflag & IXON) && rs->oxoff != _POSIX_VDISABLE)
 	rs->ostate &= ~ORAW;
 
@@ -550,7 +556,7 @@ tty_t *tp;			/* which TTY */
   /* Enable interrupts for both interrupt controller and device. */
   irq = (line & 1) ? SECONDARY_IRQ : RS232_IRQ;
 
-#if ENABLE_NETWORKING
+#if ENABLE_DP8390
   /* The ethernet driver may steal the IRQ of an RS232 line. */
   v = ETHER_IRQ;
   switch (env_parse("DPETH0", "x:d:x:x", 1, &v, 0L, (long) NR_IRQ_VECTORS-1)) {
@@ -587,6 +593,7 @@ tty_t *tp;			/* which TTY */
   tp->tty_ocancel = rs_ocancel;
   tp->tty_ioctl = rs_ioctl;
   tp->tty_break = rs_break;
+  tp->tty_close = rs_close;
 
   /* Tell external device we are ready. */
   istart(rs);
@@ -644,7 +651,11 @@ tty_t *tp;			/* which tty */
 	ostate = rs->ostate;
 	rs->ostate &= ~ODEVHUP;		/* save ostate, clear DEVHUP */
 	unlock();
-	if (ostate & ODEVHUP) { sigchar(tp, SIGHUP); return; }
+	if (ostate & ODEVHUP) {
+		sigchar(tp, SIGHUP);
+		tp->tty_termios.c_ospeed = B0;	/* Disable further I/O. */
+		return;
+	}
   }
 
   while ((count = rs->icount) > 0) {
@@ -690,6 +701,21 @@ tty_t *tp;			/* which tty */
   out_byte(rs->line_ctl_port, line_controls | LC_BREAK);
   milli_delay(400);						/* ouch */
   out_byte(rs->line_ctl_port, line_controls);
+}
+
+
+/*==========================================================================*
+ *				rs_close				    *
+ *==========================================================================*/
+PRIVATE void rs_close(tp)
+tty_t *tp;			/* which tty */
+{
+/* The line is closed; optionally hang up. */
+  rs232_t *rs = tp->tty_priv;
+
+  if (tp->tty_termios.c_cflag & HUPCL) {
+	out_byte(rs->modem_ctl_port, MC_OUT2 | MC_RTS);
+  }
 }
 
 

@@ -2,15 +2,17 @@
  * Special character files also require I/O.  The routines for these are here.
  *
  * The entry points in this file are:
- *   dev_io:	 perform a read or write on a block or character device
- *   dev_opcl:   perform generic device-specific processing for open & close
- *   tty_open:   perform tty-specific processing for open
- *   ctty_open:  perform controlling-tty-specific processing for open
- *   ctty_close: perform controlling-tty-specific processing for close
- *   do_setsid:	 perform the SETSID system call (FS side)
+ *   dev_open:   FS opens a device
+ *   dev_close:  FS closes a device
+ *   dev_io:	 FS does a read or write on a device
+ *   gen_opcl:   generic call to a task to perform an open/close
+ *   gen_io:     generic call to a task to perform an I/O operation
+ *   no_dev:     open/close processing for devices that don't exist
+ *   tty_opcl:   perform tty-specific processing for open/close
+ *   ctty_opcl:  perform controlling-tty-specific processing for open/close
+ *   ctty_io:    perform controlling-tty-specific processing for I/O
  *   do_ioctl:	 perform the IOCTL system call
- *   call_task:	 procedure that actually calls the kernel tasks
- *   call_ctty:	 procedure that actually calls task for /dev/tty
+ *   do_setsid:	 perform the SETSID system call (FS side)
  */
 
 #include "fs.h"
@@ -23,51 +25,84 @@
 #include "inode.h"
 #include "param.h"
 
-PRIVATE message dev_mess;
-PRIVATE major, minor, task;
 
-FORWARD _PROTOTYPE( void find_dev, (Dev_t dev)				);
+/*===========================================================================*
+ *				dev_open				     *
+ *===========================================================================*/
+PUBLIC int dev_open(dev, proc, flags)
+dev_t dev;			/* device to open */
+int proc;			/* process to open for */
+int flags;			/* mode bits and flags */
+{
+  int major, r;
+  struct dmap *dp;
+
+  /* Determine the major device number call the device class specific
+   * open/close routine.  (This is the only routine that must check the
+   * device number for being in range.  All others can trust this check.)
+   */
+  major = (dev >> MAJOR) & BYTE;
+  if (major >= max_major) major = 0;
+  dp = &dmap[major];
+  r = (*dp->dmap_opcl)(DEV_OPEN, dev, proc, flags);
+  if (r == SUSPEND) panic("Suspend on open from", dp->dmap_task);
+  return(r);
+}
+
+
+/*===========================================================================*
+ *				dev_close				     *
+ *===========================================================================*/
+PUBLIC void dev_close(dev)
+dev_t dev;			/* device to close */
+{
+  (void) (*dmap[(dev >> MAJOR) & BYTE].dmap_opcl)(DEV_CLOSE, dev, 0, 0);
+}
+
 
 /*===========================================================================*
  *				dev_io					     *
  *===========================================================================*/
-PUBLIC int dev_io(op, nonblock, dev, pos, bytes, proc, buff)
+PUBLIC int dev_io(op, dev, proc, buf, pos, bytes, flags)
 int op;				/* DEV_READ, DEV_WRITE, DEV_IOCTL, etc. */
-int nonblock;			/* TRUE if nonblocking op */
 dev_t dev;			/* major-minor device number */
+int proc;			/* in whose address space is buf? */
+void *buf;			/* virtual address of the buffer */
 off_t pos;			/* byte position */
 int bytes;			/* how many bytes to transfer */
-int proc;			/* in whose address space is buff? */
-char *buff;			/* virtual address of the buffer */
+int flags;			/* special flags, like O_NONBLOCK */
 {
 /* Read or write from a device.  The parameter 'dev' tells which one. */
+  struct dmap *dp;
+  message dev_mess;
 
-  find_dev(dev);		/* load the variables major, minor, and task */
+  /* Determine task dmap. */
+  dp = &dmap[(dev >> MAJOR) & BYTE];
 
   /* Set up the message passed to task. */
   dev_mess.m_type   = op;
   dev_mess.DEVICE   = (dev >> MINOR) & BYTE;
   dev_mess.POSITION = pos;
   dev_mess.PROC_NR  = proc;
-  dev_mess.ADDRESS  = buff;
+  dev_mess.ADDRESS  = buf;
   dev_mess.COUNT    = bytes;
-  dev_mess.TTY_FLAGS = nonblock; /* temporary kludge */
+  dev_mess.TTY_FLAGS = flags;
 
   /* Call the task. */
-  (*dmap[major].dmap_rw)(task, &dev_mess);
+  (*dp->dmap_io)(dp->dmap_task, &dev_mess);
 
   /* Task has completed.  See if call completed. */
   if (dev_mess.REP_STATUS == SUSPEND) {
-	if (nonblock) {
+	if (flags & O_NONBLOCK) {
 		/* Not supposed to block. */
 		dev_mess.m_type = CANCEL;
 		dev_mess.PROC_NR = proc;
 		dev_mess.DEVICE = (dev >> MINOR) & BYTE;
-		(*dmap[major].dmap_rw)(task, &dev_mess);
+		(*dp->dmap_io)(dp->dmap_task, &dev_mess);
 		if (dev_mess.REP_STATUS == EINTR) dev_mess.REP_STATUS = EAGAIN;
 	} else {
-		if (op == DEV_OPEN) task = XPOPEN;
-		suspend(task);		/* suspend user */
+		/* Suspend user. */
+		suspend(dp->dmap_task);
 	}
   }
 
@@ -76,46 +111,46 @@ char *buff;			/* virtual address of the buffer */
 
 
 /*===========================================================================*
- *				dev_opcl				     *
+ *				gen_opcl				     *
  *===========================================================================*/
-PUBLIC void dev_opcl(task_nr, mess_ptr)
-int task_nr;			/* which task */
-message *mess_ptr;		/* message pointer */
+PUBLIC int gen_opcl(op, dev, proc, flags)
+int op;				/* operation, DEV_OPEN or DEV_CLOSE */
+dev_t dev;			/* device to open or close */
+int proc;			/* process to open/close for */
+int flags;			/* mode bits and flags */
 {
 /* Called from the dmap struct in table.c on opens & closes of special files.*/
+  struct dmap *dp;
+  message dev_mess;
 
-  int op;
+  /* Determine task dmap. */
+  dp = &dmap[(dev >> MAJOR) & BYTE];
 
-  op = mess_ptr->m_type;	/* save DEV_OPEN or DEV_CLOSE for later */
-  mess_ptr->DEVICE = (mess_ptr->DEVICE >> MINOR) & BYTE;
-  mess_ptr->PROC_NR = fp - fproc;
+  dev_mess.m_type   = op;
+  dev_mess.DEVICE   = (dev >> MINOR) & BYTE;
+  dev_mess.PROC_NR  = proc;
+  dev_mess.COUNT    = flags;
 
-  call_task(task_nr, mess_ptr);
+  /* Call the task. */
+  (*dp->dmap_io)(dp->dmap_task, &dev_mess);
 
-  /* Task has completed.  See if call completed. */
-  if (mess_ptr->REP_STATUS == SUSPEND) {
-	if (op == DEV_OPEN) task_nr = XPOPEN;
-	suspend(task_nr);	/* suspend user */
-  }
+  return(dev_mess.REP_STATUS);
 }
 
-/*===========================================================================*
- *				tty_open				     *
- *===========================================================================*/
-PUBLIC void tty_open(task_nr, mess_ptr)
-int task_nr;
-message *mess_ptr;
-{
-/* This procedure is called from the dmap struct in table.c on tty opens. */
-  
-  int r;
-  dev_t dev;
-  int flags, proc;
-  register struct fproc *rfp;
 
-  dev = (dev_t) mess_ptr->DEVICE;
-  flags = mess_ptr->COUNT;
-  proc = fp - fproc;
+/*===========================================================================*
+ *				tty_opcl				     *
+ *===========================================================================*/
+PUBLIC int tty_opcl(op, dev, proc, flags)
+int op;				/* operation, DEV_OPEN or DEV_CLOSE */
+dev_t dev;			/* device to open or close */
+int proc;			/* process to open/close for */
+int flags;			/* mode bits and flags */
+{
+/* This procedure is called from the dmap struct on tty open/close. */
+ 
+  int r;
+  register struct fproc *rfp;
 
   /* Add O_NOCTTY to the flags if this process is not a session leader, or
    * if it already has a controlling tty, or if it is someone elses
@@ -129,42 +164,31 @@ message *mess_ptr;
 	}
   }
 
-  r = dev_io(DEV_OPEN, mode, dev, (off_t) 0, flags, proc, NIL_PTR);
+  r = gen_opcl(op, dev, proc, flags);
 
+  /* Did this call make the tty the controlling tty? */
   if (r == 1) {
 	fp->fp_tty = dev;
 	r = OK;
   }
-
-  mess_ptr->REP_STATUS = r;
+  return(r);
 }
 
 
 /*===========================================================================*
- *				ctty_open				     *
+ *				ctty_opcl				     *
  *===========================================================================*/
-PUBLIC void ctty_open(task_nr, mess_ptr)
-int task_nr;
-message *mess_ptr;
+PUBLIC int ctty_opcl(op, dev, proc, flags)
+int op;				/* operation, DEV_OPEN or DEV_CLOSE */
+dev_t dev;			/* device to open or close */
+int proc;			/* process to open/close for */
+int flags;			/* mode bits and flags */
 {
-/* This procedure is called from the dmap struct in table.c on opening
+/* This procedure is called from the dmap struct in table.c on opening/closing
  * /dev/tty, the magic device that translates to the controlling tty.
  */
-  
-  mess_ptr->REP_STATUS = fp->fp_tty == 0 ? ENXIO : OK;
-}
-
-
-/*===========================================================================*
- *				ctty_close				     *
- *===========================================================================*/
-PUBLIC void ctty_close(task_nr, mess_ptr)
-int task_nr;
-message *mess_ptr;
-{
-/* Close /dev/tty. */
-
-  mess_ptr->REP_STATUS = OK;
+ 
+  return(fp->fp_tty == 0 ? ENXIO : OK);
 }
 
 
@@ -204,59 +228,37 @@ PUBLIC int do_ioctl()
   if ( (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL
 	&& (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL) return(ENOTTY);
   dev = (dev_t) rip->i_zone[0];
-  find_dev(dev);
 
-  dev_mess= m;
-
-  dev_mess.m_type  = DEV_IOCTL;
-  dev_mess.PROC_NR = who;
-  dev_mess.TTY_LINE = minor;	
-
-  /* Call the task. */
-  (*dmap[major].dmap_rw)(task, &dev_mess);
-
-  /* Task has completed.  See if call completed. */
-  if (dev_mess.REP_STATUS == SUSPEND) {
-	if (f->filp_flags & O_NONBLOCK) {
-		/* Not supposed to block. */
-		dev_mess.m_type = CANCEL;
-		dev_mess.PROC_NR = who;
-		dev_mess.TTY_LINE = minor;
-		(*dmap[major].dmap_rw)(task, &dev_mess);
-		if (dev_mess.REP_STATUS == EINTR) dev_mess.REP_STATUS = EAGAIN;
-	} else {
-		suspend(task);		/* User must be suspended. */
-	}
-  }
 #if ENABLE_BINCOMPAT
-  m1.TTY_SPEK = dev_mess.TTY_SPEK;	/* erase and kill */
-  m1.TTY_FLAGS = dev_mess.TTY_FLAGS;	/* flags */
-#endif
-  return(dev_mess.REP_STATUS);
-}
+  if ((m.TTY_REQUEST >> 8) == 't') {
+	/* Obsolete sgtty ioctl, message contains more than is sane. */
+	struct dmap *dp;
+	message dev_mess;
 
+	dp = &dmap[(dev >> MAJOR) & BYTE];
 
-/*===========================================================================*
- *				find_dev				     *
- *===========================================================================*/
-PRIVATE void find_dev(dev)
-dev_t dev;			/* device */
-{
-/* Extract the major and minor device number from the parameter. */
+	dev_mess = m;	/* Copy full message with all the weird bits. */
+	dev_mess.m_type   = DEV_IOCTL;
+	dev_mess.PROC_NR  = who;
+	dev_mess.TTY_LINE = (dev >> MINOR) & BYTE;	
 
-  major = (dev >> MAJOR) & BYTE;	/* major device number */
-  minor = (dev >> MINOR) & BYTE;	/* minor device number */
-  if (major >= max_major) {
-	major = minor = 0;		/* will fail with ENODEV */
+	/* Call the task. */
+	(*dp->dmap_io)(dp->dmap_task, &dev_mess);
+
+	m1.TTY_SPEK = dev_mess.TTY_SPEK;	/* erase and kill */
+	m1.TTY_FLAGS = dev_mess.TTY_FLAGS;	/* flags */
+	return(dev_mess.REP_STATUS);
   }
-  task = dmap[major].dmap_task;	/* which task services the device */
+#endif
+
+  return(dev_io(DEV_IOCTL, dev, who, m.ADDRESS, 0L, m.REQUEST, f->filp_flags));
 }
 
 
 /*===========================================================================*
- *				call_task				     *
+ *				gen_io					     *
  *===========================================================================*/
-PUBLIC void call_task(task_nr, mess_ptr)
+PUBLIC void gen_io(task_nr, mess_ptr)
 int task_nr;			/* which task to call */
 message *mess_ptr;		/* pointer to message for task */
 {
@@ -278,7 +280,7 @@ message *mess_ptr;		/* pointer to message for task */
 
 	/* If we're trying to send a cancel message to a task which has just
 	 * sent a completion reply, ignore the reply and abort the cancel
-	 * request. The caller will do the revive for the process. 
+	 * request. The caller will do the revive for the process.
 	 */
 	if (mess_ptr->m_type == CANCEL && local_m.REP_PROC_NR == proc_nr)
 		return;
@@ -320,9 +322,9 @@ message *mess_ptr;		/* pointer to message for task */
 
 
 /*===========================================================================*
- *				call_ctty					     *
+ *				ctty_io					     *
  *===========================================================================*/
-PUBLIC void call_ctty(task_nr, mess_ptr)
+PUBLIC void ctty_io(task_nr, mess_ptr)
 int task_nr;			/* not used - for compatibility with dmap_t */
 message *mess_ptr;		/* pointer to message for task */
 {
@@ -331,77 +333,87 @@ message *mess_ptr;		/* pointer to message for task */
  * major/minor pair for /dev/tty itself.
  */
 
-  int major_device;
- 
+  struct dmap *dp;
+
   if (fp->fp_tty == 0) {
 	/* No controlling tty present anymore, return an I/O error. */
 	mess_ptr->REP_STATUS = EIO;
-	return;
+  } else {
+	/* Substitute the controlling terminal device. */
+	dp = &dmap[(fp->fp_tty >> MAJOR) & BYTE];
+	mess_ptr->DEVICE = (fp->fp_tty >> MINOR) & BYTE;
+	(*dp->dmap_io)(dp->dmap_task, mess_ptr);
   }
-  major_device = (fp->fp_tty >> MAJOR) & BYTE;
-  task_nr = dmap[major_device].dmap_task;	/* task for controlling tty */
-  mess_ptr->DEVICE = (fp->fp_tty >> MINOR) & BYTE;
-  call_task(task_nr, mess_ptr);
 }
 
 
 /*===========================================================================*
  *				no_dev					     *
  *===========================================================================*/
-PUBLIC void no_dev(task_nr, m_ptr)
-int task_nr;			/* not used - for compatibility with dmap_t */
-message *m_ptr;			/* message pointer */
+PUBLIC int no_dev(op, dev, proc, flags)
+int op;				/* operation, DEV_OPEN or DEV_CLOSE */
+dev_t dev;			/* device to open or close */
+int proc;			/* process to open/close for */
+int flags;			/* mode bits and flags */
 {
-/* No device there. */
+/* Called when opening a nonexistent device. */
 
-  m_ptr->REP_STATUS = ENODEV;
+  return(ENODEV);
 }
 
 
-#if ENABLE_NETWORKING
 /*===========================================================================*
- *				net_open				     *
+ *				clone_opcl				     *
  *===========================================================================*/
-PUBLIC void net_open(task_nr, mess_ptr)
-int task_nr;			/* task to send message to */
-message *mess_ptr;		/* pointer to message to send */
+PUBLIC int clone_opcl(op, dev, proc, flags)
+int op;				/* operation, DEV_OPEN or DEV_CLOSE */
+dev_t dev;			/* device to open or close */
+int proc;			/* process to open/close for */
+int flags;			/* mode bits and flags */
 {
-/* Network files need special processing upon open.  A network device is
- * "cloned", i.e. on a succesful open it is replaced by a new network device
- * with a new unique minor device number.  This new device number identifies
- * the new IP connection with the network task.
+/* Some devices need special processing upon open.  Such a device is "cloned",
+ * i.e. on a succesful open it is replaced by a new device with a new unique
+ * minor device number.  This new device number identifies a new object (such
+ * as a new network connection) that has been allocated within a task.
  */
+  struct dmap *dp;
+  int minor;
+  message dev_mess;
 
-  dev_t dev;
-  struct inode *rip, *nrip;
-  int result;
-  int ncount, proc;
+  /* Determine task dmap. */
+  dp = &dmap[(dev >> MAJOR) & BYTE];
+  minor = (dev >> MINOR) & BYTE;
 
-  rip = fp->fp_filp[fd]->filp_ino; 
+  dev_mess.m_type   = op;
+  dev_mess.DEVICE   = minor;
+  dev_mess.PROC_NR  = proc;
+  dev_mess.COUNT    = flags;
 
-  nrip = alloc_inode(rip->i_dev, ALL_MODES | I_CHAR_SPECIAL);
-  if (nrip == NIL_INODE) {
-	mess_ptr->REP_STATUS = err_code;
-	return;
+  /* Call the task. */
+  (*dp->dmap_io)(dp->dmap_task, &dev_mess);
+
+  if (op == DEV_OPEN && dev_mess.REP_STATUS >= 0) {
+	if (dev_mess.REP_STATUS != minor) {
+		/* A new minor device number has been returned.  Create a
+		 * temporary device file to hold it.
+		 */
+		struct inode *ip;
+
+		/* Device number of the new device. */
+		dev = (dev & ~(BYTE << MINOR)) | (dev_mess.REP_STATUS << MINOR);
+
+		ip = alloc_inode(root_dev, ALL_MODES | I_CHAR_SPECIAL);
+		if (ip == NIL_INODE) {
+			/* Oops, that didn't work.  Undo open. */
+			(void) clone_opcl(DEV_CLOSE, dev, proc, 0);
+			return(err_code);
+		}
+		ip->i_zone[0] = dev;
+
+		put_inode(fp->fp_filp[fd]->filp_ino);
+		fp->fp_filp[fd]->filp_ino = ip;
+	}
+	dev_mess.REP_STATUS = OK;
   }
-
-  dev = (dev_t) mess_ptr->DEVICE;
-  ncount = mess_ptr->COUNT;
-  proc = fp - fproc;
-  result = dev_io(DEV_OPEN, mode, dev, (off_t) 0, ncount, proc, NIL_PTR);
-
-  if (result < 0) {
-	put_inode(nrip);
-	mess_ptr->REP_STATUS = result;
-	return;
-  }
-
-  dev= rip->i_zone[0]; 
-  dev= (dev & ~(BYTE << MINOR)) | ((result & BYTE) << MINOR); 
-
-  nrip->i_zone[0]= dev;
-  put_inode(rip);
-  fp->fp_filp[fd]->filp_ino = nrip;
-  mess_ptr->REP_STATUS = OK;
+  return(dev_mess.REP_STATUS);
 }
-#endif /* ENABLE_NETWORKING */

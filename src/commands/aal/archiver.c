@@ -19,6 +19,7 @@ static char RcsId[] = "$Header: archiver.c,v 1.23 91/06/20 14:22:37 ceriel Exp $
  *	  p: print named files
  *	  l: temporaries in current directory instead of /usr/tmp
  *	  c: don't give "create" message
+ *	  u: replace only if dated later than member in archive
 #ifdef DISTRIBUTION
  *	  D: make distribution: use distr_time, uid=2, gid=2, mode=0644
 #endif
@@ -87,6 +88,7 @@ BOOL rep_fl;
 BOOL del_fl;
 BOOL nocr_fl;
 BOOL local_fl;
+BOOL update_fl;
 #ifdef DISTRIBUTION
 BOOL distr_fl;
 long distr_time;
@@ -108,9 +110,9 @@ usage()
 	error(TRUE, "usage: %s %s archive [file] ...\n",
 		progname,
 #ifdef AAL
-		"[acdrtxvl]"
+		"[acdrtxvlu]"
 #else
-		"[acdprtxvl]"
+		"[acdprtxvlu]"
 #endif
 		);
 }
@@ -240,6 +242,9 @@ char *argv[];
 		case 'l' :
 			local_fl = TRUE;
 			break;
+		case 'u' :
+			update_fl = TRUE;
+			break;
 #ifdef DISTRIBUTION
 		case 'D' :
 			distr_fl = TRUE;
@@ -265,7 +270,10 @@ char *argv[];
 
   if (app_fl + ex_fl + del_fl + rep_fl + show_fl + pr_fl != 1)
 	usage();
-  
+
+  if (update_fl && !rep_fl)
+	usage();
+
   if (rep_fl || del_fl
 #ifdef AAL
 	|| app_fl
@@ -360,8 +368,24 @@ register char *argv[];
 	if (ex_fl || pr_fl)
 		extract(member);
 	else {
-		if (rep_fl)
-			add(argv[i], temp_fd, "r - %s\n");
+		if (rep_fl) {
+			int isold = 0;
+			if(update_fl) {
+				struct stat status;
+				if (stat(argv[i], &status) >= 0) {
+					if(status.st_mtime <= member->ar_date)
+						isold = 1;
+				}
+			}
+			if(!isold)
+				add(argv[i], temp_fd, "r - %s\n");
+			else {
+				wr_arhdr(temp_fd, member);
+				copy_member(member, ar_fd, temp_fd, 0);
+				if(verbose)
+					show("r - %s (old)\n", member->ar_name);
+			}
+		}
 		else if (show_fl) {
 			char buf[sizeof(member->ar_name) + 2];
 			register char *p = buf, *q = member->ar_name;

@@ -23,7 +23,6 @@
 #include "lock.h"
 #include "param.h"
 
-PRIVATE message dev_mess;
 PRIVATE char mode_map[] = {R_BIT, W_BIT, R_BIT|W_BIT, 0};
 
 FORWARD _PROTOTYPE( int common_open, (int oflags, Mode_t omode)		);
@@ -80,7 +79,7 @@ mode_t omode;
 /* Common code from do_creat and do_open. */
 
   register struct inode *rip;
-  int r, b, major, task, exist = TRUE;
+  int r, b, exist = TRUE;
   dev_t dev;
   mode_t bits;
   off_t pos;
@@ -141,18 +140,8 @@ mode_t omode;
 	     	   case I_CHAR_SPECIAL:
      		   case I_BLOCK_SPECIAL:
 			/* Invoke the driver for special processing. */
-			dev_mess.m_type = DEV_OPEN;
 			dev = (dev_t) rip->i_zone[0];
-			dev_mess.DEVICE = dev;
-			dev_mess.COUNT = bits | (oflags & ~O_ACCMODE);
-			major = (dev >> MAJOR) & BYTE;	/* major device nr */
-			if (major <= 0 || major >= max_major) {
-				r = ENODEV;
-				break;
-			}
-			task = dmap[major].dmap_task;	/* device task nr */
-			(*dmap[major].dmap_open)(task, &dev_mess);
-			r = dev_mess.REP_STATUS;
+			r = dev_open(dev, who, bits | (oflags & ~O_ACCMODE));
 			break;
 
 		   case I_NAMED_PIPE:
@@ -391,7 +380,7 @@ PUBLIC int do_close()
   register struct filp *rfilp;
   register struct inode *rip;
   struct file_lock *flp;
-  int rw, mode_word, major, task, lock_count;
+  int rw, mode_word, lock_count;
   dev_t dev;
 
   /* First locate the inode that belongs to the file descriptor. */
@@ -412,14 +401,8 @@ PUBLIC int do_close()
 				invalidate(dev);
 			}    
 		}
-		/* Use the dmap_close entry to do any special processing
-		 * required.
-		 */
-		dev_mess.m_type = DEV_CLOSE;
-		dev_mess.DEVICE = dev;
-		major = (dev >> MAJOR) & BYTE;	/* major device nr */
-		task = dmap[major].dmap_task;	/* device task nr */
-		(*dmap[major].dmap_close)(task, &dev_mess);
+		/* Do any special processing on device close. */
+		dev_close(dev);
 	}
   }
 

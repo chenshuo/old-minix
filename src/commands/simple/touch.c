@@ -1,5 +1,3 @@
-/* touch - update file times			Author: Peter Holzer */
-
 /* Touch - change file access and modification times.
  *
  * Usage: see end of file

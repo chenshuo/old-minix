@@ -187,9 +187,6 @@ PRIVATE void do_clocktick()
 	sched_ticks = SCHED_RATE;		/* reset quantum */
 	prev_ptr = bill_ptr;			/* new previous process */
   }
-#if (SHADOWING == 1)
-  if (rdy_head[SHADOW_Q]) unshadow(rdy_head[SHADOW_Q]);
-#endif
 }
 
 
@@ -267,7 +264,7 @@ message *m_ptr;			/* pointer to request message */
   function = (watchdog_t) m_ptr->FUNC_TO_CALL;
 					/* function to call (tasks only) */
   rp = proc_addr(proc_nr);
-  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm - realtime)/HZ );
+  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm-realtime+(HZ-1)) / HZ);
   if (!istaskp(rp)) function= 0;	/* user processes get signaled */
   common_setalarm(proc_nr, delta_ticks, function);
 }
@@ -460,7 +457,7 @@ int irq;
   pending_ticks += ticks;
   now = realtime + pending_ticks;
   if (tty_timeout <= now) tty_wakeup(now);	/* possibly wake up TTY */
-#if (CHIP != M68000)
+#if (CHIP == INTEL) && ENABLE_PRINTER
   pr_restart();					/* possibly restart printer */
 #endif
 #if (CHIP == M68000)
@@ -471,11 +468,7 @@ int irq;
   if (next_alarm <= now ||
       sched_ticks == 1 &&
       bill_ptr == prev_ptr &&
-#if (SHADOWING == 0)
       rdy_head[USER_Q] != NIL_PROC) {
-#else
-      (rdy_head[USER_Q] != NIL_PROC || rdy_head[SHADOW_Q] != NIL_PROC)) {
-#endif
 	interrupt(CLOCK);
 	return 1;	/* Reenable interrupts */
   }

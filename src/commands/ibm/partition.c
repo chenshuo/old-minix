@@ -1,4 +1,4 @@
-/*	partition 1.10 - Make a partition table		Author: Kees J. Bot
+/*	partition 1.12 - Make a partition table		Author: Kees J. Bot
  *								27 Apr 1992
  */
 #define nil 0
@@ -10,16 +10,13 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
+#include <minix/u64.h>
 #include <ibm/partition.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <limits.h>
-
-#if !__minix_vmd
-#define div64u(i, j)	((i) / (j))
-#endif
 
 #define SECTOR_SIZE	512
 
@@ -62,8 +59,6 @@ int npart;
 
 /* Extra flag at construction time. */
 #define EXPAND_FLAG	0x01	/* Add the remaining sectors to this one */
-
-#define MINOR_hd1a	128
 
 void sec2dos(unsigned long sec, unsigned char *dos)
 /* Translate a sector number into the three bytes DOS uses. */

@@ -7,7 +7,7 @@ Copyright 1995 Philip Homburg
 #ifndef INET_IP_INT_H
 #define INET_IP_INT_H
 
-#define IP_FD_NR	32
+#define IP_FD_NR	(8*IP_PORT_MAX)
 #define IP_ASS_NR	3
 
 #define IP_42BSD_BCAST		1	/* hostnumber 0 is also network
@@ -24,6 +24,7 @@ typedef int (*ip_dev_send_t) ARGS(( struct ip_port *ip_port, ipaddr_t dest,
 typedef struct ip_port
 {
 	int ip_flags, ip_dl_type;
+	int ip_port;
 	union
 	{
 		struct
@@ -45,7 +46,6 @@ typedef struct ip_port
 			acc_t *ps_send_tail;
 		} dl_ps;
 	} ip_dl;
-	int ip_minor;
 	ipaddr_t ip_ipaddr;
 	ipaddr_t ip_netmask;
 	ipaddr_t ip_subnetmask;
@@ -78,8 +78,8 @@ typedef struct ip_port
 #define IPF_IPADDRSET	0x2
 #define IPF_NETMASKSET	0x4
 
-#define IPDL_ETH	1
-#define IPDL_PSIP	2
+#define IPDL_ETH	NETTYPE_ETH
+#define IPDL_PSIP	NETTYPE_PSIP
 
 typedef struct ip_ass
 {
@@ -162,7 +162,7 @@ void ip_hdr_chksum ARGS(( ip_hdr_t *ip_hdr, int ip_hdr_len ));
 
 
 extern ip_fd_t ip_fd_table[IP_FD_NR];
-extern ip_port_t ip_port_table[IP_PORT_NR];
+extern ip_port_t *ip_port_table;
 extern ip_ass_t ip_ass_table[IP_ASS_NR];
 
 #define NWIO_DEFAULT    (NWIO_EN_LOC | NWIO_EN_BROAD | NWIO_REMANY | \

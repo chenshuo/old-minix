@@ -17,7 +17,7 @@ OBJ =	main.o open.o read.o write.o pipe.o \
 	lock.c misc.o utility.o table.o putk.o
 
 fs:	$(OBJ)
-	$(CC) -o $@ $(LDFLAGS) $(OBJ)
+	$(CC) -o $@ $(LDFLAGS) $(OBJ) -lsys
 	install -S 512w $@
 
 all install:	# Nothing.
@@ -32,7 +32,6 @@ a=	fs.h $h/config.h $s/types.h $h/const.h $h/type.h \
 
 cache.o:	$a
 cache.o:	$h/com.h
-cache.o:	$h/boot.h
 cache.o:	buf.h
 cache.o:	file.h
 cache.o:	fproc.h
@@ -40,7 +39,6 @@ cache.o:	super.h
 
 cache2.o:	$a
 cache2.o:	$h/com.h
-cache2.o:	$h/boot.h
 cache2.o:	buf.h
 
 device.o:	$a
@@ -59,7 +57,6 @@ filedes.o:	fproc.h
 filedes.o:	inode.h
 
 inode.o:	$a
-inode.o:	$h/boot.h
 inode.o:	buf.h
 inode.o:	file.h
 inode.o:	fproc.h
@@ -89,10 +86,11 @@ lock.o:	param.h
 main.o:	$a
 main.o:	$i/fcntl.h
 main.o:	$i/string.h
+main.o:	$i/stdlib.h
 main.o:	$s/ioctl.h
+main.o:	$s/svrctl.h
 main.o:	$h/callnr.h
 main.o:	$h/com.h
-main.o:	$h/boot.h
 main.o:	buf.h
 main.o:	dev.h
 main.o:	file.h
@@ -106,7 +104,7 @@ misc.o:	$i/fcntl.h
 misc.o:	$i/unistd.h
 misc.o:	$h/callnr.h
 misc.o:	$h/com.h
-misc.o:	$h/boot.h
+misc.o:	$s/svrctl.h
 misc.o:	buf.h
 misc.o:	file.h
 misc.o:	fproc.h
@@ -151,7 +149,6 @@ path.o:	super.h
 pipe.o:	$a
 pipe.o:	$i/fcntl.h
 pipe.o:	$i/signal.h
-pipe.o:	$h/boot.h
 pipe.o:	$h/callnr.h
 pipe.o:	$h/com.h
 pipe.o:	dev.h
@@ -192,7 +189,6 @@ stadir.o:	param.h
 
 super.o:	$a
 super.o:	$i/string.h
-super.o:	$h/boot.h
 super.o:	buf.h
 super.o:	inode.h
 super.o:	super.h
@@ -218,7 +214,6 @@ time.o:	param.h
 
 utility.o:	$a
 utility.o:	$h/com.h
-utility.o:	$h/boot.h
 utility.o:	$i/unistd.h
 utility.o:	buf.h
 utility.o:	file.h

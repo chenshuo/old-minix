@@ -18,8 +18,10 @@ _PROTOTYPE( void partition, (struct driver *dr, int device, int style) );
 
 /* Miscellaneous. */
 #define DEV_PER_DRIVE	(1 + NR_PARTITIONS)
-#define MINOR_hd1a	128
-#define MINOR_fd0a	(28<<2)
+#define MINOR_t0	64
+#define MINOR_r0	120
+#define MINOR_d0p0s0	128
+#define MINOR_fd0p0	(28<<2)
 #define P_FLOPPY	0
 #define P_PRIMARY	1
 #define P_SUB		2

@@ -41,6 +41,8 @@
 #define utime_file    m.m2_p1
 #define utime_length  m.m2_i1
 #define whence	      m.m2_i2
+#define svrctl_req    m.m2_i1
+#define svrctl_argp   m.m2_p1
 
 /* The following names are synonyms for the variables in the output message. */
 #define reply_type    m1.m_type

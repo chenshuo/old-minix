@@ -12,7 +12,6 @@
 
 #include "fs.h"
 #include <minix/com.h>
-#include <minix/boot.h>
 #include <unistd.h>
 #include "buf.h"
 #include "file.h"

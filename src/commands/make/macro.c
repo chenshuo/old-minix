@@ -133,12 +133,10 @@ char  *from;
   register char *p;
   char *q;
   struct macro *mp;
-  int temp;			/* work-around for ACK bug (PC)*/
 
 
-  rp  = from;
-  temp= to->pos;
-  p   = &(*to->ptr)[temp];
+  rp = from;
+  p  = &(*to->ptr)[to->pos];
   while (*rp) {
 	if (*rp != '$') {
 		*p++ = *rp++;
@@ -155,7 +153,7 @@ char  *from;
 		else if (!*rp) {
 			*p++ = '$';
 			to->pos++;
-			break;
+			goto bail;
 		}
 		else
 			*q++ = *rp;
@@ -169,14 +167,13 @@ char  *from;
 		mp->m_flag |= M_MARK;
 		if ( mp->m_flag & M_MAKE) expmake = TRUE;
 		doexp(to, mp->m_val);
-		temp = to->pos;
-		p = &(*to->ptr)[temp];
+		p = &(*to->ptr)[to->pos];
 		mp->m_flag &= ~M_MARK;
 	}
+  bail:
 	if (to->pos >= to->len) {
-		strrealloc (to);
-		temp = to->pos;
-		p =  &(*to->ptr)[temp];
+		strrealloc(to);
+		p = &(*to->ptr)[to->pos];
 	}
   }
   *p = '\0';

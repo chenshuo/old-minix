@@ -12,9 +12,13 @@
 
 #if (CHIP == INTEL)
 
-/* In real mode only 1M can be addressed, and in 16-bit protected mode 16M. */
-#define MAX_86ADDR	0x00100000L
-#define MAX_286ADDR	0x01000000L
+/* In real mode only 1M can be addressed, and in 16-bit protected we can go
+ * no further than we can count in clicks.  (The 286 is further limited by
+ * its 24 bit address bus, but we can assume in that case that no more than
+ * 16M memory is reported by the BIOS.)
+ */
+#define MAX_REAL	0x00100000L
+#define MAX_16BIT	(0xFFF0L << CLICK_SHIFT)
 
 /*=========================================================================*
  *				mem_init				   *
@@ -43,7 +47,7 @@ PUBLIC void mem_init()
 	env_parse(env, fmt, 2*i+1, &size, 0L, LONG_MAX);
 	limit = base + size;
 #if _WORD_SIZE == 2
-	max_address = protected_mode ? MAX_286ADDR : MAX_86ADDR;
+	max_address = protected_mode ? MAX_16BIT : MAX_REAL;
 	if (limit > max_address) limit = max_address;
 #endif
 	base = (base + CLICK_SIZE-1) & ~(long)(CLICK_SIZE-1);
@@ -82,7 +86,7 @@ long min, max;		/* minimum and maximum values for the parameter */
   long newpar;
   int i = 0, radix, r;
 
-  if ((val = k_getenv(env)) == NIL_PTR) return(EP_UNSET);
+  if ((val = getenv(env)) == NIL_PTR) return(EP_UNSET);
   if (strcmp(val, "off") == 0) return(EP_OFF);
   if (strcmp(val, "on") == 0) return(EP_ON);
 
@@ -122,12 +126,12 @@ long min, max;		/* minimum and maximum values for the parameter */
 	}
   }
 badenv:
-  printf("Bad environment setting: '%s = %s'\n", env, k_getenv(env));
-  panic("", NO_NUM);
+  printf("Bad environment setting: '%s = %s'\n", env, getenv(env));
+  panic(NULL, NO_NUM);
   /*NOTREACHED*/
 }
 
-#if DEBUG
+#if !NDEBUG
 /*=========================================================================*
  *				bad_assertion				   *
  *=========================================================================*/
@@ -154,4 +158,4 @@ int rhs;
 	file, line, lhs, what, rhs);
   panic(NULL, NO_NUM);
 }
-#endif /* DEBUG */
+#endif /* !NDEBUG */

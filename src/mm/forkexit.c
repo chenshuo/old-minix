@@ -37,7 +37,7 @@ PUBLIC int do_fork()
   register struct mproc *rmp;	/* pointer to parent */
   register struct mproc *rmc;	/* pointer to child */
   int i, child_nr, t;
-  phys_clicks prog_clicks, child_base = 0;
+  phys_clicks prog_clicks, child_base;
   phys_bytes prog_bytes, parent_abs, child_abs;	/* Intel only */
 
  /* If tables might fill up during FORK, don't even start since recovery half
@@ -52,18 +52,14 @@ PUBLIC int do_fork()
    */
   prog_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-#if (SHADOWING == 0)
   prog_bytes = (phys_bytes) prog_clicks << CLICK_SHIFT;
-#endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(ENOMEM);
 
-#if (SHADOWING == 0)
   /* Create a copy of the parent's core image for the child. */
   child_abs = (phys_bytes) child_base << CLICK_SHIFT;
   parent_abs = (phys_bytes) rmp->mp_seg[D].mem_phys << CLICK_SHIFT;
   i = sys_copy(ABS, 0, parent_abs, ABS, 0, child_abs, prog_bytes);
   if (i < 0) panic("do_fork can't copy", i);
-#endif
 
   /* Find a slot in 'mproc' for the child process.  A slot must exist. */
   for (rmc = &mproc[0]; rmc < &mproc[NR_PROCS]; rmc++)
@@ -74,9 +70,9 @@ PUBLIC int do_fork()
   procs_in_use++;
   *rmc = *rmp;			/* copy parent's process slot to child's */
 
-  rmc->mp_parent = who;		/* record child's parent */
-  rmc->mp_flags &= ~TRACED;	/* child does not inherit trace status */
-#if (SHADOWING == 0)
+  rmc->mp_parent = who;			/* record child's parent */
+  rmc->mp_flags &= (IN_USE|SEPARATE);	/* inherit only these flags */
+
   /* A separate I&D child keeps the parents text segment.  The data and stack
    * segments must refer to the new copy.
    */
@@ -84,7 +80,6 @@ PUBLIC int do_fork()
   rmc->mp_seg[D].mem_phys = child_base;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
 			(rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-#endif
   rmc->mp_exitstatus = 0;
   rmc->mp_sigstatus = 0;
 
@@ -101,16 +96,14 @@ PUBLIC int do_fork()
   } while (t);
 
   /* Tell kernel and file system about the (now successful) FORK. */
-  sys_fork(who, child_nr, rmc->mp_pid, child_base); /* child_base is 68K only*/
+  sys_fork(who, child_nr, rmc->mp_pid);
   tell_fs(FORK, who, child_nr, rmc->mp_pid);
 
-#if (SHADOWING == 0)
   /* Report child's memory map to kernel. */
   sys_newmap(child_nr, rmc->mp_seg);
-#endif
 
   /* Reply to child to wake it up. */
-  reply(child_nr, 0, 0, NIL_PTR);
+  setreply(child_nr, 0);
   return(next_pid);		 /* child's pid */
 }
 
@@ -125,8 +118,7 @@ PUBLIC int do_mm_exit()
  */
 
   mm_exit(mp, status);
-  dont_reply = TRUE;		/* don't reply to newly terminated process */
-  return(OK);			/* pro forma return code */
+  return(E_NO_MESSAGE);		/* can't communicate from beyond the grave */
 }
 
 
@@ -138,13 +130,14 @@ register struct mproc *rmp;	/* pointer to the process to be terminated */
 int exit_status;		/* the process' exit status (for parent) */
 {
 /* A process is done.  Release most of the process' possessions.  If its
- * parent is waiting, release the rest, else hang.
+ * parent is waiting, release the rest, else keep the process slot and
+ * become a zombie.
  */
 
   register int proc_nr;
   int parent_waiting, right_child;
   pid_t pidarg, procgrp;
-  phys_clicks base, size, s;		/* base and size used on 68000 only */
+  struct mproc *p_mp;
 
   proc_nr = (int) (rmp - mproc);	/* get process slot number */
 
@@ -156,12 +149,8 @@ int exit_status;		/* the process' exit status (for parent) */
 
   /* Tell the kernel and FS that the process is no longer runnable. */
   tell_fs(EXIT, proc_nr, 0, 0);  /* file system can free the proc slot */
-  sys_xit(rmp->mp_parent, proc_nr, &base, &size);
-#if (SHADOWING == 1)
-  free_mem(base, size);
-#endif
+  sys_xit(rmp->mp_parent, proc_nr);
 
-#if (SHADOWING == 0)
   /* Release the memory occupied by the child. */
   if (find_share(rmp, rmp->mp_ino, rmp->mp_dev, rmp->mp_ctime) == NULL) {
 	/* No other process shares the text segment, so free it. */
@@ -170,20 +159,23 @@ int exit_status;		/* the process' exit status (for parent) */
   /* Free the data and stack segments. */
   free_mem(rmp->mp_seg[D].mem_phys,
       rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir);
-#endif
 
   /* The process slot can only be freed if the parent has done a WAIT. */
   rmp->mp_exitstatus = (char) exit_status;
-  pidarg = mproc[rmp->mp_parent].mp_wpid;	/* who's being waited for? */
-  parent_waiting = mproc[rmp->mp_parent].mp_flags & WAITING;
-  if (pidarg == -1 || pidarg == rmp->mp_pid || -pidarg == rmp->mp_procgrp)
-	right_child = TRUE;		/* child meets one of the 3 tests */
-  else
-	right_child = FALSE;		/* child fails all 3 tests */
-  if (parent_waiting && right_child)
+
+  p_mp = &mproc[rmp->mp_parent];	/* process' parent */
+  pidarg = p_mp->mp_wpid;		/* who's being waited for? */
+  parent_waiting = p_mp->mp_flags & WAITING;
+
+  right_child =				/* child meets one of the 3 tests? */
+	(pidarg == -1 || pidarg == rmp->mp_pid || -pidarg == rmp->mp_procgrp);
+
+  if (parent_waiting && right_child) {
 	cleanup(rmp);			/* tell parent and release child slot */
-  else
-	rmp->mp_flags |= HANGING;	/* parent not waiting, suspend child */
+  } else {
+	rmp->mp_flags = IN_USE|ZOMBIE;	/* parent not waiting, zombify child */
+	sig_proc(p_mp, SIGCHLD);	/* send parent a "child died" signal */
+  }
 
   /* If the process has children, disinherit them.  INIT is the new parent. */
   for (rmp = &mproc[0]; rmp < &mproc[NR_PROCS]; rmp++) {
@@ -191,7 +183,7 @@ int exit_status;		/* the process' exit status (for parent) */
 		/* 'rmp' now points to a child to be disinherited. */
 		rmp->mp_parent = INIT_PROC_NR;
 		parent_waiting = mproc[INIT_PROC_NR].mp_flags & WAITING;
-		if (parent_waiting && (rmp->mp_flags & HANGING)) cleanup(rmp);
+		if (parent_waiting && (rmp->mp_flags & ZOMBIE)) cleanup(rmp);
 	}
   }
 
@@ -211,12 +203,12 @@ PUBLIC int do_waitpid()
  */
 
   register struct mproc *rp;
-  int pidarg, options, children, res2;
+  int pidarg, options, children;
 
-  /* A process calling WAIT never gets a reply in the usual way via the
-   * reply() in the main loop (unless WNOHANG is set or no qualifying child
-   * exists).  If a child has already exited, the routine cleanup() sends 
-   * the reply to awaken the caller.
+  /* A process calling WAIT never gets a reply in the usual way at the end
+   * of the main loop (unless WNOHANG is set or no qualifying child exists).
+   * If a child has already exited, the routine cleanup() sends the reply
+   * to awaken the caller.
    */
 
   /* Set internal variables, depending on whether this is WAIT or WAITPID. */
@@ -237,19 +229,16 @@ PUBLIC int do_waitpid()
 		if (pidarg < -1 && -pidarg != rp->mp_procgrp) continue;
 
 		children++;		/* this child is acceptable */
-		if (rp->mp_flags & HANGING) {
+		if (rp->mp_flags & ZOMBIE) {
 			/* This child meets the pid test and has exited. */
 			cleanup(rp);	/* this child has already exited */
-			dont_reply = TRUE;
-			return(OK);
+			return(E_NO_MESSAGE);
 		}
 		if ((rp->mp_flags & STOPPED) && rp->mp_sigstatus) {
 			/* This child meets the pid test and is being traced.*/
-			res2 =  0177 | (rp->mp_sigstatus << 8);
-			reply(who, rp->mp_pid, res2, NIL_PTR);
-			dont_reply = TRUE;
+			mp->reply_res2 = 0177 | (rp->mp_sigstatus << 8);
 			rp->mp_sigstatus = 0;
-			return(OK);
+			return(rp->mp_pid);
 		}
 	}
   }
@@ -260,8 +249,7 @@ PUBLIC int do_waitpid()
 	if (options & WNOHANG) return(0);    /* parent does not want to wait */
 	mp->mp_flags |= WAITING;	     /* parent wants to wait */
 	mp->mp_wpid = (pid_t) pidarg;	     /* save pid for later */
-	dont_reply = TRUE;		     /* do not reply now though */
-	return(OK);			     /* yes - wait for one to exit */
+	return(E_NO_MESSAGE);		     /* do not reply, let it wait */
   } else {
 	/* No child even meets the pid test.  Return error immediately. */
 	return(ECHILD);			     /* no - parent has no children */
@@ -279,12 +267,14 @@ register struct mproc *child;	/* tells which process is exiting */
  * by a signal, and its parent is waiting.
  */
 
+  struct mproc *parent = &mproc[child->mp_parent];
   int exitstatus;
 
   /* Wake up the parent. */
   exitstatus = (child->mp_exitstatus << 8) | (child->mp_sigstatus & 0377);
-  reply(child->mp_parent, child->mp_pid, exitstatus, NIL_PTR);
-  mproc[child->mp_parent].mp_flags &= ~WAITING;	/* parent no longer waiting */
+  parent->reply_res2 = exitstatus;
+  setreply(child->mp_parent, child->mp_pid);
+  parent->mp_flags &= ~WAITING;		/* parent no longer waiting */
 
   /* Release the process table entry. */
   child->mp_flags = 0;

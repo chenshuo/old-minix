@@ -25,8 +25,10 @@ OBJECTS	= \
 	$(LIBRARY)(dup2.o) \
 	$(LIBRARY)(execl.o) \
 	$(LIBRARY)(execle.o) \
+	$(LIBRARY)(execlp.o) \
 	$(LIBRARY)(execv.o) \
 	$(LIBRARY)(execve.o) \
+	$(LIBRARY)(execvp.o) \
 	$(LIBRARY)(fcntl.o) \
 	$(LIBRARY)(fork.o) \
 	$(LIBRARY)(fpathconf.o) \
@@ -81,6 +83,7 @@ OBJECTS	= \
 	$(LIBRARY)(stat.o) \
 	$(LIBRARY)(stime.o) \
 	$(LIBRARY)(sync.o) \
+	$(LIBRARY)(svrctl.o) \
 	$(LIBRARY)(tcdrain.o) \
 	$(LIBRARY)(tcflow.o) \
 	$(LIBRARY)(tcflush.o) \
@@ -159,11 +162,17 @@ $(LIBRARY)(execl.o):	execl.s
 $(LIBRARY)(execle.o):	execle.s
 	$(CC1) execle.s
 
+$(LIBRARY)(execlp.o):	execlp.s
+	$(CC1) execlp.s
+
 $(LIBRARY)(execv.o):	execv.s
 	$(CC1) execv.s
 
 $(LIBRARY)(execve.o):	execve.s
 	$(CC1) execve.s
+
+$(LIBRARY)(execvp.o):	execvp.s
+	$(CC1) execvp.s
 
 $(LIBRARY)(fcntl.o):	fcntl.s
 	$(CC1) fcntl.s
@@ -326,6 +335,9 @@ $(LIBRARY)(stime.o):	stime.s
 
 $(LIBRARY)(sync.o):	sync.s
 	$(CC1) sync.s
+
+$(LIBRARY)(svrctl.o):	svrctl.s
+	$(CC1) svrctl.s
 
 $(LIBRARY)(tcdrain.o):	tcdrain.s
 	$(CC1) tcdrain.s

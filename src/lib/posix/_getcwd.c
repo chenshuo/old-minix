@@ -65,7 +65,7 @@ char *getcwd(char *path, size_t size)
 	char *p, *up, *dotdot;
 	int cycle;
 
-	if (path == nil || size <= 2) { errno= EINVAL; return nil; }
+	if (path == nil || size <= 1) { errno= EINVAL; return nil; }
 
 	p= path + size;
 	*--p = 0;

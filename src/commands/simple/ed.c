@@ -99,7 +99,7 @@ ed:	$(OBJS)
 #define	ESCAPE	'\\'
 #define CCL	'['		/* Character class: [...] */
 #define CCLEND	']'
-#define NEGATE	'~'
+#define NEGATE	'^'
 #define NCCL	'!'		/* Negative character class [^...] */
 #define CLOSURE	'*'
 #define OR_SYM	'|'
@@ -410,7 +410,10 @@ unsigned size;
   printf("Making a %d bit map (%d bytes required)\n", size, numbytes);
 #endif
 
-  if (map = (unsigned *) malloc(numbytes + sizeof(unsigned))) *map = size;
+  if (map = (unsigned *) malloc(numbytes + sizeof(unsigned))) {
+	*map = size;
+	memset(map + 1, 0, numbytes);
+  }
 
   return((BITMAP *) map);
 }
@@ -1095,7 +1098,7 @@ char **argv;
   set_buf();
   doflush = isatty(1);
 
-  if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 0) {
+  if (argc > 1 && (strcmp(argv[1], "-") == 0 || strcmp(argv[1], "-s") == 0)) {
 	diag = 0;
 	argc--;
 	argv++;
@@ -1118,9 +1121,18 @@ char **argv;
 	if (fgets(inlin, sizeof(inlin), stdin) == NULL) {
 		break;
 	}
+	for (;;) {
+		inptr = strchr(inlin, EOS);
+		if (inptr >= inlin+2 && inptr[-2] == '\\' && inptr[-1] == NL) {
+			inptr[-1] = 'n';
+			if (fgets(inptr, sizeof(inlin) - (inptr - inlin),
+						stdin) == NULL) break;
+		} else {
+			break;
+		}
+	}
 	if (*inlin == '!') {
-		for (inptr = inlin; *inptr != NL; inptr++);
-		*inptr = EOS;
+		if ((inptr = strchr(inlin, NL)) != NULL) *inptr = EOS;
 		System(inlin + 1);
 		continue;
 	}

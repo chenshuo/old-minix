@@ -13,7 +13,7 @@
 #define	DAY	(24 * HOUR)	/* # seconds in a day */
 #define	YEAR	(365 * DAY)	/* # seconds in a (non-leap) year */
 
-int qflag, uflag, sflag;
+int qflag, uflag, sflag, Sflag;
 
 /* Default output file descriptor.
  */
@@ -26,6 +26,7 @@ _PROTOTYPE(void pldecimal, (unsigned long d, int digits));
 _PROTOTYPE(void pdecimal, (int d, int digits));
 _PROTOTYPE(void fmtdate, (char *format, time_t t, struct tm *p));
 _PROTOTYPE(time_t make_time, (char *t));
+_PROTOTYPE(struct tm *september, (time_t *tp));
 _PROTOTYPE(void usage, (void));
 
 /* Main module. Handles P1003.2 date and system administrator's date. The
@@ -36,6 +37,7 @@ int argc;
 char **argv;
 {
   time_t t;
+  struct tm *tm;
   char *format;
   char time_buf[40];
   int n;
@@ -59,7 +61,12 @@ char **argv;
 	case 'u':
 		uflag = 1;
 		break;
+	case 'S':
+		Sflag = 1;
+		break;
 	case 't':
+		/* (obsolete, now -r) */
+	case 'r':
 		if (*opt == 0) {
 			if (i == argc) usage();
 			opt = argv[i++];
@@ -68,6 +75,8 @@ char **argv;
 		if (*end != 0) usage();
 		opt = "";
 		break;
+	default:
+		usage();
 	}
   }
 
@@ -96,7 +105,9 @@ char **argv;
 	return(1);
   }
 
-  fmtdate(format, t, uflag ? gmtime(&t) : localtime(&t));
+  tm = Sflag ? september(&t) : uflag ? gmtime(&t) : localtime(&t);
+
+  fmtdate(format, t, tm);
   putchar('\n');
   return(0);
 }
@@ -163,8 +174,6 @@ struct tm *p;
   static char *month[] = {"January", "February", "March", "April",
 			"May", "June", "July", "August",
 		    "September", "October", "November", "December"};
-
-  p= uflag ? gmtime(&t) : localtime(&t);
 
   while (*format)
 	if (*format == '%') {
@@ -391,10 +400,44 @@ char *t;
   }
 }
 
+/* Correct the time to the reckoning of Eternal September. */
+struct tm *september(tp)
+time_t *tp;
+{
+  time_t t;
+  int days;
+  struct tm *tm;
+
+  tm = localtime(tp);
+
+  t = *tp - (tm->tm_hour - 12) * 3600L;  /* No zone troubles around noon. */
+  days = 0;
+
+  while (tm->tm_year > 93 || (tm->tm_year == 93 && tm->tm_mon >= 8)) {
+	/* Step back a year or a month. */
+	days += tm->tm_year > 93 ? tm->tm_yday+1 : tm->tm_mday;
+	t = *tp - days * 24 * 3600L;
+
+	tm = localtime(&t);
+  }
+
+  if (days > 0) {
+	tm = localtime(tp);
+	tm->tm_mday = days;
+	tm->tm_year = 93;
+	tm->tm_mon = 8;
+#if SANITY
+	t = mktime(tm);
+	tm = localtime(&t);
+#endif
+  }
+  return tm;
+}
+
 /* (Extended) Posix prototype of date. */
 void usage()
 {
   outfd = 2;
-  pstring("Usage: date [-qsu] [-t seconds] [[MMDDYY]hhmm[ss]] [+format]\n", -1);
+  pstring("Usage: date [-qsuS] [-r seconds] [[MMDDYY]hhmm[ss]] [+format]\n", -1);
   exit(1);
 }

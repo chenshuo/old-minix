@@ -14,7 +14,7 @@
  * shell
  */
 
-#define	LINELIM	2100
+#define	LINELIM	4096
 #define	NPUSH	8	/* limit to input nesting */
 
 #define	NOFILE	20	/* Number of open files */

@@ -9,6 +9,11 @@
 #ifndef _ANSI_H
 #include <ansi.h>
 #endif
+#ifdef _POSIX_SOURCE
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+#endif
 
 /* Here are types that are closely associated with signal handling. */
 typedef int sig_atomic_t;
@@ -20,7 +25,7 @@ typedef unsigned long sigset_t;
 #endif
 #endif
 
-#define _NSIG             16	/* number of signals used */
+#define _NSIG             17	/* number of signals used */
 
 #define SIGHUP             1	/* hangup */
 #define SIGINT             2	/* interrupt (DEL) */
@@ -38,6 +43,7 @@ typedef unsigned long sigset_t;
 #define SIGPIPE           13	/* write on a pipe with no one to read it */
 #define SIGALRM           14	/* alarm clock */
 #define SIGTERM           15	/* software termination signal from kill */
+#define SIGCHLD           17	/* child process terminated or stopped */
 
 #define SIGEMT             7	/* obsolete */
 #define SIGBUS            10	/* obsolete */
@@ -45,7 +51,6 @@ typedef unsigned long sigset_t;
 /* POSIX requires the following signals to be defined, even if they are
  * not supported.  Here are the definitions, but they are not supported.
  */
-#define SIGCHLD           17	/* child process terminated or stopped */
 #define SIGCONT           18	/* continue if stopped */
 #define SIGSTOP           19	/* stop signal */
 #define SIGTSTP           20	/* interactive stop signal */
@@ -53,11 +58,7 @@ typedef unsigned long sigset_t;
 #define SIGTTOU           22	/* background process wants to write */
 
 /* The sighandler_t type is not allowed unless _POSIX_SOURCE is defined. */
-#ifdef _POSIX_SOURCE
-#define __sighandler_t sighandler_t
-#else
-typedef void (*__sighandler_t) (int);
-#endif
+typedef void _PROTOTYPE( (*__sighandler_t), (int) );
 
 /* Macros used as function pointers. */
 #define SIG_ERR    ((__sighandler_t) -1)	/* error return */
@@ -101,7 +102,7 @@ _PROTOTYPE( int sigaddset, (sigset_t *_set, int _sig)			);
 _PROTOTYPE( int sigdelset, (sigset_t *_set, int _sig)			);
 _PROTOTYPE( int sigemptyset, (sigset_t *_set)				);
 _PROTOTYPE( int sigfillset, (sigset_t *_set)				);
-_PROTOTYPE( int sigismember, (sigset_t *_set, int _sig)			);
+_PROTOTYPE( int sigismember, (const sigset_t *_set, int _sig)		);
 _PROTOTYPE( int sigpending, (sigset_t *_set)				);
 _PROTOTYPE( int sigprocmask,
 	    (int _how, const sigset_t *_set, sigset_t *_oset)		);

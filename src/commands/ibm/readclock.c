@@ -48,11 +48,14 @@
 #include <signal.h>
 #include <ibm/portio.h>
 #include <ibm/cmos.h>
+#include <sys/svrctl.h>
 
 int nflag = 0;		/* Tell what, but don't do it. */
 int wflag = 0;		/* Set the CMOS clock. */
 int Wflag = 0;		/* Also set the CMOS clock register bits. */
 int y2kflag = 0;	/* Interpret 1980 as 2000 for clock with Y2K bug. */
+
+char clocktz[128];	/* Timezone of the clock. */
 
 #define MACH_ID_ADDR	0xFFFFE		/* BIOS Machine ID at FFFF:000E */
 
@@ -87,7 +90,7 @@ int main(int argc, char **argv)
   time_t now, rtc;
   int i, mem;
   unsigned char mach_id, cmos_state;
-  unsigned long frac;
+  struct sysgetenv sysgetenv;
 
   /* Open /dev/mem to get access to physical memory. */
   if ((mem = open("/dev/mem", O_RDONLY)) == -1) {
@@ -137,6 +140,19 @@ int main(int argc, char **argv)
   }
   if (Wflag) wflag = 1;		/* -W implies -w */
 
+  /* The hardware clock may run in a different time zone, likely GMT or
+   * winter time.  Select that time zone.
+   */
+  strcpy(clocktz, "TZ=");
+  sysgetenv.key = "TZ";
+  sysgetenv.keylen = 2+1;
+  sysgetenv.val = clocktz+3;
+  sysgetenv.vallen = sizeof(clocktz)-3;
+  if (svrctl(SYSGETENV, &sysgetenv) == 0) {
+	putenv(clocktz);
+	tzset();
+  }
+
   /* Read the CMOS real time clock. */
   for (i = 0; i < 10; i++) {
 	get_time(&time1);
@@ -174,8 +190,8 @@ int main(int argc, char **argv)
 	}
   } else {
 	/* Set the CMOS clock to the system time. */
+	tmnow = *localtime(&now);
 	if (nflag) {
-		tmnow = *localtime(&now);
 		printf("%04d-%02d-%02d %02d:%02d:%02d\n",
 			tmnow.tm_year + 1900,
 			tmnow.tm_mon + 1,

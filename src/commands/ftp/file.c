@@ -27,8 +27,8 @@ _PROTOTYPE(static int binaryrecv, (int fd, int fdin));
 _PROTOTYPE(static int asciisize, (int fd, off_t *filesize));
 _PROTOTYPE(static off_t asciisetsize, (int fd, off_t filesize));
 
-static char buffer[8192];
-static char bufout[8192];
+static char buffer[512 << sizeof(char *)];
+static char bufout[512 << sizeof(char *)];
 static char line2[512];
 
 static char *dir(path, full)

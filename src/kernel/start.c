@@ -11,12 +11,10 @@
 
 #include "kernel.h"
 #include <stdlib.h>
-#include <minix/boot.h>
 #include "protect.h"
 
-PRIVATE char k_environ[256];	/* environment strings passed by loader */
-
-FORWARD _PROTOTYPE( int k_atoi, (char *s) );
+/* Environment strings passed by loader. */
+PRIVATE char k_environ[128*sizeof(char *)];
 
 
 /*==========================================================================*
@@ -40,25 +38,21 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
   prot_init();
 
   /* Copy the boot parameters to kernel memory. */
+  mon_params = seg2phys(mds) + parmoff;
+  mon_parmsize = parmsize;
   if (parmsize > sizeof k_environ - 2) parmsize = sizeof k_environ - 2;
-  phys_copy(seg2phys(mds)+parmoff, vir2phys(k_environ), (phys_bytes) parmsize);
-
-  /* Convert important boot environment variables. */
-  boot_parameters.bp_rootdev = k_atoi(k_getenv("rootdev"));
-  boot_parameters.bp_ramimagedev = k_atoi(k_getenv("ramimagedev"));
-  boot_parameters.bp_ramsize = k_atoi(k_getenv("ramsize"));
-  boot_parameters.bp_processor = k_atoi(k_getenv("processor"));
+  phys_copy(mon_params, vir2phys(k_environ), (phys_bytes) parmsize);
 
   /* Type of VDU: */
-  envp = k_getenv("video");
+  envp = getenv("video");
   if (strcmp(envp, "ega") == 0) ega = TRUE;
   if (strcmp(envp, "vga") == 0) vga = ega = TRUE;
 
   /* Processor? */
-  processor = boot_parameters.bp_processor;	/* 86, 186, 286, 386, ... */
+  processor = atoi(getenv("processor"));	/* 86, 186, 286, 386, ... */
 
   /* XT, AT or MCA bus? */
-  envp = k_getenv("bus");
+  envp = getenv("bus");
   if (envp == NIL_PTR || strcmp(envp, "at") == 0) {
 	pc_at = TRUE;
   } else
@@ -79,28 +73,16 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
 
 
 /*==========================================================================*
- *				k_atoi					    *
+ *				getenv					    *
  *==========================================================================*/
-PRIVATE int k_atoi(s)
-register char *s;
-{
-/* Convert string to integer. */
-
-  return strtol(s, (char **) NULL, 10);
-}
-
-
-/*==========================================================================*
- *				k_getenv				    *
- *==========================================================================*/
-PUBLIC char *k_getenv(name)
-char *name;
+PUBLIC char *getenv(name)
+_CONST char *name;
 {
 /* Get environment value - kernel version of getenv to avoid setting up the
  * usual environment array.
  */
 
-  register char *namep;
+  register _CONST char *namep;
   register char *envp;
 
   for (envp = k_environ; *envp != 0;) {

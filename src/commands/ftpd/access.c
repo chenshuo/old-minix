@@ -107,24 +107,27 @@ char *name;
 struct passwd *pwd;
 {
    if(!strcmp(name, "ftp")) {
-	if(chroot(pwd->pw_dir)) {
+	if(chroot(pwd->pw_dir) || chdir("/")) {
 		logit("LOGIN", "FAIL");
 		printf("530 Not logged in, could not chroot.\r\n");
 		return(GOOD);
 	}
-	strncpy(newroot, pwd->pw_dir, sizeof(newroot));
 	anonymous = 1;
-	strcpy(pwd->pw_dir, "/");
    }
 
-   if(setgid(pwd->pw_gid) || setuid(pwd->pw_uid) || chdir(pwd->pw_dir)) {
+   if(setgid(pwd->pw_gid) || setuid(pwd->pw_uid)) {
 	logit("LOGIN", "FAIL");
 	printf(msg530);
 	anonymous = 0;
    } else {
 	logit("LOGIN", "PASS");
-	printf("230 User %s logged in, directory %s.\r\n",
-		username, pwd->pw_dir);
+	if (chdir(pwd->pw_dir)) {
+		printf("230 User %s logged in, no home directory.\r\n",
+			username);
+	} else {
+		printf("230 User %s logged in, directory %s.\r\n",
+			username, pwd->pw_dir);
+	}
 	loggedin = 1;
    }
 

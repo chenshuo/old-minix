@@ -16,14 +16,6 @@ Copyright 1995 Philip Homburg
 #define CRAMPED (_EM_WSIZE==2)	/* 64K code and data is quite cramped. */
 #define ZERO 0	/* Used to comment out initialization code that does nothing. */
 
-#if CRAMPED
-/* Keep 16-bit compiler from running out of memory. */
-#undef _PROTOTYPE
-#undef _ARGS
-#define _PROTOTYPE(f, a) f()
-#define _ARGS(a) ()
-#endif
-
 #include <sys/types.h>
 #include <errno.h>
 #include <stddef.h>
@@ -68,15 +60,21 @@ typedef int ioreq_t;
 
 #define THIS_FILE static char *this_file= __FILE__;
 
+#if CRAMPED
+
+/* Minimum panic info. */
+#define ip_panic(print_list)  panic(this_file, __LINE__)
+_PROTOTYPE( void panic, (char *file, int line) );
+
+#else /* !CRAMPED */
+
+/* Maximum panic info. */
+#define ip_panic(print_list)  \
+	(panic0(this_file, __LINE__), printf print_list, panic())
 _PROTOTYPE( void panic0, (char *file, int line) );
 _PROTOTYPE( void panic, (void) );
 
-#if !CRAMPED
-#define ip_panic(print_list)  \
-	(panic0(this_file, __LINE__), printf print_list, panic())
-#else
-#define ip_panic(print_list)  panic(this_file, __LINE__)
-#endif
+#endif /* !CRAMPED */
 
 #if DEBUG
 #define ip_warning(print_list)  \
@@ -101,8 +99,8 @@ _PROTOTYPE( void panic, (void) );
 
 #define ARGS(x) _ARGS(x)
 
-#define this_proc INET_PROC_NR
 extern char version[];
+extern int this_proc, synal_tasknr;
 
 void stacktrace ARGS(( void ));
 

@@ -49,31 +49,32 @@ FILE *fd;
 {
   register char *p;
   char          *q;
-  int            tmppos;
+  int            c;
 
-  strs->pos = 0;
   for (;;) {
-	if (strs->pos >= strs->len -128)
-		strrealloc(strs);
-	if (fgets(*strs->ptr + strs->pos, strs->len - strs->pos, fd) == (char *)0)
-		return TRUE;		/*  EOF  */
+	strs->pos = 0;
+	for (;;) {
+		do {
+			if (strs->pos >= strs->len)
+				strrealloc(strs);
+			if ((c = getc(fd)) == EOF)
+				return TRUE;		/* EOF */
+			(*strs->ptr)[strs->pos++] = c;
+		} while (c != '\n');
 
-	lineno++;
+		lineno++;
 
-	while ((p = strchr(*strs->ptr + strs->pos, '\n')) == (char *)0) {
-		tmppos = strs->len -1;
-		strrealloc(strs);
-		if (fgets(*strs->ptr + tmppos, strs->len - tmppos, fd) == (char *)0)
-			error("Unexpected EOF",(char *)0);
+		if (strs->pos >= 2 && (*strs->ptr)[strs->pos - 2] == '\\') {
+			(*strs->ptr)[strs->pos - 2] = '\n';
+			strs->pos--;
+		} else {
+			break;
+		}
 	}
 
-
-	if (p[-1] == '\\')
-	{
-		p[-1] = '\n';
-		strs->pos = p - *strs->ptr;
-		continue;
-	}
+	if (strs->pos >= strs->len)
+		strrealloc(strs);
+	(*strs->ptr)[strs->pos] = '\0';
 
 	p = q =  *strs->ptr;
 	while (isspace(*q)) q++;
@@ -101,7 +102,6 @@ FILE *fd;
 
 	if (*p != '\0')
 		return FALSE;
-	strs->pos = 0;
   }
 }
 

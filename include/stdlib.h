@@ -3,6 +3,10 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
 /* The macros are NULL, EXIT_FAILURE, EXIT_SUCCESS, RAND_MAX, and MB_CUR_MAX.*/
 #define NULL    ((void *)0)
 
@@ -26,10 +30,6 @@ typedef char wchar_t;		/* type expanded character set */
 #endif
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( void abort, (void)						);
 _PROTOTYPE( int abs, (int _j)						);
 _PROTOTYPE( int atexit, (void (*_func)(void))				);

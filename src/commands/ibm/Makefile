@@ -6,93 +6,86 @@ CFLAGS	= -D_MINIX -D_POSIX_SOURCE
 CCLD	= $(CC) -i $(CFLAGS)
 MAKE	= exec make -$(MAKEFLAGS)
 
-all:	bin \
-	bin/cdplay \
-	bin/dosread \
-	bin/fdisk \
-	bin/format \
-	bin/loadfont \
-	bin/loadkeys \
-	bin/mixer \
-	bin/part \
-	bin/partition \
-	bin/playwave \
-	bin/postmort \
-	bin/readclock \
-	bin/recwave \
-	bin/repartition \
-	bin/screendump \
-	bin/sdump \
+ALL	= \
+	dosread \
+	fdisk \
+	format \
+	loadfont \
+	loadkeys \
+	mixer \
+	part \
+	partition \
+	playwave \
+	postmort \
+	readclock \
+	recwave \
+	repartition \
+	screendump \
+	sdump \
 
-bin:
-	mkdir bin
+all:	$(ALL)
 
-bin/cdplay:	cdplay.c
-	$(CCLD) -o $@ -m $? -lcurses
-	install -S 4kw $@
-
-bin/dosread:	dosread.c
+dosread:	dosread.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
 
-bin/fdisk:	fdisk.c
+fdisk:	fdisk.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/format:	format.c
-	$(CCLD) -m -o $@ $?
-	install -S 4kw $@
-
-bin/loadfont:	loadfont.c
+format:	format.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/loadkeys:	loadkeys.c
+loadfont:	loadfont.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mixer:	mixer.c
-	$(CCLD) -o $@ -m $? -lcurses
+loadkeys:	loadkeys.c
+	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/part:	part.c
-	$(CCLD) -m -o $@ $?
+mixer:	mixer.c
+	$(CCLD) -o $@ $? -lcurses
+	install -S 4kw $@
+
+part:	part.c
+	$(CCLD) -o $@ $?
 	install -S 11kw $@
 
-bin/partition:	partition.c
+partition:	partition.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/playwave:	playwave.c
+playwave:	playwave.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/postmort:	postmort.c
-	$(CCLD) -m -o $@ $?
-	install -S 4kw $@
-
-bin/readclock:	readclock.c
+postmort:	postmort.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/recwave:	recwave.c
+readclock:	readclock.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/repartition:	repartition.c
+recwave:	recwave.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/screendump:	screendump.c
+repartition:	repartition.c
 	$(CCLD) -o $@ $?
-	install -S 8kw $@
-
-bin/sdump:	sdump.c
-	$(CCLD) -m -o $@ $?
 	install -S 4kw $@
 
-install:	bin \
-	/usr/bin/cdplay \
+screendump:	screendump.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+sdump:	sdump.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+install:	\
 	/usr/bin/dosread \
 		/usr/bin/dosdir \
 		/usr/bin/doswrite \
@@ -113,55 +106,52 @@ install:	bin \
 	/bin/loadkeys \
 	/bin/readclock \
 
-/usr/bin/cdplay:	bin/cdplay
-	install -cs -o bin $? $@
-
-/usr/bin/dosread:	bin/dosread
+/usr/bin/dosread:	dosread
 	install -cs -o bin $? $@
 
 /usr/bin/dosdir /usr/bin/doswrite:	/usr/bin/dosread
 	install -l $? $@
 
-/usr/bin/fdisk:	bin/fdisk
+/usr/bin/fdisk:	fdisk
 	install -cs -o bin $? $@
 
-/usr/bin/format:	bin/format
+/usr/bin/format:	format
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/loadfont:	bin/loadfont
+/usr/bin/loadfont:	loadfont
 	install -cs -o bin $? $@
 
-/usr/bin/loadkeys:	bin/loadkeys
+/usr/bin/loadkeys:	loadkeys
 	install -cs -o bin $? $@
 
-/usr/bin/mixer:	bin/mixer
+/usr/bin/mixer:	mixer
 	install -cs -o bin $? $@
 
-/usr/bin/part:	bin/part
+/usr/bin/part:	part
 	install -cs -o bin $? $@
 
-/usr/bin/partition:	bin/partition
+/usr/bin/partition:	partition
 	install -cs -o bin $? $@
 
-/usr/bin/playwave:	bin/playwave
+/usr/bin/playwave:	playwave
 	install -cs -o bin $? $@
 
-/usr/bin/postmort:	bin/postmort
+/usr/bin/postmort:	postmort
 	install -cs -o bin $? $@
 
-/usr/bin/readclock:	bin/readclock
+/usr/bin/readclock:	readclock
 	install -cs -o bin $? $@
 
-/usr/bin/recwave:	bin/recwave
+/usr/bin/recwave:	recwave
 	install -cs -o bin $? $@
 
-/usr/bin/repartition:	bin/repartition
+/usr/bin/repartition:	repartition
 	install -cs -o bin $? $@
 
-/usr/bin/screendump:	bin/screendump
+/usr/bin/screendump:	screendump
 	install -cs -o bin $? $@
 
-/usr/bin/sdump:	bin/sdump
+/usr/bin/sdump:	sdump
 	install -cs -o bin $? $@
 
 /bin/loadkeys:	/usr/bin/loadkeys
@@ -171,4 +161,4 @@ install:	bin \
 	install -lcs $? $@
 
 clean:
-	rm -rf a.out core bin
+	rm -rf $(ALL) a.out core

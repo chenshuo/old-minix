@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	checkhier 2.5 - check the directory hierarchy	Author: Kees J. Bot
+#	checkhier 2.7 - check the directory hierarchy	Author: Kees J. Bot
 #								7 May 1995
 
 case "`id`" in
@@ -22,6 +22,7 @@ drwxr-xr-x	root	operator	/etc
 -rw-r--r--	root	operator	/etc/fstab
 -rw-r--r--	root	operator	/etc/group
 -rw-r--r--	root	operator	/etc/hostname.file
+-rw-r--r--	root	operator	/etc/inet.conf
 -rw-r--r--	root	operator	/etc/motd
 -rw-r--r--	root	operator	/etc/mtab
 -rw-r--r--	root	operator	/etc/passwd
@@ -44,7 +45,7 @@ drwxr-xr-x	root	operator	/usr/adm
 -rw-r--r--	root	operator	/usr/adm/wtmp
 drwxr-xr-x	ast	other		/usr/ast
 drwxr-xr-x	bin	operator	/usr/bin
-drwxr-xr-x	bin	operator	/usr/etc
+drwxr-xr-x	root	operator	/usr/etc
 drwxr-xr-x	bin	operator	/usr/include
 drwxr-xr-x	bin	operator	/usr/lib
 drwxrwxr-x	root	operator	/usr/local
@@ -56,9 +57,11 @@ drwxrwxr-x	bin	operator	/usr/local/src
 drwxr-xr-x	bin	operator	/usr/man
 drwxr-xr-x	bin	operator	/usr/mdec
 drwx------	root	operator	/usr/preserve
+drwxr-xr-x	root	operator	/usr/run
 drwxr-xr-x	root	operator	/usr/spool
 drwx--x--x	root	operator	/usr/spool/at
 drwx--x--x	root	operator	/usr/spool/at/past
+drwx------	root	operator	/usr/spool/crontabs
 drwxrwxr-x	root	uucp		/usr/spool/locks
 drwx------	daemon	daemon		/usr/spool/lpd
 drwxr-xr-x	bin	operator	/usr/src
@@ -78,7 +81,6 @@ drwxrwxrwx	root	operator	/usr/tmp
 -rwsr-xr-x	root	?		/usr/bin/passwd
 -rwsr-xr-x	root	?		/usr/bin/ping
 -rwxr-sr-x	?	kmem		/usr/bin/ps
--rwsr-xr-x	root	?		/usr/bin/recover
 -rwsr-xr--	root	?		/usr/bin/shutdown
 -rwsr-xr-x	root	?		/usr/bin/su
 -rwxr-sr-x	?	uucp		/usr/bin/term

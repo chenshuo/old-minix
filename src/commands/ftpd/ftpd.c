@@ -24,6 +24,7 @@ char *FtpdVersion = "0.95";
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <net/gen/in.h>
 #include <net/gen/tcp.h>
 
@@ -38,7 +39,7 @@ _PROTOTYPE(static int doNOOP, (char *buff));
 _PROTOTYPE(static int doUNIMP, (char *buff));
 
 /* The following defines the inactivity timeout in seconds */
-#define	INACTIVITY_TIMEOUT	60*5
+#define	INACTIVITY_TIMEOUT	60*60
 
 char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -51,16 +52,16 @@ int ftpdata_fd = -1;
 int loggedin, gotuser, anonymous;
 char username[80];
 char anonpass[128];
-char newroot[128];
 
 ipaddr_t myipaddr, rmtipaddr, dataaddr;
 tcpport_t myport, rmtport, dataport;
 
 char myhostname[256], rmthostname[256];
 
-#define	FTPD_LOG	"/usr/adm/ftpd.log"
+#define	FTPLOG		"/usr/adm/ftplog"
+#define	AFTPLOG		"/usr/adm/aftplog"
 
-FILE *logfile;
+int fd_ftplog, fd_aftplog, fd_curlog;
 
 int timeout = 0;
 
@@ -123,7 +124,6 @@ static void init()
    loggedin = 0;
    gotuser = 0;
    anonymous = 0;
-   newroot[0] = '\0';
    type = TYPE_A;
    format = 0;
    mode = 0;
@@ -241,20 +241,28 @@ char *parm;
 {
 time_t now;
 struct tm *tm;
+char message[1024];
 
-   if(logfile == (FILE *)NULL)
+   if(fd_curlog == -1)
 	return;
 
    time(&now);
    tm = localtime(&now);
-   fprintf(logfile, "%4d%02d%02d%02d%02d%02d ",
-	1900+tm->tm_year,
-	tm->tm_mon + 1,
+   sprintf(message, "%s %s %2d %02d:%02d:%02d %d %s %s %s %s\n",
+	days[tm->tm_wday],
+	months[tm->tm_mon],
 	tm->tm_mday,
-	tm->tm_hour, tm->tm_min, tm->tm_sec);
-   fprintf(logfile, "%s %s %s %s %s\n",
-	rmthostname, username, anonymous ? anonpass : username, type, parm);
-   fflush(logfile);
+	tm->tm_hour, tm->tm_min, tm->tm_sec,
+	1900+tm->tm_year,
+	rmthostname, anonymous ? anonpass : username, type, parm);
+   (void) write(fd_curlog, message, strlen(message));
+}
+
+/* loganon */
+void loganon(anon)
+int anon;
+{
+   fd_curlog = anon ? fd_aftplog : fd_ftplog;
 }
 
 int main(argc, argv)
@@ -270,11 +278,10 @@ int s;
 
    GetNetInfo();
 
-   /* open transfer log file if it exists */
-   if((logfile = fopen(FTPD_LOG, "r")) != (FILE *)NULL) {
-	fclose(logfile);
-	logfile = fopen(FTPD_LOG, "a");
-   }
+   /* open log file and anonymous log file if they exist */
+   fd_ftplog = open(FTPLOG, O_WRONLY | O_APPEND);
+   fd_aftplog = open(AFTPLOG, O_WRONLY | O_APPEND);
+   loganon(0);
 
    /* Let's initialize some stuff */
    init();

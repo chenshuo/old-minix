@@ -242,8 +242,9 @@ typedef struct dpeth
 	int de_sendq_head;		/* Enqueue at the head */
 	int de_sendq_tail;		/* Dequeue at the tail */
 
-	/* The de_memsegm field is calculated based on the de_linmem field */
-	segm_t de_memsegm;
+	/* Shared memory segment and offset based on de_linmem. */
+	u16_t de_memseg;
+	vir_bytes de_memoff;
 
 	/* Fields for internal use by the dp8390 driver. */
 	int de_flags;

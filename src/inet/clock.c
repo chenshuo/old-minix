@@ -39,9 +39,7 @@ PUBLIC time_t get_time()
 		static message mess;
 
 		mess.m_type= GET_UPTIME;
-		if (sendrec (CLOCK, &mess) < 0)
-			ip_panic(("unable to sendrec"));
-		if (mess.m_type != OK)
+		if (sendrec (CLOCK, &mess) < 0 || mess.m_type != OK)
 			ip_panic(("can't read clock"));
 		curr_time= mess.NEW_TIME;
 	}
@@ -158,9 +156,7 @@ PRIVATE void set_timer()
 		mess.m_type= SET_SYNC_AL;
 		mess.CLOCK_PROC_NR= this_proc;
 		mess.DELTA_TICKS= new_time;
-		if (sendrec (CLOCK, &mess) < 0)
-			ip_panic(("unable to sendrec"));
-		if (mess.m_type != OK)
+		if (sendrec (CLOCK, &mess) < 0 || mess.m_type != OK)
 			ip_panic(("can't set timer"));
 	}
 }

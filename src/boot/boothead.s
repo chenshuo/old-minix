@@ -9,13 +9,7 @@
 !	dl	= Boot-device.
 !	es:si	= Partition table entry if hard disk.
 !
-
-.define begtext, begdata, begbss
-.data
-begdata:
-	.ascii	"(null)\0"	! Just in case someone follows a null pointer
-.bss
-begbss:
+.text
 
 	o32	    =	  0x66	! This assembler doesn't know 386 extensions
 	BOOTOFF	    =	0x7C00	! 0x0000:BOOTOFF load a bootstrap here
@@ -49,8 +43,6 @@ begbss:
 .extern _mem					! Free memory list
 
 .text
-begtext:
-.extern _boot, _printk				! Boot Minix, kernel printf
 
 ! Set segment registers and stack pointer using the programs own header!
 ! The header is either 32 bytes (short form) or 48 bytes (long form).  The
@@ -191,7 +183,7 @@ ___exit:
 	jz	reboot
 quit:	mov	ax, #any_key
 	push	ax
-	call	_printk
+	call	_printf
 	xorb	ah, ah			! Read character from keyboard
 	int	0x16
 reboot:	call	restore_video
@@ -394,7 +386,7 @@ sbrk:	push	ax		! save it as future return value
 	jae	plenty		! No reason to complain
 	mov	ax, #memwarn
 	push	ax
-	call	_printk		! Warn about memory running low
+	call	_printf		! Warn about memory running low
 	pop	ax
 	movb	memwarn, #0	! No more warnings
 plenty:	pop	ax		! Return old break (0 for brk)
@@ -403,7 +395,7 @@ heaperr:mov	ax, #chmem
 	push	ax
 	mov	ax, #nomem
 	push	ax
-	call	_printk
+	call	_printf
 	jmp	quit
 .data
 nomem:	.ascii	"\nOut of%s\0"
@@ -477,8 +469,8 @@ geodone:
 	pop	di
 	pop	es		! Restore di and es registers
 	ret
-geoerr:	movb	al, ah		! ax = BIOS error code
-	xorb	ah, ah
+geoerr:	movb	al, ah
+	xorb	ah, ah		! ax = BIOS error code
 	jmp	geodone
 .data
 seclist:
@@ -518,13 +510,14 @@ _dev_boundary:
 _writesectors:
 	push	bp
 	mov	bp, sp
-	movb	13(bp), #3	! Code for a disk write
+	movb	13(bp), #0x03	! Code for a disk write
 	jmp	rwsec
 _readsectors:
 	push	bp
 	mov	bp, sp
-	movb	13(bp), #2	! Code for a disk read
-rwsec:	push	di
+	movb	13(bp), #0x02	! Code for a disk read
+rwsec:	push	si
+	push	di
 	push	es
 	mov	ax, 4(bp)
 	mov	dx, 6(bp)
@@ -539,6 +532,8 @@ nohd:	cmpb	12(bp), #0	! count equals zero?
 	jz	done
 more:	mov	ax, 8(bp)
 	mov	dx, 10(bp)	! dx:ax = abs sector.  Divide it by sectors/cyl
+	cmp	dx, #[1024*255*63-255]>>16  ! Near 8G limit?
+	jae	bigdisk
 	div	secspcyl	! ax = cylinder, dx = sector within cylinder
 	xchg	ax, dx		! ax = sector within cylinder, dx = cylinder
 	movb	ch, dl		! ch = low 8 bits of cylinder
@@ -556,10 +551,25 @@ more:	mov	ax, 8(bp)
 	cmpb	al, 12(bp)	! Compare with # sectors to transfer
 	jbe	doit		! Can't go past the end of a cylinder?
 	movb	al, 12(bp)	! 12(bp) < sectors left on this track
-doit:	movb	ah, 13(bp)	! Code for disk read (2) or write (3)
+doit:	movb	ah, 13(bp)	! Code for disk read (0x02) or write (0x03)
 	push	ax		! Save al = sectors to read
 	int	0x13		! call the BIOS to do the transfer
 	pop	cx		! Restore al in cl
+	jmp	rdeval
+bigdisk:
+	mov	si, #ext_rw	! si = extended read/write parameter packet
+	movb	cl, 12(bp)
+	movb	2(si), cl	! Fill in # blocks to transfer
+	mov	4(si), bx	! Buffer address = es:bx
+	mov	6(si), es
+	mov	8(si), ax	! Starting block number = dx:ax
+	mov	10(si), dx
+	movb	dl, _device	! dl = device to use
+	movb	ah, 13(bp)	! Code for disk read (0x02) or write (0x03)
+	orb	ah, #0x40	! Extended read (0x42) or write (0x43)
+	int	0x13
+	!jmp	rdeval
+rdeval:
 	jc	ioerr		! I/O error
 	movb	al, cl		! Restore al = sectors read
 	addb	bh, al		! bx += 2 * al * 256 (add bytes transferred)
@@ -583,20 +593,38 @@ finish:	movb	al, ah
 	xorb	ah, ah		! ax = error number
 	pop	es
 	pop	di
+	pop	si
 	pop	bp
 	ret
+.data
+	.align	4
+! Extended read/write commands require a parameter packet.
+ext_rw:
+	.data1	0x10		! Length of extended r/w packet
+	.data1	0		! Reserved
+	.data2	0		! Blocks to transfer (to be filled in)
+	.data2	0		! Buffer address offset (tbfi)
+	.data2	0		! Buffer address segment (tbfi)
+	.data4	0		! Starting block number low 32 bits (tbfi)
+	.data4	0		! Starting block number high 32 bits
+.text
 
 ! int getch(void);
 !	Read a character from the keyboard, and check for an expired timer.
 !	A carriage return is changed into a linefeed for UNIX compatibility.
 .define _getch
 _getch:
+	xor	ax, ax
+	xchg	ax, unchar	! Ungotten character?
+	test	ax, ax
+	jnz	gotch
+getch:	hlt			! Play dead until interrupted (see pause())
 	movb	ah, #0x01	! Keyboard status
 	int	0x16
-	jnz	press
+	jnz	press		! Keypress?
 	call	_expired	! Timer expired?
 	test	ax, ax
-	jz	_getch
+	jz	getch
 	mov	ax, #ESC	! Return ESC
 	ret
 press:
@@ -609,6 +637,15 @@ nocr:	cmpb	al, #ESC	! Escape typed?
 	jne	noesc
 	inc	escape		! Set flag
 noesc:	xorb	ah, ah		! ax = al
+gotch:	ret
+
+! int ungetch(void);
+!	Return a character to undo a getch().
+.define _ungetch
+_ungetch:
+	mov	bx, sp
+	mov	ax, 2(bx)
+	mov	unchar, ax
 	ret
 
 ! int escape(void);
@@ -629,14 +666,14 @@ escflg:	xor	ax, ax
 
 ! int putch(int c);
 !	Write a character in teletype mode.  The putk synonym is
-!	for the kernel printk function that uses it.
+!	for the kernel printf function that uses it.
 !	Newlines are automatically preceded by a carriage return.
 !
 .define _putch, _putk
 _putch:
 _putk:	mov	bx, sp
 	movb	al, 2(bx)	! al = character to be printed
-	testb	al, al		! 1.6.* printk adds a trailing null
+	testb	al, al		! Kernel printf adds a null char to flush queue
 	jz	nulch
 	cmpb	al, #0x0A	! al = newline?
 	jnz	putc
@@ -647,6 +684,14 @@ putc:	movb	ah, #0x0E	! Print character in teletype mode
 	mov	bx, #0x0001	! Page 0, foreground color
 	int	0x10		! Call BIOS VIDEO_IO
 nulch:	ret
+
+! void pause(void);
+!	Wait for an interrupt using the HLT instruction.  This either saves
+!	power, or tells an x86 emulator that nothing is happening right now.
+.define _pause
+_pause:
+	hlt
+	ret
 
 ! void set_mode(unsigned mode);
 ! void clear_screen(void);
@@ -806,7 +851,7 @@ _bootstrap:
 	sti
 	jmpf	BOOTOFF, 0	! Back to where the BIOS loads the boot code
 
-! u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
+! void minix(u32_t koff, u32_t kcs, u32_t kds,
 !				char *bootparams, size_t paramsize, u32_t aout);
 !	Call Minix.
 _minix:
@@ -935,14 +980,14 @@ noret386:
 
 ! Minix-86 returns here on a halt or reboot.
 ret86:
-	mov	8(bp), ax
-	mov	10(bp), dx	! Return value
+	mov	_reboot_code+0, ax
+	mov	_reboot_code+2, dx	! Return value (obsolete method)
 	jmp	return
 
 ! Minix-386 returns here on a halt or reboot.
 ret386:
 	.data1	o32
-	mov	8(bp), ax	! Return value
+	mov	_reboot_code, ax	! Return value (obsolete method)
 	call	prot2real	! Switch to real mode
 
 return:
@@ -1006,8 +1051,6 @@ tryclk:	decb	al
 	int	0x1A
 noclock:
 
-	mov	ax, 8(bp)
-	mov	dx, 10(bp)	! dx-ax = return value from the kernel
 	pop	bp
 	ret			! Return to monitor as if nothing much happened
 
@@ -1203,6 +1246,7 @@ A20ok:	inb	0x92		! Check port A
 	ret
 
 .data
+	.ascii	"(null)\0"	! Just in case someone follows a null pointer
 	.align	2
 c60:	.data2	60		! Constants for MUL and DIV
 c1024:	.data2	1024
@@ -1283,3 +1327,4 @@ p_mcs_desc:
 	.comm	pdbr, 4		! Saved page directory base register (cr3)
 	.comm	escape, 2	! Escape typed?
 	.comm	bus, 2		! Saved return value of _get_bus
+	.comm	unchar, 2	! Char returned by ungetch(c)

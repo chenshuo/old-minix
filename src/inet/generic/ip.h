@@ -7,15 +7,11 @@ Copyright 1995 Philip Homburg
 #ifndef INET_IP_H
 #define INET_IP_H
 
-#define IP0	0
-#define IP1	1
-#define IP2	2
-#define IP3	3
-
 /* Prototypes */
 
 struct acc;
 
+void ip_prep ARGS(( void ));
 void ip_init ARGS(( void ));
 int  ip_open ARGS(( int port, int srfd,
 	get_userdata_t get_userdata, put_userdata_t put_userdata,

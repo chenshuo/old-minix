@@ -49,29 +49,8 @@
 #define HCHIGH_MASK	0x0F	/* h/w click mask for low byte of hi word */
 #define HCLOW_MASK	0xF0	/* h/w click mask for low byte of low word */
 
-! Imported functions
-
-.extern	p_restart
-.extern	p_save
-.extern	_restart
-.extern	save
-
 ! Exported variables
-
 .extern kernel_cs
-
-! Imported variables
-
-.extern kernel_ds
-.extern _irq_use
-.extern	_blank_color
-.extern	_gdt
-.extern	_protected_mode
-.extern	_vid_seg
-.extern	_vid_size
-.extern	_vid_mask
-.extern	_level0_func
-.extern	_ps_mca
 
 	.text
 !*===========================================================================*
@@ -82,8 +61,6 @@
 
 _monitor:
 	call	prot2real		! switch to real mode
-	mov	ax, _reboot_code+0	! address of new parameters
-	mov	dx, _reboot_code+2
 	mov	sp, _mon_sp		! restore monitor stack pointer
 	mov	bx, _mon_ss		! monitor data segment
 	mov	ds, bx
@@ -241,8 +218,10 @@ prot2real:
 	cmp	_processor, #386	! is this a 386?
 	jae	p2r386
 p2r286:
-	mov	_gdt+ES_286_OFFSET+DESC_BASE, #0x0000
-	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE, #0x00
+	xor	ax, ax
+	mov	_gdt+ES_286_OFFSET+DESC_BASE, ax
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE, al
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_HIGH, al
 	mov	ax, #ES_286_SELECTOR
 	mov	es, ax			! BIOS data segment
   eseg	mov	0x0467, #real		! set return from shutdown address
@@ -785,22 +764,21 @@ _reset:
 !*===========================================================================*
 ! PUBLIC void mem_vid_copy(u16 *src, unsigned dst, unsigned count);
 !
-! Copy count characters from kernel memory to video memory.  Src, dst and
-! count are character (word) based video offsets and counts.  If src is null
-! then screen memory is blanked by filling it with blank_color.
-
-MVC_ARGS	=	2 + 2 + 2 + 2	! 2 + 2 + 2
-!			es  di  si  ip	 src dst ct
+! Copy count characters from kernel memory to video memory.  Src is an ordinary
+! pointer to a word, but dst and count are character (word) based video offset
+! and count.  If src is null then screen memory is blanked by filling it with
+! blank_color.
 
 _mem_vid_copy:
+	push	bp
+	mov	bp, sp
 	push	si
 	push	di
 	push	es
-	mov	bx, sp
-	mov	si, MVC_ARGS(bx)	! source
-	mov	di, MVC_ARGS+2(bx)	! destination
-	mov	dx, MVC_ARGS+2+2(bx)	! count
-	mov	es, _vid_seg		! destination is video segment
+	mov	si, 4(bp)		! source
+	mov	di, 6(bp)		! destination
+	mov	dx, 8(bp)		! count
+	mov	es, _vid_seg		! segment containing video memory
 	cld				! make sure direction is up
 mvc_loop:
 	and	di, _vid_mask		! wrap address
@@ -812,6 +790,7 @@ mvc_loop:
 	mov	cx, ax			! cx = min(cx, vid_size - di)
 0:	sub	dx, cx			! count -= cx
 	shl	di, #1			! byte address
+	add	di, _vid_off		! in video memory
 	test	si, si			! source == 0 means blank the screen
 	jz	mvc_blank
 mvc_copy:
@@ -824,13 +803,15 @@ mvc_blank:
 	stos				! copy blanks to video memory
 	!jmp	mvc_test
 mvc_test:
-	shr	di, #1			! word addresses
+	sub	di, _vid_off
+	shr	di, #1			! back to a word address
 	test	dx, dx
 	jnz	mvc_loop
 mvc_done:
 	pop	es
 	pop	di
 	pop	si
+	pop	bp
 	ret
 
 
@@ -843,18 +824,16 @@ mvc_done:
 ! Used for scrolling, line or character insertion and deletion.  Src, dst
 ! and count are character (word) based video offsets and counts.
 
-VVC_ARGS	=	2 + 2 + 2 + 2	! 2 + 2 + 2
-!			es  di  si  ip 	 src dst ct
-
 _vid_vid_copy:
+	push	bp
+	mov	bp, sp
 	push	si
 	push	di
 	push	es
-	mov	bx, sp
-	mov	si, VVC_ARGS(bx)	! source
-	mov	di, VVC_ARGS+2(bx)	! destination
-	mov	dx, VVC_ARGS+2+2(bx)	! count
-	mov	es, _vid_seg		! use video segment
+	mov	si, 4(bp)		! source
+	mov	di, 6(bp)		! destination
+	mov	dx, 8(bp)		! count
+	mov	es, _vid_seg		! segment containing video memory
 	cmp	si, di			! copy up or down?
 	jb	vvc_down
 vvc_up:
@@ -874,12 +853,7 @@ vvc_uploop:
 	jbe	0f
 	mov	cx, ax			! cx = min(cx, vid_size - di)
 0:	sub	dx, cx			! count -= cx
-	shl	si, #1
-	shl	di, #1			! byte addresses
-	rep
-   eseg movs				! copy video words
-	shr	si, #1
-	shr	di, #1			! word addresses
+	call	vvc_copy
 	test	dx, dx
 	jnz	vvc_uploop		! again?
 	jmp	vvc_done
@@ -902,12 +876,7 @@ vvc_downloop:
 	jbe	0f
 	mov	cx, ax			! cx = min(cx, di + 1)
 0:	sub	dx, cx			! count -= cx
-	shl	si, #1
-	shl	di, #1			! byte addresses
-	rep
-   eseg	movs				! copy video words
-	shr	si, #1
-	shr	di, #1			! word addresses
+	call	vvc_copy
 	test	dx, dx
 	jnz	vvc_downloop		! again?
 	cld				! C compiler expect up
@@ -916,6 +885,24 @@ vvc_done:
 	pop	es
 	pop	di
 	pop	si
+	pop	bp
+	ret
+
+! Copy video words.  (Inner code of both the up and downcopying loop.)
+vvc_copy:
+	shl	si, #1
+	shl	di, #1			! byte addresses
+	add	si, _vid_off
+	add	di, _vid_off		! in video memory
+	push	ds			! must set ds here, 8086 can't do
+	mov	ds, _vid_seg		! 'rep eseg movs' with interrupts on
+	rep
+	movs				! copy video words
+	pop	ds
+	sub	si, _vid_off
+	sub	di, _vid_off
+	shr	si, #1
+	shr	di, #1			! back to word addresses
 	ret
 
 
@@ -973,46 +960,51 @@ kip_done:
 ! that just gets in the way here.
 
 p_cp_mess:
-	cld
-	pop	dx
-	pop	bx		! proc
-	pop	cx		! source clicks
-	pop	ax		! source offset
-#if CLICK_SHIFT != HCLICK_SHIFT + 4
-#error /* the only click size supported is 256, to avoid slow shifts here */
-#endif
-	addb	ah,cl		! calculate source offset
-	adcb	ch,#0		! and put in base of source descriptor
-	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,ch
-	pop	cx		! destination clicks
-	pop	ax		! destination offset
-	addb	ah,cl		! calculate destination offset
-	adcb	ch,#0		! and put in base of destination descriptor
-	mov	_gdt+ES_286_OFFSET+DESC_BASE,ax
-	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE,ch
-	sub	sp,#2+2+2+2+2
-
+	mov	bx, sp		! bx -> arguments
+	push	si
+	push	di
 	push	ds
 	push	es
-	mov	ax,#DS_286_SELECTOR
-	mov	ds,ax
-	mov	ax,#ES_286_SELECTOR
-	mov	es,ax
 
-  eseg	mov	0,bx		! proc no. of sender from arg, not msg
-	mov	ax,si
-	mov	bx,di
-	mov	si,#2		! src offset is now 2 relative to start of seg
-	mov	di,si		! and destination offset
-	mov	cx,#Msize-1	! word count
+	mov	ax, 4(bx)	! Compute source descriptor base
+	mov	dx, ax
+	shl	ax, #CLICK_SHIFT
+	shr	dx, #16-CLICK_SHIFT	! dx:ax = src_clicks * CLICK_SIZE
+	add	ax, 6(bx)
+	adc	dx, #0			! dx:ax += src_offset
+	mov	_gdt+DS_286_OFFSET+DESC_BASE, ax
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE, dl
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH, dh
+
+	mov	ax, 8(bx)	! Compute destination descriptor base
+	mov	dx, ax
+	shl	ax, #CLICK_SHIFT
+	shr	dx, #16-CLICK_SHIFT	! dx:ax = dst_clicks * CLICK_SIZE
+	add	ax, 10(bx)
+	adc	dx, #0			! dx:ax += dst_offset
+	mov	_gdt+ES_286_OFFSET+DESC_BASE, ax
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE, dl
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_HIGH, dh
+
+	mov	bx, 2(bx)		! proc no
+	mov	ax, #DS_286_SELECTOR
+	mov	ds, ax
+	mov	ax, #ES_286_SELECTOR
+	mov	es, ax
+
+  eseg	mov	0, bx		! proc no. of sender from arg, not msg
+	mov	si, #2		! src offset is now 2 relative to start of seg
+	mov	di, si		! and destination offset
+	mov	cx, #Msize-1	! word count
+	cld			! direction is up
 	rep
-	movs
-	mov	di,bx
-	mov	si,ax
+	movs			! copy message (except first word)
+
 	pop	es
 	pop	ds
-	jmp	(dx)
+	pop	di
+	pop	si
+	ret
 
 
 !*===========================================================================*
@@ -1025,6 +1017,7 @@ p_portio_setup:
 	mov	dx,4+2+2(bp)
 	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
 	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,dl
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH,dh
 	xor	bx,bx		! bx = 0 = start of segment
 	mov	ax,#DS_286_SELECTOR ! ax = segment selector
 	mov	cx,4+2+4(bp)	! count in bytes
@@ -1042,9 +1035,11 @@ p_phys_copy:
 	pop	_gdt+DS_286_OFFSET+DESC_BASE
 	pop	ax		! pop source into base of source descriptor
 	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,al
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH,ah
 	pop	_gdt+ES_286_OFFSET+DESC_BASE
 	pop	ax		! pop destination into base of dst descriptor
 	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE,al
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_HIGH,ah
 	pop	cx		! byte count in bx:cx
 	pop	bx
 	sub	sp,#4+4+4
@@ -1068,8 +1063,10 @@ ppc_large:
 	pop	cx
 	dec	bx
 	pop	ds		! update the descriptors
-	incb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE
-	incb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE
+	addb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,#1
+	adcb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH,#0
+	addb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE,#1
+	adcb	_gdt+ES_286_OFFSET+DESC_BASE_HIGH,#0
 	push	ds
 ppc_next:
 	mov	ax,#DS_286_SELECTOR	! (re)load the selectors

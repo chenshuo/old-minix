@@ -64,6 +64,7 @@ typedef struct arp_port
 	int ap_flags;
 	int ap_state;
 	int ap_eth_port;
+	int ap_ip_port;
 	int ap_eth_fd;
 	ether_addr_t ap_ethaddr;
 	ipaddr_t ap_ipaddr;
@@ -131,9 +132,13 @@ FORWARD arp_cache_t *find_cache_ent ARGS(( arp_port_t *arp_port,
 	ipaddr_t ipaddr ));
 FORWARD arp_cache_t *alloc_cache_ent ARGS(( void ));
 
-PRIVATE arp_port_t arp_port_table[ARP_PORT_NR];
-/* PRIVATE arp_port_t *arp_port; */
+PRIVATE arp_port_t *arp_port_table;
 PRIVATE	arp_cache_t arp_cache[ARP_CACHE_NR];
+
+PUBLIC void arp_prep()
+{
+	arp_port_table= alloc(eth_conf_nr * sizeof(arp_port_table[0]));
+}
 
 PUBLIC void arp_init()
 {
@@ -144,7 +149,7 @@ PUBLIC void arp_init()
 	assert (BUF_S >= sizeof(struct nwio_ethopt));
 	assert (BUF_S >= sizeof(arp46_t));
 
-	for (i=0, arp_port= arp_port_table; i<ARP_PORT_NR; i++, arp_port++)
+	for (i=0, arp_port= arp_port_table; i<eth_conf_nr; i++, arp_port++)
 	{
 		arp_port->ap_state= APS_ERROR;	/* Mark all ports as
 						 * unavailable */
@@ -161,7 +166,7 @@ arp_port_t *arp_port;
 	{
 	case APS_INITIAL:
 		arp_port->ap_eth_fd= eth_open(arp_port->ap_eth_port,
-			arp_port-arp_port_table, arp_getdata, arp_putdata, 0);
+			arp_port->ap_eth_port, arp_getdata, arp_putdata, 0);
 
 		if (arp_port->ap_eth_fd<0)
 		{
@@ -220,10 +225,12 @@ arp_port_t *arp_port;
 		setup_read(arp_port);
 		return;
 
+#if !CRAMPED
 	default:
 		ip_panic((
 		 "arp_main(&arp_port_table[%d]) called but ap_state=0x%x\n",
-			arp_port-arp_port_table, arp_port->ap_state ));
+			arp_port->ap_eth_port, arp_port->ap_state ));
+#endif
 	}
 }
 
@@ -443,7 +450,7 @@ arp_port_t *arp_port;
 			arp_port->ap_write_code= ARP_REQUEST;
 			clck_timer(&arp_port->ap_timer,
 				get_time() + ARP_TIMEOUT,
-				arp_timeout, arp_port-arp_port_table);
+				arp_timeout, arp_port->ap_eth_port);
 		}
 		else
 		{
@@ -583,7 +590,7 @@ ether_addr_t *ethaddr;
 		arp_port->ap_flags &= ~(APF_CLIENTREQ|APF_CLIENTWRITE);
 		clck_untimer(&arp_port->ap_timer);
 	}
-	(*arp_port->ap_arp_func)(arp_port-arp_port_table, ipaddr, ethaddr);
+	(*arp_port->ap_arp_func)(arp_port->ap_eth_port, ipaddr, ethaddr);
 }
 
 PRIVATE arp_cache_t *find_cache_ent (arp_port, ipaddr)
@@ -624,16 +631,16 @@ PRIVATE arp_cache_t *alloc_cache_ent()
 	return old;
 }
 
-PUBLIC void arp_set_ipaddr (ip_port, ipaddr)
-int ip_port;
+PUBLIC void arp_set_ipaddr (eth_port, ipaddr)
+int eth_port;
 ipaddr_t ipaddr;
 {
 	arp_port_t *arp_port;
 	int i;
 
-	if (ip_port < 0 || ip_port >= ARP_PORT_NR)
+	if (eth_port < 0 || eth_port >= eth_conf_nr)
 		return;
-	arp_port= &arp_port_table[ip_port];
+	arp_port= &arp_port_table[eth_port];
 
 	arp_port->ap_ipaddr= ipaddr;
 	arp_port->ap_flags |= APF_INADDR_SET;
@@ -642,20 +649,21 @@ ipaddr_t ipaddr;
 		arp_main(arp_port);
 }
 
-PUBLIC int arp_set_cb(ip_port, eth_port, arp_func)
-int ip_port;
+PUBLIC int arp_set_cb(eth_port, ip_port, arp_func)
 int eth_port;
+int ip_port;
 arp_func_t arp_func;
 {
 	arp_port_t *arp_port;
 	int i;
 
-	assert(ip_port >= 0);
-	if (ip_port >= ARP_PORT_NR)
+	assert(eth_port >= 0);
+	if (eth_port >= eth_conf_nr)
 		return ENXIO;
 
-	arp_port= &arp_port_table[ip_port];
+	arp_port= &arp_port_table[eth_port];
 	arp_port->ap_eth_port= eth_port;
+	arp_port->ap_ip_port= ip_port;
 	arp_port->ap_state= APS_INITIAL;
 	arp_port->ap_flags= APF_EMPTY;
 	arp_port->ap_arp_func= arp_func;
@@ -665,8 +673,8 @@ arp_func_t arp_func;
 	return NW_OK;
 }
 
-PUBLIC int arp_ip_eth (ip_port, ipaddr, ethaddr)
-int ip_port;
+PUBLIC int arp_ip_eth (eth_port, ipaddr, ethaddr)
+int eth_port;
 ipaddr_t ipaddr;
 ether_addr_t *ethaddr;
 {
@@ -675,8 +683,8 @@ ether_addr_t *ethaddr;
 	arp_cache_t *ce;
 	time_t curr_time;
 
-	assert(ip_port >= 0 && ip_port < ARP_PORT_NR);
-	arp_port= &arp_port_table[ip_port];
+	assert(eth_port >= 0 && eth_port < eth_conf_nr);
+	arp_port= &arp_port_table[eth_port];
 	assert(arp_port->ap_state == APS_ARPMAIN ||
 		(printf("ap_state= %d\n", arp_port->ap_state), 0));
 
@@ -750,15 +758,16 @@ timer_t *timer;
 	else
 	{
 		ce= find_cache_ent(arp_port, arp_port->ap_req_ipaddr);
-		assert(ce && ce->ac_state == ACS_INCOMPLETE ||
-			(printf("ce= %p, ce->ac_state= %d\n",
-				ce, ce ? ce->ac_state : -1),0));
-		curr_time= get_time();
-		ce->ac_state= ACS_UNREACHABLE;
-		ce->ac_expire= curr_time+ ARP_NOTRCH_EXP_TIME;
-		ce->ac_lastuse= curr_time;
+		if (ce) {
+			assert(ce->ac_state == ACS_INCOMPLETE ||
+				(printf("ce->ac_state= %d\n", ce->ac_state),0));
+			curr_time= get_time();
+			ce->ac_state= ACS_UNREACHABLE;
+			ce->ac_expire= curr_time+ ARP_NOTRCH_EXP_TIME;
+			ce->ac_lastuse= curr_time;
 
-		client_reply(arp_port, ce->ac_ipaddr, NULL);
+			client_reply(arp_port, ce->ac_ipaddr, NULL);
+		}
 	}
 }
 

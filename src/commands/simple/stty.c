@@ -157,12 +157,6 @@ char *argv[];
   for (k= 1; k < argc; k++)
 	k += option(argv[k], k+1 < argc ? argv[k+1] : "");
 
-  if (tcsetattr(0, TCSANOW, &termios) == -1)
-  {
-	fprintf(stderr, "%s: can't set terminal parameters to stdin: %s\n",
-		prog_name, strerror(errno));
-	exit(1);
-  }
 #ifdef __minix
   if (ioctl(0, TIOCSWINSZ, &winsize) == -1)
   {
@@ -171,6 +165,12 @@ char *argv[];
 	exit(1);
   }
 #endif
+  if (tcsetattr(0, TCSANOW, &termios) == -1)
+  {
+	fprintf(stderr, "%s: can't set terminal parameters to stdin: %s\n",
+		prog_name, strerror(errno));
+	exit(1);
+  }
   exit(0);
 }
 

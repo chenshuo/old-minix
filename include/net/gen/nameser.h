@@ -116,6 +116,7 @@ Error codes
 /* Valid classes */
 
 #define C_IN		1			/* the internet */
+#define C_CHAOS		3			/* for chaos net (MIT) */
 #define C_HS		4		/* for Hesiod name server at MIT */
 
 #define C_ANY		255			/* wildcard */

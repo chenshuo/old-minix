@@ -55,7 +55,7 @@ ip_port_t *ip_port;
 	assert(BUF_S >= sizeof(eth_hdr_t));
 
 	ip_port->ip_dl.dl_eth.de_fd= eth_open(ip_port->
-		ip_dl.dl_eth.de_port, ip_port-ip_port_table,
+		ip_dl.dl_eth.de_port, ip_port->ip_port,
 		get_eth_data, put_eth_data, ip_eth_arrived);
 	if (ip_port->ip_dl.dl_eth.de_fd < 0)
 	{
@@ -99,8 +99,8 @@ ip_port_t *ip_port;
 			return;
 		/* drops through */
 	case IES_SETPROTO:
-		result= arp_set_cb(ip_port-ip_port_table,
-			ip_port->ip_dl.dl_eth.de_port,
+		result= arp_set_cb(ip_port->ip_dl.dl_eth.de_port,
+			ip_port->ip_port,
 			ipeth_arp_reply);
 		if (result != NW_OK)
 		{
@@ -139,9 +139,11 @@ ip_port_t *ip_port;
 		}
 		do_eth_read(ip_port);
 		return;
+#if !CRAMPED
 	default:
 		ip_panic(( "unknown state: %d",
 			ip_port->ip_dl.dl_eth.de_state));
+#endif
 	}
 }
 
@@ -262,14 +264,14 @@ int for_ioctl;
 #if !CRAMPED
 	printf("ip_port->ip_dl.dl_eth.de_state= 0x%x",
 		ip_port->ip_dl.dl_eth.de_state);
-#endif
 	ip_panic (( "strange status" ));
+#endif
 }
 
 PRIVATE void ipeth_set_ipaddr(ip_port)
 ip_port_t *ip_port;
 {
-	arp_set_ipaddr (ip_port-ip_port_table, ip_port->ip_ipaddr);
+	arp_set_ipaddr (ip_port->ip_dl.dl_eth.de_port, ip_port->ip_ipaddr);
 	if (ip_port->ip_dl.dl_eth.de_state == IES_GETIPADDR)
 		ipeth_main(ip_port);
 }
@@ -311,7 +313,9 @@ int broadcast;
 		if ((dest & ip_port->ip_subnetmask) != 
 			(ip_port->ip_ipaddr & ip_port->ip_subnetmask))
 		{
+#if !CRAMPED
 			ip_panic(( "invalid destination" ));
+#endif
 		}
 
 		hostpart= (dest & ~ip_port->ip_subnetmask);
@@ -319,7 +323,8 @@ int broadcast;
 		assert(hostpart != 0);
 		assert(dest != ip_port->ip_ipaddr);
 
-		r= arp_ip_eth(ip_port-ip_port_table, dest, &eth_hdr->eh_dst);
+		r= arp_ip_eth(ip_port->ip_dl.dl_eth.de_port,
+			dest, &eth_hdr->eh_dst);
 		if (r == NW_SUSPEND)
 		{
 			/* Unfortunately, the arp takes some time, use
@@ -504,7 +509,7 @@ ether_addr_t *eth_addr;
 	eth_hdr_t *eth_hdr;
 	ether_addr_t tmp_eth_addr;
 
-	assert (ip_port_nr >= 0 && ip_port_nr < IP_PORT_NR);
+	assert (ip_port_nr >= 0 && ip_port_nr < ip_conf_nr);
 	ip_port= &ip_port_table[ip_port_nr];
 
 	for (;;)
@@ -568,8 +573,8 @@ ether_addr_t *eth_addr;
 	{
 		eth_pack= ip_port->ip_dl.dl_eth.de_arp_head;
 		xmit_hdr= (xmit_hdr_t *)ptr2acc_data(eth_pack);
-		r= arp_ip_eth(ip_port-ip_port_table, xmit_hdr->xh_ipaddr,
-			&tmp_eth_addr);
+		r= arp_ip_eth(ip_port->ip_dl.dl_eth.de_port,
+			xmit_hdr->xh_ipaddr, &tmp_eth_addr);
 		if (r == NW_SUSPEND)
 			break;				/* Normal case */
 

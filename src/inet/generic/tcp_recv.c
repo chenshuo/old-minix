@@ -819,7 +819,8 @@ int data_len;
 	tcp_conn->tc_RCV_NXT= hi_seq;
 
 	if ((tcp_hdr_flags & THF_FIN) && 
-		tcp_Lmod4G(tcp_conn->tc_RCV_NXT, tcp_conn->tc_RCV_HI))
+		tcp_Lmod4G(tcp_conn->tc_RCV_NXT, tcp_conn->tc_RCV_HI) &&
+		!(tcp_conn->tc_flags & TCF_FIN_RECV))
 	{
 		tcp_conn->tc_RCV_NXT++;
 		tcp_conn->tc_flags |= TCF_FIN_RECV;
@@ -1234,13 +1235,13 @@ int enq;					/* Enqueue writes. */
 	{
 		/* Out of data, clear PUSH flag and reply to a read. */
 		tcp_conn->tc_flags &= ~TCF_RCV_PUSH;
-		if (tcp_fd->tf_read_offset)
-		{
-			tcp_reply_read (tcp_fd, tcp_fd->tf_read_offset);
-			return;
-		}
 	}
 	if (fin_recv || urg || !tcp_fd->tf_read_count)
+	{
+		tcp_reply_read (tcp_fd, tcp_fd->tf_read_offset);
+		return;
+	}
+	if (tcp_fd->tf_read_offset)
 	{
 		tcp_reply_read (tcp_fd, tcp_fd->tf_read_offset);
 		return;
@@ -1248,5 +1249,5 @@ int enq;					/* Enqueue writes. */
 }
 
 /*
- * $PchId: tcp_recv.c,v 1.13 1997/01/31 08:49:51 philip Exp $
+ * $PchId: tcp_recv.c,v 1.13.2.1 2000/05/02 18:53:06 philip Exp $
  */

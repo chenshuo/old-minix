@@ -53,9 +53,6 @@
 #include "../../fs/inode.h"
 #include "../../fs/type.h"
 #include <minix/fslib.h>
-
-#undef printf			/* defined as printk in "../fs/const.h" */
-
 #include <stdio.h>
 
 #define BITSHIFT	  4	/* = log2(#bits(int)) */

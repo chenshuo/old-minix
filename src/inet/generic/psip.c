@@ -24,7 +24,6 @@ THIS_FILE
 typedef struct psip_port
 {
 	int pp_flags;
-	int pp_minor;
 	int pp_ipdev;
 	int pp_opencnt;
 	struct psip_fd *pp_rd_head;
@@ -38,7 +37,7 @@ typedef struct psip_port
 #define PPF_ENABLED	2
 #define PPF_PROMISC	4
 
-#define PSIP_FD_NR	4
+#define PSIP_FD_NR	(1*IP_PORT_MAX)
 
 typedef struct psip_fd
 {
@@ -57,7 +56,7 @@ typedef struct psip_fd
 #define PFF_READ_IP	2
 #define PFF_PROMISC	4
 
-PRIVATE psip_port_t psip_port_table[PSIP_PORT_NR];
+PRIVATE psip_port_t *psip_port_table;
 PRIVATE psip_fd_t psip_fd_table[PSIP_FD_NR];
 
 FORWARD int psip_open ARGS(( int port, int srfd,
@@ -79,6 +78,11 @@ FORWARD void reply_thr_put ARGS(( psip_fd_t *psip_fd, int reply,
 FORWARD void reply_thr_get ARGS(( psip_fd_t *psip_fd, int reply,
 	int for_ioctl ));
 
+PUBLIC void psip_prep()
+{
+	psip_port_table= alloc(psip_conf_nr * sizeof(psip_port_table[0]));
+}
+
 PUBLIC void psip_init()
 {
 	int i;
@@ -86,16 +90,15 @@ PUBLIC void psip_init()
 	psip_fd_t *psip_fd;
 
 #if ZERO
-	for (i=0, psip_port= psip_port_table; i<PSIP_PORT_NR; i++, psip_port++)
+	for (i=0, psip_port= psip_port_table; i<psip_conf_nr; i++, psip_port++)
 		psip_port->pp_flags= PPF_EMPTY;
 
 	for (i=0, psip_fd= psip_fd_table; i<PSIP_FD_NR; i++, psip_fd++)
 		psip_fd->pf_flags= PFF_EMPTY;
 #endif
 
-	for (i=0, psip_port= psip_port_table; i<PSIP_PORT_NR; i++, psip_port++)
+	for (i=0, psip_port= psip_port_table; i<psip_conf_nr; i++, psip_port++)
 	{
-		psip_port->pp_minor= psip_conf[i].pc_minor;
 		psip_port->pp_flags |= PPF_CONFIGURED;
 #if ZERO
 		psip_port->pp_opencnt= 0;
@@ -116,9 +119,8 @@ int port_nr;
 int ip_port_nr;
 {
 	psip_port_t *psip_port;
-	int result;
 
-	assert(port_nr >= 0 && port_nr < PSIP_PORT_NR);
+	assert(port_nr >= 0 && port_nr < psip_conf_nr);
 
 	psip_port= &psip_port_table[port_nr];
 	assert(psip_port->pp_flags & PPF_CONFIGURED);
@@ -126,10 +128,9 @@ int ip_port_nr;
 	psip_port->pp_ipdev= ip_port_nr;
 	psip_port->pp_flags |= PPF_ENABLED;
 
-	result= sr_add_minor (psip_port->pp_minor, port_nr,
-		psip_open, psip_close, psip_read, psip_write, psip_ioctl, 
-								psip_cancel);
-	assert (result>=0);
+	sr_add_minor(if2minor(psip_conf[port_nr].pc_ifno, PSIP_DEV_OFF),
+		port_nr, psip_open, psip_close, psip_read,
+		psip_write, psip_ioctl, psip_cancel);
 
 	return NW_OK;
 }
@@ -145,7 +146,7 @@ acc_t *pack;
 	acc_t *hdr_pack;
 	psip_io_hdr_t *hdr;
 
-	assert(port_nr >= 0 && port_nr < PSIP_PORT_NR);
+	assert(port_nr >= 0 && port_nr < psip_conf_nr);
 	psip_port= &psip_port_table[port_nr];
 
 	if (psip_port->pp_opencnt == 0)
@@ -240,7 +241,7 @@ put_pkt_t put_pkt;
 	psip_fd_t *psip_fd;
 	int i;
 
-	assert(port >= 0 && port < PSIP_PORT_NR);
+	assert(port >= 0 && port < psip_conf_nr);
 	psip_port= &psip_port_table[port];
 
 	if (!(psip_port->pp_flags & PPF_ENABLED))
@@ -471,8 +472,10 @@ int which_operation;
 
 	switch(which_operation)
 	{
+#if !CRAMPED
 	case SR_CANCEL_IOCTL:
 		ip_panic(( "should not be here" ));
+#endif
 	case SR_CANCEL_READ:
 		assert(psip_fd->pf_flags & PFF_READ_IP);
 		for (prev_fd= NULL, tmp_fd= psip_port->pp_rd_head; tmp_fd;
@@ -481,8 +484,10 @@ int which_operation;
 			if (tmp_fd == psip_fd)
 				break;
 		}
+#if !CRAMPED
 		if (tmp_fd == NULL)
 			ip_panic(( "unable to find to request to cancel" ));
+#endif
 		if (prev_fd == NULL)
 			psip_port->pp_rd_head= psip_fd->pf_rd_next;
 		else
@@ -494,10 +499,12 @@ int which_operation;
 						(size_t)EINTR, NULL, FALSE);
 		assert(result == NW_OK);
 		break;
+#if !CRAMPED
 	case SR_CANCEL_WRITE:
 		ip_panic(( "should not be here" ));
 	default:
 		ip_panic(( "invalid operation for cancel" ));
+#endif
 	}
 	return NW_OK;
 }
@@ -602,7 +609,7 @@ int priority;
 
 	if (priority == PSIP_PRI_EXP_PROMISC)
 	{
-		for (i=0, psip_port= psip_port_table; i<PSIP_PORT_NR;
+		for (i=0, psip_port= psip_port_table; i<psip_conf_nr;
 			i++, psip_port++)
 		{
 			if (!(psip_port->pp_flags & PPF_CONFIGURED) )
@@ -629,7 +636,7 @@ PRIVATE void psip_bufcheck()
 	psip_port_t *psip_port;
 	acc_t *tmp_acc;
 
-	for (i= 0, psip_port= psip_port_table; i<PSIP_PORT_NR;
+	for (i= 0, psip_port= psip_port_table; i<psip_conf_nr;
 		i++, psip_port++)
 	{
 		for (tmp_acc= psip_port->pp_promisc_head; tmp_acc; 

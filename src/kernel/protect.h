@@ -3,7 +3,7 @@
 /* Table sizes. */
 #define GDT_SIZE (FIRST_LDT_INDEX + NR_TASKS + NR_PROCS) /* spec. and LDT's */
 #define IDT_SIZE (IRQ8_VECTOR + 8)	/* only up to the highest vector */
-#define LDT_SIZE         2	/* contains CS and DS only */
+#define LDT_SIZE         4	/* contains CS, DS and two extras */
 
 /* Fixed global descriptors.  1 to 7 are prescribed by the BIOS. */
 #define GDT_INDEX        1	/* GDT descriptor */
@@ -16,10 +16,11 @@
 #define TSS_INDEX        8	/* kernel TSS */
 #define DS_286_INDEX     9	/* scratch 16-bit source segment */
 #define ES_286_INDEX    10	/* scratch 16-bit destination segment */
-#define VIDEO_INDEX     11	/* video memory segment */
-#define DP_ETH0_INDEX	12	/* Western Digital Etherplus buffer */
-#define DP_ETH1_INDEX	13	/* Western Digital Etherplus buffer */
-#define FIRST_LDT_INDEX 14	/* rest of descriptors are LDT's */
+#define A_INDEX         11	/* 64K memory segment at A0000 */
+#define B_INDEX         12	/* 64K memory segment at B0000 */
+#define C_INDEX         13	/* 64K memory segment at C0000 */
+#define D_INDEX         14	/* 64K memory segment at D0000 */
+#define FIRST_LDT_INDEX 15	/* rest of descriptors are LDT's */
 
 #define GDT_SELECTOR      0x08	/* (GDT_INDEX * DESC_SIZE) bad for asld */
 #define IDT_SELECTOR      0x10	/* (IDT_INDEX * DESC_SIZE) */
@@ -30,15 +31,13 @@
 #define CS_SELECTOR       0x30	/* (CS_INDEX * DESC_SIZE) */
 #define MON_CS_SELECTOR   0x38	/* (MON_CS_INDEX * DESC_SIZE) */
 #define TSS_SELECTOR      0x40	/* (TSS_INDEX * DESC_SIZE) */
-#define DS_286_SELECTOR   0x49	/* (DS_286_INDEX * DESC_SIZE + 1) */
-#define ES_286_SELECTOR   0x51	/* (ES_286_INDEX * DESC_SIZE + 1) */
-#define VIDEO_SELECTOR    0x59	/* (VIDEO_INDEX * DESC_SIZE + 1) */
-#define DP_ETH0_SELECTOR  0x61	/* (DP_ETH0_INDEX * DESC_SIZE) */
-#define DP_ETH1_SELECTOR  0x69	/* (DP_ETH1_INDEX * DESC_SIZE) */
+#define DS_286_SELECTOR   0x49	/* (DS_286_INDEX*DESC_SIZE + TASK_PRIVILEGE) */
+#define ES_286_SELECTOR   0x51	/* (ES_286_INDEX*DESC_SIZE + TASK_PRIVILEGE) */
 
 /* Fixed local descriptors. */
 #define CS_LDT_INDEX     0	/* process CS */
 #define DS_LDT_INDEX     1	/* process DS=ES=FS=GS=SS */
+#define EXTRA_LDT_INDEX  2	/* first of the extra LDT entries */
 
 /* Privileges. */
 #define INTR_PRIVILEGE   0	/* kernel and interrupt handlers */
@@ -67,9 +66,6 @@
 #define DESC_BASE_MIDDLE 4	/* to base_middle */
 #define DESC_ACCESS      5	/* to access byte */
 #define DESC_SIZE        8	/* sizeof (struct segdesc_s) */
-
-/* Segment sizes. */
-#define MAX_286_SEG_SIZE 0x10000L
 
 /* Base and limit sizes and shifts. */
 #define BASE_MIDDLE_SHIFT   16	/* shift for base --> base_middle */

@@ -7,4 +7,5 @@ uucp:*:5:
 news:*:6:
 ftp:*:7:
 kmem:*:8:
+www:*:9:
 nogroup:*:99:

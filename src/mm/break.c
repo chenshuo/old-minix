@@ -45,13 +45,13 @@ PUBLIC int do_brk()
   v = (vir_bytes) addr;
   new_clicks = (vir_clicks) ( ((long) v + CLICK_SIZE - 1) >> CLICK_SHIFT);
   if (new_clicks < rmp->mp_seg[D].mem_vir) {
-	res_ptr = (char *) -1;
+	rmp->reply_ptr = (char *) -1;
 	return(ENOMEM);
   }
   new_clicks -= rmp->mp_seg[D].mem_vir;
   sys_getsp(who, &new_sp);	/* ask kernel for current sp value */
   r = adjust(rmp, new_clicks, new_sp);
-  res_ptr = (r == OK ? addr : (char *) -1);
+  rmp->reply_ptr = (r == OK ? addr : (char *) -1);
   return(r);			/* return new address or -1 */
 }
 

@@ -42,6 +42,7 @@ OBJECTS	= \
 	$(LIBRARY)(em_fif8.o) \
 	$(LIBRARY)(em_fp8087.o) \
 	$(LIBRARY)(em_gto.o) \
+	$(LIBRARY)(em_hol0.o) \
 	$(LIBRARY)(em_iaar.o) \
 	$(LIBRARY)(em_ilar.o) \
 	$(LIBRARY)(em_inn.o) \
@@ -72,7 +73,6 @@ OBJECTS	= \
 	$(LIBRARY)(em_sri.o) \
 	$(LIBRARY)(em_sti.o) \
 	$(LIBRARY)(em_stop.o) \
-	$(LIBRARY)(em_strhp.o) \
 	$(LIBRARY)(em_trp.o) \
 	$(LIBRARY)(em_unknown.o) \
 	$(LIBRARY)(em_xor.o) \
@@ -186,6 +186,9 @@ $(LIBRARY)(em_fp8087.o):	em_fp8087.s
 $(LIBRARY)(em_gto.o):	em_gto.s
 	$(CC1) em_gto.s
 
+$(LIBRARY)(em_hol0.o):	em_hol0.s
+	$(CC1) em_hol0.s
+
 $(LIBRARY)(em_iaar.o):	em_iaar.s
 	$(CC1) em_iaar.s
 
@@ -275,9 +278,6 @@ $(LIBRARY)(em_sti.o):	em_sti.s
 
 $(LIBRARY)(em_stop.o):	em_stop.s
 	$(CC1) em_stop.s
-
-$(LIBRARY)(em_strhp.o):	em_strhp.s
-	$(CC1) em_strhp.s
 
 $(LIBRARY)(em_trp.o):	em_trp.s
 	$(CC1) em_trp.s

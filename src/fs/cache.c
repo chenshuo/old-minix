@@ -14,7 +14,6 @@
 
 #include "fs.h"
 #include <minix/com.h>
-#include <minix/boot.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
@@ -216,7 +215,7 @@ zone_t z;			/* try to allocate new zone near this one */
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
 	minor = (int) (sp->s_dev >> MINOR) & BYTE;
 	printf("No space on %sdevice %d/%d\n",
-		sp->s_dev == ROOT_DEV ? "root " : "", major, minor);
+		sp->s_dev == root_dev ? "root " : "", major, minor);
 	return(NO_ZONE);
   }
   if (z == sp->s_firstdatazone) sp->s_zsearch = b;	/* for next time */
@@ -265,7 +264,7 @@ int rw_flag;			/* READING or WRITING */
   if ( (dev = bp->b_dev) != NO_DEV) {
 	pos = (off_t) bp->b_blocknr * BLOCK_SIZE;
 	op = (rw_flag == READING ? DEV_READ : DEV_WRITE);
-	r = dev_io(op, FALSE, dev, pos, BLOCK_SIZE, FS_PROC_NR, bp->b_data);
+	r = dev_io(op, dev, FS_PROC_NR, bp->b_data, pos, BLOCK_SIZE, 0);
 	if (r != BLOCK_SIZE) {
 	    if (r >= 0) r = END_OF_FILE;
 	    if (r != END_OF_FILE)
@@ -333,9 +332,9 @@ int rw_flag;			/* READING or WRITING */
   register struct buf *bp;
   int gap;
   register int i;
-  register struct iorequest_s *iop;
-  static struct iorequest_s iovec[NR_IOREQS];  /* static so it isn't on stack */
-  int j;
+  register iovec_t *iop;
+  static iovec_t iovec[NR_IOREQS];  /* static so it isn't on stack */
+  int j, r;
 
   /* (Shell) sort buffers on b_blocknr. */
   gap = 1;
@@ -355,40 +354,54 @@ int rw_flag;			/* READING or WRITING */
 	}
   }
 
-  /* Set up i/o vector and do i/o.  The result of dev_io is discarded because
-   * all results are returned in the vector.  If dev_io fails completely, the
-   * vector is unchanged and all results are taken as errors.
+  /* Set up I/O vector and do I/O.  The result of dev_io is OK if everything
+   * went fine, otherwise the error code for the first failed transfer.
    */  
   while (bufqsize > 0) {
 	for (j = 0, iop = iovec; j < NR_IOREQS && j < bufqsize; j++, iop++) {
 		bp = bufq[j];
-		iop->io_position = (off_t) bp->b_blocknr * BLOCK_SIZE;
-		iop->io_buf = bp->b_data;
-		iop->io_nbytes = BLOCK_SIZE;
-		iop->io_request = rw_flag == WRITING ?
-				  DEV_WRITE : DEV_READ | OPTIONAL_IO;
+		if (bp->b_blocknr != bufq[0]->b_blocknr + j) break;
+		iop->iov_addr = (vir_bytes) bp->b_data;
+		iop->iov_size = BLOCK_SIZE;
 	}
-	(void) dev_io(SCATTERED_IO, 0, dev, (off_t) 0, j, FS_PROC_NR,
-							(char *) iovec);
+	r = dev_io(rw_flag == WRITING ? DEV_SCATTER : DEV_GATHER,
+		dev, FS_PROC_NR, iovec,
+		(off_t) bufq[0]->b_blocknr * BLOCK_SIZE, j, 0);
 
-	/* Harvest the results.  Leave read errors for rw_block() to complain. */
+	/* Harvest the results.  Dev_io reports the first error it may have
+	 * encountered, but we only care if it's the first block that failed.
+	 */
 	for (i = 0, iop = iovec; i < j; i++, iop++) {
 		bp = bufq[i];
+		if (iop->iov_size != 0) {
+			/* Transfer failed. An error? Do we care? */
+			if (r != OK && i == 0) {
+				printf(
+				"fs: I/O error on device %d/%d, block %lu\n",
+					(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE,
+					bp->b_blocknr);
+				bp->b_dev = NO_DEV;	/* invalidate block */
+			}
+			break;
+		}
 		if (rw_flag == READING) {
-		    if (iop->io_nbytes == 0)
 			bp->b_dev = dev;	/* validate block */
-		    put_block(bp, PARTIAL_DATA_BLOCK);
+			put_block(bp, PARTIAL_DATA_BLOCK);
 		} else {
-		    if (iop->io_nbytes != 0) {
-		     printf("Unrecoverable write error on device %d/%d, block %ld\n",
-				(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE, bp->b_blocknr);
-			bp->b_dev = NO_DEV;	/* invalidate block */
-		    }
-		    bp->b_dirt = CLEAN;
+			bp->b_dirt = CLEAN;
 		}
 	}
-	bufq += j;
-	bufqsize -= j;
+	bufq += i;
+	bufqsize -= i;
+	if (rw_flag == READING) {
+		/* Don't bother reading more than the device is willing to
+		 * give at this time.  Don't forget to release those extras.
+		 */
+		while (bufqsize > 0) {
+			put_block(*bufq++, PARTIAL_DATA_BLOCK);
+			bufqsize--;
+		}
+	}
   }
 }
 

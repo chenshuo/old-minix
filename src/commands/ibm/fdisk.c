@@ -970,10 +970,8 @@ int type;
 	case 0x64: return("NOVELL286");
 	case 0x65: return("NOVELL386");
 	case 0x75: return("PC/IX");
-	case OLD_MINIX_PART: 
-		   return("MINIX old");	/* 0x80 */
-	case MINIX_PART: 
-	           return("MINIX"); 	/* 0x81 */
+	case 0x80: return("MINIX old");
+	case 0x81: return("MINIX");
 	case 0x82: return("LINUXswap");
 	case 0x83: return("LINUX");
 	case 0x93: return("AMOEBA");

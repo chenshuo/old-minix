@@ -15,7 +15,7 @@
 #include "lock.h"
 #include "super.h"
 
-PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
+PUBLIC _PROTOTYPE (int (*call_vec[]), (void) ) = {
 	no_sys,		/*  0 = unused	*/
 	do_exit,	/*  1 = exit	*/
 	do_fork,	/*  2 = fork	*/
@@ -94,57 +94,46 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 	no_sys,		/* 74 = SIGPROCMASK */
 	no_sys,		/* 75 = SIGRETURN */
 	no_sys,		/* 76 = REBOOT */
+	do_svrctl,	/* 77 = SVRCTL */
 };
+/* This should not fail with "array size is negative": */
+extern int dummy[sizeof(call_vec) == NCALLS * sizeof(call_vec[0]) ? 1 : -1];
 
 
 /* Some devices may or may not be there in the next table. */
-#define DT(enable, open, rw, close, task) \
-	{ (enable ? (open) : no_dev), (enable ? (rw) : no_dev), \
-	  (enable ? (close) : no_dev), (enable ? (task) : 0) },
+#define DT(enable, opcl, io, task) \
+  { (enable ? (opcl) : no_dev), (enable ? (io) : 0), (enable ? (task) : 0) },
 
 /* The order of the entries here determines the mapping between major device
  * numbers and tasks.  The first entry (major device 0) is not used.  The
  * next entry is major device 1, etc.  Character and block devices can be
- * intermixed at random.  If this ordering is changed, the devices in
- * <include/minix/boot.h> must be changed to correspond to the new values.
+ * intermixed at random.  This ordering determines the device numbers in
+ * /dev/ and is thereby more or less cast in stone once allocated.
  * Note that the major device numbers used in /dev are NOT the same as the 
  * task numbers used inside the kernel (as defined in <include/minix/com.h>).
- * Also note that if /dev/mem is changed from 1, NULL_MAJOR must be changed
- * in <include/minix/com.h>.
+ * Also note that FS knows the device number of /dev/ram to load the RAM disk.
  */
 PUBLIC struct dmap dmap[] = {
-/*  ?   Open       Read/Write   Close       Task #      Device  File
-    -   ----       ----------   -----       -------     ------  ----       */
-  DT(1, no_dev,    no_dev,      no_dev,     0)           /* 0 = not used   */
-  DT(1, dev_opcl,  call_task,   dev_opcl,   MEM)         /* 1 = /dev/mem   */
-  DT(1, dev_opcl,  call_task,   dev_opcl,   FLOPPY)      /* 2 = /dev/fd0   */
-  DT(ENABLE_WINI,
-        dev_opcl,  call_task,   dev_opcl,   WINCHESTER)  /* 3 = /dev/hd0   */
-  DT(1, tty_open,  call_task,   dev_opcl,   TTY)         /* 4 = /dev/tty00 */
-  DT(1, ctty_open, call_ctty,   ctty_close, TTY)         /* 5 = /dev/tty   */
-  DT(1, dev_opcl,  call_task,   dev_opcl,    PRINTER)     /* 6 = /dev/lp    */
+/*   ?                 Open/Close  I/O       Task #       Device  File
+     -                 ----------  --------  -----------  ------  ----       */
+  DT(1,                no_dev,     0,        0)            /* 0 = not used   */
+  DT(1,                gen_opcl,   gen_io,   MEM)          /* 1 = /dev/mem   */
+  DT(1,                gen_opcl,   gen_io,   FLOPPY)       /* 2 = /dev/fd0   */
+  DT(NR_CTRLRS >= 1,   gen_opcl,   gen_io,   CTRLR(0))     /* 3 = /dev/c0    */
+  DT(1,                tty_opcl,   gen_io,   TTY)          /* 4 = /dev/tty00 */
+  DT(1,                ctty_opcl,  ctty_io,  TTY)          /* 5 = /dev/tty   */
+  DT(ENABLE_PRINTER,   gen_opcl,   gen_io,   PRINTER)      /* 6 = /dev/lp    */
 
 #if (MACHINE == IBM_PC)
-  DT(ENABLE_NETWORKING,
-        net_open,  call_task,   dev_opcl,   INET_PROC_NR)/* 7 = /dev/ip    */
-  DT(ENABLE_CDROM,
-        dev_opcl,  call_task,   dev_opcl,   CDROM)       /* 8 = /dev/cd0   */
-  DT(0, 0,         0,           0,          0)           /* 9 = not used   */
-  DT(ENABLE_SCSI,
-        dev_opcl,  call_task,   dev_opcl,   SCSI)        /*10 = /dev/sd0   */
-  DT(0, 0,         0,           0,          0)           /*11 = not used   */
-  DT(ENABLE_DOSDSK,
-        dev_opcl,  call_task,   dev_opcl,   DOSDSK)      /*12 = /dev/dosd0 */
-  DT(ENABLE_AUDIO,
-        dev_opcl,  call_task,   dev_opcl,   AUDIO)       /*13 = /dev/audio */
-  DT(ENABLE_AUDIO,
-        dev_opcl,  call_task,   dev_opcl,   MIXER)       /*14 = /dev/mixer */
+  DT(1,                no_dev,     0,        ANY)          /* 7 = /dev/ip    */
+  DT(NR_CTRLRS >= 2,   gen_opcl,   gen_io,   CTRLR(1))     /* 8 = /dev/c1    */
+  DT(0,                0,          0,        0)            /* 9 = not used   */
+  DT(NR_CTRLRS >= 3,   gen_opcl,   gen_io,   CTRLR(2))     /*10 = /dev/c2    */
+  DT(0,                0,          0,        0)            /*11 = not used   */
+  DT(NR_CTRLRS >= 4,   gen_opcl,   gen_io,   CTRLR(3))     /*12 = /dev/c3    */
+  DT(ENABLE_SB16,      gen_opcl,   gen_io,   SB16)         /*13 = /dev/audio */
+  DT(ENABLE_SB16,      gen_opcl,   gen_io,   SB16MIXER)    /*14 = /dev/mixer */
 #endif /* IBM_PC */
-
-#if (MACHINE == ATARI)
-  DT(ENABLE_SCSI,
-        dev_opcl,  call_task,   dev_opcl,   SCSI)        /* 7 = /dev/hdscsi0 */
-#endif
 };
 
 PUBLIC int max_major = sizeof(dmap)/sizeof(struct dmap);

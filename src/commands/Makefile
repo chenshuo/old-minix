@@ -18,7 +18,9 @@ all install clean:
 	cd bc && $(MAKE) $@
 	cd byacc && $(MAKE) $@
 	cd cawf && $(MAKE) $@
+	cd cron && $(MAKE) $@
 	cd de && $(MAKE) $@
+	cd dhcpd && $(MAKE) $@
 	cd dis88 && $(MAKE) $@
 	cd elle && $(MAKE) $@
 	cd elvis && $(MAKE) $@
@@ -32,6 +34,7 @@ all install clean:
 	cd mined && $(MAKE) $@
 	cd patch && $(MAKE) $@
 	cd reboot && $(MAKE) $@
+	cd rlogind && $(MAKE) $@
 	cd scripts && $(MAKE) $@
 	cd sh && $(MAKE) $@
 	cd simple && $(MAKE) $@
@@ -39,5 +42,6 @@ all install clean:
 	cd talkd && $(MAKE) $@
 	cd telnet && $(MAKE) $@
 	cd telnetd && $(MAKE) $@
+	cd urlget && $(MAKE) $@
 	cd yap && $(MAKE) $@
 	cd zmodem && $(MAKE) $@

@@ -29,10 +29,12 @@
 #define reboot_flag	mm_in.m1_i1
 #define reboot_code	mm_in.m1_p1
 #define reboot_size	mm_in.m1_i2
+#define svrctl_req	mm_in.m2_i1
+#define svrctl_argp	mm_in.m2_p1
 
-/* The following names are synonyms for the variables in the output message. */
-#define reply_type      mm_out.m_type
-#define reply_i1        mm_out.m2_i1
-#define reply_p1        mm_out.m2_p1
-#define ret_mask	mm_out.m2_l1 	
+/* The following names are synonyms for the variables in a reply message. */
+#define reply_res	mp_reply.m_type
+#define reply_res2	mp_reply.m2_i1
+#define reply_ptr	mp_reply.m2_p1
+#define reply_mask	mp_reply.m2_l1 	
 

@@ -1,4 +1,4 @@
-!	Bootblock 1.4 - Minix boot block.		Author: Kees J. Bot
+!	Bootblock 1.5 - Minix boot block.		Author: Kees J. Bot
 !					   			21 Dec 1991
 !
 ! When the PC is powered on, it will try to read the first sector of floppy
@@ -8,18 +8,17 @@
 ! the partition table of the hard disk.  When executed, it will select the
 ! active partition and load the first sector of that at address 0x7C00.
 ! This file contains the code that is eventually read from either the floppy
-! disk, or the hard disk partition.  It is just smart enough to load the
-! secondary boot code from the boot device into memory at address 0x10000 and
-! execute that.  The disk addresses for this secondary boot code are patched
-! into this code by installboot as 24-bit sector numbers and 8-bit sector
-! counts above enddata upwards.  The secondary boot code is in turn smart
-! enough to load the different parts of the Minix kernel into memory and
-! execute them to finally get Minix started.
+! disk, or the hard disk partition.  It is just smart enough to load /boot
+! from the boot device into memory at address 0x10000 and execute that.  The
+! disk addresses for /boot are patched into this code by installboot as 24-bit
+! sector numbers and 8-bit sector counts above enddata upwards.  /boot is in
+! turn smart enough to load the different parts of the Minix kernel into
+! memory and execute them to finally get Minix started.
 !
 
 	LOADOFF	   =	0x7C00	! 0x0000:LOADOFF is where this code is loaded
 	BOOTSEG    =	0x1000	! Secondary boot code segment.
-	BOOTOFF	   =	0x0030	! Offset into secondary boot above header
+	BOOTOFF	   =	0x0030	! Offset into /boot above header
 	BUFFER	   =	0x0600	! First free memory
 	LOWSEC     =	     8	! Offset of logical first sector in partition
 				! table
@@ -104,22 +103,24 @@ floppy:	xorb	ah, ah		! Reset drive
 success:movb	dh, #2		! Load number of heads for multiply
 
 loadboot:
-! Load the secondary boot code from the boot device
+! Load /boot from the boot device
 
 	movb	al, (di)	! al = (di) = sectors per track
 	mulb	dh		! dh = heads, ax = heads * sectors
 	mov	secpcyl(bp), ax	! Sectors per cylinder = heads * sectors
 
-	mov	ax, #BOOTSEG	! Segment to load secondary boot code into
+	mov	ax, #BOOTSEG	! Segment to load /boot into
 	mov	es, ax
 	xor	bx, bx		! Load first sector at es:bx = BOOTSEG:0x0000
 	mov	si, #LOADOFF+addresses	! Start of the boot code addresses
 load:
 	mov	ax, 1(si)	! Get next sector number: low 16 bits
-	movb	dl, 3(si)	! Bits 16-23 for your 8GB disk
+	movb	dl, 3(si)	! Bits 16-23 for your up to 8GB partition
 	xorb	dh, dh		! dx:ax = sector within partition
 	add	ax, lowsec+0(bp)
 	adc	dx, lowsec+2(bp)! dx:ax = sector within drive
+	cmp	dx, #[1024*255*63-255]>>16  ! Near 8G limit?
+	jae	bigdisk
 	div	secpcyl(bp)	! ax = cylinder, dx = sector within cylinder
 	xchg	ax, dx		! ax = sector within cylinder, dx = cylinder
 	movb	ch, dl		! ch = low 8 bits of cylinder
@@ -138,9 +139,24 @@ load:
 	jbe	read		! Can't read past the end of a cylinder?
 	movb	al, (si)	! (si) < sectors left on this track
 read:	push	ax		! Save al = sectors to read
-	movb	ah, #2		! Code for disk read (all registers in use now!)
+	movb	ah, #0x02	! Code for disk read (all registers in use now!)
 	int	0x13		! Call the BIOS for a read
 	pop	cx		! Restore al in cl
+	jmp	rdeval
+bigdisk:
+	movb	cl, (si)	! Number of sectors to read
+	push	si		! Save si
+	mov	si, #LOADOFF+ext_rw ! si = extended read/write parameter packet
+	movb	2(si), cl	! Fill in # blocks to transfer
+	mov	4(si), bx	! Buffer address
+	mov	8(si), ax	! Starting block number = dx:ax
+	mov	10(si), dx
+	movb	dl, device(bp)	! dl = device to read
+	movb	ah, #0x42	! Extended read
+	int	0x13
+	pop	si		! Restore si to point to the addresses array
+	!jmp	rdeval
+rdeval:
 	jc	error		! Jump on disk read error
 	movb	al, cl		! Restore al = sectors read
 	addb	bh, al		! bx += 2 * al * 256 (add bytes read)
@@ -151,12 +167,12 @@ read:	push	ax		! Save al = sectors to read
 	jnz	load		! Not all sectors have been read
 	add	si, #4		! Next (address, count) pair
 	cmpb	ah, (si)	! Done when no sectors to read
-	jnz	load		! Read next chunk of secondary boot code
+	jnz	load		! Read next chunk of /boot
 
 done:
 
-! Call secondary boot, assuming a long a.out header (48 bytes).  The a.out
-! header is usually short (32 bytes), but secondary boot has two entry points:
+! Call /boot, assuming a long a.out header (48 bytes).  The a.out header is
+! usually short (32 bytes), but to be sure /boot has two entry points:
 ! One at offset 0 for the long, and one at offset 16 for the short header.
 ! Parameters passed in registers are:
 !
@@ -183,25 +199,33 @@ digit:	addb	(si), al	! Modify '0' in string
 
 	mov	si, #LOADOFF+rderr  ! String to print
 print:	lodsb			! al = *si++ is char to be printed
+	testb	al, al		! Null byte marks end
+hang:	jz	hang		! Hang forever waiting for CTRL-ALT-DEL
 	movb	ah, #0x0E	! Print character in teletype mode
 	mov	bx, #0x0001	! Page 0, foreground color
 	int	0x10		! Call BIOS VIDEO_IO
-	cmp	si, #LOADOFF+errend  ! End of string reached?
-	jb	print
-
-! Hang forever waiting for CTRL-ALT-DEL
-hang:	jmp	hang
+	jmp	print
 
 .data
 rderr:	.ascii	"Read error "
-errno:	.ascii	"00 "
+errno:	.ascii	"00 \0"
 errend:
 
 ! Floppy disk sectors per track for the 1.44M, 1.2M and 360K/720K types:
 sectors:
 	.data1	18, 15, 9
 
+! Extended read/write commands require a parameter packet.
+ext_rw:
+	.data1	0x10		! Length of extended r/w packet
+	.data1	0		! Reserved
+	.data2	0		! Blocks to transfer (to be filled in)
+	.data2	0		! Buffer address offset (tbfi)
+	.data2	BOOTSEG		! Buffer address segment
+	.data4	0		! Starting block number low 32 bits (tbfi)
+	.data4	0		! Starting block number high 32 bits
+
 	.align	2
 addresses:
-! The space below this is for disk addresses for a 66K secondary boot
-! program (worst case, i.e. file is fragmented).  It should be enough.
+! The space below this is for disk addresses for a 38K /boot program (worst
+! case, i.e. file is completely fragmented).  It should be enough.

@@ -1,7 +1,7 @@
 /* This file contains the device dependent part of the driver for the Floppy
  * Disk Controller (FDC) using the NEC PD765 chip.
  *
- * The file contains one entry point:
+ * The file contains two entry points:
  *
  *   floppy_task:	main entry when system is brought up
  *   floppy_stop:	stop all activity
@@ -16,6 +16,7 @@
  *	14 Feb  1992 by Andy Tanenbaum: check drive density on opens only
  *	27 Mar  1992 by Kees J. Bot: last details on density checking
  *	04 Apr  1992 by Kees J. Bot: device dependent/independent split
+ *	14 May  2000 by Kees J. Bot: d-d/i rewrite.
  */
 
 #include "kernel.h"
@@ -125,87 +126,47 @@
 #define UNCALIBRATED       0	/* drive needs to be calibrated at next use */
 #define CALIBRATED         1	/* no calibration needed */
 #define BASE_SECTOR        1	/* sectors are numbered starting at 1 */
-#define NO_SECTOR          0	/* current sector unknown */
+#define NO_SECTOR        (-1)	/* current sector unknown */
 #define NO_CYL		 (-1)	/* current cylinder unknown, must seek */
 #define NO_DENS		 100	/* current media unknown */
 #define BSY_IDLE	   0	/* busy doing nothing */
-#define BSY_IO		   1	/* doing I/O */
+#define BSY_IO		   1	/* busy doing I/O */
 #define BSY_WAKEN	   2	/* got a wakeup call */
-
-/* Variables. */
-PRIVATE struct floppy {		/* main drive struct, one entry per drive */
-  int fl_curcyl;		/* current cylinder */
-  int fl_hardcyl;		/* hardware cylinder, as opposed to: */
-  int fl_cylinder;		/* cylinder number addressed */
-  int fl_sector;		/* sector addressed */
-  int fl_head;			/* head number addressed */
-  char fl_calibration;		/* CALIBRATED or UNCALIBRATED */
-  char fl_density;		/* NO_DENS = ?, 0 = 360K; 1 = 360K/1.2M; etc.*/
-  char fl_class;		/* bitmap for possible densities */
-  struct device fl_geom;	/* Geometry of the drive */
-  struct device fl_part[NR_PARTITIONS];  /* partition's base & size */
-} floppy[NR_DRIVES], *f_fp;
-
-/* Gather transfer data for each sector. */
-PRIVATE struct trans {		/* precomputed transfer params */
-  unsigned tr_count;		/* byte count */
-  struct iorequest_s *tr_iop;	/* belongs to this I/O request */
-  phys_bytes tr_phys;		/* user physical address */
-  phys_bytes tr_dma;		/* DMA physical address */
-} ftrans[MAX_SECTORS];
-
-PRIVATE unsigned f_count;	/* this many bytes to transfer */
-PRIVATE unsigned f_nexttrack;	/* don't do blocks above this */
-PRIVATE int motor_status;	/* bitmap of current motor status */
-PRIVATE int motor_goal;		/* bitmap of desired motor status */
-PRIVATE int need_reset;		/* set to 1 when controller must be reset */
-PRIVATE int d;			/* diskette/drive combination */
-PRIVATE int f_drive;		/* selected drive */
-PRIVATE int f_device;		/* selected minor device */
-PRIVATE int f_opcode;		/* DEV_READ or DEV_WRITE */
-PRIVATE int f_sectors;		/* sectors per track of the floppy */
-PRIVATE int f_must;		/* must do part of the next track? */
-PRIVATE int f_busy;		/* BSY_IDLE, BSY_IO, BSY_WAKEN */
-PRIVATE int current_spec1;	/* latest spec1 sent to the controller */
-PRIVATE struct device *f_dv;	/* device's base and size */
-PRIVATE struct disk_parameter_s fmt_param; /* parameters for format */
-PRIVATE char f_results[MAX_RESULTS];/* the controller can give lots of output */
-
 
 /* Seven combinations of diskette/drive are supported.
  *
- * # Drive  diskette  Sectors  Tracks  Rotation Data-rate  Comment
- * 0  360K    360K      9       40     300 RPM  250 kbps   Standard PC DSDD
- * 1  1.2M    1.2M     15       80     360 RPM  500 kbps   AT disk in AT drive
- * 2  720K    360K      9       40     300 RPM  250 kbps   Quad density PC
- * 3  720K    720K      9       80     300 RPM  250 kbps   Toshiba, et al.
- * 4  1.2M    360K      9       40     360 RPM  300 kbps   PC disk in AT drive
- * 5  1.2M    720K      9       80     360 RPM  300 kbps   Toshiba in AT drive
- * 6  1.44M   1.44M    18	80     300 RPM  500 kbps   PS/2, et al.
+ * # Diskette Drive  Sectors  Tracks   Rotation Data-rate  Comment
+ * 0   360K    360K     9       40     300 RPM  250 kbps   Standard PC DSDD
+ * 1   1.2M    1.2M    15       80     360 RPM  500 kbps   AT disk in AT drive
+ * 2   360K    720K     9       40     300 RPM  250 kbps   Quad density PC
+ * 3   720K    720K     9       80     300 RPM  250 kbps   Toshiba, et al.
+ * 4   360K    1.2M     9       40     360 RPM  300 kbps   PC disk in AT drive
+ * 5   720K    1.2M     9       80     360 RPM  300 kbps   Toshiba in AT drive
+ * 6   1.44M   1.44M   18	80     300 RPM  500 kbps   PS/2, et al.
  *
  * In addition, 720K diskettes can be read in 1.44MB drives, but that does
  * not need a different set of parameters.  This combination uses
  *
- * X  1.44M   720K	9	80     300 RPM  250 kbps   PS/2, et al.
+ * 3   720K    1.44M    9       80     300 RPM  250 kbps   PS/2, et al.
  */
-PRIVATE char gap[NT] =
-	{0x2A, 0x1B, 0x2A, 0x2A, 0x23, 0x23, 0x1B}; /* gap size */
-PRIVATE char rate[NT] =
-	{0x02, 0x00, 0x02, 0x02, 0x01, 0x01, 0x00}; /* 2=250,1=300,0=500 kbps*/
-PRIVATE char nr_sectors[NT] =
-	{9,    15,   9,    9,    9,    9,    18};   /* sectors/track */
-PRIVATE int nr_blocks[NT] =
-	{720,  2400, 720,  1440, 720,  1440, 2880}; /* sectors/diskette*/
-PRIVATE char steps_per_cyl[NT] =
-	{1,    1,    2,    1,    2,    1,     1};   /* 2 = dbl step */
-PRIVATE char mtr_setup[NT] =
-	{1*HZ/4,3*HZ/4,1*HZ/4,4*HZ/4,3*HZ/4,3*HZ/4,4*HZ/4}; /* in ticks */
-PRIVATE char spec1[NT] =
-	{0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF, 0xDF}; /* step rate, etc. */
-PRIVATE char test_sector[NT] =
-	{4*9,  14,   2*9,  4*9,  2*9,  4*9,  17};   /* to recognize it */
-
-#define b(d)	(1 << (d))	/* bit for density d. */
+PRIVATE struct density {
+	u8_t	secpt;		/* sectors per track */
+	u8_t	cyls;		/* tracks per side */
+	u8_t	steps;		/* steps per cylinder (2 = double step) */
+	u8_t	test;		/* sector to try for density test */
+	u8_t	rate;		/* data rate (2=250, 1=300, 0=500 kbps) */
+	u8_t	start;		/* motor start (clock ticks) */
+	u8_t	gap;		/* gap size */
+	u8_t	spec1;		/* first specify byte (SRT/HUT) */
+} fdensity[NT] = {
+	{  9, 40, 1, 4*9, 2, 6*HZ/8, 0x2A, 0xDF },	/*  360K / 360K  */
+	{ 15, 80, 1,  14, 0, 4*HZ/8, 0x1B, 0xD1 },	/*  1.2M / 1.2M  */
+	{  9, 40, 2, 2*9, 2, 4*HZ/8, 0x2A, 0xE1 },	/*  360K / 720K  */
+	{  9, 80, 1, 4*9, 2, 6*HZ/8, 0x2A, 0xDF },	/*  720K / 720K  */
+	{  9, 40, 2, 2*9, 1, 4*HZ/8, 0x23, 0xE1 },	/*  360K / 1.2M  */
+	{  9, 80, 1, 4*9, 1, 4*HZ/8, 0x23, 0xE1 },	/*  720K / 1.2M  */
+	{ 18, 80, 1,  17, 0, 4*HZ/8, 0x1B, 0xD1 },	/* 1.44M / 1.44M */
+};
 
 /* The following table is used with the test_sector array to recognize a
  * drive/floppy combination.  The sector to test has been determined by
@@ -215,9 +176,11 @@ PRIVATE char test_sector[NT] =
  * set of densities it can support to avoid unnecessary tests in the future.
  */
 
+#define b(d)	(1 << (d))	/* bit for density d. */
+
 PRIVATE struct test_order {
-	char	t_density;	/* floppy/drive type */
-	char	t_class;	/* limit drive to this class of densities */
+	u8_t	t_density;	/* floppy/drive type */
+	u8_t	t_class;	/* limit drive to this class of densities */
 } test_order[NT-1] = {
 	{ 6,  b(3) | b(6) },		/* 1.44M  {720K, 1.44M} */
 	{ 1,  b(1) | b(4) | b(5) },	/* 1.2M   {1.2M, 360K, 720K} */
@@ -225,29 +188,60 @@ PRIVATE struct test_order {
 	{ 4,  b(1) | b(4) | b(5) },	/* 360K   {1.2M, 360K, 720K} */
 	{ 5,  b(1) | b(4) | b(5) },	/* 720K   {1.2M, 360K, 720K} */
 	{ 2,  b(2) | b(3) },		/* 360K   {360K, 720K} */
-	/* Note that type 0 is missing, type 3 can read/write it too (alas). */
+	/* Note that type 0 is missing, type 3 can read/write it too, which is
+	 * why the type 3 parameters have been pessimized to be like type 0.
+	 */
 };
+
+/* Variables. */
+PRIVATE struct floppy {		/* main drive struct, one entry per drive */
+  unsigned fl_curcyl;		/* current cylinder */
+  unsigned fl_hardcyl;		/* hardware cylinder, as opposed to: */
+  unsigned fl_cylinder;		/* cylinder number addressed */
+  unsigned fl_sector;		/* sector addressed */
+  unsigned fl_head;		/* head number addressed */
+  char fl_calibration;		/* CALIBRATED or UNCALIBRATED */
+  u8_t fl_density;		/* NO_DENS = ?, 0 = 360K; 1 = 360K/1.2M; etc.*/
+  u8_t fl_class;		/* bitmap for possible densities */
+  struct device fl_geom;	/* Geometry of the drive */
+  struct device fl_part[NR_PARTITIONS];  /* partition's base & size */
+} floppy[NR_DRIVES];
+
+PRIVATE int motor_status;	/* bitmap of current motor status */
+PRIVATE int motor_goal;		/* bitmap of desired motor status */
+PRIVATE int need_reset;		/* set to 1 when controller must be reset */
+PRIVATE unsigned f_drive;	/* selected drive */
+PRIVATE unsigned f_device;	/* selected minor device */
+PRIVATE struct floppy *f_fp;	/* current drive */
+PRIVATE struct density *f_dp;	/* current density parameters */
+PRIVATE struct density *prev_dp;/* previous density parameters */
+PRIVATE unsigned f_sectors;	/* equal to f_dp->secpt (needed a lot) */
+PRIVATE int f_busy;		/* BSY_IDLE, BSY_IO, BSY_WAKEN */
+PRIVATE struct device *f_dv;	/* device's base and size */
+PRIVATE struct disk_parameter_s fmt_param; /* parameters for format */
+PRIVATE u8_t f_results[MAX_RESULTS];/* the controller can give lots of output */
+
 
 FORWARD _PROTOTYPE( struct device *f_prepare, (int device) );
 FORWARD _PROTOTYPE( char *f_name, (void) );
 FORWARD _PROTOTYPE( void f_cleanup, (void) );
-FORWARD _PROTOTYPE( int f_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int f_finish, (void) );
-FORWARD _PROTOTYPE( void defuse, (void) );
-FORWARD _PROTOTYPE( void dma_setup, (struct trans *tp) );
+FORWARD _PROTOTYPE( int f_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
+FORWARD _PROTOTYPE( void dma_setup, (int opcode) );
 FORWARD _PROTOTYPE( void start_motor, (void) );
 FORWARD _PROTOTYPE( void stop_motor, (void) );
-FORWARD _PROTOTYPE( int seek, (struct floppy *fp) );
-FORWARD _PROTOTYPE( int f_transfer, (struct floppy *fp, struct trans *tp) );
+FORWARD _PROTOTYPE( int seek, (void) );
+FORWARD _PROTOTYPE( int fdc_transfer, (int opcode) );
 FORWARD _PROTOTYPE( int fdc_results, (void) );
 FORWARD _PROTOTYPE( int f_handler, (int irq) );
+FORWARD _PROTOTYPE( int fdc_command, (u8_t *cmd, int len) );
 FORWARD _PROTOTYPE( void fdc_out, (int val) );
-FORWARD _PROTOTYPE( int recalibrate, (struct floppy *fp) );
+FORWARD _PROTOTYPE( int recalibrate, (void) );
 FORWARD _PROTOTYPE( void f_reset, (void) );
 FORWARD _PROTOTYPE( void send_mess, (void) );
 FORWARD _PROTOTYPE( int f_intr_wait, (void) );
 FORWARD _PROTOTYPE( void f_timeout, (void) );
-FORWARD _PROTOTYPE( int read_id, (struct floppy *fp) );
+FORWARD _PROTOTYPE( int read_id, (void) );
 FORWARD _PROTOTYPE( int f_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int test_read, (int density) );
 FORWARD _PROTOTYPE( void f_geometry, (struct partition *entry));
@@ -260,8 +254,7 @@ PRIVATE struct driver f_dtab = {
   do_nop,	/* nothing on a close */
   do_diocntl,	/* get or set a partitions geometry */
   f_prepare,	/* prepare for I/O on a given minor device */
-  f_schedule,	/* precompute cylinder, head, sector, etc. */
-  f_finish,	/* do the I/O */
+  f_transfer,	/* do the I/O */
   f_cleanup,	/* cleanup before sending reply to user process */
   f_geometry	/* tell the geometry of the diskette */
 };
@@ -283,7 +276,7 @@ PUBLIC void floppy_task()
   }
 
   put_irq_handler(FLOPPY_IRQ, f_handler);
-  enable_irq(FLOPPY_IRQ);		/* ready for floppy interrupts */
+  enable_irq(FLOPPY_IRQ);	/* ready for floppy interrupts */
 
   driver_task(&f_dtab);
 }
@@ -297,23 +290,22 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  /* Leftover jobs after an I/O error must be removed */
-  if (f_count > 0) defuse();
-
   f_device = device;
   f_drive = device & ~(DEV_TYPE_BITS | FORMAT_DEV_BIT);
   if (f_drive < 0 || f_drive >= NR_DRIVES) return(NIL_DEV);
 
   f_fp = &floppy[f_drive];
   f_dv = &f_fp->fl_geom;
-  d = f_fp->fl_density;
-  f_sectors = nr_sectors[d];
-
-  f_must = TRUE;	/* the first transfers must be done */
+  if (f_fp->fl_density < NT) {
+	f_dp = &fdensity[f_fp->fl_density];
+	f_sectors = f_dp->secpt;
+	f_fp->fl_geom.dv_size = mul64u((long) (NR_HEADS * f_sectors
+					* f_dp->cyls), SECTOR_SIZE);
+  }
 
   /* A partition? */
-  if ((device &= DEV_TYPE_BITS) >= MINOR_fd0a)
-	f_dv = &f_fp->fl_part[(device - MINOR_fd0a) >> DEV_TYPE_SHIFT];
+  if ((device &= DEV_TYPE_BITS) >= MINOR_fd0p0)
+	f_dv = &f_fp->fl_part[(device - MINOR_fd0p0) >> DEV_TYPE_SHIFT];
 
   return f_dv;
 }
@@ -325,7 +317,7 @@ int device;
 PRIVATE char *f_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "fd3";
+  static char name[] = "fd0";
 
   name[2] = '0' + f_drive;
   return name;
@@ -363,278 +355,199 @@ PRIVATE void f_cleanup()
 
 
 /*===========================================================================*
- *				f_schedule				     *
+ *				f_transfer				     *
  *===========================================================================*/
-PRIVATE int f_schedule(proc_nr, iop)
+PRIVATE int f_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-  int r, opcode, spanning;
-  unsigned long pos;
-  unsigned block;	/* Seen any 32M floppies lately? */
-  unsigned nbytes, count, dma_count;
-  phys_bytes user_phys, dma_phys;
-  struct trans *tp, *tp0;
-
-  /* Ignore any alarm to turn motor off, now there is work to do. */
-  motor_goal = motor_status;
-
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
-
-  /* From/to this position on disk */
-  pos = iop->io_position;
-  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
-
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read, write or format? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-  if (f_device & FORMAT_DEV_BIT) {
-	if (opcode != DEV_WRITE) return(iop->io_nbytes = EIO);
-	if (nbytes != BLOCK_SIZE) return(iop->io_nbytes = EINVAL);
-
-	phys_copy(user_phys + SECTOR_SIZE, vir2phys(&fmt_param),
-						(phys_bytes) sizeof fmt_param);
-
-	/* Check that the number of sectors in the data is reasonable, to
-	 * avoid division by 0.  Leave checking of other data to the FDC.
-	 */
-	if (fmt_param.sectors_per_cylinder == 0)
-		return(iop->io_nbytes = EIO);
-
-	/* Only the first sector of the parameters now needed. */
-	iop->io_nbytes = nbytes = SECTOR_SIZE;
-  }
-
-  /* Which block on disk and how close to EOF? */
-  if (pos >= f_dv->dv_size) return(OK);		/* At EOF */
-  if (pos + nbytes > f_dv->dv_size) nbytes = f_dv->dv_size - pos;
-  block = (f_dv->dv_base + pos) >> SECTOR_SHIFT;
-
-  spanning = FALSE;	/* set if the block spans a track */
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	count = nbytes;
-
-	if (f_count > 0 && block >= f_nexttrack) {
-		/* The new job leaves the track, finish all gathered jobs */
-		if ((r = f_finish()) != OK) return(r);
-		f_must = spanning;
-	}
-
-	if (f_count == 0) {
-		/* This is the first job, compute cylinder and head */
-		f_opcode = opcode;
-		f_fp->fl_cylinder = block / (NR_HEADS * f_sectors);
-		f_fp->fl_hardcyl = f_fp->fl_cylinder * steps_per_cyl[d];
-		f_fp->fl_head = (block % (NR_HEADS * f_sectors)) / f_sectors;
-
-		/* See where the next track starts, one is trouble enough */
-		f_nexttrack = (f_fp->fl_cylinder * NR_HEADS
-					+ f_fp->fl_head + 1) * f_sectors;
-	}
-
-	/* Don't do track spanning I/O. */
-	if (block + (count >> SECTOR_SHIFT) > f_nexttrack)
-		count = (f_nexttrack - block) << SECTOR_SHIFT;
-
-	/* Memory chunk to DMA. */
-	dma_phys = user_phys;
-	dma_count = dma_bytes_left(dma_phys);
-
-#if _WORD_SIZE > 2
-	/* The DMA chip uses a 24 bit address, so don't DMA above 16MB. */
-	if (dma_phys >= 0x1000000) dma_count = 0;
-#endif
-	if (dma_count < count) {
-		/* Nearing a 64K boundary. */
-		if (dma_count >= SECTOR_SIZE) {
-			/* Can read a few sectors before hitting the
-			 * boundary.
-			 */
-			count = dma_count & ~SECTOR_MASK;
-		} else {
-			/* Must use the special buffer for this. */
-			count = SECTOR_SIZE;
-			dma_phys = tmp_phys;
-		}
-	}
-
-	/* Store the I/O parameters in the ftrans slots for the sectors to
-	 * read.  The first slot specifies all sectors, the ones following
-	 * it each specify one sector less.  This allows I/O to be started
-	 * in the middle of a block.
-	 */
-	tp = tp0 = &ftrans[block % f_sectors];
-
-	block += count >> SECTOR_SHIFT;
-	nbytes -= count;
-	f_count += count;
-	if (!(iop->io_request & OPTIONAL_IO)) f_must = TRUE;
-
-	do {
-		tp->tr_count = count;
-		tp->tr_iop = iop;
-		tp->tr_phys = user_phys;
-		tp->tr_dma = dma_phys;
-		tp++;
-
-		user_phys += SECTOR_SIZE;
-		dma_phys += SECTOR_SIZE;
-		count -= SECTOR_SIZE;
-	} while (count > 0);
-
-	spanning = TRUE;	/* the rest of the block may span a track */
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				f_finish				     *
- *===========================================================================*/
-PRIVATE int f_finish()
-{
-/* Carry out the I/O requests gathered in ftrans[].  */
-
   struct floppy *fp = f_fp;
-  struct trans *tp;
+  iovec_t *iop, *iov_end = iov + nr_req;
   int r, errors;
+  unsigned block;	/* Seen any 32M floppies lately? */
+  unsigned nbytes, count, chunk, sector;
+  unsigned long dv_size = cv64ul(f_dv->dv_size);
+  vir_bytes user_addr;
+  vir_bytes uaddrs[MAX_SECTORS], *up;
+  u8_t cmd[3];
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
-  if (f_count == 0) return(OK);	/* Spurious finish. */
+  /* Check disk address. */
+  if ((position & SECTOR_MASK) != 0) return(EINVAL);
 
-  /* If all the requests are optional then don't read from the next track.
-   * (There may be enough buffers to read the next track, but doing so is
-   * unwise.  It's no good to be greedy on a slow device.)
-   */
-  if (!f_must) {
-	defuse();
-	return(EAGAIN);
-  }
+  errors = 0;
+  while (nr_req > 0) {
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) nbytes += iop->iov_size;
 
-  /* See if motor is running; if not, turn it on and wait */
-  start_motor();
+	/* Which block on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);		/* At EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+	block = div64u(add64ul(f_dv->dv_base, position), SECTOR_SIZE);
 
-  /* Let read_id find out the next sector to read/write if it pays to do so.
-   * Note that no read_id is done while formatting if there is one format
-   * request per track as there should be.
-   */
-  fp->fl_sector = f_count >= (6 * SECTOR_SIZE) ? 0 : BASE_SECTOR;
+	if ((nbytes & SECTOR_MASK) != 0) return(EINVAL);
 
-  do {
-	/* This loop allows a failed operation to be repeated. */
-	errors = 0;
+	/* Using a formatting device? */
+	if (f_device & FORMAT_DEV_BIT) {
+		if (opcode != DEV_SCATTER) return(EIO);
+		if (iov->iov_size < SECTOR_SIZE + sizeof(fmt_param))
+			return(EINVAL);
+
+		phys_copy(user_base + iov->iov_addr + SECTOR_SIZE,
+			vir2phys(&fmt_param), (phys_bytes) sizeof(fmt_param));
+
+		/* Check that the number of sectors in the data is reasonable,
+		 * to avoid division by 0.  Leave checking of other data to
+		 * the FDC.
+		 */
+		if (fmt_param.sectors_per_cylinder == 0) return(EIO);
+
+		/* Only the first sector of the parameters now needed. */
+		iov->iov_size = nbytes = SECTOR_SIZE;
+	}
+
+	/* Only try one sector if there were errors. */
+	if (errors > 0) nbytes = SECTOR_SIZE;
+
+	/* Compute cylinder and head of the track to access. */
+	fp->fl_cylinder = block / (NR_HEADS * f_sectors);
+	fp->fl_hardcyl = fp->fl_cylinder * f_dp->steps;
+	fp->fl_head = (block % (NR_HEADS * f_sectors)) / f_sectors;
+
+	/* For each sector on this track compute the user address it is to
+	 * go or to come from.
+	 */
+	for (up = uaddrs; up < uaddrs + MAX_SECTORS; up++) *up = 0;
+	count = 0;
+	iop = iov;
+	sector = block % f_sectors;
 	for (;;) {
-		/* First check to see if a reset is needed. */
-		if (need_reset) f_reset();
+		user_addr = iop->iov_addr;
+		chunk = iop->iov_size;
+		if ((chunk & SECTOR_MASK) != 0) return(EINVAL);
 
-		/* Set the stepping rate */
-		if (current_spec1 != spec1[d]) {
-			fdc_out(FDC_SPECIFY);
-			current_spec1 = spec1[d];
-			fdc_out(current_spec1);
-			fdc_out(SPEC2);
+		while (chunk > 0) {
+			uaddrs[sector++] = user_addr;
+			chunk -= SECTOR_SIZE;
+			user_addr += SECTOR_SIZE;
+			count += SECTOR_SIZE;
+			if (sector == f_sectors || count == nbytes)
+				goto track_set_up;
 		}
+		iop++;
+	}
+  track_set_up:
 
-		/* Set the data rate */
-		if (pc_at) out_byte(FDC_RATE, rate[d]);
+	/* First check to see if a reset is needed. */
+	if (need_reset) f_reset();
 
-		/* If we are going to a new cylinder, perform a seek. */
-		r = seek(fp);
+	/* See if motor is running; if not, turn it on and wait. */
+	start_motor();
 
+	/* Set the stepping rate and data rate */
+	if (f_dp != prev_dp) {
+		cmd[0] = FDC_SPECIFY;
+		cmd[1] = f_dp->spec1;
+		cmd[2] = SPEC2;
+		(void) fdc_command(cmd, 3);
+		out_byte(FDC_RATE, f_dp->rate);
+		prev_dp = f_dp;
+	}
+
+	/* If we are going to a new cylinder, perform a seek. */
+	r = seek();
+
+	/* Avoid read_id() if we don't plan to read much. */
+	if (fp->fl_sector == NO_SECTOR && count < (6 * SECTOR_SIZE))
+		fp->fl_sector = 0;
+
+	for (nbytes = 0; nbytes < count; nbytes += SECTOR_SIZE) {
 		if (fp->fl_sector == NO_SECTOR) {
-			/* Don't retry read_id too often, we need tp soon */
-			if (errors > 0) fp->fl_sector = BASE_SECTOR;
-
-			/* Find out what the current sector is */
-			if (r == OK) r = read_id(fp);
+			/* Find out what the current sector is.  This often
+			 * fails right after a seek, so try it twice.
+			 */
+			if (r == OK && read_id() != OK) r = read_id();
 		}
 
-		/* Look for the next job in ftrans[] */
-		if (fp->fl_sector != NO_SECTOR) {
+		/* Look for the next job in uaddrs[] */
+		if (r == OK) {
 			for (;;) {
-				if (fp->fl_sector >= BASE_SECTOR + f_sectors)
-					fp->fl_sector = BASE_SECTOR;
+				if (fp->fl_sector >= f_sectors)
+					fp->fl_sector = 0;
 
-				tp = &ftrans[fp->fl_sector - BASE_SECTOR];
-				if (tp->tr_count > 0) break;
+				up = &uaddrs[fp->fl_sector];
+				if (*up != 0) break;
 				fp->fl_sector++;
 			}
-			/* Do not transfer more than f_count bytes. */
-			if (tp->tr_count > f_count) tp->tr_count = f_count;
 		}
 
-		if (r == OK && tp->tr_dma == tmp_phys
-						&& f_opcode == DEV_WRITE) {
-			/* Copy the bad user buffer to the DMA buffer. */
-			phys_copy(tp->tr_phys, tp->tr_dma,
-						(phys_bytes) tp->tr_count);
+		if (r == OK && opcode == DEV_SCATTER) {
+			/* Copy the user bytes to the DMA buffer. */
+			phys_copy(user_base + *up, tmp_phys,
+						(phys_bytes) SECTOR_SIZE);
 		}
 
 		/* Set up the DMA chip and perform the transfer. */
 		if (r == OK) {
-			dma_setup(tp);
-			r = f_transfer(fp, tp);
+			dma_setup(opcode);
+			r = fdc_transfer(opcode);
 		}
 
-		if (r == OK && tp->tr_dma == tmp_phys
-						&& f_opcode == DEV_READ) {
-			/* Copy the DMA buffer to the bad user buffer. */
-			phys_copy(tp->tr_dma, tp->tr_phys,
-						(phys_bytes) tp->tr_count);
+		if (r == OK && opcode == DEV_GATHER) {
+			/* Copy the DMA buffer to user space. */
+			phys_copy(tmp_phys, user_base + *up,
+						(phys_bytes) SECTOR_SIZE);
 		}
 
-		if (r == OK) break;	/* if successful, exit loop */
+		if (r != OK) {
+			/* Don't retry if write protected or too many errors. */
+			if (err_no_retry(r) || ++errors == MAX_ERRORS)
+				return(EIO);
 
-		/* Don't retry if write protected or too many errors. */
-		if (err_no_retry(r) || ++errors == MAX_ERRORS) {
-			if (fp->fl_sector != 0) tp->tr_iop->io_nbytes = EIO;
-			return(EIO);
-		}
+			/* Recalibrate if halfway. */
+			if (errors == MAX_ERRORS / 2)
+				fp->fl_calibration = UNCALIBRATED;
 
-		/* Recalibrate if halfway, but bail out if optional I/O. */
-		if (errors == MAX_ERRORS / 2) {
-			fp->fl_calibration = UNCALIBRATED;
-			if (tp->tr_iop->io_request & OPTIONAL_IO)
-				return(tp->tr_iop->io_nbytes = EIO);
+			nbytes = 0;
+			break;		/* retry */
 		}
 	}
-	f_count -= tp->tr_count;
-	tp->tr_iop->io_nbytes -= tp->tr_count;
-  } while (f_count > 0);
 
-  /* Defuse the leftover partial jobs. */
-  defuse();
-
+	/* Book the bytes successfully transferred. */
+	position += nbytes;
+	for (;;) {
+		if (nbytes < iov->iov_size) {
+			/* Not done with this one yet. */
+			iov->iov_addr += nbytes;
+			iov->iov_size -= nbytes;
+			break;
+		}
+		nbytes -= iov->iov_size;
+		iov->iov_addr += iov->iov_size;
+		iov->iov_size = 0;
+		if (nbytes == 0) {
+			/* The rest is optional, so we return to give FS a
+			 * chance to think it over.
+			 */
+			return(OK);
+		}
+		iov++;
+		nr_req--;
+	}
+  }
   return(OK);
-}
-
-
-/*===========================================================================*
- *				defuse					     *
- *===========================================================================*/
-PRIVATE void defuse()
-{
-/* Invalidate leftover requests in the transfer array. */
-
-  struct trans *tp;
-
-  for (tp = ftrans; tp < ftrans + MAX_SECTORS; tp++) tp->tr_count = 0;
-  f_count = 0;
 }
 
 
 /*===========================================================================*
  *				dma_setup				     *
  *===========================================================================*/
-PRIVATE void dma_setup(tp)
-struct trans *tp;		/* pointer to the transfer struct */
+PRIVATE void dma_setup(opcode)
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
 {
 /* The IBM PC can perform DMA operations by using the DMA chip.  To use it,
  * the DMA (Direct Memory Access) chip is loaded with the 20-bit memory address
@@ -649,12 +562,12 @@ struct trans *tp;		/* pointer to the transfer struct */
    */
   out_byte(DMA_INIT, DMA_RESET_VAL);    /* reset the dma controller */
   out_byte(DMA_FLIPFLOP, 0);		/* write anything to reset it */
-  out_byte(DMA_MODE, f_opcode == DEV_WRITE ? DMA_WRITE : DMA_READ);
-  out_byte(DMA_ADDR, (int) tp->tr_dma >>  0);
-  out_byte(DMA_ADDR, (int) tp->tr_dma >>  8);
-  out_byte(DMA_TOP, (int) (tp->tr_dma >> 16));
-  out_byte(DMA_COUNT, (tp->tr_count - 1) >> 0);
-  out_byte(DMA_COUNT, (tp->tr_count - 1) >> 8);
+  out_byte(DMA_MODE, opcode == DEV_SCATTER ? DMA_WRITE : DMA_READ);
+  out_byte(DMA_ADDR, (unsigned) tmp_phys >>  0);
+  out_byte(DMA_ADDR, (unsigned) tmp_phys >>  8);
+  out_byte(DMA_TOP, (unsigned) (tmp_phys >> 16));
+  out_byte(DMA_COUNT, (SECTOR_SIZE - 1) >> 0);
+  out_byte(DMA_COUNT, (SECTOR_SIZE - 1) >> 8);
   out_byte(DMA_INIT, 2);	/* some sort of enable */
 }
 
@@ -689,7 +602,7 @@ PRIVATE void start_motor()
 
   /* If the motor was already running, we don't have to wait for it. */
   if (running) return;			/* motor was already running */
-  clock_mess(mtr_setup[d], send_mess);	/* motor was not running */
+  clock_mess(f_dp->start, send_mess);	/* motor was not running */
   receive(CLOCK, &mess);		/* wait for clock interrupt */
 }
 
@@ -726,26 +639,27 @@ PUBLIC void floppy_stop()
 /*===========================================================================*
  *				seek					     *
  *===========================================================================*/
-PRIVATE int seek(fp)
-struct floppy *fp;		/* pointer to the drive struct */
+PRIVATE int seek()
 {
 /* Issue a SEEK command on the indicated drive unless the arm is already
  * positioned on the correct cylinder.
  */
 
+  struct floppy *fp = f_fp;
   int r;
   message mess;
+  u8_t cmd[3];
 
   /* Are we already on the correct cylinder? */
   if (fp->fl_calibration == UNCALIBRATED)
-	if (recalibrate(fp) != OK) return(ERR_SEEK);
+	if (recalibrate() != OK) return(ERR_SEEK);
   if (fp->fl_curcyl == fp->fl_hardcyl) return(OK);
 
   /* No.  Wrong cylinder.  Issue a SEEK and wait for interrupt. */
-  fdc_out(FDC_SEEK);
-  fdc_out((fp->fl_head << 2) | f_drive);
-  fdc_out(fp->fl_hardcyl);
-  if (need_reset) return(ERR_SEEK);	/* if controller is sick, abort seek */
+  cmd[0] = FDC_SEEK;
+  cmd[1] = (fp->fl_head << 2) | f_drive;
+  cmd[2] = fp->fl_hardcyl;
+  if (fdc_command(cmd, 3) != OK) return(ERR_SEEK);
   if (f_intr_wait() != OK) return(ERR_TIMEOUT);
 
   /* Interrupt has been received.  Check drive status. */
@@ -756,26 +670,28 @@ struct floppy *fp;		/* pointer to the drive struct */
 	/* seek failed, may need a recalibrate */
 	return(ERR_SEEK);
   }
-  /* give head time to settle on a format, no retrying here! */
+  /* Give head time to settle on a format, no retrying here! */
   if (f_device & FORMAT_DEV_BIT) {
 	clock_mess(2, send_mess);
 	receive(CLOCK, &mess);
   }
   fp->fl_curcyl = fp->fl_hardcyl;
+  fp->fl_sector = NO_SECTOR;
   return(OK);
 }
 
 
 /*===========================================================================*
- *				f_transfer				     *
+ *				fdc_transfer				     *
  *===========================================================================*/
-PRIVATE int f_transfer(fp, tp)
-struct floppy *fp;		/* pointer to the drive struct */
-struct trans *tp;		/* pointer to the transfer struct */
+PRIVATE int fdc_transfer(opcode)
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
 {
 /* The drive is now on the proper cylinder.  Read, write or format 1 block. */
 
+  struct floppy *fp = f_fp;
   int r, s;
+  u8_t cmd[9];
 
   /* Never attempt a transfer if the drive is uncalibrated or motor is off. */
   if (fp->fl_calibration == UNCALIBRATED) return(ERR_TRANSFER);
@@ -784,27 +700,27 @@ struct trans *tp;		/* pointer to the transfer struct */
   /* The command is issued by outputting several bytes to the controller chip.
    */
   if (f_device & FORMAT_DEV_BIT) {
-	fdc_out(FDC_FORMAT);
-	fdc_out((fp->fl_head << 2) | f_drive);
-	fdc_out(fmt_param.sector_size_code);
-	fdc_out(fmt_param.sectors_per_cylinder);
-	fdc_out(fmt_param.gap_length_for_format);
-	fdc_out(fmt_param.fill_byte_for_format);
+	cmd[0] = FDC_FORMAT;
+	cmd[1] = (fp->fl_head << 2) | f_drive;
+	cmd[2] = fmt_param.sector_size_code;
+	cmd[3] = fmt_param.sectors_per_cylinder;
+	cmd[4] = fmt_param.gap_length_for_format;
+	cmd[5] = fmt_param.fill_byte_for_format;
+	if (fdc_command(cmd, 6) != OK) return(ERR_TRANSFER);
   } else {
-	fdc_out(f_opcode == DEV_WRITE ? FDC_WRITE : FDC_READ);
-	fdc_out((fp->fl_head << 2) | f_drive);
-	fdc_out(fp->fl_cylinder);
-	fdc_out(fp->fl_head);
-	fdc_out(fp->fl_sector);
-	fdc_out(SECTOR_SIZE_CODE);
-	fdc_out(f_sectors);
-	fdc_out(gap[d]);	/* sector gap */
-	fdc_out(DTL);		/* data length */
+	cmd[0] = opcode == DEV_SCATTER ? FDC_WRITE : FDC_READ;
+	cmd[1] = (fp->fl_head << 2) | f_drive;
+	cmd[2] = fp->fl_cylinder;
+	cmd[3] = fp->fl_head;
+	cmd[4] = BASE_SECTOR + fp->fl_sector;
+	cmd[5] = SECTOR_SIZE_CODE;
+	cmd[6] = f_sectors;
+	cmd[7] = f_dp->gap;	/* sector gap */
+	cmd[8] = DTL;		/* data length */
+	if (fdc_command(cmd, 9) != OK) return(ERR_TRANSFER);
   }
 
   /* Block, waiting for disk interrupt. */
-  if (need_reset) return(ERR_TRANSFER);	/* if controller is sick, abort op */
-
   if (f_intr_wait() != OK) return(ERR_TIMEOUT);
 
   /* Get controller status and check for errors. */
@@ -824,11 +740,11 @@ struct trans *tp;		/* pointer to the transfer struct */
   /* Compare actual numbers of sectors transferred with expected number. */
   s =  (f_results[ST_CYL] - fp->fl_cylinder) * NR_HEADS * f_sectors;
   s += (f_results[ST_HEAD] - fp->fl_head) * f_sectors;
-  s += (f_results[ST_SEC] - fp->fl_sector);
-  if ((s << SECTOR_SHIFT) != tp->tr_count) return(ERR_TRANSFER);
+  s += (f_results[ST_SEC] - BASE_SECTOR - fp->fl_sector);
+  if (s != 1) return(ERR_TRANSFER);
 
   /* This sector is next for I/O: */
-  fp->fl_sector = f_results[ST_SEC];
+  fp->fl_sector = f_results[ST_SEC] - BASE_SECTOR;
   return(OK);
 }
 
@@ -880,8 +796,30 @@ int irq;
 {
 /* FDC interrupt, send message to floppy task. */
 
+  f_busy = BSY_IDLE;
   interrupt(FLOPPY);
   return 0;
+}
+
+
+/*===========================================================================*
+ *				fdc_command				     *
+ *===========================================================================*/
+PRIVATE int fdc_command(cmd, len)
+u8_t *cmd;		/* command bytes */
+int len;		/* command length */
+{
+/* Output a command to the controller. */
+
+  /* Schedule a wakeup call. */
+  clock_mess(WAKEUP, f_timeout);
+
+  f_busy = BSY_IO;
+  while (len > 0) {
+	fdc_out(*cmd++);
+	len--;
+  }
+  return(need_reset ? ERR_DRIVE : OK);
 }
 
 
@@ -916,8 +854,7 @@ int val;		/* write this byte to floppy disk controller */
 /*===========================================================================*
  *				recalibrate				     *
  *===========================================================================*/
-PRIVATE int recalibrate(fp)
-struct floppy *fp;	/* pointer tot he drive struct */
+PRIVATE int recalibrate()
 {
 /* The floppy disk controller has no way of determining its absolute arm
  * position (cylinder).  Instead, it steps the arm a cylinder at a time and
@@ -928,19 +865,21 @@ struct floppy *fp;	/* pointer tot he drive struct */
  * into sync with reality.
  */
 
+  struct floppy *fp = f_fp;
   int r;
+  u8_t cmd[2];
 
   /* Issue the RECALIBRATE command and wait for the interrupt. */
-  start_motor();		/* can't recalibrate with motor off */
-  fdc_out(FDC_RECALIBRATE);	/* tell drive to recalibrate itself */
-  fdc_out(f_drive);		/* specify drive */
-  if (need_reset) return(ERR_SEEK);	/* don't wait if controller is sick */
+  cmd[0] = FDC_RECALIBRATE;	/* tell drive to recalibrate itself */
+  cmd[1] = f_drive;		/* specify drive */
+  if (fdc_command(cmd, 2) != OK) return(ERR_SEEK);
   if (f_intr_wait() != OK) return(ERR_TIMEOUT);
 
   /* Determine if the recalibration succeeded. */
   fdc_out(FDC_SENSE);		/* issue SENSE command to request results */
   r = fdc_results();		/* get results of the FDC_RECALIBRATE command*/
   fp->fl_curcyl = NO_CYL;	/* force a SEEK next time */
+  fp->fl_sector = NO_SECTOR;
   if (r != OK ||		/* controller would not respond */
      (f_results[ST0] & ST0_BITS) != SEEK_ST0 || f_results[ST_PCN] != 0) {
 	/* Recalibration failed.  FDC must be reset. */
@@ -978,13 +917,15 @@ PRIVATE void f_reset()
    *   3) the sense interrupt clears the interrupt (not clear which one).
    * and for some reason the reset does not work.
    */
+  (void) fdc_command((u8_t *) 0, 0);	/* need only the timer */
   lock();
   motor_status = 0;
   motor_goal = 0;
   out_byte(DOR, 0);		/* strobe reset bit low */
   out_byte(DOR, ENABLE_INT);	/* strobe it high again */
   unlock();
-  receive(HARDWARE, &mess);	/* collect the RESET interrupt */
+				/* collect the RESET interrupt */
+  do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
 
   /* The controller supports 4 drives and returns a result for each of them.
    * Collect all the results now.  The old version only collected the first
@@ -1005,7 +946,7 @@ PRIVATE void f_reset()
 	floppy[i].fl_calibration = UNCALIBRATED;
 
   /* The current timing parameters must be specified again. */
-  current_spec1 = 0;
+  prev_dp = NULL;
 }
 
 
@@ -1034,16 +975,15 @@ PRIVATE int f_intr_wait()
 
   f_busy = BSY_IO;
   clock_mess(WAKEUP, f_timeout);
-  receive(HARDWARE, &mess);
+  do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
 
   if (f_busy == BSY_WAKEN) {
 	/* No interrupt from the FDC, this means that there is probably no
 	 * floppy in the drive.  Get the FDC down to earth and return error.
 	 */
-	f_reset();
+	need_reset = TRUE;
 	return(ERR_TIMEOUT);
   }
-  f_busy = BSY_IDLE;
   return(OK);
 }
 
@@ -1067,24 +1007,22 @@ PRIVATE void f_timeout()
 /*==========================================================================*
  *				read_id					    *
  *==========================================================================*/
-PRIVATE int read_id(fp)
-struct floppy *fp;	/* pointer to the drive struct */
+PRIVATE int read_id()
 {
 /* Determine current cylinder and sector. */
 
+  struct floppy *fp = f_fp;
   int result;
+  u8_t cmd[2];
 
   /* Never attempt a read id if the drive is uncalibrated or motor is off. */
   if (fp->fl_calibration == UNCALIBRATED) return(ERR_READ_ID);
   if ((motor_status & (1 << f_drive)) == 0) return(ERR_READ_ID);
 
   /* The command is issued by outputting 2 bytes to the controller chip. */
-  fdc_out(FDC_READ_ID);		/* issue the read id command */
-  fdc_out( (f_fp->fl_head << 2) | f_drive);
-
-  /* Block, waiting for disk interrupt. */
-  if (need_reset) return(ERR_READ_ID);	/* if controller is sick, abort op */
-
+  cmd[0] = FDC_READ_ID;		/* issue the read id command */
+  cmd[1] = (fp->fl_head << 2) | f_drive;
+  if (fdc_command(cmd, 2) != OK) return(ERR_READ_ID);
   if (f_intr_wait() != OK) return(ERR_TIMEOUT);
 
   /* Get controller status and check for errors. */
@@ -1095,7 +1033,7 @@ struct floppy *fp;	/* pointer to the drive struct */
   if (f_results[ST1] | f_results[ST2]) return(ERR_READ_ID);
 
   /* The next sector is next for I/O: */
-  f_fp->fl_sector = f_results[ST_SEC] + 1;
+  fp->fl_sector = f_results[ST_SEC] - BASE_SECTOR + 1;
   return(OK);
 }
 
@@ -1116,27 +1054,27 @@ message *m_ptr;			/* pointer to open message */
   if (f_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
 
   dtype = f_device & DEV_TYPE_BITS;	/* get density from minor dev */
-  if (dtype >= MINOR_fd0a) dtype = 0;
+  if (dtype >= MINOR_fd0p0) dtype = 0;
+
   if (dtype != 0) {
 	/* All types except 0 indicate a specific drive/medium combination.*/
 	dtype = (dtype >> DEV_TYPE_SHIFT) - 1;
 	if (dtype >= NT) return(ENXIO);
 	f_fp->fl_density = dtype;
-	f_fp->fl_geom.dv_size = (long) nr_blocks[dtype] << SECTOR_SHIFT;
+	(void) f_prepare(f_device);	/* Recompute parameters. */
 	return(OK);
   }
-  if (f_device & FORMAT_DEV_BIT) return(EIO);	/* Can't format /dev/fdx */
+  if (f_device & FORMAT_DEV_BIT) return(EIO);	/* Can't format /dev/fdN */
 
-  /* No need to test if the motor is still running. */
-  if (motor_status & (1 << f_drive)) return(OK);
-
-  /* The device opened is /dev/fdx.  Experimentally determine drive/medium.
+  /* The device opened is /dev/fdN.  Experimentally determine drive/medium.
    * First check fl_density.  If it is not NO_DENS, the drive has been used
    * before and the value of fl_density tells what was found last time. Try
-   * that first.
+   * that first.  If the motor is still running then assume nothing changed.
    */
-  if (f_fp->fl_density != NO_DENS && test_read(f_fp->fl_density) == OK)
-	return(OK);
+  if (f_fp->fl_density != NO_DENS) {
+	if (motor_status & (1 << f_drive)) return(OK);
+	if (test_read(f_fp->fl_density) == OK) return(OK);
+  }
 
   /* Either drive type is unknown or a different diskette is now present.
    * Use test_order to try them one by one.
@@ -1172,21 +1110,20 @@ int density;
  * types have as many sectors per track, and trying cylinder 2 finds the
  * ones that need double stepping.
  */
-
-  message m;
-  int r, device;
+  int device;
+  off_t position;
+  iovec_t iovec1;
 
   f_fp->fl_density = density;
   device = ((density + 1) << DEV_TYPE_SHIFT) + f_drive;
-  f_fp->fl_geom.dv_size = (long) nr_blocks[density] << SECTOR_SHIFT;
-  m.m_type = DEV_READ;
-  m.DEVICE = device;
-  m.PROC_NR = FLOPPY;
-  m.COUNT = SECTOR_SIZE;
-  m.POSITION = (long) test_sector[density] * SECTOR_SIZE;
-  m.ADDRESS = (char *) tmp_buf;
-  r = do_rdwt(&f_dtab, &m);
-  if (r != SECTOR_SIZE) return(EIO);
+
+  (void) f_prepare(device);
+  position = (off_t) f_dp->test << SECTOR_SHIFT;
+  iovec1.iov_addr = (vir_bytes) tmp_buf;
+  iovec1.iov_size = SECTOR_SIZE;
+  (void) f_transfer(FLOPPY, DEV_GATHER, position, &iovec1, 1);
+
+  if (iovec1.iov_size != 0) return(EIO);
 
   partition(&f_dtab, f_drive, P_FLOPPY);
   return(OK);
@@ -1199,7 +1136,7 @@ int density;
 PRIVATE void f_geometry(entry)
 struct partition *entry;
 {
-  entry->cylinders = nr_blocks[d] / (NR_HEADS * f_sectors);
+  entry->cylinders = f_dp->cyls;
   entry->heads = NR_HEADS;
   entry->sectors = f_sectors;
 }

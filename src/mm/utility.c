@@ -41,7 +41,7 @@ int mask;			/* R_BIT, W_BIT, or X_BIT */
   tell_fs(SETUID, MM_PROC_NR, (int) SUPER_USER, (int) SUPER_USER);
 
   /* Open the file and fstat it.  Restore the ids early to handle errors. */
-  fd = open(name_buf, O_RDONLY);
+  fd = open(name_buf, O_RDONLY | O_NONBLOCK);
   save_errno = errno;		/* open might fail, e.g. from ENFILE */
   tell_fs(SETUID, MM_PROC_NR, (int) mp->mp_effuid, (int) mp->mp_effuid);
   if (fd < 0) return(-save_errno);

@@ -244,10 +244,10 @@ getanswer(answer, anslen, iquery)
 
 struct hostent *
 gethostbyname(name)
-	char *name;
+	_CONST char *name;
 {
 	querybuf_t buf;
-	register char *cp;
+	register _CONST char *cp;
 	int n;
 
 	/*
@@ -270,7 +270,7 @@ gethostbyname(name)
 					h_errno = HOST_NOT_FOUND;
 					return((struct hostent *) NULL);
 				}
-				host.h_name = name;
+				host.h_name = (char *) name;
 				host.h_aliases = host_aliases;
 				host_aliases[0] = NULL;
 				host.h_addrtype = AF_INET;
@@ -288,7 +288,7 @@ gethostbyname(name)
 				break;
 		}
 
-	if ((n = res_search(name, C_IN, T_A, buf.buf, sizeof(buf))) < 0) {
+	if ((n = res_search((char*)name, C_IN, T_A, buf.buf, sizeof(buf))) < 0) {
 #ifdef DEBUG
 		if (_res.options & RES_DEBUG)
 			printf("res_search failed\n");

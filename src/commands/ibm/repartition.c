@@ -1,4 +1,4 @@
-/*	repartition 1.15 - Load a partition table	Author: Kees J. Bot
+/*	repartition 1.17 - Load a partition table	Author: Kees J. Bot
  *								30 Nov 1991
  */
 #define nil 0
@@ -11,15 +11,13 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
+#include <minix/u64.h>
 #include <ibm/partition.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
-
-#if !__minix_vmd
-#define div64u(i, j)	((i) / (j))
-#define mul64u(i, j)	((i) * (j))
-#endif
+#include <dirent.h>
+#include <limits.h>
 
 #define DEV_FD0		0x200
 
@@ -30,6 +28,11 @@
 
 char *arg0;
 char *dev_file;		/* Device to repartition. */
+
+#ifndef S_ISLNK
+/* There were no symlinks in medieval times. */
+#define lstat		stat
+#endif
 
 void report(const char *label)
 {
@@ -49,7 +52,7 @@ void fatal(const char *label)
 			((dev_t) (((major) << MAJOR) | ((minor) << MINOR)))
 #endif
 
-#define MINOR_hd1a	128
+#define MINOR_d0p0s0	128
 
 void partsort(struct part_entry *pe)
 /* DOS has the misguided idea that partition tables must be sorted. */
@@ -67,44 +70,39 @@ void partsort(struct part_entry *pe)
 		}
 }
 
-char *devname(dev_t dev)
-/* Create a device name for device number dev.  Use dev_file as template. */
+char *finddev(dev_t device)
+/* Find the device next to dev_file with the given device number. */
 {
-	static char *dname;
-	char *p;
-	int prefix;
-	int drive, par, sub;
-	static char subs[]= { 0, 'a', 'b', 'c', 'd' };
+	DIR *dp;
+	struct dirent *de;
+	static char name[PATH_MAX];
+	char *np;
+	size_t nlen;
+	struct stat st;
 
-	if (dname != nil) free(dname);
-
-	if ((p= strrchr(dev_file, '/')) == nil) p= dev_file; else p++;
-	while (('a' <= *p && *p <= 'z') || ('A' <= *p && *p <= 'Z')) p++;
-	prefix= p - dev_file;
-
-	if ((dname= malloc((prefix + 4) * sizeof(dname[0]))) == nil)
-		fatal("malloc()");
-	if (major(dev) == major(DEV_FD0)) {
-		/* Floppies are different. */
-		drive= minor(dev) & 0x03;
-		par= (minor(dev) & 0x7C) >> 2;
-		par= par < 28 ? 0 : par - 28 + 1;
-		sprintf(dname, "%.*s%d%c", prefix, dev_file, drive, subs[par]);
-	} else {
-		/* Some hard disk. */
-		if (minor(dev) < 128) {
-			drive= minor(dev) / 5;
-			par= minor(dev) % 5;
-			sub= 0;
-		} else {
-			drive= (minor(dev) - 128) >> 4;
-			par= (((minor(dev) - 128) >> 2) & 0x03) + 1;
-			sub= ((minor(dev) - 128) & 0x03) + 1;
-		}
-		sprintf(dname, "%.*s%d%c", prefix, dev_file,
-						drive * 5 + par, subs[sub]);
+	if ((np= strrchr(dev_file, '/')) == nil) np= dev_file; else np++;
+	nlen= np - dev_file;
+	if (nlen > PATH_MAX - NAME_MAX - 1) {
+		fprintf(stderr, "%s: %s: Name is way too long\n",
+			arg0, dev_file);
+		exit(1);
 	}
-	return dname;
+	memcpy(name, dev_file, nlen);
+
+	if ((dp= opendir("/dev")) == nil) fatal("/dev");
+	while ((de= readdir(dp)) != nil) {
+		strcpy(name+nlen, de->d_name);
+		if (lstat(name, &st) == 0
+			&& (S_ISBLK(st.st_mode) || S_ISCHR(st.st_mode))
+			&& st.st_rdev == device
+		) {
+			closedir(dp);
+			return name;
+		}
+	}
+	fprintf(stderr, "%s: Can't find partition devices associated with %s\n",
+		arg0, dev_file);
+	exit(1);
 }
 
 #define DSETP	0
@@ -117,8 +115,7 @@ int diocntl(dev_t device, int request, struct partition *entry)
 	int r, f, err;
 	struct partition geometry;
 
-	name= devname(device);
-
+	name= finddev(device);
 	if ((f= open(name, O_RDONLY)) < 0) return -1;
 	r= ioctl(f, request == DSETP ? DIOCSETP : DIOCGETP, (void *) entry);
 	err= errno;
@@ -188,11 +185,6 @@ int main(int argc, char **argv)
 	shrink= (argc == 2);
 
 	if (stat(dev_file, &hdst) < 0) fatal(dev_file);
-	if (strcmp(dev_file, devname(hdst.st_rdev)) != 0) {
-		fprintf(stderr, "%s: can't do anything with the name of %s\n",
-			arg0, dev_file);
-		exit(1);
-	}
 
 	/* Geometry (to print nice numbers.) */
 	if (diocntl(hdst.st_rdev, DGETP, &geometry) < 0) fatal(dev_file);
@@ -204,7 +196,7 @@ int main(int argc, char **argv)
 	hd_major= major(hdst.st_rdev);
 	hd_minor= minor(hdst.st_rdev);
 
-	if (hd_minor >= MINOR_hd1a) {
+	if (hd_minor >= MINOR_d0p0s0) {
 		errno= EINVAL;
 		fatal(dev_file);
 	}
@@ -229,7 +221,7 @@ int main(int argc, char **argv)
 		drive= hd_minor / (1 + NR_PARTITIONS);
 		par= hd_minor % (1 + NR_PARTITIONS) - 1;
 
-		device= MINOR_hd1a
+		device= MINOR_d0p0s0
 				+ (drive * NR_PARTITIONS + par) * NR_PARTITIONS;
 		if (device + NR_PARTITIONS - 1 > BYTE) {
 			errno= EINVAL;
@@ -284,7 +276,7 @@ int main(int argc, char **argv)
 		if (diocntl(makedev(hd_major, device), DSETP, &entry) < 0)
 			fatal(dev_file);
 
-		show_part(devname(makedev(hd_major, device)),
+		show_part(finddev(makedev(hd_major, device)),
 							pe->lowsec, pe->size);
 	}
 	exit(0);

@@ -3,15 +3,8 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
 
-/* POSIX requires size_t and ssize_t in <unistd.h> and elsewhere. */
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef unsigned int size_t;
-#endif
-
-#ifndef _SSIZE_T
-#define _SSIZE_T
-typedef int ssize_t;
+#ifndef _TYPES_H
+#include <sys/types.h>
 #endif
 
 /* Values used by access().  POSIX Table 2-8. */
@@ -82,10 +75,6 @@ typedef int ssize_t;
 #define _POSIX_CHOWN_RESTRICTED  1
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( void _exit, (int _status)					);
 _PROTOTYPE( int access, (const char *_path, int _amode)			);
 _PROTOTYPE( unsigned int alarm, (unsigned int _seconds)			);

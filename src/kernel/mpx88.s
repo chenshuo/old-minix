@@ -85,39 +85,10 @@
 .define	save		! save the machine state in the proc table
 .define	_s_call		! process or task wants to send or receive a message
 
-! Imported functions.
-
-.extern	_cstart
-.extern	_main
-.extern	_exception
-.extern	_interrupt
-.extern	_sys_call
-.extern	_unhold
-.extern	klib_init_prot
-.extern	real2prot
-
 ! Exported variables.
-! Note: when used with a variable the .define does not reserve storage,
-! it makes the name externally visible so it may be linked to. 
-
 .define	kernel_ds
 .define	begbss
 .define	begdata
-
-! Imported variables.
-
-.extern kernel_cs
-.extern	_gdt
-.extern	_aout
-.extern	_code_base
-.extern	_data_base
-.extern	_held_head
-.extern	_k_reenter
-.extern	_pc_at
-.extern	_proc_ptr
-.extern	_protected_mode
-.extern	_ps_mca
-.extern	_irq_table
 
 	.text
 !*===========================================================================*
@@ -127,10 +98,11 @@ MINIX:				! this is the entry point for the MINIX kernel
 	jmp	over_kernel_ds	! skip over the next few bytes
 	.data2	CLICK_SHIFT	! for the monitor: memory granularity
 kernel_ds:
-	.data2	0x00B4		! boot monitor flags:  (later kernel DS)
+	.data2	0x01B4		! boot monitor flags:  (later kernel DS)
 				!	call in 8086 mode, make bss, make stack,
 				!	load low, don`t patch, will return,
-				!	(has own INT calls), memory vector
+				!	(has own INT calls), memory vector,
+				!	new boot code return
 over_kernel_ds:
 
 ! Set up a C stack frame on the monitor stack.  (The monitor sets cs and ds
@@ -539,8 +511,19 @@ _level0_call:
 !*===========================================================================*
 !*				idle_task				     *
 !*===========================================================================*
-_idle_task:			! executed when there is no work
-	jmp	_idle_task	! a "hlt" before this fails in protected mode
+_idle_task:
+! This task is called when the system has nothing else to do.  The HLT
+! instruction puts the processor in a state where it draws minimum power.
+	mov	ax, #halt
+	push	ax
+	call	_level0		! level0(halt)
+	pop	ax
+	jmp	_idle_task
+halt:
+	sti
+	hlt
+	cli
+	ret
 
 
 !*===========================================================================*

@@ -42,18 +42,6 @@
 ! expects to be preserved (ebx, esi, edi, ebp, esp, segment registers, and
 ! direction bit in the flags).
 
-! imported variables
-
-.sect .bss
-.extern	_mon_return, _mon_sp
-.extern _irq_use
-.extern	_blank_color
-.extern	_gdt
-.extern	_vid_seg
-.extern	_vid_size
-.extern	_vid_mask
-.extern	_level0_func
-
 .sect .text
 !*===========================================================================*
 !*				monitor					     *
@@ -62,7 +50,6 @@
 ! Return to the monitor.
 
 _monitor:
-	mov	eax, (_reboot_code)	! address of new parameters
 	mov	esp, (_mon_sp)		! restore monitor stack pointer
     o16 mov	dx, SS_SELECTOR		! monitor data segment
 	mov	ds, dx
@@ -574,21 +561,21 @@ idt_zero:	.data4	0, 0
 !*===========================================================================*
 ! PUBLIC void mem_vid_copy(u16 *src, unsigned dst, unsigned count);
 !
-! Copy count characters from kernel memory to video memory.  Src, dst and
-! count are character (word) based video offsets and counts.  If src is null
-! then screen memory is blanked by filling it with blank_color.
-
-MVC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
-!			es edi esi eip	 src dst ct
+! Copy count characters from kernel memory to video memory.  Src is an ordinary
+! pointer to a word, but dst and count are character (word) based video offset
+! and count.  If src is null then screen memory is blanked by filling it with
+! blank_color.
 
 _mem_vid_copy:
+	push	ebp
+	mov	ebp, esp
 	push	esi
 	push	edi
 	push	es
-	mov	esi, MVC_ARGS(esp)	! source
-	mov	edi, MVC_ARGS+4(esp)	! destination
-	mov	edx, MVC_ARGS+4+4(esp)	! count
-	mov	es, (_vid_seg)		! destination is video segment
+	mov	esi, 8(ebp)		! source
+	mov	edi, 12(ebp)		! destination
+	mov	edx, 16(ebp)		! count
+	mov	es, (_vid_seg)		! segment containing video memory
 	cld				! make sure direction is up
 mvc_loop:
 	and	edi, (_vid_mask)	! wrap address
@@ -600,6 +587,7 @@ mvc_loop:
 	mov	ecx, eax		! ecx = min(ecx, vid_size - edi)
 0:	sub	edx, ecx		! count -= ecx
 	shl	edi, 1			! byte address
+	add	edi, (_vid_off)		! in video memory
 	test	esi, esi		! source == 0 means blank the screen
 	jz	mvc_blank
 mvc_copy:
@@ -612,13 +600,15 @@ mvc_blank:
     o16	stos				! copy blanks to video memory
 	!jmp	mvc_test
 mvc_test:
-	shr	edi, 1			! word addresses
+	sub	edi, (_vid_off)
+	shr	edi, 1			! back to a word address
 	test	edx, edx
 	jnz	mvc_loop
 mvc_done:
 	pop	es
 	pop	edi
 	pop	esi
+	pop	ebp
 	ret
 
 
@@ -629,19 +619,18 @@ mvc_done:
 !
 ! Copy count characters from video memory to video memory.  Handle overlap.
 ! Used for scrolling, line or character insertion and deletion.  Src, dst
-! and count are character (word) based video offsets and counts.
-
-VVC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
-!			es edi esi eip	 src dst ct
+! and count are character (word) based video offsets and count.
 
 _vid_vid_copy:
+	push	ebp
+	mov	ebp, esp
 	push	esi
 	push	edi
 	push	es
-	mov	esi, VVC_ARGS(esp)	! source
-	mov	edi, VVC_ARGS+4(esp)	! destination
-	mov	edx, VVC_ARGS+4+4(esp)	! count
-	mov	es, (_vid_seg)		! use video segment
+	mov	esi, 8(ebp)		! source
+	mov	edi, 12(ebp)		! destination
+	mov	edx, 16(ebp)		! count
+	mov	es, (_vid_seg)		! segment containing video memory
 	cmp	esi, edi		! copy up or down?
 	jb	vvc_down
 vvc_up:
@@ -661,12 +650,7 @@ vvc_uploop:
 	jbe	0f
 	mov	ecx, eax		! ecx = min(ecx, vid_size - edi)
 0:	sub	edx, ecx		! count -= ecx
-	shl	esi, 1
-	shl	edi, 1			! byte addresses
-	rep
-eseg o16 movs				! copy video words
-	shr	esi, 1
-	shr	edi, 1			! word addresses
+	call	vvc_copy		! copy video words
 	test	edx, edx
 	jnz	vvc_uploop		! again?
 	jmp	vvc_done
@@ -687,20 +671,30 @@ vvc_downloop:
 	jbe	0f
 	mov	ecx, eax		! ecx = min(ecx, edi + 1)
 0:	sub	edx, ecx		! count -= ecx
-	shl	esi, 1
-	shl	edi, 1			! byte addresses
-	rep
-eseg o16 movs				! copy video words
-	shr	esi, 1
-	shr	edi, 1			! word addresses
+	call	vvc_copy
 	test	edx, edx
 	jnz	vvc_downloop		! again?
-	cld				! C compiler expect up
+	cld				! C compiler expects up
 	!jmp	vvc_done
 vvc_done:
 	pop	es
 	pop	edi
 	pop	esi
+	pop	ebp
+	ret
+
+! Copy video words.  (Inner code of both the up and downcopying loop.)
+vvc_copy:
+	shl	esi, 1
+	shl	edi, 1			! byte addresses
+	add	esi, (_vid_off)
+	add	edi, (_vid_off)		! in video memory
+	rep
+eseg o16 movs				! copy video words
+	sub	esi, (_vid_off)
+	sub	edi, (_vid_off)
+	shr	esi, 1
+	shr	edi, 1			! back to word addresses
 	ret
 
 

@@ -1,7 +1,9 @@
 /* head - print the first few lines of a file	Author: Andy Tanenbaum */
 
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 #define DEFAULT 10
 
@@ -38,7 +40,8 @@ char *argv[];
   while (k < argc) {
 	if (nfiles > 1) printf("==> %s <==\n", argv[k]);
 	if ((f = fopen(argv[k], "r")) == NULL)
-		printf("head: cannot open %s\n", argv[k]);
+		fprintf(stderr, "%s: cannot open %s: %s\n",
+			argv[0], argv[k], strerror(errno));
 	else {
 		do_file(n, f);
 		fclose(f);

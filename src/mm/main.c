@@ -7,7 +7,7 @@
  *
  * The entry points into this file are:
  *   main:	starts MM running
- *   reply:	reply to a process making an MM system call
+ *   setreply:	set the reply to be sent to process making an MM system call
  */
 
 #include "mm.h"
@@ -22,6 +22,9 @@
 FORWARD _PROTOTYPE( void get_work, (void)				);
 FORWARD _PROTOTYPE( void mm_init, (void)				);
 
+#define click_to_round_k(n) \
+	((unsigned) ((((unsigned long) (n) << CLICK_SHIFT) + 512) / 1024))
+
 /*===========================================================================*
  *				main					     *
  *===========================================================================*/
@@ -29,31 +32,37 @@ PUBLIC void main()
 {
 /* Main routine of the memory manager. */
 
-  int error;
+  int result, proc_nr;
+  struct mproc *rmp;
 
   mm_init();			/* initialize memory manager tables */
 
   /* This is MM's main loop-  get work and do it, forever and forever. */
   while (TRUE) {
-	/* Wait for message. */
 	get_work();		/* wait for an MM system call */
-	mp = &mproc[who];
-
-  	/* Set some flags. */
-	error = OK;
-	dont_reply = FALSE;
-	err_code = -999;
 
 	/* If the call number is valid, perform the call. */
-	if (mm_call < 0 || mm_call >= NCALLS)
-		error = EBADCALL;
-	else
-		error = (*call_vec[mm_call])();
+	if ((unsigned) mm_call >= NCALLS) {
+		result = ENOSYS;
+	} else {
+		result = (*call_vec[mm_call])();
+	}
 
 	/* Send the results back to the user to indicate completion. */
-	if (dont_reply) continue;	/* no reply for EXIT and WAIT */
-	if (mm_call == EXEC && error == OK) continue;
-	reply(who, error, result2, res_ptr);
+	if (result != E_NO_MESSAGE) setreply(who, result);
+
+	swap_in();		/* maybe a process can be swapped in? */
+
+	/* Send out all pending reply messages, including the answer to
+	 * the call just made above.  The processes must not be swapped out.
+	 */
+	for (proc_nr = 0, rmp = mproc; proc_nr < NR_PROCS; proc_nr++, rmp++) {
+		if ((rmp->mp_flags & (REPLY | ONSWAP)) == REPLY) {
+			if (send(proc_nr, &rmp->mp_reply) != OK)
+				panic("MM can't reply to", proc_nr);
+			rmp->mp_flags &= ~REPLY;
+		}
+	}
   }
 }
 
@@ -68,34 +77,31 @@ PRIVATE void get_work()
   if (receive(ANY, &mm_in) != OK) panic("MM receive error", NO_NUM);
   who = mm_in.m_source;		/* who sent the message */
   mm_call = mm_in.m_type;	/* system call number */
+
+  /* Process slot of caller.  Misuse MM's own process slot for tasks (KSIG?). */
+  mp = &mproc[who < 0 ? MM_PROC_NR : who];
 }
 
 
 /*===========================================================================*
- *				reply					     *
+ *				setreply				     *
  *===========================================================================*/
-PUBLIC void reply(proc_nr, result, res2, respt)
+PUBLIC void setreply(proc_nr, result)
 int proc_nr;			/* process to reply to */
 int result;			/* result of the call (usually OK or error #)*/
-int res2;			/* secondary result */
-char *respt;			/* result if pointer */
 {
-/* Send a reply to a user process. */
+/* Fill in a reply message to be sent later to a user process.  System calls
+ * may occasionally fill in other fields, this is only for the main return
+ * value, and for setting the "must send reply" flag.
+ */
 
-  register struct mproc *proc_ptr;
+  register struct mproc *rmp = &mproc[proc_nr];
 
-  proc_ptr = &mproc[proc_nr];
-  /* 
-   * To make MM robust, check to see if destination is still alive.  This
-   * validy check must be skipped if the caller is a task.
-   */
-  if ((who >=0) && ((proc_ptr->mp_flags&IN_USE) == 0 || 
-	(proc_ptr->mp_flags&HANGING))) return;
+  rmp->reply_res = result;
+  rmp->mp_flags |= REPLY;	/* reply pending */
 
-  reply_type = result;
-  reply_i1 = res2;
-  reply_p1 = respt;
-  if (send(proc_nr, &mm_out) != OK) panic("MM can't reply", NO_NUM);
+  if (rmp->mp_flags & ONSWAP)
+	swap_inqueue(rmp);	/* must swap this process back in */
 }
 
 
@@ -106,10 +112,9 @@ PRIVATE void mm_init()
 {
 /* Initialize the memory manager. */
 
-  static char core_sigs[] = {
-	SIGQUIT, SIGILL, SIGTRAP, SIGABRT,
-	SIGEMT, SIGFPE, SIGUSR1, SIGSEGV,
-	SIGUSR2, 0 };
+  static char core_sigs[] = { SIGQUIT, SIGILL, SIGTRAP, SIGABRT,
+			SIGEMT, SIGFPE, SIGUSR1, SIGSEGV, SIGUSR2 };
+  static char ign_sigs[] = { SIGCHLD };
   register int proc_nr;
   register struct mproc *rmp;
   register char *sig_ptr;
@@ -118,12 +123,15 @@ PRIVATE void mm_init()
   struct mem_map kernel_map[NR_SEGS];
   int mem;
 
-  /* Build the set of signals which cause core dumps. Do it the Posix
-   * way, so no knowledge of bit positions is needed.
+  /* Build the set of signals which cause core dumps, and the set of signals
+   * that are by default ignored.
    */
   sigemptyset(&core_sset);
-  for (sig_ptr = core_sigs; *sig_ptr != 0; sig_ptr++)
+  for (sig_ptr = core_sigs; sig_ptr < core_sigs+sizeof(core_sigs); sig_ptr++)
 	sigaddset(&core_sset, *sig_ptr);
+  sigemptyset(&ign_sset);
+  for (sig_ptr = ign_sigs; sig_ptr < ign_sigs+sizeof(ign_sigs); sig_ptr++)
+	sigaddset(&ign_sset, *sig_ptr);
 
   /* Get the memory map of the kernel to see how much memory it uses. */
   sys_getmap(SYSTASK, kernel_map);
@@ -155,17 +163,17 @@ PRIVATE void mm_init()
   mem_init(&total_clicks, &free_clicks);
 
   /* Print memory information. */
-  printf("\nMemory size = %dK   ", click_to_round_k(total_clicks));
-  printf("MINIX = %dK   ", click_to_round_k(minix_clicks));
-  printf("RAM disk = %dK   ", click_to_round_k(ram_clicks));
-  printf("Available = %dK\n\n", click_to_round_k(free_clicks));
+  printf("\nMemory size = %uK   ", click_to_round_k(total_clicks));
+  printf("MINIX = %uK   ", click_to_round_k(minix_clicks));
+  printf("RAM disk = %uK   ", click_to_round_k(ram_clicks));
+  printf("Available = %uK\n\n", click_to_round_k(free_clicks));
 
   /* Tell FS to continue. */
   if (send(FS_PROC_NR, &mess) != OK)
 	panic("MM can't sync up with FS", NO_NUM);
 
   /* Tell the memory task where my process table is for the sake of ps(1). */
-  if ((mem = open("/dev/mem", O_RDWR)) != -1) {
+  if ((mem = open("/dev/ram", O_RDWR)) != -1) {
 	ioctl(mem, MIOCSPSINFO, (void *) mproc);
 	close(mem);
   }

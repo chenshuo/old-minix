@@ -2,6 +2,8 @@
 vmd/cmd/simple/pr_routes.c
 */
 
+#define _POSIX_C_SOURCE 2
+
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <errno.h>
@@ -12,6 +14,7 @@ vmd/cmd/simple/pr_routes.c
 #include <unistd.h>
 
 #include <net/netlib.h>
+#include <net/hton.h>
 #include <net/gen/in.h>
 #include <net/gen/ip_io.h>
 #include <net/gen/route.h>
@@ -92,7 +95,7 @@ int main(int argc, char *argv[])
 	if (ip_device == NULL)
 		ip_device= IP_DEVICE;
 		
-	ip_fd= open(ip_device, O_RDWR);
+	ip_fd= open(ip_device, O_RDONLY);
 	if (ip_fd == -1)
 	{
 		fprintf(stderr, "%s: unable to open %s: %s\n", prog_name,
@@ -136,48 +139,61 @@ int main(int argc, char *argv[])
 
 int ent_width= 5;
 int if_width= 15;
-int dest_width= 15;
-int netmask_width= 15;
+int dest_width= 18;
 int gateway_width= 15;
 int dist_width= 4;
-int pref_width= 4;
+int pref_width= 5;
+int mtu_width= 4;
 
 static void print_header(void)
 {
 	printf("%*s ", ent_width, "ent #");
+	printf("%*s ", if_width, "if");
 	printf("%*s ", dest_width, "dest");
-	printf("%*s ", netmask_width, "netmask");
 	printf("%*s ", gateway_width, "gateway");
 	printf("%*s ", dist_width, "dist");
 	printf("%*s ", pref_width, "pref");
+	printf("%*s ", mtu_width, "mtu");
 	printf("%s", "flags");
 	printf("\n");
-	if (all_devices)
-		printf("%*s %*s\n", ent_width, "", if_width, "if");
 }
 
+static char *cidr2a(ipaddr_t addr, ipaddr_t mask)
+{
+	ipaddr_t testmask= 0xFFFFFFFF;
+	int n;
+	static char result[sizeof("255.255.255.255/255.255.255.255")];
+
+	for (n= 32; n >= 0; n--)
+	{
+		if (mask == htonl(testmask))
+			break;
+		testmask= (testmask << 1) & 0xFFFFFFFF;
+	}
+
+	sprintf(result, "%s/%-2d", inet_ntoa(addr), n);
+	if (n == -1)
+		strcpy(strchr(result, '/')+1, inet_ntoa(mask));
+	return result;
+}
 
 static void print_route(nwio_route_t *route)
 {
 	if (!(route->nwr_flags & NWRF_INUSE))
 		return;
 
-	printf("%*d ", ent_width, route->nwr_ent_no);
-	printf("%*s ", dest_width, inet_ntoa(route->nwr_dest));
-	printf("%*s ", netmask_width, inet_ntoa(route->nwr_netmask));
+	printf("%*lu ", ent_width, (unsigned long) route->nwr_ent_no);
+	printf("%*s ", if_width, inet_ntoa(route->nwr_ifaddr));
+	printf("%*s ", dest_width, cidr2a(route->nwr_dest, route->nwr_netmask));
 	printf("%*s ", gateway_width, inet_ntoa(route->nwr_gateway));
-	printf("%*d ", dist_width, route->nwr_dist);
-	printf("%*d", pref_width, route->nwr_pref);
+	printf("%*lu ", dist_width, (unsigned long) route->nwr_dist);
+	printf("%*ld", pref_width, (long) route->nwr_pref);
+	printf("%*lu", mtu_width, (long) route->nwr_mtu);
 	if (route->nwr_flags & NWRF_STATIC)
 		printf(" static");
 	if (route->nwr_flags & NWRF_UNREACHABLE)
 		printf(" dead");
 	printf("\n");
-	if (all_devices)
-	{
-		printf("%*s %*s\n", ent_width, "", 
-			if_width, inet_ntoa(route->nwr_ifaddr));
-	}
 }
 
 static void usage(void)
@@ -186,3 +202,7 @@ static void usage(void)
 		prog_name);
 	exit(1);
 }
+
+/*
+ * $PchId: pr_routes.c,v 1.7 2001/04/20 10:44:27 philip Exp $
+ */

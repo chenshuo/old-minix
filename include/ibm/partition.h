@@ -20,9 +20,7 @@ struct part_entry {
 #define	PART_TABLE_OFF	0x1BE	/* offset of partition table in boot sector */
 
 /* Partition types. */
-#define MINIX_PART	0x81	/* Minix partition type */
 #define NO_PART		0x00	/* unused entry */
-#define OLD_MINIX_PART	0x80	/* created before 1.4b, obsolete */
-#define EXT_PART	0x05	/* extended partition */
+#define MINIX_PART	0x81	/* Minix partition type */
 
 #endif /* _PARTITION_H */

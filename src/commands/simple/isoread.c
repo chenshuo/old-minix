@@ -9,6 +9,10 @@
  * Dec  7 1997    Albert S. Woodhull -- bug fix: return values
  *                                       "   " : isodir filename handling
  *                                   -- added  : isoread -a option  
+ * Mar 21 2000    Michael A. Temari  -- bug fix: look_up only searched first
+ *                                             : block of directory
+ *                                             : stack overflow in recurse_dir
+ *                                             : and various other bugs
  */
 
 #include <ctype.h>
@@ -389,6 +393,7 @@ char *path;
     {
       /* Read a directory block */
       read_device(block*BLOCK_SIZE, BLOCK_SIZE, Buffer);
+      block++;
 
       dir_ptr = (struct dir_entry *) Buffer;
 
@@ -419,10 +424,9 @@ struct dir_entry *dir_ptr;
 {
   /* Recursively descend all directories starting with dir_ptr */
 
-  char tmp_buffer[BLOCK_SIZE];
   char tmp_path[MAX_PATH_LENGTH];
   int i,j, path_length;
-  long block;
+  long block, saveblock;
   int nr_of_blocks;
   int offset = 0; 
 
@@ -449,14 +453,12 @@ struct dir_entry *dir_ptr;
   for (j=0; j < nr_of_blocks; j++) 
   {
     read_device(block*BLOCK_SIZE, BLOCK_SIZE, Buffer);
-    block++;
+    saveblock = block++;
 
     /* Save buffer, because the next recursive call destroys 
      * the global Buffer 
      */
-    for (i=0; i < BLOCK_SIZE; i++) tmp_buffer[i] = Buffer[i];
-
-    dir_ptr = (struct dir_entry *) tmp_buffer;
+    dir_ptr = (struct dir_entry *) Buffer;
 
     /* Search this dir entry for directories */
     offset = 0;
@@ -478,11 +480,14 @@ struct dir_entry *dir_ptr;
   
         /* And start all over again with this entry */
         recurse_dir(tmp_path, (struct dir_entry *) Buffer);
+
+        /* get the block we were looking at */
+        read_device(saveblock*BLOCK_SIZE, BLOCK_SIZE, Buffer);
       }
 
       /* Go to the next file in this directory */
       offset += iso_711(dir_ptr->length);
-      dir_ptr = (struct dir_entry *) (tmp_buffer + offset);
+      dir_ptr = (struct dir_entry *) (Buffer + offset);
     }
   }
 }
@@ -577,10 +582,13 @@ char *date;
 {
   /* Print date in a directory entry */
 
-  int i,m;
+  int m;
 
   m = iso_711(&date[1]) - 1;
-  for (i = 0;i<3;i++) fprintf(STDOUT,"%c",months[m*3+i]);
+  if(m < 0 || m > 11)
+  	fprintf(STDOUT, "   ");
+  else
+	fprintf(STDOUT,"%.3s",&months[m*3]);
 
   fprintf (STDOUT, " %02d 19%02d %02d:%02d:%02d",
            date[2],

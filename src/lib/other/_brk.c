@@ -19,9 +19,11 @@ char *addr;
 {
   message m;
 
-  m.m1_p1 = addr;
-  if (_syscall(MM, BRK, &m) < 0) return(-1);
-  _brksize = m.m2_p1;
+  if (addr != _brksize) {
+	m.m1_p1 = addr;
+	if (_syscall(MM, BRK, &m) < 0) return(-1);
+	_brksize = m.m2_p1;
+  }
   return(0);
 }
 
@@ -33,7 +35,7 @@ int incr;
 
   oldsize = _brksize;
   newsize = _brksize + incr;
-  if (incr > 0 && newsize < oldsize || incr < 0 && newsize > oldsize)
+  if ((incr > 0 && newsize < oldsize) || (incr < 0 && newsize > oldsize))
 	return( (char *) -1);
   if (brk(newsize) == 0)
 	return(oldsize);

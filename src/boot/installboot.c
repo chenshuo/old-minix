@@ -1,4 +1,4 @@
-/*	installboot 2.0 - Make a device bootable	Author: Kees J. Bot
+/*	installboot 3.0 - Make a device bootable	Author: Kees J. Bot
  *								21 Dec 1991
  *
  * Either make a device bootable or make an image from kernel, mm, fs, etc.
@@ -20,6 +20,7 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
+#include <minix/u64.h>
 #include "rawfs.h"
 #include "image.h"
 
@@ -28,10 +29,6 @@
 #define RATIO		(BLOCK_SIZE/SECTOR_SIZE)
 #define SIGNATURE	0xAA55	/* Boot block signature. */
 #define BOOT_MAX	64	/* Absolute maximum size of secondary boot */
-#define JMP		0xEB	/* Opcode of a short jump */
-#define JMPOFFM		0x01	/* Jump offset in normal master bootstrap */
-#define JMPOFFE		0x02	/* Jump offset in extended bootstrap */
-#define XOR		0x31	/* Jumping to an XOR instruction? */
 #define SIGPOS		510	/* Where to put signature word. */
 #define PARTPOS		446	/* Offset to the partition table in a master
 				 * boot block.
@@ -39,10 +36,6 @@
 
 #define between(a, c, z)	((unsigned) ((c) - (a)) <= ((z) - (a)))
 #define control(c)		between('\0', (c), '\37')
-
-#if !__minix_vmd
-#define cv64ul(i)	(i)
-#endif
 
 void report(char *label)
 /* installboot: label: No such file or directory */
@@ -84,7 +77,7 @@ void bread(FILE *f, char *name, void *buf, size_t len)
 {
 	if (len > 0 && fread(buf, len, 1, f) != 1) {
 		if (ferror(f)) fatal(name);
-		fprintf(stderr, "installboot: Unsuspected EOF on %s\n", name);
+		fprintf(stderr, "installboot: Unexpected EOF on %s\n", name);
 		exit(1);
 	}
 }
@@ -350,7 +343,7 @@ void readblock(off_t blk, char *buf)
 	) fatal(rawdev);
 
 	if (n < BLOCK_SIZE) {
-		fprintf(stderr, "installboot: unexpected EOF on %s\n", rawdev);
+		fprintf(stderr, "installboot: Unexpected EOF on %s\n", rawdev);
 		exit(1);
 	}
 }
@@ -559,7 +552,7 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 	boothdr= dummy.process;
 
 	if (boothdr.a_text + boothdr.a_data +
-					 4 * (bap - bootaddr) + 1 > SIGPOS) {
+					 4 * (bap - bootaddr) + 1 > PARTPOS) {
 		fprintf(stderr,
 	"installboot: %s + addresses to %s don't fit in the boot sector\n",
 			bootblock, bootcode);
@@ -590,9 +583,8 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 	}
 
 	/* Boot block signature. */
-	adrp= buf + SIGPOS;
-	*adrp++= (SIGNATURE >> 0) & 0xFF;
-	*adrp++= (SIGNATURE >> 8) & 0xFF;
+	buf[SIGPOS+0]= (SIGNATURE >> 0) & 0xFF;
+	buf[SIGPOS+1]= (SIGNATURE >> 8) & 0xFF;
 
 	/* Sector 2 of the boot block is used for boot parameters, initially
 	 * filled with null commands (newlines).  Initialize it only if
@@ -688,12 +680,12 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 	}
 }
 
-void install_master(char *device, char *masterboot, char *fix)
+void install_master(char *device, char *masterboot, char **guide)
 /* Booting a hard disk is a two stage process:  The master bootstrap in sector
  * 0 loads the bootstrap from sector 0 of the active partition which in turn
  * starts the operating system.  This code installs such a master bootstrap
- * on a hard disk.  If fix is non-null then the master bootstrap is locked
- * into booting device /dev/hd'fix'.
+ * on a hard disk.  If guide[0] is non-null then the master bootstrap is
+ * guided into booting a certain device.
  */
 {
 	FILE *masf;
@@ -721,45 +713,60 @@ void install_master(char *device, char *masterboot, char *fix)
 		fprintf(stderr, "installboot: %s is too big\n", masterboot);
 		exit(1);
 	}
+
 	/* Read the master boot block, patch it, write. */
 	readblock(BOOTBLOCK, buf);
 
+	memset(buf, 0, PARTPOS);
 	(void) bread(masf, masterboot, buf, size);
 
-	if (fix != nil) {
+	if (guide[0] != nil) {
 		/* Fixate partition to boot. */
-		int device= 0, logical= 0;
-		char *pf= fix;
+		char *keys= guide[0];
+		char *logical= guide[1];
+		size_t i;
+		int logfd;
+		u32_t offset;
+		struct partition geometry;
 
-		while (between('0', *pf, '9')) {
-			device= 10 * device + (*pf - '0');
-			if (device >= 40) break;
-			pf++;
-		}
-		if (between('a', *pf, 'd')) {
-			logical= 1 + (*pf - 'a');
-			pf++;
-		}
-		if (*pf != 0) {
-			fprintf(stderr, "installboot: bad fix key '%s'\n", fix);
-			exit(1);
-		}
+		/* A string of digits to be seen as keystrokes. */
+		i= 0;
+		do {
+			if (!between('0', keys[i], '9')) {
+				fprintf(stderr,
+					"installboot: bad guide keys '%s'\n",
+					keys);
+				exit(1);
+			}
+		} while (keys[++i] != 0);
 
-		if (buf[0] == (char) JMP && buf[1] == (char) JMPOFFM
-				&& buf[3] == (char) XOR && logical == 0) {
-			/* Minix masterboot; patch device number. */
-			buf[2]= device;
-		} else
-		if (buf[0] == (char) JMP && buf[1] == (char) JMPOFFE
-				&& buf[4] == (char) XOR && logical != 0) {
-			/* Minix extboot; patch device and logical number. */
-			buf[2]= device;
-			buf[3]= logical;
-		} else {
+		if (size + i + 1 > PARTPOS) {
 			fprintf(stderr,
-				"installboot: can't put fix flag '%s' on %s\n",
-				fix, masterboot);
+			"installboot: not enough space after '%s' for '%s'\n",
+				masterboot, keys);
 			exit(1);
+		}
+		memcpy(buf + size, keys, i);
+		size += i;
+		buf[size]= '\r';
+
+		if (logical != nil) {
+			if ((logfd= open(logical, O_RDONLY)) < 0
+				|| ioctl(logfd, DIOCGETP, &geometry) < 0
+			) {
+				fatal(logical);
+			}
+			offset= div64u(geometry.base, SECTOR_SIZE);
+			if (size + 5 > PARTPOS) {
+				fprintf(stderr,
+					"installboot: not enough space "
+					"after '%s' for '%s' and an offset "
+					"to '%s'\n",
+					masterboot, keys, logical);
+				exit(1);
+			}
+			buf[size]= '#';
+			memcpy(buf+size+1, &offset, 4);
 		}
 	}
 
@@ -777,7 +784,7 @@ void usage(void)
 	  "       installboot -(e)x(tract) image\n"
 	  "       installboot -d(evice) device bootblock boot [image ...]\n"
 	  "       installboot -b(oot) device bootblock boot image ...\n"
-	  "       installboot -m(aster) [fix] device masterboot\n");
+	  "       installboot -m(aster) device masterboot [keys [logical]]\n");
 	exit(1);
 }
 
@@ -809,12 +816,8 @@ int main(int argc, char **argv)
 	if (argc >= 6 && isoption(argv[1], "-boot")) {
 		make_bootable(BOOT, argv[2], argv[3], argv[4], argv + 5);
 	} else
-	if (argc == 4 && isoption(argv[1], "-master")) {
-		install_master(argv[2], argv[3], nil);
-	} else
-	if (argc == 5 && isoption(argv[1], "-master")
-				    && between('0', argv[2][0], '9')) {
-		install_master(argv[3], argv[4], argv[2]);
+	if ((4 <= argc && argc <= 6) && isoption(argv[1], "-master")) {
+		install_master(argv[2], argv[3], argv + 4);
 	} else {
 		usage();
 	}

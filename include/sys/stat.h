@@ -6,6 +6,10 @@
 #ifndef _STAT_H
 #define _STAT_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 struct stat {
   dev_t st_dev;			/* major/minor device number */
   ino_t st_ino;			/* i-node number */
@@ -60,10 +64,6 @@ struct stat {
 
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( int chmod, (const char *_path, Mode_t _mode)		);
 _PROTOTYPE( int fstat, (int _fildes, struct stat *_buf)			);
 _PROTOTYPE( int mkdir, (const char *_path, Mode_t _mode)		);

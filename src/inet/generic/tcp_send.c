@@ -322,6 +322,7 @@ tcp_conn_t *tcp_conn;
 			{
 				DBLOCK(0x20,
 					printf("no data: partial packet\n"));
+				seg_flags &= ~THF_FIN;
 				goto after_data;
 			}
 
@@ -431,9 +432,11 @@ after_data:
 			tcp_conn->tc_senddis= new_dis;
 
 		return pack2write;
+#if !CRAMPED
 	default:
 		DBLOCK(1, tcp_print_conn(tcp_conn); printf("\n"));
 		ip_panic(( "Illegal state" ));
+#endif
 	}
 	assert(0);
 	return NULL;

@@ -3,6 +3,10 @@
 #ifndef _GRP_H
 #define _GRP_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 struct	group { 
   char *gr_name;		/* the name of the group */
   char *gr_passwd;		/* the group passwd */
@@ -11,10 +15,6 @@ struct	group {
 };
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( struct group *getgrgid, (Gid_t _gid)  			);
 _PROTOTYPE( struct group *getgrnam, (const char *_name)			);
 

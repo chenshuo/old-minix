@@ -21,8 +21,6 @@
 #include "param.h"
 #include "super.h"
 
-#define FD_MASK          077	/* max file descriptor is 63 */
-
 PRIVATE message umess;		/* message for asking SYSTASK for user copy */
 
 FORWARD _PROTOTYPE( int rw_chunk, (struct inode *rip, off_t position,
@@ -58,9 +56,9 @@ int rw_flag;			/* READING or WRITING */
 
   /* MM loads segments by putting funny things in upper 10 bits of 'fd'. */
   if (who == MM_PROC_NR && (fd & (~BYTE)) ) {
-	usr = (fd >> 8) & BYTE;
-	seg = (fd >> 6) & 03;
-	fd &= FD_MASK;		/* get rid of user and segment bits */
+	usr = fd >> 7;
+	seg = (fd >> 5) & 03;
+	fd &= 037;		/* get rid of user and segment bits */
   } else {
 	usr = who;		/* normal case */
 	seg = D;
@@ -74,8 +72,6 @@ int rw_flag;			/* READING or WRITING */
   }
   if (nbytes == 0) return(0);	/* so char special files need not check for 0*/
   position = f->filp_pos;
-  if (position > MAX_FILE_POS) return(EINVAL);
-  if (position + nbytes < position) return(EINVAL); /* unsigned overflow */
   oflags = f->filp_flags;
   rip = f->filp_ino;
   f_size = rip->i_size;
@@ -98,7 +94,7 @@ int rw_flag;			/* READING or WRITING */
   /* Check for character special files. */
   if (char_spec) {
 	dev = (dev_t) rip->i_zone[0];
-	r = dev_io(op, oflags & O_NONBLOCK, dev, position, nbytes, who,buffer);
+	r = dev_io(op, dev, usr, buffer, position, nbytes, oflags);
 	if (r >= 0) {
 		cum_io = r;
 		position += r;

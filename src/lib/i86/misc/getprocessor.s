@@ -24,11 +24,10 @@ _getprocessor:
 	mov	ax, #186
 	jmp	got_processor
 
-new_processor:			! see if high bits are set in saved GDT
-	sub	sp, #6		! space for GDT ptr
-	.data1	0x0F		! Prefix for 286 instruction: sgdt -6(bp)
-	add	-6(bp), ax	! save 3 word GDT ptr (This is NOT an add!)
-	cmpb	-1(bp), #0xFF	! top byte of GDT ptr is always FF on 286
+new_processor:			! see if high bits are set in saved IDT
+	sub	sp, #6		! space for IDT ptr
+	sidt	-6(bp)		! save 3 word IDT ptr
+	cmpb	-1(bp), #0xFF	! top byte of IDT ptr is always FF on 286
 	mov	ax, #286
 	je	got_processor
 

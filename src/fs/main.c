@@ -12,10 +12,11 @@ struct super_block;		/* proto.h needs to know this */
 #include "fs.h"
 #include <fcntl.h>
 #include <string.h>
+#include <stdlib.h>
 #include <sys/ioctl.h>
+#include <sys/svrctl.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
-#include <minix/boot.h>
 #include "buf.h"
 #include "dev.h"
 #include "file.h"
@@ -26,7 +27,7 @@ struct super_block;		/* proto.h needs to know this */
 
 FORWARD _PROTOTYPE( void buf_pool, (void)				);
 FORWARD _PROTOTYPE( void fs_init, (void)				);
-FORWARD _PROTOTYPE( void get_boot_parameters, (void)			);
+FORWARD _PROTOTYPE( int igetenv, (char *var)				);
 FORWARD _PROTOTYPE( void get_work, (void)				);
 FORWARD _PROTOTYPE( void load_ram, (void)				);
 FORWARD _PROTOTYPE( void load_super, (Dev_t super_dev)			);
@@ -55,9 +56,9 @@ PUBLIC void main()
 
 	/* Call the internal function that does the work. */
 	if (fs_call < 0 || fs_call >= NCALLS)
-		error = EBADCALL;
+		error = ENOSYS;
 	else
-		error = (*call_vector[fs_call])();
+		error = (*call_vec[fs_call])();
 
 	/* Copy the results back to the user and send reply. */
 	if (dont_reply) continue;
@@ -136,15 +137,14 @@ PRIVATE void fs_init()
   who = FS_PROC_NR;
 
   buf_pool();			/* initialize buffer pool */
-  get_boot_parameters();	/* get the parameters from the menu */
   load_ram();			/* init RAM disk, load if it is root */
-  load_super(ROOT_DEV);		/* load super block for root device */
+  load_super(root_dev);		/* load super block for root device */
 
   /* Initialize the 'fproc' fields for process 0 .. INIT. */
   for (i = 0; i <= LOW_USER; i+= 1) {
 	if (i == FS_PROC_NR) continue;	/* do not initialize FS */
 	fp = &fproc[i];
-	rip = get_inode(ROOT_DEV, ROOT_INODE);
+	rip = get_inode(root_dev, ROOT_INODE);
 	fp->fp_rootdir = rip;
 	dup_inode(rip);
 	fp->fp_workdir = rip;
@@ -153,6 +153,7 @@ PRIVATE void fs_init()
 	fp->fp_realgid = (gid_t) SYS_GID;
 	fp->fp_effgid = (gid_t) SYS_GID;
 	fp->fp_umask = ~0;
+	fp->fp_pid = i < LOW_USER ? PID_SERVER : 1;
   }
 
   /* Certain relations must hold for the file system to work at all. */
@@ -168,6 +169,7 @@ PRIVATE void fs_init()
   /* Tell the memory task where my process table is for the sake of ps(1). */
   mess.m_type = DEV_IOCTL;
   mess.PROC_NR = FS_PROC_NR;
+  mess.DEVICE = RAM_DEV;
   mess.REQUEST = MIOCSPSINFO;
   mess.ADDRESS = (void *) fproc;
   (void) sendrec(MEM, &mess);
@@ -202,18 +204,21 @@ PRIVATE void buf_pool()
 
 
 /*===========================================================================*
- *				get_boot_parameters			     *
+ *				igetenv					     *
  *===========================================================================*/
-PUBLIC struct bparam_s boot_parameters;
-
-PRIVATE void get_boot_parameters()
+PRIVATE int igetenv(var)
+char *var;
 {
-/* Ask kernel for boot parameters. */
+/* Ask kernel for an integer valued boot environment variable. */
+  struct sysgetenv sysgetenv;
+  char value[64];
 
-  m1.m_type = SYS_GBOOT;
-  m1.PROC1 = FS_PROC_NR;
-  m1.MEM_PTR = (char *) &boot_parameters;
-  (void) sendrec(SYSTASK, &m1);
+  sysgetenv.key = var;
+  sysgetenv.keylen = strlen(var)+1;
+  sysgetenv.val = value;
+  sysgetenv.vallen = sizeof(value);
+  (void) sys_sysctl(FS_PROC_NR, SYSGETENV, 1, (vir_bytes) &sysgetenv);
+  return(atoi(value));
 }
 
 
@@ -228,38 +233,29 @@ PRIVATE void load_ram()
  */
 
   register struct buf *bp, *bp1;
-  long k_loaded, lcount;
-  u32_t ram_size, fsmax;
+  u32_t lcount, ram_size, fsmax;
   zone_t zones;
   struct super_block *sp, *dsp;
   block_t b;
-  int major, task;
-  message dev_mess;
+  Dev_t image_dev;
 
-  ram_size = boot_parameters.bp_ramsize;
+  /* Get some boot environment variables. */
+  root_dev = igetenv("rootdev");
+  image_dev = igetenv("ramimagedev");
+  ram_size = igetenv("ramsize");
 
   /* Open the root device. */
-  major = (ROOT_DEV >> MAJOR) & BYTE;	/* major device nr */
-  task = dmap[major].dmap_task;		/* device task nr */
-  dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
-  dev_mess.DEVICE = ROOT_DEV;
-  dev_mess.COUNT = R_BIT|W_BIT;
-  (*dmap[major].dmap_open)(task, &dev_mess);
-  if (dev_mess.REP_STATUS != OK) panic("Cannot open root device",NO_NUM);
+  if (dev_open(root_dev, FS_PROC_NR, R_BIT|W_BIT) != OK)
+	panic("Cannot open root device",NO_NUM);
 
   /* If the root device is the ram disk then fill it from the image device. */
-  if (ROOT_DEV == DEV_RAM) {
-	major = (IMAGE_DEV >> MAJOR) & BYTE;	/* major device nr */
-	task = dmap[major].dmap_task;		/* device task nr */
-	dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
-	dev_mess.DEVICE = IMAGE_DEV;
-	dev_mess.COUNT = R_BIT;
-	(*dmap[major].dmap_open)(task, &dev_mess);
-	if (dev_mess.REP_STATUS != OK) panic("Cannot open root device", NO_NUM);
+  if (root_dev == DEV_RAM) {
+	if (dev_open(image_dev, FS_PROC_NR, R_BIT) != OK)
+		panic("Cannot open RAM image device", NO_NUM);
 
 	/* Get size of RAM disk by reading root file system's super block. */
 	sp = &super_block[0];
-	sp->s_dev = IMAGE_DEV;
+	sp->s_dev = image_dev;
 	if (read_super(sp) != OK) panic("Bad root file system", NO_NUM);
 
 	lcount = sp->s_zones << sp->s_log_zone_size;	/* # blks on root dev*/
@@ -276,6 +272,7 @@ PRIVATE void load_ram()
   /* Tell RAM driver how big the RAM disk must be. */
   m1.m_type = DEV_IOCTL;
   m1.PROC_NR = FS_PROC_NR;
+  m1.DEVICE = RAM_DEV;
   m1.REQUEST = MIOCRAMSIZE;
   m1.POSITION = ram_size;
   if (sendrec(MEM, &m1) != OK || m1.REP_STATUS != OK)
@@ -292,37 +289,34 @@ PRIVATE void load_ram()
 #endif
 
   /* If the root device is not the RAM disk, it doesn't need loading. */
-  if (ROOT_DEV != DEV_RAM) return;
+  if (root_dev != DEV_RAM) return;
 
   /* Copy the blocks one at a time from the image to the RAM disk. */
   printf("Loading RAM disk.\33[23CLoaded:    0K ");
 
   inode[0].i_mode = I_BLOCK_SPECIAL;	/* temp inode for rahead() */
   inode[0].i_size = LONG_MAX;
-  inode[0].i_dev = IMAGE_DEV;
-  inode[0].i_zone[0] = IMAGE_DEV;
+  inode[0].i_dev = image_dev;
+  inode[0].i_zone[0] = image_dev;
 
   for (b = 0; b < (block_t) lcount; b++) {
 	bp = rahead(&inode[0], b, (off_t)BLOCK_SIZE * b, BLOCK_SIZE);
-	bp1 = get_block(ROOT_DEV, b, NO_READ);
+	bp1 = get_block(root_dev, b, NO_READ);
 	memcpy(bp1->b_data, bp->b_data, (size_t) BLOCK_SIZE);
 	bp1->b_dirt = DIRTY;
 	put_block(bp, FULL_DATA_BLOCK);
 	put_block(bp1, FULL_DATA_BLOCK);
-	k_loaded = ( (long) b * BLOCK_SIZE)/1024L;	/* K loaded so far */
-	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b\b%5ldK ", k_loaded);
+	printf("\b\b\b\b\b\b\b%5ldK ", ((long) b * BLOCK_SIZE)/1024L);
   }
 
   printf("\rRAM disk loaded.\33[K\n\n");
 
-  /* Close and invalidate image device. */
-  dev_mess.m_type = DEV_CLOSE;
-  dev_mess.DEVICE = IMAGE_DEV;
-  (*dmap[major].dmap_close)(task, &dev_mess);
-  invalidate(IMAGE_DEV);
+  /* Invalidate and close the image device. */
+  invalidate(image_dev);
+  dev_close(image_dev);
 
   /* Resize the RAM disk root file system. */
-  bp = get_block(ROOT_DEV, SUPER_BLOCK, NORMAL);
+  bp = get_block(root_dev, SUPER_BLOCK, NORMAL);
   dsp = (struct super_block *) bp->b_data;
   zones = ram_size >> sp->s_log_zone_size;
   dsp->s_nzones = conv2(sp->s_native, (u16_t) zones);
@@ -350,13 +344,13 @@ dev_t super_dev;			/* place to get superblock from */
   sp = &super_block[0];
   sp->s_dev = super_dev;
 
-  /* Check super_block for consistency (is it the right diskette?). */
+  /* Check super_block for consistency. */
   bad = (read_super(sp) != OK);
   if (!bad) {
 	rip = get_inode(super_dev, ROOT_INODE);	/* inode for root dir */
 	if ( (rip->i_mode & I_TYPE) != I_DIRECTORY || rip->i_nlinks < 3) bad++;
   }
-  if (bad)panic("Invalid root file system.  Possibly wrong diskette.",NO_NUM);
+  if (bad) panic("Invalid root file system", NO_NUM);
 
   sp->s_imount = rip;
   dup_inode(rip);

@@ -1,4 +1,4 @@
-/*	screendump 1.1 - dump the contents of the console
+/*	screendump 1.2 - dump the contents of the console
  *							Author: Kees J. Bot
  *								16 Dec 1994
  */
@@ -9,6 +9,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
+#include <termios.h>
+#include <sys/ioctl.h>
 
 #define BIOS_CRTBASE	0x00463L	/* BIOS parameters: CRT base. */
 #define CRTBASE_MONO	0x03B4		/* Value of CRT base for mono mode. */
@@ -16,8 +18,11 @@
 #define MONO_BASE	0xB0000L	/* Screen memory in monochrome mode. */
 #define COLOR_BASE	0xB8000L	/* ... colour mode. */
 
-#define COLUMNS		80
-#define LINES		25
+#define DEF_COLS	80		/* Default screen geometry. */
+#define DEF_ROWS	25
+
+#define MAX_COLS	132		/* Maximum screen geometry. */
+#define MAX_ROWS	60
 
 char MEMORY[] =		"/dev/mem";	/* Memory device to read screen. */
 int mfd;				/* Open memory device. */
@@ -60,10 +65,13 @@ long video_base(void)
 
 void main(void)
 {
-	unsigned char screen[COLUMNS * LINES * 2];
+	static unsigned char screen[MAX_COLS * MAX_ROWS * 2];
 	unsigned char *ps;
 	long base;
+	int lfd;
 	int row;
+	int nrows, ncols;
+	struct winsize winsize;
 
 	/* Open the memory device. */
 	if ((mfd= open(MEMORY, O_RDONLY)) < 0) fatal(MEMORY);
@@ -83,18 +91,33 @@ void main(void)
 		/* Fine */;
 	}
 
+	/* Try to obtain the screen geometry from /dev/log. */
+	ncols= DEF_COLS;
+	nrows= DEF_ROWS;
+	if ((lfd= open("/dev/log", O_WRONLY)) != -1
+		&& ioctl(lfd, TIOCGWINSZ, &winsize) == 0
+	) {
+		if (40 <= winsize.ws_col && winsize.ws_col <= MAX_COLS) {
+			ncols= winsize.ws_col;
+		}
+		if (25 <= winsize.ws_row && winsize.ws_row <= MAX_COLS) {
+			nrows= winsize.ws_row;
+		}
+	}
+	if (lfd != -1) close(lfd);
+
 	/* Print the contents of the screen line by line.  Omit trailing
 	 * blanks.  Note that screen memory consists of pairs of characters
 	 * and attribute bytes.
 	 */
 	ps= screen;
-	for (row= 0; row < LINES; row++) {
-		char line[COLUMNS + 1];
+	for (row= 0; row < nrows; row++) {
+		char line[MAX_COLS + 1];
 		char *pl= line;
 		int column;
 		int blanks= 0;
 
-		for (column= 0; column < COLUMNS; column++) {
+		for (column= 0; column < ncols; column++) {
 			if (*ps <= ' ') {
 				/* Skip trailing junk. */
 				blanks++;

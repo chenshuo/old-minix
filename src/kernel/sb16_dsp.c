@@ -18,7 +18,7 @@
  *
  * The file contains one entry point:
  *
- *   dsp_task:	main entry when system is brought up
+ *   sb16_task:	main entry when system is brought up
  *
  *  May 20 1995			Author: Michel R. Prevenier 
  */
@@ -28,13 +28,9 @@
 #include <minix/com.h> 
 #include <minix/callnr.h> 
 #include <sys/ioctl.h>
-#if __minix_vmd
-#include "proc.h"
-#include "config.h"
-#endif
 #include "sb16.h"
 
-#if ENABLE_SB_AUDIO
+#if ENABLE_SB16
 
 /* prototypes */
 FORWARD _PROTOTYPE( void init_buffer, (void));
@@ -56,9 +52,6 @@ FORWARD _PROTOTYPE( void dsp_dma_setup, (phys_bytes address, int count));
 FORWARD _PROTOTYPE( void dsp_setup, (void));
 
 /* globals */
-#if __minix_vmd
-PRIVATE int DspTasknr = ANY;
-#endif
 PRIVATE int DspVersion[2]; 
 PRIVATE unsigned int DspStereo = DEFAULT_STEREO;
 PRIVATE unsigned int DspSpeed = DEFAULT_SPEED; 
@@ -77,16 +70,12 @@ PRIVATE phys_bytes DmaPhys;
 
 
 /*=========================================================================*
- *				dsp_task				   *
+ *				sb16_task				   *
  *=========================================================================*/
-PUBLIC void dsp_task()
+PUBLIC void sb16_task()
 {
   message mess;
   int err, caller, proc_nr;
-
-#if __minix_vmd
-  DspTasknr = proc_number(proc_ptr);
-#endif
 
   /* initialize the DMA buffer */
   init_buffer();
@@ -326,11 +315,7 @@ int irq;
   }
 
   /* Send interrupt to audio task and enable again */
-#if __minix_vmd
-  interrupt(DspTasknr);
-#else
-  interrupt(AUDIO);
-#endif
+  interrupt(SB16);
 
   /* Acknowledge the interrupt on the DSP */
   (void) in_byte((DspBits == 8 ? DSP_DATA_AVL : DSP_DATA16_AVL));
@@ -690,4 +675,4 @@ message *m_ptr;
 
   return(DspFragmentSize);
 }
-#endif /* ENABLE_AUDIO */
+#endif /* ENABLE_SB16 */

@@ -1,4 +1,4 @@
-/*	mt 1.2 - magnetic tape control			Author: Kees J. Bot
+/*	mt 1.3 - magnetic tape control			Author: Kees J. Bot
  *								4 Apr 1993
  */
 #define nil	NULL
@@ -14,9 +14,6 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mtio.h>
-
-/* Default tape device. */
-char DEFAULT_TAPE[]= "/dev/nrst4";
 
 /* Device status. */
 #define DS_OK		0
@@ -92,7 +89,7 @@ int main(int argc, char **argv)
 	struct mtop mtop;
 	struct mtget mtget;
 
-	if ((tape= getenv("TAPE")) == nil) tape= DEFAULT_TAPE;
+	tape= getenv("TAPE");
 
 	/* -f tape? */
 	if (argc > 1 && argv[1][0] == '-' && argv[1][1] == 'f') {
@@ -121,6 +118,12 @@ int main(int argc, char **argv)
 				argv[2]);
 			exit(1);
 		}
+	}
+
+	if (tape == nil) {
+		fprintf(stderr,
+			"mt: tape device not specified by -f or $TAPE\n");
+		exit(1);
 	}
 
 	cmd= argv[1];

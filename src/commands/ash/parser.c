@@ -130,8 +130,7 @@ parsecmd(interact) {
 
 	doprompt = interact;
 	if (doprompt)
-		putprompt(exitstatus == 0 || vpse.flags & VUNSET
-					? ps1val() : pseval());
+		putprompt(exitstatus == 0 ? ps1val() : pseval());
 	needprompt = 0;
 	if ((t = readtoken()) == TEOF)
 		return NEOF;

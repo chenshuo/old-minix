@@ -12,7 +12,6 @@ Copyright 1995 Philip Homburg
 
 typedef struct tcp_port
 {
-	int tp_minor;
 	int tp_ipdev;
 	int tp_flags;
 	int tp_state;
@@ -209,15 +208,10 @@ void tcp_reply_write ARGS(( tcp_fd_t *tcp_fd, size_t reply ));
 void tcp_reply_read ARGS(( tcp_fd_t *tcp_fd, size_t reply ));
 void tcp_notreach ARGS(( tcp_conn_t *tcp_conn ));
 
-#if CRAMPED
-#define TCP_FD_NR	20
-#define TCP_CONN_NR	20
-#else
-#define TCP_FD_NR	40
-#define TCP_CONN_NR	80
-#endif
+#define TCP_FD_NR	(10*IP_PORT_MAX)
+#define TCP_CONN_NR	(2*TCP_FD_NR)
 
-EXTERN tcp_port_t tcp_port_table[TCP_PORT_NR];
+EXTERN tcp_port_t *tcp_port_table;
 EXTERN tcp_conn_t tcp_conn_table[TCP_CONN_NR];
 EXTERN tcp_fd_t tcp_fd_table[TCP_FD_NR];
 

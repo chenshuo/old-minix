@@ -62,3 +62,7 @@ main(ac, av)
     exit(0);
     /* NOTREACHED */
 }
+
+/*
+ * $PchId: testit.c,v 1.3 1996/02/22 21:18:51 philip Exp $
+ */

@@ -3,6 +3,10 @@
 #ifndef _IOCTL_H
 #define _IOCTL_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 #if _EM_WSIZE >= 4
 /* Ioctls have the command encoded in the low-order word, and the size
  * of the parameter in the high-order word. The 3 high bits of the high-
@@ -66,7 +70,7 @@
 
 #define NWIOGIPOROUTE	_IORW('n', 40, struct nwio_route)
 #define NWIOSIPOROUTE	_IOW ('n', 41, struct nwio_route)
-#define NWIOIPDROUTE	_IOW ('n', 42, struct nwio_route)
+#define NWIODIPOROUTE	_IOW ('n', 42, struct nwio_route)
 
 #define NWIOGIPIROUTE	_IORW('n', 43, struct nwio_route)
 #define NWIOSIPIROUTE	_IOW ('n', 44, struct nwio_route)
@@ -88,9 +92,9 @@
 #define NWIOGPSIPOPT	_IOR('n', 81, struct nwio_psipopt)
 
 /* Disk ioctls. */
+#define DIOCSETP	_IOW('d', 3, struct partition)
+#define DIOCGETP	_IOR('d', 4, struct partition)
 #define DIOCEJECT	_IO ('d', 5)
-#define DIOCSETP	_IOW('d', 6, struct partition)
-#define DIOCGETP	_IOR('d', 7, struct partition)
 
 /* Keyboard ioctls. */
 #define KIOCSMAP	_IOW('k', 3, keymap_t)
@@ -99,6 +103,9 @@
 #define MIOCRAMSIZE	_IOW('m', 3, u32_t)	/* Size of the ramdisk */
 #define MIOCSPSINFO	_IOW('m', 4, void *)
 #define MIOCGPSINFO	_IOR('m', 5, struct psinfo)
+#define MIOCINT86	_IORW('m', 6, struct mio_int86)
+#define MIOCGLDT86	_IORW('m', 7, struct mio_ldt86)
+#define MIOCSLDT86	_IOW('m', 8, struct mio_ldt86)
 
 /* Magnetic tape ioctls. */
 #define MTIOCTOP	_IOW('M', 1, struct mtop)
@@ -106,17 +113,6 @@
 
 /* SCSI command. */
 #define SCIOCCMD	_IOW('S', 1, struct scsicmd)
-
-/* CD-ROM ioctls. */
-#define	CDIOPLAYTI	_IOR('c', 1, struct cd_play_track)
-#define CDIOPLAYMSS	_IOR('c', 2, struct cd_play_mss)
-#define CDIOREADTOCHDR	_IOW('c', 3, struct cd_toc_entry)
-#define CDIOREADTOC	_IOW('c', 4, struct cd_toc_entry)
-#define CDIOREADSUBCH	_IOW('c', 5, struct cd_toc_entry)
-#define CDIOSTOP	_IO ('c', 10)
-#define CDIOPAUSE	_IO ('c', 11)
-#define CDIORESUME	_IO ('c', 12)
-#define CDIOEJECT	DIOCEJECT
 
 /* Soundcard DSP ioctls. */
 #define	DSPIORATE	_IOR('s', 1, unsigned int)
@@ -136,10 +132,6 @@
 #define MIXIOSETINPUTLEFT	_IORW('s', 21, struct inout_ctrl)
 #define MIXIOSETINPUTRIGHT	_IORW('s', 22, struct inout_ctrl)
 #define MIXIOSETOUTPUT		_IORW('s', 23, struct inout_ctrl)
-
-#ifndef _ANSI
-#include <ansi.h>
-#endif
 
 _PROTOTYPE( int ioctl, (int _fd, int _request, void *_data)		);
 

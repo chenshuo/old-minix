@@ -226,6 +226,7 @@ static struct commands commands[] = {
 	"append",	DOappe,
 	"ascii",        DOascii,
 	"binary",       DObinary,
+	"bin",          DObinary,
 	"bye",          DOquit,
 	"cd",           DOcd,
 	"close",        DOclose,

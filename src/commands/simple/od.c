@@ -175,7 +175,7 @@ int k, radix;
   int i;
 
   if (linenr++ != 1) printf("       ");
-  for (i = 0; i < (k + 1) / 2; i++) outword(words[i], radix);
+  for (i = 0; i < (k + 1) / 2; i++) outword(words[i] & 0xFFFF, radix);
   printf("\n");
 }
 
@@ -281,31 +281,18 @@ int num, radix;
 /* Output a number with all leading 0s present.  Octal is 6 places,
  * decimal is 5 places, hex is 4 places.
  */
-  int d, i;
   unsigned val;
-  char s[8];
 
   val = (unsigned) num;
   if (radix == 8)
-	d = 6;
+	printf ("%06o", val);
   else if (radix == 10)
-	d = 5;
+	printf ("%05u", val);
   else if (radix == 16)
-	d = 4;
+	printf ("%04x", val);
   else if (radix == 7) {
-	d = 3;
-	radix = 8;
-  }
-  for (i = 0; i < d; i++) {
-	s[i] = val % radix;
-	val -= s[i];
-	val = val / radix;
-  }
-  for (i = d - 1; i >= 0; i--) {
-	if (s[i] > 9)
-		printf("%c", 'a' + s[i] - 10);
-	else
-		printf("%c", s[i] + '0');
+  	/* special case */
+	printf ("%03o", val);
   }
 }
 
@@ -313,25 +300,13 @@ int num, radix;
 void addrout(l)
 long l;
 {
-  int i;
-
   if (hflag == 0) {
-	for (i = 0; i < 7; i++)
-		printf("%c", (int) ((l >> (18 - 3 * i)) & 07) + '0');
+	printf("%07lo", l);
   } else {
-	for (i = 0; i < 7; i++)
-		printf("%c", hexit((int) ((l >> (24 - 4 * i)) & 0x0F)));
+	printf("%07lx", l);
   }
 }
 
-char hexit(k)
-int k;
-{
-  if (k <= 9)
-	return('0' + k);
-  else
-	return('A' + k - 10);
-}
 
 void usage()
 {

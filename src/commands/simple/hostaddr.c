@@ -8,9 +8,9 @@ Created:	Jan 27, 1992 by Philip Homburg
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/utsname.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,12 +28,14 @@ Created:	Jan 27, 1992 by Philip Homburg
 #include <net/gen/socket.h>
 #include <net/gen/nameser.h>
 #include <net/gen/resolv.h>
+#include <net/gen/dhcp.h>
 
 char *prog_name;
 
+char DHCPCACHE[]="/usr/adm/dhcp.cache";
+
 void main _ARGS(( int argc, char *argv[] ));
 void usage _ARGS(( void ));
-void dummy_handler _ARGS(( int sig ));
 
 void main(argc, argv)
 int argc;
@@ -41,15 +43,18 @@ char *argv[];
 {
 	int c;
 	int first_print;
-	int a_flag, e_flag, i_flag;
+	int a_flag, e_flag, i_flag, h_flag;
 	char *E_arg, *I_arg;
-	int do_ether, do_ip, do_asc_ip;
+	int do_ether, do_ip, do_asc_ip, do_hostname;
 	char *eth_device, *ip_device;
 	int eth_fd, ip_fd;
 	int result;
 	nwio_ethstat_t nwio_ethstat;
 	nwio_ipconf_t nwio_ipconf;
 	struct hostent *hostent;
+	char *hostname, *domain;
+	char nodename[2*256];
+	dhcp_t dhcp;
 
 	first_print= 1;
 	prog_name= argv[0];
@@ -57,7 +62,7 @@ char *argv[];
 	a_flag= e_flag= i_flag= 0;
 	E_arg= I_arg= NULL;
 
-	while((c= getopt(argc, argv, "?aeE:iI:")) != -1)
+	while((c= getopt(argc, argv, "?aheE:iI:")) != -1)
 	{
 		switch(c)
 		{
@@ -67,6 +72,11 @@ char *argv[];
 			if (a_flag)
 				usage();
 			a_flag= 1;
+			break;
+		case 'h':
+			if (h_flag)
+				usage();
+			h_flag= 1;
 			break;
 		case 'e':
 			if (e_flag)
@@ -89,9 +99,7 @@ char *argv[];
 			I_arg= optarg;
 			break;
 		default:
-			fprintf(stderr, "%s: getopt failure: '%c'\n",
-				prog_name, c);
-			exit(1);
+			usage();
 		}
 	}
 	if(optind != argc)
@@ -109,6 +117,7 @@ char *argv[];
 
 	do_ip= i_flag;
 	do_asc_ip= a_flag;
+	do_hostname= h_flag;
 	if (I_arg)
 		ip_device= I_arg;
 	else
@@ -118,7 +127,7 @@ char *argv[];
 			ip_device= IP_DEVICE;
 	}
 
-	if (!do_ether && !do_ip && !do_asc_ip)
+	if (!do_ether && !do_ip && !do_asc_ip && !do_hostname)
 		do_ether= do_ip= do_asc_ip= 1;
 
 	if (do_ether)
@@ -126,7 +135,7 @@ char *argv[];
 		eth_fd= open(eth_device, O_RDWR);
 		if (eth_fd == -1)
 		{
-			fprintf(stderr, "%s: unable to open '%s': %s\n",
+			fprintf(stderr, "%s: Unable to open '%s': %s\n",
 				prog_name, eth_device, strerror(errno));
 			exit(1);
 		}
@@ -134,7 +143,7 @@ char *argv[];
 		if (result == -1)
 		{
 			fprintf(stderr, 
-			"%s: unable to fetch ethernet address: %s\n",
+			"%s: Unable to fetch ethernet address: %s\n",
 				prog_name, strerror(errno));
 			exit(1);
 		}
@@ -142,66 +151,161 @@ char *argv[];
 					ether_ntoa(&nwio_ethstat.nwes_addr));
 		first_print= 0;
 	}
-	if (do_ip || do_asc_ip)
+	if (do_ip || do_asc_ip || do_hostname)
 	{
 		ip_fd= open(ip_device, O_RDWR);
 		if (ip_fd == -1)
 		{
-			fprintf(stderr, "%s: unable to open '%s': %s\n",
+			fprintf(stderr, "%s: Unable to open '%s': %s\n",
 				prog_name, ip_device, strerror(errno));
 			exit(1);
 		}
-		signal(SIGALRM, dummy_handler);
-		alarm(25);
 		result= ioctl(ip_fd, NWIOGIPCONF, &nwio_ipconf);
 		if (result == -1)
 		{
 			fprintf(stderr, 
-				"%s: unable to fetch IP address: %s\n",
+				"%s: Unable to fetch IP address: %s\n",
 				prog_name,
-				errno == EINTR ? "Timeout" : strerror(errno));
+				strerror(errno));
 			exit(1);
 		}
-		alarm(0);
 	}
+
+	setuid(getuid());
+
 	if (do_ip)
 	{
 		printf("%s%s", first_print ? "" : " ",
 					inet_ntoa(nwio_ipconf.nwic_ipaddr));
 		first_print= 0;
 	}
-	if (do_asc_ip)
+	if (do_asc_ip || do_hostname)
 	{
-		res_init();
-		if ((ntohl(_res.nsaddr_list[0]) & 0x7F000000L) == 0x7F000000L
-			&& _res.nscount == 1)
-		{
-			/* At boot time the name daemon is just starting up,
-			 * so our first request may get lost.  A short retry
-			 * timeout makes it less noticable.
-			 */
-			_res.retrans= 1;
-			_res.retry= 5;
-		}
+		int fd;
+		int r;
+		dhcp_t d;
+		u8_t *data;
+		size_t hlen, dlen;
+
+		hostname= NULL;
+		domain= NULL;
+
+		/* Use a reverse DNS lookup to get the host name.  This is
+		 * the preferred method, but often fails due to lazy admins.
+		 */
 		hostent= gethostbyaddr((char *)&nwio_ipconf.nwic_ipaddr,
 			sizeof(nwio_ipconf.nwic_ipaddr), AF_INET);
-		printf("%s%s", first_print ? "" : " ", hostent ?
-			hostent->h_name : inet_ntoa(nwio_ipconf.nwic_ipaddr));
+		if (hostent != NULL) hostname= hostent->h_name;
+
+		if (hostname != NULL)
+		{
+			/* Reverse DNS works.  */
+		}
+		else if ((fd= open(DHCPCACHE, O_RDONLY)) == -1)
+		{
+			if (errno != ENOENT)
+			{
+				fprintf(stderr, "%s: %s: %s\n",
+					prog_name, DHCPCACHE, strerror(errno));
+				exit(1);
+			}
+		}
+		else
+		{
+			/* Try to get the hostname from the DHCP data. */
+			while ((r= read(fd, &d, sizeof(d))) == sizeof(d))
+			{
+				if (d.yiaddr == nwio_ipconf.nwic_ipaddr) break;
+			}
+			if (r < 0)
+			{
+				fprintf(stderr, "%s: %s: %s\n",
+					prog_name, DHCPCACHE, strerror(errno));
+				exit(1);
+			}
+			close(fd);
+
+			if (r == sizeof(d))
+			{
+				if (dhcp_gettag(&d, DHCP_TAG_HOSTNAME,
+							&data, &hlen))
+					hostname= (char *) data;
+
+				if (dhcp_gettag(&d, DHCP_TAG_DOMAIN,
+							&data, &dlen))
+					domain= (char *) data;
+
+				if (hostname != NULL) hostname[hlen] = 0;
+				if (domain != NULL) domain[dlen] = 0;
+			}
+		}
+
+		if (hostname != NULL)
+		{
+			if (strchr(hostname, '.') != NULL)
+			{
+				domain= strchr(hostname, '.');
+				*domain++ = 0;
+			}
+		}
+		else
+		{
+			/* No host name anywhere.  Use the IP address. */
+			hostname= inet_ntoa(nwio_ipconf.nwic_ipaddr);
+			domain= NULL;
+		}
+
+		strcpy(nodename, hostname);
+		if (domain != NULL)
+		{
+			strcat(nodename, ".");
+			strcat(nodename, domain);
+		}
+	}
+	if (do_asc_ip)
+	{
+		printf("%s%s", first_print ? "" : " ", nodename);
 		first_print= 0;
 	}
-	printf("\n");
+	if (do_hostname)
+	{
+#if __minix_vmd
+		if (sysuname(_UTS_SET, _UTS_NODENAME,
+					nodename, strlen(nodename)+1) == -1)
+		{
+			fprintf(stderr, "%s: Unable to set nodename: %s\n",
+				prog_name, strerror(errno));
+			exit(1);
+		}
+
+		if (sysuname(_UTS_SET, _UTS_HOSTNAME,
+					hostname, strlen(hostname)+1) == -1)
+		{
+			fprintf(stderr, "%s: Unable to set hostname: %s\n",
+				prog_name, strerror(errno));
+			exit(1);
+		}
+#else
+		FILE *fp;
+
+		if ((fp= fopen("/etc/hostname.file", "w")) == NULL
+		    || fprintf(fp, "%s\n", nodename) == EOF
+		    || fclose(fp) == EOF)
+		{
+			fprintf(stderr, "%s: /etc/hostname.file: %s\n",
+				prog_name, strerror(errno));
+			exit(1);
+		}
+#endif
+	}
+	if (!first_print) printf("\n");
 	exit(0);
 }
 
 void usage()
 {
-	fprintf(stderr, "Usage: %s -[eia] [-E <eth-device>] [-I <ip-device>]\n", 
+	fprintf(stderr,
+		"Usage: %s -[eiah] [-E <eth-device>] [-I <ip-device>]\n", 
 								prog_name);
 	exit(1);
-}
-
-void dummy_handler(sig)
-int sig;
-{
-	/* Do nothing. */
 }

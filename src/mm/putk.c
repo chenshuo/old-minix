@@ -1,13 +1,12 @@
-/* MM must occasionally print some message.  It uses the standard library
- * routine printk().  (The name "printf" is really a macro defined as 
- * "printk"). Printing is done by calling the TTY task directly, not going 
- * through FS.
+/* MM must occasionally print some message.  It uses a special version of
+ * the standard library routine printf() that calls putk() to print characters.
+ * Printing is done by calling the TTY task directly, not going through FS.
  */
 
 #include "mm.h"
 #include <minix/com.h>
 
-#define BUF_SIZE          100	/* print buffer size */
+#define BUF_SIZE          80	/* print buffer size */
 
 PRIVATE int buf_count;		/* # characters in the buffer */
 PRIVATE char print_buf[BUF_SIZE];	/* output is buffered here */

@@ -22,7 +22,7 @@ prtso:
 	jae	0f
 	testb	bl, #1			! aligned?
 	jnz	0f
-	cmp	(bx), #0x5353		! is it our _environ?
+	cmp	(bx), #0x5353		! is it our environ?
 	jne	0f
 	mov	__penviron, bx		! _penviron = &environ;
 0:	mov	bx, __penviron
@@ -34,7 +34,7 @@ prtso:
 
 	mov	.ignmask, #56
 
-	call	__m_a_i_n		! Run Pascal program
+	call	__m_a_i_n		! run Pascal program
 
 	push	ax			! push exit status
 	call	__exit
@@ -43,10 +43,9 @@ prtso:
 
 .data
 begdata:
-hol0:	.data2 0, 0
-	.data2 0, 0
+	.data2	0			! for sep I&D: *NULL == 0
 __penviron:
-	.data4	__penvp			! Pointer to environ, or hidden pointer
+	.data2	__penvp			! Pointer to environ, or hidden pointer
 
 .bss
 begbss:

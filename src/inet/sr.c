@@ -53,7 +53,7 @@
 
 THIS_FILE
 
-#define FD_NR			128
+#define FD_NR			(16*IP_PORT_MAX)
 
 typedef struct sr_fd
 {
@@ -168,9 +168,11 @@ mq_t *m;
 		free_mess= 1;
 		m->mq_mess.m_type= 0;
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(("unknown message, from %d, type %d",
 				m->mq_mess.m_source, m->mq_mess.m_type));
+#endif
 	}
 	if (send_reply)
 	{
@@ -180,7 +182,7 @@ mq_t *m;
 		mq_free(m);
 }
 
-PUBLIC int sr_add_minor(minor, port, openf, closef, readf, writef,
+PUBLIC void sr_add_minor(minor, port, openf, closef, readf, writef,
 	ioctlf, cancelf)
 int minor;
 int port;
@@ -197,8 +199,7 @@ sr_cancel_t cancelf;
 
 	sr_fd= &sr_fd_table[minor];
 
-	if (sr_fd->srf_flags & SFF_INUSE)
-		return EGENERIC;
+	assert(!(sr_fd->srf_flags & SFF_INUSE));
 
 	sr_fd->srf_flags= SFF_INUSE | SFF_MINOR;
 	sr_fd->srf_port= port;
@@ -208,8 +209,6 @@ sr_cancel_t cancelf;
 	sr_fd->srf_read= readf;
 	sr_fd->srf_ioctl= ioctlf;
 	sr_fd->srf_cancel= cancelf;
-
-	return OK;
 }
 
 PRIVATE int sr_open(m)
@@ -261,8 +260,7 @@ message *m;
 	sr_fd= sr_getchannel(m->DEVICE);
 	assert (sr_fd);
 
-	if (sr_fd->srf_flags & SFF_BUSY)
-		ip_panic(("close on busy channel"));
+	assert (!(sr_fd->srf_flags & SFF_BUSY));
 
 	assert (!(sr_fd->srf_flags & SFF_MINOR));
 	(*sr_fd->srf_close)(sr_fd->srf_fd);
@@ -302,8 +300,10 @@ mq_t *m;
 		ip_flag= SFF_IOCTL_IP;
 		susp_flag= SFF_IOCTL_SUSP;
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(("illegal case entry"));
+#endif
 	}
 
 	if (sr_fd->srf_flags & ip_flag)
@@ -345,8 +345,10 @@ mq_t *m;
 #endif
 		r= (*sr_fd->srf_ioctl)(sr_fd->srf_fd, request);
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(("illegal case entry"));
+#endif
 	}
 
 	assert(r == OK || r == SUSPEND || 
@@ -392,10 +394,12 @@ message *m;
 		if (result != EAGAIN)
 			return result;
 	}
+#if !CRAMPED
 	ip_panic((
 "request not found: from %d, type %d, MINOR= %d, PROC= %d, REF= %d OPERATION= %d",
 		m->m_source, m->m_type, m->DEVICE,
 		m->PROC_NR, 0, 0));
+#endif
 }
 
 PRIVATE int walk_queue(sr_fd, q_head, q_tail_ptr, type, proc_nr, ref)

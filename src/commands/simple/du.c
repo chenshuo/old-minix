@@ -9,6 +9,7 @@
  *			1.6	01 Oct 92	kjb@cs.vu.nl
  *			1.7	04 Jan 93	bde
  *			1.8	19 Sep 94	kjb
+ *			1.9	28 Oct 99	kjb
  *
  *	Copyright 1987, Joypace Ltd., London UK. All rights reserved.
  *	This code may be freely distributed, provided that this notice
@@ -27,6 +28,7 @@
  *		Count blocks for all non-special files.
  *		Don't clutter link buffer with directories.
  *  1.8:	Remember all links.
+ *  1.9:	Added -x flag to not cross device boundaries.  Type fixes.
  */
 
 
@@ -64,13 +66,14 @@ typedef struct already {
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(int makedname, (char *d, char *f, char *out, int outlen));
-_PROTOTYPE(int done, (int dev, Ino_t inum, Nlink_t nlink));
-_PROTOTYPE(long dodir, (char *d, int thislev));
+_PROTOTYPE(int done, (Dev_t dev, Ino_t inum, Nlink_t nlink));
+_PROTOTYPE(long dodir, (char *d, int thislev, Dev_t dev));
 
 char *prog;			/* program name */
-char *optstr = "asl:";		/* -a and -s arguments */
+char *optstr = "asxdl:";	/* options */
 int silent = 0;			/* silent mode */
 int all = 0;			/* all directory entries mode */
+int crosschk = 0;		/* do not cross device boundaries mode */
 char *startdir = ".";		/* starting from here */
 int levels = 20000;		/* # of directory levels to print */
 ALREADY *already[NR_ALREADY];
@@ -105,7 +108,7 @@ int outlen;
  *	0 for no, and remembers (dev, inum, nlink).
  */
 int done(dev, inum, nlink)
-int dev;
+dev_t dev;
 ino_t inum;
 nlink_t nlink;
 {
@@ -138,9 +141,10 @@ nlink_t nlink;
  *	dodir - process the directory d. Return the long size (in blocks)
  *	of d and its descendants.
  */
-long dodir(d, thislev)
+long dodir(d, thislev, dev)
 char *d;
 int thislev;
+dev_t dev;
 {
   int maybe_print;
   struct stat s;
@@ -154,6 +158,7 @@ int thislev;
 		"%s: %s: %s\n", prog, d, strerror(errno));
     	return 0L;
   }
+  if (s.st_dev != dev && dev != 0 && crosschk) return 0;
   total = (s.st_size + (BLOCK_SIZE - 1)) / BLOCK_SIZE;
   switch (s.st_mode & S_IFMT) {
     case S_IFDIR:
@@ -167,7 +172,7 @@ int thislev;
 		    strcmp(entry->d_name, "..") == 0)
 			continue;
 		if (!makedname(d, entry->d_name, dent, sizeof(dent))) continue;
-		total += dodir(dent, thislev - 1);
+		total += dodir(dent, thislev - 1, s.st_dev);
 	}
 	closedir(dp);
 	break;
@@ -196,16 +201,18 @@ char **argv;
   while ((c = getopt(argc, argv, optstr)) != EOF) switch (c) {
 	    case 'a':	all = 1;	break;
 	    case 's':	silent = 1;	break;
+	    case 'x':
+	    case 'd':	crosschk = 1;	break;
 	    case 'l':	levels = atoi(optarg);	break;
 	    default:
 		fprintf(stderr,
-			"Usage: %s [-a] [-s] [-l levels] [startdir]\n", prog);
+			"Usage: %s [-asx] [-l levels] [startdir]\n", prog);
 		exit(1);
 	}
   do {
 	if (optind < argc) startdir = argv[optind++];
 	alc = 0;
-	(void) dodir(startdir, levels);
+	(void) dodir(startdir, levels, 0);
   } while (optind < argc);
   return(0);
 }

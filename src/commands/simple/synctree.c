@@ -1,4 +1,4 @@
-/*	synctree 4.15 - Synchronise file tree.		Author: Kees J. Bot
+/*	synctree 4.16 - Synchronise file tree.		Author: Kees J. Bot
  *								5 Apr 1989
  * SYNOPSYS
  *	synctree [-iuf] [[user1@machine1:]dir1 [[user2@]machine2:]dir2
@@ -16,16 +16,13 @@
  * then it is a backup directory.  The file ".backup" in this directory is
  * an array of mode information indexed on inode number.
  *
- * Copyright 1989 Kees J. Bot, All rights reserved.
- * This program may only be used with Minix, unless permission has been
- * granted by me.  Any other use is a violation of my copyright.
- *
  * 89/04/05, Kees J. Bot - Birth of tree synchronizing program.
  * 92/02/02		 - General overhaul, rcp(1) like syntax.
  */
 
 #define nil 0
 #include <sys/types.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <utime.h>
@@ -298,8 +295,118 @@ static void enter()
 	if (E->con != nil && E->con->next != nil) sort(&E->con);
 }
 
+#define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
+#define arraylimit(a)	((a) + arraysize(a))
+
+static char *link_islink(struct stat *stp, const char *file)
+{
+    /* Tell if a file, which stat(2) information in '*stp', has been seen
+     * earlier by this function under a different name.  If not return a
+     * null pointer with errno set to ENOENT, otherwise return the name of
+     * the link.  Return a null pointer with an error code in errno for any
+     * error, using E2BIG for a too long file name.
+     *
+     * Use link_islink(nil, nil) to reset all bookkeeping.
+     *
+     * Call for a file twice to delete it from the store.
+     */
+
+    typedef struct link {	/* In-memory link store. */
+	struct link	*next;		/* Hash chain on inode number. */
+	ino_t		ino;		/* File's inode number. */
+	off_t		off;		/* Offset to more info in temp file. */
+    } link_t;
+    typedef struct dlink {	/* On-disk link store. */
+	dev_t		dev;		/* Device number. */
+	char		file[PATH_MAX];	/* Name of earlier seen link. */
+    } dlink_t;
+    static link_t *links[256];		/* Hash list of known links. */
+    static int tfd= -1;			/* Temp file for file name storage. */
+    static dlink_t dlink;
+    link_t *lp, **plp;
+    size_t len;
+    off_t off;
+
+    if (file == nil) {
+	/* Reset everything. */
+	for (plp= links; plp < arraylimit(links); plp++) {
+	    while ((lp= *plp) != nil) {
+		*plp= lp->next;
+		free(lp);
+	    }
+	}
+	if (tfd != -1) close(tfd);
+	tfd= -1;
+	return nil;
+    }
+
+    /* The file must be a non-directory with more than one link. */
+    if (S_ISDIR(stp->st_mode) || stp->st_nlink <= 1) {
+	errno= ENOENT;
+	return nil;
+    }
+
+    plp= &links[stp->st_ino % arraysize(links)];
+
+    while ((lp= *plp) != nil) {
+	if (lp->ino == stp->st_ino) {
+	    /* May have seen this link before.  Get it and check. */
+	    if (lseek(tfd, lp->off, SEEK_SET) == -1) return nil;
+	    if (read(tfd, &dlink, sizeof(dlink)) < 0) return nil;
+
+	    /* Only need to check the device number. */
+	    if (dlink.dev == stp->st_dev) {
+		if (strcmp(file, dlink.file) == 0) {
+		    /* Called twice.  Forget about this link. */
+		    *plp= lp->next;
+		    free(lp);
+		    errno= ENOENT;
+		    return nil;
+		}
+
+		/* Return the name of the earlier link. */
+		return dlink.file;
+	    }
+	}
+	plp= &lp->next;
+    }
+
+    /* First time I see this link.  Add it to the store. */
+    if (tfd == -1) {
+	for (;;) {
+	    char *tmp;
+
+	    tmp= tmpnam(nil);
+	    tfd= open(tmp, O_RDWR|O_CREAT|O_EXCL, 0600);
+	    if (tfd < 0) {
+		if (errno != EEXIST) return nil;
+	    } else {
+		(void) unlink(tmp);
+		break;
+	    }
+	}
+    }
+    if ((len= strlen(file)) >= PATH_MAX) {
+	errno= E2BIG;
+	return nil;
+    }
+
+    dlink.dev= stp->st_dev;
+    strcpy(dlink.file, file);
+    len += offsetof(dlink_t, file) + 1;
+    if ((off= lseek(tfd, 0, SEEK_END)) == -1) return nil;
+    if (write(tfd, &dlink, len) != len) return nil;
+
+    if ((lp= malloc(sizeof(*lp))) == nil) return nil;
+    lp->next= nil;
+    lp->ino= stp->st_ino;
+    lp->off= off;
+    *plp= lp;
+    errno= ENOENT;
+    return nil;
+}
+
 #define cancellink()	((void) islink())
-	/* Delete link by calling for it twice. (Gross hack) */
 
 static char *islink()
 /* Returns the name of the file path is linked to.  If no such link can be
@@ -308,46 +415,11 @@ static char *islink()
  * Directories are not seen as linkable.
  */
 {
-	struct links {
-		struct links	*next;	/* They form a simple list. */
-		char		*name;	/* Full name of the link. */
-		dev_t		dev;	/* Identification. */
-		ino_t		ino;
-		int		count;	/* This many links are not seen yet. */
-	};
-	static struct links *lnktop=nil, **lnk= nil;
-	struct links *new;
+	char *name;
 
-	if (!S_ISDIR(st.st_mode) && st.st_nlink > 1) {
-		lnk= &lnktop;
-
-		while (*lnk != nil
-			&& !((*lnk)->dev == st.st_dev
-			&& (*lnk)->ino == st.st_ino)
-		) lnk= &(*lnk)->next;
-
-		if (*lnk != nil) {	/* Link found, return its name. */
-			new= *lnk;
-			strcpy(lnkpth, new->name);
-			if (--new->count == 0 || strcmp(path, new->name) == 0) {
-						/* ^^ check for cancellink. */
-				*lnk= new->next;
-				free(new->name);
-				free(new);
-			}
-			return lnkpth;
-		}
-			/* No link found, add this one. */
-		*lnk= new= (struct links *) malloc(sizeof(*new));
-		new->next= nil;
-		new->name= (char *) malloc(strlen(path) + 1);
-		strcpy(new->name, path);
-		new->dev= st.st_dev;
-		new->ino= st.st_ino;
-		new->count= st.st_nlink - 1;
-	}
-	lnk= nil;
-	return nil;
+	name= link_islink(&st, path);
+	if (name == nil && errno != ENOENT) perrx(path);
+	return name;
 }
 
 static void setstat(ino, stp) ino_t ino; struct stat *stp;
@@ -493,7 +565,10 @@ static void report()
 	buckp= bucket;
 
 	while (buckn > 0) {
-		if ((r= write(chan[1], buckp, buckn)) < 0) perrx("report()");
+		r = buckn;
+		if (r > (512 << sizeof(char*))) r= (512 << sizeof(char*));
+
+		if ((r= write(chan[1], buckp, r)) < 0) perrx("report()");
 
 		buckp += r;
 		buckn -= r;

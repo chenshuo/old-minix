@@ -99,8 +99,8 @@ struct compile {
 
 struct passinfo passinfo[] = {
 	{ "cpp", PP, "CPP", "i", "wo=o,I*,D*,U*,P", INPUT|STDOUT },
-	{ "irrel", IRREL, "i", "i", "", INPUT},
-	{ "cem", CEM, "i,c", "k", "m,p,wa=a,wo=o,ws=s,w,T*", INPUT|OUTPUT|PREPALWAYS },
+	{ "irrel", IRREL, "i", "i", "m", INPUT},
+	{ "cem", CEM, "i,c", "k", "m=o,p,wa=a,wo=o,ws=s,w,T*", INPUT|OUTPUT|PREPALWAYS },
 	{ "pc", PEM, "i,p", "k", "n=L,w,a,A,R", INPUT|OUTPUT|PREPCOND },
 	{ "m2", M2EM, "i,mod", "k", "n=L,w*,A,R,W*,3,I*", INPUT|OUTPUT|PREPCOND },
 	{ "encode", ENCODE, "i,e", "k", "", INPUT|STDOUT|PREPCOND|PREPNOLN },
@@ -216,12 +216,12 @@ char *ProgCall = 0;
 int RET_CODE = 0;
 
 char *stopsuffix;
-int m_flag = 0;
 int v_flag = 0;
 int t_flag = 0;
 int noexec = 0;
-int fp_lib = 0;
+int fp_lib = 1;
 int E_flag = 0;
+int i_flag = 1;
 
 
 USTRING curfil;
@@ -333,69 +333,81 @@ main(argc, argv)
 			continue;
 		}
 
-		switch (str[1]) {
+		if (strcmp(str, "-com") == 0) {
+			i_flag = 0;
+		} else
+		if (strcmp(str, "-sep") == 0) {
+			i_flag = 1;
+		} else {
+			switch (str[1]) {
 
-		case 'c':
-			stopsuffix = "o";
-			if (str[2] == '.') stopsuffix = str + 3;
-			break;
-		case 'f':
-			fp_lib = 1;
-			break;
-		case 'F':
-		case 'W':
-			/* Ignore. */
-			break;
-		case 'L':
-			append(&LDIRS, &str[2]);
-			count = strlen(&str[2]);
-			if (count > maxLlen) maxLlen = count;
-			break;
-		case 'l':
-			append(&SRCFILES, library(&str[2]));
-			break;
-		case 'm':
-			if (str[2] == 0)
-				m_flag++;
-			break;
-		case 'o':
-			if (argc-- >= 0)
-				o_FILE = *argv++;
-			break;
-		case 'S':
-			stopsuffix = "s";
-			break;
-		case 'E':
-			E_flag = 1;
-			stopsuffix = "i";
-			break;
-		case 'P':
-			stopsuffix = "i";
-			append(&FLAGS, str);
-			break;
-		case 'v':
-			v_flag++;
-			if (str[2] == 'n')
-				noexec = 1;
-			break;
-		case 't':
-			/* save temporaries */
-			t_flag++;
-			break;
-		case '.':
-			if (str[2] == 'o') {
-				/* no runtime start-off */
-				loader->pp_head[0] = 0;
+			case 'c':
+				stopsuffix = "o";
+				if (str[2] == '.') stopsuffix = str + 3;
+				break;
+			case 'f':
+				fp_lib = (strcmp(str+2, "hard") != 0);
+				break;
+			case 'F':
+			case 'W':
+				/* Ignore. */
+				break;
+			case 'L':
+				append(&LDIRS, &str[2]);
+				count = strlen(&str[2]);
+				if (count > maxLlen) maxLlen = count;
+				break;
+			case 'l':
+				append(&SRCFILES, library(&str[2]));
+				break;
+			case 'm':
+				/* Use -m, ignore -mxxx. */
+				if (str[2] == 0) append(&FLAGS, str);
+				break;
+			case 'o':
+				if (argc-- >= 0)
+					o_FILE = *argv++;
+				break;
+			case 'S':
+				stopsuffix = "s";
+				break;
+			case 'E':
+				E_flag = 1;
+				stopsuffix = "i";
+				break;
+			case 'P':
+				stopsuffix = "i";
+				append(&FLAGS, str);
+				break;
+			case 'v':
+				v_flag++;
+				if (str[2] == 'n')
+					noexec = 1;
+				break;
+			case 't':
+				/* save temporaries */
+				t_flag++;
+				break;
+			case '.':
+				if (str[2] == 'o') {
+					/* no runtime start-off */
+					loader->pp_head[0] = 0;
+				}
+				break;
+			case 'i':
+				i_flag++;
+				break;
+			case 'T':
+				tmpdir = &str[2];
+				/*FALLTHROUGH*/
+			default:
+				append(&FLAGS, str);
+
 			}
-			break;
-		case 'T':
-			tmpdir = &str[2];
-			/*FALLTHROUGH*/
-		default:
-			append(&FLAGS, str);
-
 		}
 	}
+
+	if (i_flag) append(&FLAGS, "-i");
 
 	mktempname(tmpname);
 
@@ -788,11 +800,9 @@ apply(pinf, cp, name, passindex, noremove, first, resultname)
 			cleanup(newfil);
 			return 0;
 		}
-		/*
-		 * When -m is specified and we have a .c file, then we
-		 * should run irrel.
-		 */
-		if (m_flag && cfile(name)) {
+
+		/* A .c file must always be mishandled by irrel. */
+		if (cfile(name)) {
 			/* newfil is OK */
 			mkvec(call, newfil, newfil, &irrel, &passinfo[1]);
 			if (! runvec(call, &passinfo[1], newfil, newfil)) {

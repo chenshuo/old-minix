@@ -43,7 +43,14 @@ static unsigned inodes_per_block;
 #include <sys/dir.h>
 #endif
 
+#if __minix_vmd
+static struct v12_super_block super;	/* Superblock of file system */
+#define s_log_zone_size s_dummy		/* Zones are obsolete. */
+#else
 static struct super_block super;	/* Superblock of file system */
+#define SUPER_V1 SUPER_MAGIC		/* V1 magic has a weird name. */
+#endif
+
 static struct inode curfil;		/* Inode of file under examination */
 static char indir[BLOCK_SIZE];		/* Single indirect block. */
 static char dindir[BLOCK_SIZE];		/* Double indirect block. */
@@ -74,7 +81,7 @@ off_t r_super(void)
 		inodes_per_block= V2_INODES_PER_BLOCK;
 		return (off_t) super.s_zones << zone_shift;
 	} else
-	if (super.s_magic == SUPER_MAGIC) {
+	if (super.s_magic == SUPER_V1) {
 		nr_dzones= V1_NR_DZONES;
 		nr_indirects= V1_INDIRECTS;
 		inodes_per_block= V1_INODES_PER_BLOCK;

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <string.h>
+#include <errno.h>
 
 int errs;
 
@@ -98,7 +100,7 @@ char *fname;
   if (fname == NULL)
 	fp = stdin;
   else if ((fp = fopen(fname, "r")) == NULL) {
-	fprintf(stderr, "crc: cannot open %s\n", fname);
+	fprintf(stderr, "crc: Can't open %s: %s\n", fname, strerror(errno));
 	errs++;
 	return;
   }

@@ -15,9 +15,9 @@
  *   do_alarm:	perform the ALARM system call by calling set_alarm()
  *   set_alarm:	tell the clock task to start or stop a timer
  *   do_pause:	perform the PAUSE system call
- *   do_reboot: kill all processes, then reboot system
  *   sig_proc:	interrupt or terminate a signaled process
  *   check_sig: check which processes to signal with sig_proc()
+ *   check_pending:  check if a pending signal can now be delivered
  */
 
 #include "mm.h"
@@ -32,10 +32,7 @@
 
 #define CORE_MODE	0777	/* mode to use on core image files */
 #define DUMPED          0200	/* bit set in status when core dumped */
-#define DUMP_SIZE	((INT_MAX / BLOCK_SIZE) * BLOCK_SIZE)
-				/* buffer size for core dumps */
 
-FORWARD _PROTOTYPE( void check_pending, (void)				);
 FORWARD _PROTOTYPE( void dump_core, (struct mproc *rmp)			);
 FORWARD _PROTOTYPE( void unpause, (int pro)				);
 
@@ -89,7 +86,7 @@ PUBLIC int do_sigaction()
  *===========================================================================*/
 PUBLIC int do_sigpending()
 {
-  ret_mask = (long) mp->mp_sigpending;
+  mp->reply_mask = (long) mp->mp_sigpending;
   return OK;
 }
 
@@ -109,29 +106,29 @@ PUBLIC int do_sigprocmask()
 
   int i;
 
-  ret_mask = (long) mp->mp_sigmask;
+  mp->reply_mask = (long) mp->mp_sigmask;
 
   switch (sig_how) {
       case SIG_BLOCK:
 	sigdelset((sigset_t *)&sig_set, SIGKILL);
-	for (i = 1; i < _NSIG; i++) {
+	for (i = 1; i <= _NSIG; i++) {
 		if (sigismember((sigset_t *)&sig_set, i))
 			sigaddset(&mp->mp_sigmask, i);
 	}
 	break;
 
       case SIG_UNBLOCK:
-	for (i = 1; i < _NSIG; i++) {
+	for (i = 1; i <= _NSIG; i++) {
 		if (sigismember((sigset_t *)&sig_set, i))
 			sigdelset(&mp->mp_sigmask, i);
 	}
-	check_pending();
+	check_pending(mp);
 	break;
 
       case SIG_SETMASK:
 	sigdelset((sigset_t *)&sig_set, SIGKILL);
 	mp->mp_sigmask = (sigset_t)sig_set;
-	check_pending();
+	check_pending(mp);
 	break;
 
       case SIG_INQUIRE:
@@ -153,9 +150,8 @@ PUBLIC int do_sigsuspend()
   mp->mp_sigmask = (sigset_t) sig_set;
   sigdelset(&mp->mp_sigmask, SIGKILL);
   mp->mp_flags |= SIGSUSPENDED;
-  dont_reply = TRUE;
-  check_pending();
-  return OK;
+  check_pending(mp);
+  return(E_NO_MESSAGE);
 }
 
 
@@ -174,7 +170,7 @@ PUBLIC int do_sigreturn()
   sigdelset(&mp->mp_sigmask, SIGKILL);
 
   r = sys_sigreturn(who, (vir_bytes)sig_context, sig_flags);
-  check_pending();
+  check_pending(mp);
   return(r);
 }
 
@@ -208,10 +204,9 @@ PUBLIC int do_ksig()
 
   /* Only kernel may make this call. */
   if (who != HARDWARE) return(EPERM);
-  dont_reply = TRUE;		/* don't reply to the kernel */
   proc_nr = mm_in.SIG_PROC;
   rmp = &mproc[proc_nr];
-  if ( (rmp->mp_flags & IN_USE) == 0 || (rmp->mp_flags & HANGING) ) return(OK);
+  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(E_NO_MESSAGE);
   proc_id = rmp->mp_pid;
   sig_map = (sigset_t) mm_in.SIG_MAP;
   mp = &mproc[0];		/* pretend kernel signals are from MM */
@@ -247,7 +242,7 @@ PUBLIC int do_ksig()
 	check_sig(id, i);
 	sys_endsig(proc_nr);	/* tell kernel it's done */
   }
-  return(OK);
+  return(E_NO_MESSAGE);
 }
 
 
@@ -318,48 +313,7 @@ PUBLIC int do_pause()
 /* Perform the pause() system call. */
 
   mp->mp_flags |= PAUSED;
-  dont_reply = TRUE;
-  return(OK);
-}
-
-
-/*=====================================================================*
- *			    do_reboot				       *
- *=====================================================================*/
-PUBLIC int do_reboot()
-{
-  register struct mproc *rmp = mp;
-  char monitor_code[64];
-
-  if (rmp->mp_effuid != SUPER_USER)   return EPERM;
-
-  switch (reboot_flag) {
-  case RBT_HALT:
-  case RBT_REBOOT:
-  case RBT_PANIC:
-  case RBT_RESET:
-	break;
-  case RBT_MONITOR:
-	if (reboot_size > sizeof(monitor_code)) return EINVAL;
-	memset(monitor_code, 0, sizeof(monitor_code));
-	if (sys_copy(who, D, (phys_bytes) reboot_code,
-		MM_PROC_NR, D, (phys_bytes) monitor_code,
-		(phys_bytes) reboot_size) != OK) return EFAULT;
-	if (monitor_code[sizeof(monitor_code)-1] != 0) return EINVAL;
-	break;
-  default:
-	return EINVAL;
-  }
-
-  /* Kill all processes except init. */
-  check_sig(-1, SIGKILL);
-
-  tell_fs(EXIT, INIT_PROC_NR, 0, 0);	/* cleanup init */
-
-  tell_fs(SYNC,0,0,0);
-
-  sys_abort(reboot_flag, monitor_code);
-  /* NOTREACHED */
+  return(E_NO_MESSAGE);
 }
 
 
@@ -388,15 +342,12 @@ int signo;			/* signal to send to process (1 to _NSIG) */
   struct sigmsg sm;
 
   slot = (int) (rmp - mproc);
-  if (!(rmp->mp_flags & IN_USE)) {
-	printf("MM: signal %d sent to dead process %d\n", signo, slot);
+  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) {
+	printf("MM: signal %d sent to %s process %d\n",
+		(rmp->mp_flags & ZOMBIE) ? "zombie" : "dead", signo, slot);
 	panic("", NO_NUM);
   }
-  if (rmp->mp_flags & HANGING) {
-	printf("MM: signal %d sent to HANGING process %d\n", signo, slot);
-	panic("", NO_NUM);
-  }
-  if (rmp->mp_flags & TRACED && signo != SIGKILL) {
+  if ((rmp->mp_flags & TRACED) && signo != SIGKILL) {
 	/* A traced process has special handling. */
 	unpause(slot);
 	stop_proc(rmp, signo);	/* a signal causes it to stop */
@@ -412,6 +363,12 @@ int signo;			/* signal to send to process (1 to _NSIG) */
   }
   sigflags = rmp->mp_sigact[signo].sa_flags;
   if (sigismember(&rmp->mp_catch, signo)) {
+	if (rmp->mp_flags & ONSWAP) {
+		/* Process is swapped out, leave signal pending. */
+		sigaddset(&rmp->mp_sigpending, signo);
+		swap_inqueue(rmp);
+		return;
+	}
 	if (rmp->mp_flags & SIGSUSPENDED)
 		sm.sm_mask = rmp->mp_sigmask2;
 	else
@@ -449,9 +406,17 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 	return;
   }
 doterminate:
-  /* Signal should not or cannot be caught.  Terminate the process. */
+  /* Signal should not or cannot be caught.  Take default action. */
+  if (sigismember(&ign_sset, signo)) return;
+
   rmp->mp_sigstatus = (char) signo;
   if (sigismember(&core_sset, signo)) {
+	if (rmp->mp_flags & ONSWAP) {
+		/* Process is swapped out, leave signal pending. */
+		sigaddset(&rmp->mp_sigpending, signo);
+		swap_inqueue(rmp);
+		return;
+	}
 	/* Switch to the user's FS environment and dump core. */
 	tell_fs(CHDIR, slot, FALSE, 0);
 	dump_core(rmp);
@@ -487,13 +452,13 @@ int signo;			/* signal to send to process (0 to _NSIG) */
   count = 0;
   error_code = ESRCH;
   for (rmp = &mproc[INIT_PROC_NR]; rmp < &mproc[NR_PROCS]; rmp++) {
-	if ( (rmp->mp_flags & IN_USE) == 0) continue;
-	if (rmp->mp_flags & HANGING && signo != 0) continue;
+	if (!(rmp->mp_flags & IN_USE)) continue;
+	if ((rmp->mp_flags & ZOMBIE) && signo != 0) continue;
 
 	/* Check for selection. */
 	if (proc_id > 0 && proc_id != rmp->mp_pid) continue;
 	if (proc_id == 0 && mp->mp_procgrp != rmp->mp_procgrp) continue;
-	if (proc_id == -1 && rmp->mp_pid == INIT_PID) continue;
+	if (proc_id == -1 && rmp->mp_pid <= INIT_PID) continue;
 	if (proc_id < -1 && rmp->mp_procgrp != -proc_id) continue;
 
 	/* Check for permission. */
@@ -519,8 +484,7 @@ int signo;			/* signal to send to process (0 to _NSIG) */
   }
 
   /* If the calling process has killed itself, don't reply. */
-  if ((mp->mp_flags & IN_USE) == 0 || (mp->mp_flags & HANGING))
-	dont_reply = TRUE;
+  if ((mp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(E_NO_MESSAGE);
   return(count > 0 ? OK : error_code);
 }
 
@@ -528,7 +492,8 @@ int signo;			/* signal to send to process (0 to _NSIG) */
 /*===========================================================================*
  *                               check_pending				     *
  *===========================================================================*/
-PRIVATE void check_pending()
+PUBLIC void check_pending(rmp)
+register struct mproc *rmp;
 {
   /* Check to see if any pending signals have been unblocked.  The
    * first such signal found is delivered.
@@ -543,11 +508,11 @@ PRIVATE void check_pending()
 
   int i;
 
-  for (i = 1; i < _NSIG; i++) {
-	if (sigismember(&mp->mp_sigpending, i) &&
-		!sigismember(&mp->mp_sigmask, i)) {
-		sigdelset(&mp->mp_sigpending, i);
-		sig_proc(mp, i);
+  for (i = 1; i <= _NSIG; i++) {
+	if (sigismember(&rmp->mp_sigpending, i) &&
+		!sigismember(&rmp->mp_sigmask, i)) {
+		sigdelset(&rmp->mp_sigpending, i);
+		sig_proc(rmp, i);
 		break;
 	}
   }
@@ -571,29 +536,15 @@ int pro;			/* which process number */
 
   rmp = &mproc[pro];
 
-  /* Check to see if process is hanging on a PAUSE call. */
-  if ( (rmp->mp_flags & PAUSED) && (rmp->mp_flags & HANGING) == 0) {
-	rmp->mp_flags &= ~PAUSED;
-	reply(pro, EINTR, 0, NIL_PTR);
-	return;
-  }
-
-  /* Check to see if process is hanging on a WAIT call. */
-  if ( (rmp->mp_flags & WAITING) && (rmp->mp_flags & HANGING) == 0) {
-	rmp->mp_flags &= ~WAITING;
-	reply(pro, EINTR, 0, NIL_PTR);
-	return;
-  }
-
-  /* Check to see if process is hanging on a SIGSUSPEND call. */
-  if ((rmp->mp_flags & SIGSUSPENDED) && (rmp->mp_flags & HANGING) == 0) {
-	rmp->mp_flags &= ~SIGSUSPENDED;
-	reply(pro, EINTR, 0, NIL_PTR);
+  /* Check to see if process is hanging on a PAUSE, WAIT or SIGSUSPEND call. */
+  if (rmp->mp_flags & (PAUSED | WAITING | SIGSUSPENDED)) {
+	rmp->mp_flags &= ~(PAUSED | WAITING | SIGSUSPENDED);
+	setreply(pro, EINTR);
 	return;
   }
 
   /* Process is not hanging on an MM call.  Ask FS to take a look. */
-	tell_fs(UNPAUSE, pro, 0, 0);
+  tell_fs(UNPAUSE, pro, 0, 0);
 }
 
 
@@ -618,7 +569,8 @@ register struct mproc *rmp;	/* whose core is to be dumped */
    * so no special permission checks are needed.
    */
   if (rmp->mp_realuid != rmp->mp_effuid) return;
-  if ( (fd = creat(core_name, CORE_MODE)) < 0) return;
+  if ( (fd = open(core_name, O_WRONLY | O_CREAT | O_TRUNC | O_NONBLOCK,
+						CORE_MODE)) < 0) return;
   rmp->mp_sigstatus |= DUMPED;
 
   /* Make sure the stack segment is up to date.
@@ -650,20 +602,8 @@ register struct mproc *rmp;	/* whose core is to be dumped */
 
   /* Loop through segments and write the segments themselves out. */
   for (seg = 0; seg < NR_SEGS; seg++) {
-	buf = (char *) ((vir_bytes) rmp->mp_seg[seg].mem_vir << CLICK_SHIFT);
-	left = (phys_bytes) rmp->mp_seg[seg].mem_len << CLICK_SHIFT;
-	fake_fd = (slot << 8) | (seg << 6) | fd;
-
-	/* Loop through a segment, dumping it. */
-	while (left != 0) {
-		nr_to_write = (unsigned) MIN(left, DUMP_SIZE);
-		if ( (nr_written = write(fake_fd, buf, nr_to_write)) < 0) {
-			close(fd);
-			return;
-		}
-		buf += nr_written;
-		left -= nr_written;
-	}
+	rw_seg(1, fd, slot, seg,
+		(phys_bytes) rmp->mp_seg[seg].mem_len << CLICK_SHIFT);
   }
   close(fd);
 }

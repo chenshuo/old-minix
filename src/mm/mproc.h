@@ -39,17 +39,22 @@ EXTERN struct mproc {
 
   unsigned mp_flags;		/* flag bits */
   vir_bytes mp_procargs;        /* ptr to proc's initial stack arguments */
+  struct mproc *mp_swapq;	/* queue of procs waiting to be swapped in */
+  message mp_reply;		/* reply message to be sent to one */
 } mproc[NR_PROCS];
 
 /* Flag values */
-#define IN_USE           001	/* set when 'mproc' slot in use */
-#define WAITING          002	/* set by WAIT system call */
-#define HANGING          004	/* set by EXIT system call */
-#define PAUSED           010	/* set by PAUSE system call */
-#define ALARM_ON         020	/* set when SIGALRM timer started */
-#define SEPARATE	 040	/* set if file is separate I & D space */
-#define	TRACED		0100	/* set if process is to be traced */
-#define STOPPED		0200	/* set if process stopped for tracing */
-#define SIGSUSPENDED 	0400	/* set by SIGSUSPEND system call */
+#define IN_USE          0x001	/* set when 'mproc' slot in use */
+#define WAITING         0x002	/* set by WAIT system call */
+#define ZOMBIE          0x004	/* set by EXIT, cleared by WAIT */
+#define PAUSED          0x008	/* set by PAUSE system call */
+#define ALARM_ON        0x010	/* set when SIGALRM timer started */
+#define SEPARATE	0x020	/* set if file is separate I & D space */
+#define	TRACED		0x040	/* set if process is to be traced */
+#define STOPPED		0x080	/* set if process stopped for tracing */
+#define SIGSUSPENDED 	0x100	/* set by SIGSUSPEND system call */
+#define REPLY	 	0x200	/* set if a reply message is pending */
+#define ONSWAP	 	0x400	/* set if data segment is swapped out */
+#define SWAPIN	 	0x800	/* set if on the "swap this in" queue */
 
 #define NIL_MPROC ((struct mproc *) 0)

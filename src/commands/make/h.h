@@ -64,6 +64,7 @@ struct DOSTIME {short time,date; };     /* time structure of TOS */
 
 #include <ctype.h>
 #include <stdio.h>
+#include <assert.h>
 
 #ifdef eon
 #define MNOENT ER_NOTF

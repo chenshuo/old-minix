@@ -16,7 +16,6 @@
 #include "fs.h"
 #include <fcntl.h>
 #include <signal.h>
-#include <minix/boot.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "dev.h"
@@ -24,8 +23,6 @@
 #include "fproc.h"
 #include "inode.h"
 #include "param.h"
-
-PRIVATE message mess;
 
 /*===========================================================================*
  *				do_pipe					     *
@@ -54,7 +51,7 @@ PUBLIC int do_pipe()
   fil_ptr1->filp_count = 1;
 
   /* Make the inode on the pipe device. */
-  if ( (rip = alloc_inode(PIPE_DEV, I_REGULAR) ) == NIL_INODE) {
+  if ( (rip = alloc_inode(root_dev, I_REGULAR) ) == NIL_INODE) {
 	rfp->fp_filp[fil_des[0]] = NIL_FILP;
 	fil_ptr0->filp_count = 0;
 	rfp->fp_filp[fil_des[1]] = NIL_FILP;
@@ -268,6 +265,7 @@ PUBLIC int do_unpause()
   int proc_nr, task, fild;
   struct filp *f;
   dev_t dev;
+  message mess;
 
   if (who > MM_PROC_NR) return(EPERM);
   proc_nr = pro;
@@ -276,12 +274,9 @@ PUBLIC int do_unpause()
   if (rfp->fp_suspended == NOT_SUSPENDED) return(OK);
   task = -rfp->fp_task;
 
-  switch(task) {
+  switch (task) {
 	case XPIPE:		/* process trying to read or write a pipe */
 		break;
-
-	case XOPEN:		/* process trying to open a special file */
-		panic ("fs/do_unpause called with XOPEN\n", NO_NUM);
 
 	case XLOCK:		/* process trying to set a lock with FCNTL */
 		break;
@@ -300,8 +295,8 @@ PUBLIC int do_unpause()
 		/* Tell kernel R or W. Mode is from current call, not open. */
 		mess.COUNT = (rfp->fp_fd & BYTE) == READ ? R_BIT : W_BIT;
 		mess.m_type = CANCEL;
-		fp = rfp;	/* hack - call_ctty uses fp */
-		(*dmap[(dev >> MAJOR) & BYTE].dmap_rw)(task, &mess);
+		fp = rfp;	/* hack - ctty_io uses fp */
+		(*dmap[(dev >> MAJOR) & BYTE].dmap_io)(task, &mess);
   }
 
   rfp->fp_suspended = NOT_SUSPENDED;

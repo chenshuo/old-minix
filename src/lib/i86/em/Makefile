@@ -7,211 +7,211 @@ LIBRARY	= ../../libe.a
 all:	$(LIBRARY)
 
 OBJECTS	= \
-	$(LIBRARY)(adi.o) \
-	$(LIBRARY)(and.o) \
-	$(LIBRARY)(blm.o) \
-	$(LIBRARY)(cii.o) \
-	$(LIBRARY)(cmi4.o) \
-	$(LIBRARY)(cms.o) \
-	$(LIBRARY)(cmu4.o) \
-	$(LIBRARY)(com.o) \
-	$(LIBRARY)(csa2.o) \
-	$(LIBRARY)(csa4.o) \
-	$(LIBRARY)(csb2.o) \
-	$(LIBRARY)(csb4.o) \
-	$(LIBRARY)(cuu.o) \
-	$(LIBRARY)(dup.o) \
-	$(LIBRARY)(dvi4.o) \
-	$(LIBRARY)(dvu4.o) \
-	$(LIBRARY)(error.o) \
-	$(LIBRARY)(exg.o) \
-	$(LIBRARY)(fat.o) \
-	$(LIBRARY)(fp8087.o) \
-	$(LIBRARY)(gto.o) \
-	$(LIBRARY)(iaar.o) \
-	$(LIBRARY)(ilar.o) \
-	$(LIBRARY)(inn.o) \
-	$(LIBRARY)(ior.o) \
-	$(LIBRARY)(isar.o) \
-	$(LIBRARY)(lar2.o) \
-	$(LIBRARY)(lfr6.o) \
-	$(LIBRARY)(lfr8.o) \
-	$(LIBRARY)(loi.o) \
-	$(LIBRARY)(mli4.o) \
-	$(LIBRARY)(mon.o) \
-	$(LIBRARY)(nop.o) \
-	$(LIBRARY)(rck.o) \
-	$(LIBRARY)(ret6.o) \
-	$(LIBRARY)(ret8.o) \
-	$(LIBRARY)(retarea.o) \
-	$(LIBRARY)(return.o) \
-	$(LIBRARY)(rmi4.o) \
-	$(LIBRARY)(rmu4.o) \
-	$(LIBRARY)(sar2.o) \
-	$(LIBRARY)(sbi.o) \
-	$(LIBRARY)(set.o) \
-	$(LIBRARY)(stb.o) \
-	$(LIBRARY)(sti.o) \
-	$(LIBRARY)(stop.o) \
-	$(LIBRARY)(strhp.o) \
-	$(LIBRARY)(trp.o) \
-	$(LIBRARY)(unknown.o) \
-	$(LIBRARY)(vars.o) \
-	$(LIBRARY)(xor.o) \
+	$(LIBRARY)(em_adi.o) \
+	$(LIBRARY)(em_and.o) \
+	$(LIBRARY)(em_blm.o) \
+	$(LIBRARY)(em_cii.o) \
+	$(LIBRARY)(em_cmi4.o) \
+	$(LIBRARY)(em_cms.o) \
+	$(LIBRARY)(em_cmu4.o) \
+	$(LIBRARY)(em_com.o) \
+	$(LIBRARY)(em_csa2.o) \
+	$(LIBRARY)(em_csa4.o) \
+	$(LIBRARY)(em_csb2.o) \
+	$(LIBRARY)(em_csb4.o) \
+	$(LIBRARY)(em_cuu.o) \
+	$(LIBRARY)(em_dup.o) \
+	$(LIBRARY)(em_dvi4.o) \
+	$(LIBRARY)(em_dvu4.o) \
+	$(LIBRARY)(em_error.o) \
+	$(LIBRARY)(em_exg.o) \
+	$(LIBRARY)(em_fat.o) \
+	$(LIBRARY)(em_fp8087.o) \
+	$(LIBRARY)(em_gto.o) \
+	$(LIBRARY)(em_hol0.o) \
+	$(LIBRARY)(em_iaar.o) \
+	$(LIBRARY)(em_ilar.o) \
+	$(LIBRARY)(em_inn.o) \
+	$(LIBRARY)(em_ior.o) \
+	$(LIBRARY)(em_isar.o) \
+	$(LIBRARY)(em_lar2.o) \
+	$(LIBRARY)(em_lfr6.o) \
+	$(LIBRARY)(em_lfr8.o) \
+	$(LIBRARY)(em_loi.o) \
+	$(LIBRARY)(em_mli4.o) \
+	$(LIBRARY)(em_mon.o) \
+	$(LIBRARY)(em_nop.o) \
+	$(LIBRARY)(em_rck.o) \
+	$(LIBRARY)(em_ret6.o) \
+	$(LIBRARY)(em_ret8.o) \
+	$(LIBRARY)(em_retarea.o) \
+	$(LIBRARY)(em_return.o) \
+	$(LIBRARY)(em_rmi4.o) \
+	$(LIBRARY)(em_rmu4.o) \
+	$(LIBRARY)(em_sar2.o) \
+	$(LIBRARY)(em_sbi.o) \
+	$(LIBRARY)(em_set.o) \
+	$(LIBRARY)(em_stb.o) \
+	$(LIBRARY)(em_sti.o) \
+	$(LIBRARY)(em_stop.o) \
+	$(LIBRARY)(em_trp.o) \
+	$(LIBRARY)(em_unknown.o) \
+	$(LIBRARY)(em_vars.o) \
+	$(LIBRARY)(em_xor.o) \
 
 $(LIBRARY):	$(OBJECTS)
 	aal cr $@ *.o
 	rm *.o
 
-$(LIBRARY)(adi.o):	adi.s
-	$(CC1) adi.s
+$(LIBRARY)(em_adi.o):	em_adi.s
+	$(CC1) em_adi.s
 
-$(LIBRARY)(and.o):	and.s
-	$(CC1) and.s
+$(LIBRARY)(em_and.o):	em_and.s
+	$(CC1) em_and.s
 
-$(LIBRARY)(blm.o):	blm.s
-	$(CC1) blm.s
+$(LIBRARY)(em_blm.o):	em_blm.s
+	$(CC1) em_blm.s
 
-$(LIBRARY)(cii.o):	cii.s
-	$(CC1) cii.s
+$(LIBRARY)(em_cii.o):	em_cii.s
+	$(CC1) em_cii.s
 
-$(LIBRARY)(cmi4.o):	cmi4.s
-	$(CC1) cmi4.s
+$(LIBRARY)(em_cmi4.o):	em_cmi4.s
+	$(CC1) em_cmi4.s
 
-$(LIBRARY)(cms.o):	cms.s
-	$(CC1) cms.s
+$(LIBRARY)(em_cms.o):	em_cms.s
+	$(CC1) em_cms.s
 
-$(LIBRARY)(cmu4.o):	cmu4.s
-	$(CC1) cmu4.s
+$(LIBRARY)(em_cmu4.o):	em_cmu4.s
+	$(CC1) em_cmu4.s
 
-$(LIBRARY)(com.o):	com.s
-	$(CC1) com.s
+$(LIBRARY)(em_com.o):	em_com.s
+	$(CC1) em_com.s
 
-$(LIBRARY)(csa2.o):	csa2.s
-	$(CC1) csa2.s
+$(LIBRARY)(em_csa2.o):	em_csa2.s
+	$(CC1) em_csa2.s
 
-$(LIBRARY)(csa4.o):	csa4.s
-	$(CC1) csa4.s
+$(LIBRARY)(em_csa4.o):	em_csa4.s
+	$(CC1) em_csa4.s
 
-$(LIBRARY)(csb2.o):	csb2.s
-	$(CC1) csb2.s
+$(LIBRARY)(em_csb2.o):	em_csb2.s
+	$(CC1) em_csb2.s
 
-$(LIBRARY)(csb4.o):	csb4.s
-	$(CC1) csb4.s
+$(LIBRARY)(em_csb4.o):	em_csb4.s
+	$(CC1) em_csb4.s
 
-$(LIBRARY)(cuu.o):	cuu.s
-	$(CC1) cuu.s
+$(LIBRARY)(em_cuu.o):	em_cuu.s
+	$(CC1) em_cuu.s
 
-$(LIBRARY)(dup.o):	dup.s
-	$(CC1) dup.s
+$(LIBRARY)(em_dup.o):	em_dup.s
+	$(CC1) em_dup.s
 
-$(LIBRARY)(dvi4.o):	dvi4.s
-	$(CC1) dvi4.s
+$(LIBRARY)(em_dvi4.o):	em_dvi4.s
+	$(CC1) em_dvi4.s
 
-$(LIBRARY)(dvu4.o):	dvu4.s
-	$(CC1) dvu4.s
+$(LIBRARY)(em_dvu4.o):	em_dvu4.s
+	$(CC1) em_dvu4.s
 
-$(LIBRARY)(error.o):	error.s
-	$(CC1) error.s
+$(LIBRARY)(em_error.o):	em_error.s
+	$(CC1) em_error.s
 
-$(LIBRARY)(exg.o):	exg.s
-	$(CC1) exg.s
+$(LIBRARY)(em_exg.o):	em_exg.s
+	$(CC1) em_exg.s
 
-$(LIBRARY)(fat.o):	fat.s
-	$(CC1) fat.s
+$(LIBRARY)(em_fat.o):	em_fat.s
+	$(CC1) em_fat.s
 
-$(LIBRARY)(fp8087.o):	fp8087.s
-	$(CC1) fp8087.s
+$(LIBRARY)(em_fp8087.o):	em_fp8087.s
+	$(CC1) em_fp8087.s
 
-$(LIBRARY)(gto.o):	gto.s
-	$(CC1) gto.s
+$(LIBRARY)(em_gto.o):	em_gto.s
+	$(CC1) em_gto.s
 
-$(LIBRARY)(iaar.o):	iaar.s
-	$(CC1) iaar.s
+$(LIBRARY)(em_hol0.o):	em_hol0.s
+	$(CC1) em_hol0.s
 
-$(LIBRARY)(ilar.o):	ilar.s
-	$(CC1) ilar.s
+$(LIBRARY)(em_iaar.o):	em_iaar.s
+	$(CC1) em_iaar.s
 
-$(LIBRARY)(inn.o):	inn.s
-	$(CC1) inn.s
+$(LIBRARY)(em_ilar.o):	em_ilar.s
+	$(CC1) em_ilar.s
 
-$(LIBRARY)(ior.o):	ior.s
-	$(CC1) ior.s
+$(LIBRARY)(em_inn.o):	em_inn.s
+	$(CC1) em_inn.s
 
-$(LIBRARY)(isar.o):	isar.s
-	$(CC1) isar.s
+$(LIBRARY)(em_ior.o):	em_ior.s
+	$(CC1) em_ior.s
 
-$(LIBRARY)(lar2.o):	lar2.s
-	$(CC1) lar2.s
+$(LIBRARY)(em_isar.o):	em_isar.s
+	$(CC1) em_isar.s
 
-$(LIBRARY)(lfr6.o):	lfr6.s
-	$(CC1) lfr6.s
+$(LIBRARY)(em_lar2.o):	em_lar2.s
+	$(CC1) em_lar2.s
 
-$(LIBRARY)(lfr8.o):	lfr8.s
-	$(CC1) lfr8.s
+$(LIBRARY)(em_lfr6.o):	em_lfr6.s
+	$(CC1) em_lfr6.s
 
-$(LIBRARY)(loi.o):	loi.s
-	$(CC1) loi.s
+$(LIBRARY)(em_lfr8.o):	em_lfr8.s
+	$(CC1) em_lfr8.s
 
-$(LIBRARY)(mli4.o):	mli4.s
-	$(CC1) mli4.s
+$(LIBRARY)(em_loi.o):	em_loi.s
+	$(CC1) em_loi.s
 
-$(LIBRARY)(mon.o):	mon.s
-	$(CC1) mon.s
+$(LIBRARY)(em_mli4.o):	em_mli4.s
+	$(CC1) em_mli4.s
 
-$(LIBRARY)(nop.o):	nop.s
-	$(CC1) nop.s
+$(LIBRARY)(em_mon.o):	em_mon.s
+	$(CC1) em_mon.s
 
-$(LIBRARY)(rck.o):	rck.s
-	$(CC1) rck.s
+$(LIBRARY)(em_nop.o):	em_nop.s
+	$(CC1) em_nop.s
 
-$(LIBRARY)(ret6.o):	ret6.s
-	$(CC1) ret6.s
+$(LIBRARY)(em_rck.o):	em_rck.s
+	$(CC1) em_rck.s
 
-$(LIBRARY)(ret8.o):	ret8.s
-	$(CC1) ret8.s
+$(LIBRARY)(em_ret6.o):	em_ret6.s
+	$(CC1) em_ret6.s
 
-$(LIBRARY)(retarea.o):	retarea.s
-	$(CC1) retarea.s
+$(LIBRARY)(em_ret8.o):	em_ret8.s
+	$(CC1) em_ret8.s
 
-$(LIBRARY)(return.o):	return.s
-	$(CC1) return.s
+$(LIBRARY)(em_retarea.o):	em_retarea.s
+	$(CC1) em_retarea.s
 
-$(LIBRARY)(rmi4.o):	rmi4.s
-	$(CC1) rmi4.s
+$(LIBRARY)(em_return.o):	em_return.s
+	$(CC1) em_return.s
 
-$(LIBRARY)(rmu4.o):	rmu4.s
-	$(CC1) rmu4.s
+$(LIBRARY)(em_rmi4.o):	em_rmi4.s
+	$(CC1) em_rmi4.s
 
-$(LIBRARY)(sar2.o):	sar2.s
-	$(CC1) sar2.s
+$(LIBRARY)(em_rmu4.o):	em_rmu4.s
+	$(CC1) em_rmu4.s
 
-$(LIBRARY)(sbi.o):	sbi.s
-	$(CC1) sbi.s
+$(LIBRARY)(em_sar2.o):	em_sar2.s
+	$(CC1) em_sar2.s
 
-$(LIBRARY)(set.o):	set.s
-	$(CC1) set.s
+$(LIBRARY)(em_sbi.o):	em_sbi.s
+	$(CC1) em_sbi.s
 
-$(LIBRARY)(stb.o):	stb.c
-	$(CC1) stb.c
+$(LIBRARY)(em_set.o):	em_set.s
+	$(CC1) em_set.s
 
-$(LIBRARY)(sti.o):	sti.s
-	$(CC1) sti.s
+$(LIBRARY)(em_stb.o):	em_stb.s
+	$(CC1) em_stb.s
 
-$(LIBRARY)(stop.o):	stop.s
-	$(CC1) stop.s
+$(LIBRARY)(em_sti.o):	em_sti.s
+	$(CC1) em_sti.s
 
-$(LIBRARY)(strhp.o):	strhp.s
-	$(CC1) strhp.s
+$(LIBRARY)(em_stop.o):	em_stop.s
+	$(CC1) em_stop.s
 
-$(LIBRARY)(trp.o):	trp.s
-	$(CC1) trp.s
+$(LIBRARY)(em_trp.o):	em_trp.s
+	$(CC1) em_trp.s
 
-$(LIBRARY)(unknown.o):	unknown.s
-	$(CC1) unknown.s
+$(LIBRARY)(em_unknown.o):	em_unknown.s
+	$(CC1) em_unknown.s
 
-$(LIBRARY)(vars.o):	vars.s
-	$(CC1) vars.s
+$(LIBRARY)(em_vars.o):	em_vars.s
+	$(CC1) em_vars.s
 
-$(LIBRARY)(xor.o):	xor.s
-	$(CC1) xor.s
+$(LIBRARY)(em_xor.o):	em_xor.s
+	$(CC1) em_xor.s

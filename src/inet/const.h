@@ -19,8 +19,6 @@ Copyright 1995 Philip Homburg
 
 #define CLOCK_GRAN	1	/* in HZ */
 
-#define printf	printk
-
 #if DEBUG
 #define where()	printf("%s, %d: ", __FILE__, __LINE__)
 #endif

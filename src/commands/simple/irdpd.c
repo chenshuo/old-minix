@@ -1,4 +1,4 @@
-/*	irdpd 1.9 - Internet router discovery protocol daemon.
+/*	irdpd 1.10 - Internet router discovery protocol daemon.
  *							Author: Kees J. Bot
  *								28 May 1994
  * Activily solicitate or passively look for routers.
@@ -69,7 +69,6 @@ char *ip_device;		/* IP device to use. */
 int priority_offset;		/* Offset to make my routes less preferred. */
 
 int bcast= 0;			/* Broadcast adverts to all. */
-int silent= 0;			/* Don't react to solicitations. */
 int debug= 0;
 
 char rip_buf[8192];		/* Incoming RIP packet buffer. */
@@ -98,8 +97,6 @@ typedef struct table
 
 table_t *table;			/* Collected table of routing info. */
 size_t table_size;
-
-ipaddr_t my_ip_addr;		/* IP address of the local host. */
 
 int sol_retries= MAX_SOLICITATIONS;
 time_t next_sol= IMMEDIATELY;
@@ -343,7 +340,10 @@ void rip_incoming(ssize_t n)
 			continue;
 		default_dist= ntohl(data->metric);
 		if (default_dist >= 256) {
-			if (debug) printf("Strange metric %d\n", default_dist);
+			if (debug) {
+				printf("Strange metric %lu\n",
+					(unsigned long) default_dist);
+			}
 		}
 	}
 	pref= default_dist >= 256 ? 1 : 512 - default_dist;
@@ -388,21 +388,10 @@ void irdp_incoming(ssize_t n)
 
 	icmp_hdr= (icmp_hdr_t *)(irdp_buf + ip_hdr_len);
 
-	/* Did I send it myself? */
-	if (ip_hdr->ih_src == my_ip_addr) return;
+	/* Did I send this myself? */
+	if (ip_hdr->ih_src == ip_hdr->ih_dst) return;
 	if ((htonl(ip_hdr->ih_src) & 0xFF000000L) == 0x7F000000L) return;
 
-	if (icmp_hdr->ih_type == ICMP_TYPE_ROUTE_SOL) {
-		/* Some other host is looking for a router.  Send a table
-		 * if there is no smart router around, we are not still
-		 * soliciting ourselves, and we are not told to be silent.
-		 */
-		if (sol_retries == 0 && table_size > 0
-				&& now > router_advert_valid && !silent) {
-			advertize(ip_hdr->ih_src);
-		}
-		return;
-	}
 	if (icmp_hdr->ih_type != ICMP_TYPE_ROUTER_ADVER) return;
 
 	/* Incoming router advertisement, the kind of packet the TCP/IP task
@@ -410,9 +399,9 @@ void irdp_incoming(ssize_t n)
 	 */
 	sol_retries= 0;
 
-	/* Add router info to our table.  Also see if the packet came from
-	 * a router, and not another irdpd.  If it is from a router then we
-	 * go silent for the lifetime of the ICMP.
+	/* Add router info to our table.  Also see if the packet really came
+	 * from a router.  If so then we can go dormant for the lifetime of
+	 * the ICMP.
 	 */
 	router= 0;
 	data= (char *) icmp_hdr->ih_dun.uhd_data;
@@ -463,7 +452,7 @@ void sig_handler(int sig)
 void usage(void)
 {
 	fprintf(stderr,
-"Usage: irdpd [-d] [-U udp-device] [-I ip-device] [-o priority-offset]\n");
+"Usage: irdpd [-bd] [-U udp-device] [-I ip-device] [-o priority-offset]\n");
 	exit(1);
 }
 
@@ -473,7 +462,6 @@ int main(int argc, char **argv)
 	struct servent *service;
 	udpport_t route_port;
 	nwio_udpopt_t udpopt;
-	nwio_ipconf_t ipconf;
 	nwio_ipopt_t ipopt;
 	asynchio_t asyn;
 	time_t timeout;
@@ -482,7 +470,8 @@ int main(int argc, char **argv)
 	char *offset_arg, *offset_end;
 	long arg;
 
-	udp_device = ip_device = nil;
+	udp_device= ip_device= nil;
+	offset_arg= nil;
 
 	for (i = 1; i < argc && argv[i][0] == '-'; i++) {
 		char *p= argv[i] + 1;
@@ -522,7 +511,7 @@ int main(int argc, char **argv)
 				bcast= 1;
 				break;
 			case 's':
-				silent= 1;
+				/*obsolete*/
 				break;
 			case 'd':
 				debug= 1;
@@ -573,11 +562,6 @@ int main(int argc, char **argv)
 		fatal("setting UDP options failed");
 
 	if ((irdp_fd= open(ip_device, O_RDWR)) < 0) fatal(ip_device);
-
-	if (ioctl(irdp_fd, NWIOGIPCONF, &ipconf) < 0)
-		fatal("can't get IP configuration");
-
-	my_ip_addr= ipconf.nwic_ipaddr;
 
 	ipopt.nwio_flags= NWIO_COPY | NWIO_EN_LOC | NWIO_EN_BROAD
 			| NWIO_REMANY | NWIO_PROTOSPEC

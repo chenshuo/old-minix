@@ -4,6 +4,7 @@
 #define _POSIX_SOURCE 1		/* for PATH_MAX from limits.h */
 
 #include <sys/types.h>
+#include <sys/svrctl.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <limits.h>
@@ -24,9 +25,16 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
+  int sflag = 0;
 
+  while (argc > 1 && argv[1][0] == '-') {
+	char *opt = argv[1]+1;
+	while (*opt) if (*opt++ == 's') sflag = 1; else usage();
+	argc--;
+	argv++;
+  }
   if (argc != 2) usage();
-  if (umount(argv[1]) < 0) {
+  if ((sflag ? svrctl(MMSWAPOFF, NULL) : umount(argv[1])) < 0) {
 	if (errno == EINVAL)
 		std_err("Device not mounted\n");
 	else
@@ -73,7 +81,7 @@ char *devname;
 
 void usage()
 {
-  std_err("Usage: umount special\n");
+  std_err("Usage: umount [-s] special\n");
   exit(1);
 }
 

@@ -7,11 +7,9 @@ BINDIR	= /usr/bin
 
 # Flags you may want to add to CFLAGS:
 # -DHAS_STDC=0 or 1	We have Standard C.  Default=1 iff __STDC__ is nonzero.
-#
-# On Minix, use '-m' in CFLAGS and '-i' in LDFLAGS.
 
 CC	= cc
-CFLAGS	= -m -D_POSIX_SOURCE
+CFLAGS	= -D_POSIX_SOURCE
 LDFLAGS	=  -i
 
 OBJS	= advent.o database.o english.o initial.o itverb.o score.o\

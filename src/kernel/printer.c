@@ -25,6 +25,8 @@
 #include <minix/com.h>
 #include "proc.h"
 
+#if ENABLE_PRINTER
+
 /* Control bits (in port_base + 2).  "+" means positive logic and "-" means
  * negative logic.  Most of the signals are negative logic on the pins but
  * many are converted to positive logic in the ports.  Some manuals are
@@ -369,3 +371,4 @@ PUBLIC void pr_restart()
 	opending = TRUE;	/* expect some printing before next call */
   }
 }
+#endif /* ENABLE_PRINTER */

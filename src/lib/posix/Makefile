@@ -23,8 +23,12 @@ OBJECTS	= \
 	$(LIBRARY)(_creat.o) \
 	$(LIBRARY)(_dup.o) \
 	$(LIBRARY)(_dup2.o) \
-	$(LIBRARY)(_exec.o) \
-	$(LIBRARY)(_execn.o) \
+	$(LIBRARY)(_execl.o) \
+	$(LIBRARY)(_execle.o) \
+	$(LIBRARY)(_execlp.o) \
+	$(LIBRARY)(_execv.o) \
+	$(LIBRARY)(_execve.o) \
+	$(LIBRARY)(_execvp.o) \
 	$(LIBRARY)(_fcntl.o) \
 	$(LIBRARY)(_fork.o) \
 	$(LIBRARY)(_fpathconf.o) \
@@ -142,11 +146,23 @@ $(LIBRARY)(_dup.o):	_dup.c
 $(LIBRARY)(_dup2.o):	_dup2.c
 	$(CC1) _dup2.c
 
-$(LIBRARY)(_exec.o):	_exec.c
-	$(CC1) _exec.c
+$(LIBRARY)(_execl.o):	_execl.c
+	$(CC1) _execl.c
 
-$(LIBRARY)(_execn.o):	_execn.c
-	$(CC1) _execn.c
+$(LIBRARY)(_execle.o):	_execle.c
+	$(CC1) _execle.c
+
+$(LIBRARY)(_execlp.o):	_execlp.c
+	$(CC1) _execlp.c
+
+$(LIBRARY)(_execv.o):	_execv.c
+	$(CC1) _execv.c
+
+$(LIBRARY)(_execve.o):	_execve.c
+	$(CC1) _execve.c
+
+$(LIBRARY)(_execvp.o):	_execvp.c
+	$(CC1) _execvp.c
 
 $(LIBRARY)(_fcntl.o):	_fcntl.c
 	$(CC1) _fcntl.c

@@ -61,6 +61,7 @@ Copyright 1995 Philip Homburg
 
 struct acc;
 
+void tcp_prep ARGS(( void ));
 void tcp_init ARGS(( void ));
 int tcp_open ARGS(( int port, int srfd,
 	get_userdata_t get_userdata, put_userdata_t put_userdata, 

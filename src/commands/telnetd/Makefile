@@ -3,7 +3,7 @@
 # 01/30/96 Initial Release	Michael Temari, <temari@ix.netcom.com>
 #
 
-CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE -m
+CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE
 LDFLAGS=-i
 BINDIR=	/usr/bin
 PROG=	in.telnetd

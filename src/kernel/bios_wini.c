@@ -17,33 +17,25 @@
  *
  * Changes:
  *	30 Apr 1992 by Kees J. Bot: device dependent/independent split.
+ *	14 May 2000 by Kees J. Bot: d-d/i rewrite.
  */
 
 #include "kernel.h"
 #include "driver.h"
 #include "drvlib.h"
+#include <ibm/int86.h>
 
 #if ENABLE_BIOS_WINI
-
-/* If the DMA buffer is large enough then use it always. */
-#define USE_BUF		(DMA_BUF_SIZE > BLOCK_SIZE)
 
 /* Error codes */
 #define ERR		 (-1)	/* general error */
 
 /* Parameters for the disk drive. */
-#define MAX_DRIVES         4	/* this driver supports 4 drives (hd0 - hd19)*/
+#define MAX_DRIVES         4	/* this driver supports 4 drives (d0 - d3)*/
 #define MAX_SECS	 255	/* bios can transfer this many sectors */
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
-
-/* BIOS parameters */
-#define BIOS_ASK        0x08	/* opcode for asking BIOS for parameters */
-#define BIOS_RESET      0x00	/* opcode for resetting disk BIOS */
-#define BIOS_READ       0x02	/* opcode for BIOS read */
-#define BIOS_WRITE      0x03	/* opcode for BIOS write */
-#define HD_CODE         0x80	/* BIOS code for hard disk drive 0 */
 
 /* Variables. */
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
@@ -51,30 +43,19 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned heads;		/* number of heads */
   unsigned sectors;		/* number of sectors per track */
   unsigned open_ct;		/* in-use count */
-  struct device part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
+  int int13ext;			/* IBM/MS INT 13 extensions supported? */
+  struct device part[DEV_PER_DRIVE];	/* disks and partitions */
+  struct device subpart[SUB_PER_DRIVE]; /* subpartitions */
 } wini[MAX_DRIVES], *w_wn;
 
-PRIVATE struct trans {
-  struct iorequest_s *iop;	/* belongs to this I/O request */
-  unsigned long block;		/* first sector to transfer */
-  unsigned count;		/* byte count */
-  phys_bytes phys;		/* user physical address */
-  phys_bytes dma;		/* DMA physical address */
-} wtrans[NR_IOREQS];
-
 PRIVATE int nr_drives = MAX_DRIVES;	/* Number of drives */
-PRIVATE struct trans *w_tp;		/* to add transfer requests */
-PRIVATE unsigned w_count;		/* number of bytes to transfer */
-PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
-PRIVATE int w_opcode;			/* DEV_READ or DEV_WRITE */
 PRIVATE int w_drive;			/* selected drive */
 PRIVATE struct device *w_dv;		/* device's base and size */
 
 FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
 FORWARD _PROTOTYPE( char *w_name, (void) );
-FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int w_finish, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
@@ -88,8 +69,7 @@ PRIVATE struct driver w_dtab = {
   w_do_close,	/* release device */
   do_diocntl,	/* get or set a partition's geometry */
   w_prepare,	/* prepare for I/O on a given minor device */
-  w_schedule,	/* precompute cylinder, head, sector, etc. */
-  w_finish,	/* do the I/O */
+  w_transfer,	/* do the I/O */
   nop_cleanup,	/* no cleanup needed */
   w_geometry	/* tell the geometry of the disk */
 };
@@ -112,15 +92,12 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  /* Nothing to transfer as yet. */
-  w_count = 0;
-
-  if (device < NR_DEVICES) {			/* hd0, hd1, ... */
+  if (device < NR_DEVICES) {			/* d0, d0p[0-3], d1, ... */
 	w_drive = device / DEV_PER_DRIVE;	/* save drive number */
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->part[device % DEV_PER_DRIVE];
   } else
-  if ((unsigned) (device -= MINOR_hd1a) < NR_SUBDEVS) {	/* hd1a, hd1b, ... */
+  if ((unsigned) (device -= MINOR_d0p0s0) < NR_SUBDEVS) {/*d[0-7]p[0-3]s[0-3]*/
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
@@ -137,197 +114,149 @@ int device;
 PRIVATE char *w_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "bios-hd5";
+  static char name[] = "bios-d0";
 
-  name[7] = '0' + w_drive * DEV_PER_DRIVE;
+  name[6] = '0' + w_drive;
   return name;
 }
 
 
 /*===========================================================================*
- *				w_schedule				     *
+ *				w_transfer				     *
  *===========================================================================*/
-PRIVATE int w_schedule(proc_nr, iop)
+PRIVATE int w_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-/* Gather I/O requests on consecutive blocks so they may be read/written
- * in one bios command if using a buffer.  Check and gather all the requests
- * and try to finish them as fast as possible if unbuffered.
- */
-  int r, opcode;
-  unsigned long pos;
-  unsigned nbytes, count, dma_count;
+  struct wini *wn = w_wn;
+  iovec_t *iop, *iov_end = iov + nr_req;
+  int errors;
+  unsigned nbytes, count, chunk;
   unsigned long block;
-  phys_bytes user_phys, dma_phys;
+  unsigned long dv_size = cv64ul(w_dv->dv_size);
+  unsigned secspcyl = wn->heads * wn->sectors;
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
+  static struct int13ext_rw {
+	u8_t	len;
+	u8_t	res1;
+	u16_t	count;
+	u16_t	addr[2];
+	u32_t	block[2];
+  } i13e_rw;
 
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+  /* Check disk address. */
+  if ((position & SECTOR_MASK) != 0) return(EINVAL);
 
-  /* From/to this position on the device */
-  pos = iop->io_position;
-  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+  errors = 0;
 
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read or write? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-
-  /* Which block on disk and how close to EOF? */
-  if (pos >= w_dv->dv_size) return(OK);		/* At EOF */
-  if (pos + nbytes > w_dv->dv_size) nbytes = w_dv->dv_size - pos;
-  block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
-
-  if (USE_BUF && w_count > 0 && block != w_nextblock) {
-	/* This new request can't be chained to the job being built */
-	if ((r = w_finish()) != OK) return(r);
-  }
-
-  /* The next consecutive block */
-  if (USE_BUF) w_nextblock = block + (nbytes >> SECTOR_SHIFT);
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	count = nbytes;
-
-	if (USE_BUF) {
-		if (w_count == DMA_BUF_SIZE) {
-			/* Can't transfer more than the buffer allows. */
-			if ((r = w_finish()) != OK) return(r);
+  while (nr_req > 0) {
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) {
+		if (nbytes + iop->iov_size > DMA_BUF_SIZE) {
+			/* Don't do half a segment if you can avoid it. */
+			if (nbytes == 0) nbytes = DMA_BUF_SIZE;
+			break;
 		}
-
-		if (w_count + count > DMA_BUF_SIZE)
-			count = DMA_BUF_SIZE - w_count;
-	} else {
-		if (w_tp == wtrans + NR_IOREQS) {
-			/* All transfer slots in use. */
-			if ((r = w_finish()) != OK) return(r);
-		}
+		nbytes += iop->iov_size;
 	}
+	if ((nbytes & SECTOR_MASK) != 0) return(EINVAL);
 
-	if (w_count == 0) {
-		/* The first request in a row, initialize. */
-		w_opcode = opcode;
-		w_tp = wtrans;
-	}
+	/* Which block on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);		/* At EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+	block = div64u(add64ul(w_dv->dv_base, position), SECTOR_SIZE);
 
-	if (USE_BUF) {
-		dma_phys = tmp_phys + w_count;
-	} else {
-		/* Memory chunk to DMA. */
-		dma_phys = user_phys;
-		dma_count = dma_bytes_left(dma_phys);
+	/* Degrade to per-sector mode if there were errors. */
+	if (errors > 0) nbytes = SECTOR_SIZE;
 
-		if (dma_phys >= (1L << 20)) {
-			/* The BIOS can only address the first megabyte. */
-			count = SECTOR_SIZE;
-			dma_phys = tmp_phys;
-		} else
-		if (dma_count < count) {
-			/* Nearing a 64K boundary. */
-			if (dma_count >= SECTOR_SIZE) {
-				/* Can read a few sectors before hitting the
-				 * boundary.
-				 */
-				count = dma_count & ~SECTOR_MASK;
-			} else {
-				/* Must use the special buffer for this. */
-				count = SECTOR_SIZE;
-				dma_phys = tmp_phys;
-			}
-		}
-	}
-
-	/* Store I/O parameters */
-	w_tp->iop = iop;
-	w_tp->block = block;
-	w_tp->count = count;
-	w_tp->phys = user_phys;
-	w_tp->dma = dma_phys;
-
-	/* Update counters */
-	w_tp++;
-	w_count += count;
-	block += count >> SECTOR_SHIFT;
-	user_phys += count;
-	nbytes -= count;
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				w_finish				     *
- *===========================================================================*/
-PRIVATE int w_finish()
-{
-/* Carry out the I/O requests gathered in wtrans[]. */
-
-  struct trans *tp = wtrans, *tp2;
-  unsigned count, cylinder, sector, head;
-  unsigned secspcyl = w_wn->heads * w_wn->sectors;
-  int many = USE_BUF;
-
-  if (w_count == 0) return(OK);	/* Spurious finish. */
-
-  do {
-	if (w_opcode == DEV_WRITE) {
-		tp2 = tp;
+	if (opcode == DEV_SCATTER) {
+		/* Copy from user space to the DMA buffer. */
 		count = 0;
-		do {
-			if (USE_BUF || tp2->dma == tmp_phys) {
-				phys_copy(tp2->phys, tp2->dma,
-						(phys_bytes) tp2->count);
-			}
-			count += tp2->count;
-			tp2++;
-		} while (many && count < w_count);
-	} else {
-		count = many ? w_count : tp->count;
+		for (iop = iov; count < nbytes; iop++) {
+			chunk = iov->iov_size;
+			if (count + chunk > nbytes) chunk = nbytes - count;
+			phys_copy(user_base + iop->iov_addr, tmp_phys + count,
+							(phys_bytes) chunk);
+			count += chunk;
+		}
 	}
 
 	/* Do the transfer */
-	cylinder = tp->block / secspcyl;
-	sector = (tp->block % w_wn->sectors) + 1;
-	head = (tp->block % secspcyl) / w_wn->sectors;
+	if (wn->int13ext) {
+		/* Set up an extended read or write BIOS call. */
+		reg86.b.intno = 0x13;
+		reg86.b.ah = opcode == DEV_SCATTER ? 0x43 : 0x42;
+		reg86.b.dl = 0x80 + w_drive;
+		reg86.w.si = vir2phys(&i13e_rw) % HCLICK_SIZE;
+		reg86.w.ds = vir2phys(&i13e_rw) / HCLICK_SIZE;
+		i13e_rw.len = 0x10;
+		i13e_rw.res1 = 0;
+		i13e_rw.count = nbytes >> SECTOR_SHIFT;
+		i13e_rw.addr[0] = tmp_phys % HCLICK_SIZE;
+		i13e_rw.addr[1] = tmp_phys / HCLICK_SIZE;
+		i13e_rw.block[0] = block;
+		i13e_rw.block[1] = 0;
+	} else {
+		/* Set up an ordinary read or write BIOS call. */
+		unsigned cylinder = block / secspcyl;
+		unsigned sector = (block % wn->sectors) + 1;
+		unsigned head = (block % secspcyl) / wn->sectors;
 
-	/* Set up and execute a read or write BIOS call. */
-	reg86.b.intno = 0x13;
-	reg86.b.ah = w_opcode == DEV_WRITE ? BIOS_WRITE : BIOS_READ;
-	reg86.b.al = count >> SECTOR_SHIFT;
-	reg86.w.bx = tp->dma % HCLICK_SIZE;
-	reg86.w.es = tp->dma / HCLICK_SIZE;
-	reg86.b.ch = cylinder & 0xFF;
-	reg86.b.cl = sector | ((cylinder & 0x300) >> 2);
-	reg86.b.dh = head;
-	reg86.b.dl = HD_CODE + w_drive;
+		reg86.b.intno = 0x13;
+		reg86.b.ah = opcode == DEV_SCATTER ? 0x03 : 0x02;
+		reg86.b.al = nbytes >> SECTOR_SHIFT;
+		reg86.w.bx = tmp_phys % HCLICK_SIZE;
+		reg86.w.es = tmp_phys / HCLICK_SIZE;
+		reg86.b.ch = cylinder & 0xFF;
+		reg86.b.cl = sector | ((cylinder & 0x300) >> 2);
+		reg86.b.dh = head;
+		reg86.b.dl = 0x80 + w_drive;
+	}
 	level0(int86);
 	if (reg86.w.f & 0x0001) {
-		/* An error occurred, try again block by block unless */
-		if (!many) return(tp->iop->io_nbytes = EIO);
-		many = 0;
+		/* An error occurred, try again sector by sector unless */
+		if (++errors == 2) return(EIO);
 		continue;
 	}
 
-	w_count -= count;
-
-	do {
-		if (w_opcode == DEV_READ) {
-			if (USE_BUF || tp->dma == tmp_phys) {
-				phys_copy(tp->dma, tp->phys,
-						(phys_bytes) tp->count);
-			}
+	if (opcode == DEV_GATHER) {
+		/* Copy from the DMA buffer to user space. */
+		count = 0;
+		for (iop = iov; count < nbytes; iop++) {
+			chunk = iov->iov_size;
+			if (count + chunk > nbytes) chunk = nbytes - count;
+			phys_copy(tmp_phys + count, user_base + iop->iov_addr,
+							(phys_bytes) chunk);
+			count += chunk;
 		}
-		tp->iop->io_nbytes -= tp->count;
-		count -= tp->count;
-		tp++;
-	} while (count > 0);
-  } while (w_count > 0);
+	}
 
+	/* Book the bytes successfully transferred. */
+	position += nbytes;
+	for (;;) {
+		if (nbytes < iov->iov_size) {
+			/* Not done with this one yet. */
+			iov->iov_addr += nbytes;
+			iov->iov_size -= nbytes;
+			break;
+		}
+		nbytes -= iov->iov_size;
+		iov->iov_addr += iov->iov_size;
+		iov->iov_size = 0;
+		if (nbytes == 0) {
+			/* The rest is optional, so we return to give FS a
+			 * chance to think it over.
+			 */
+			return(OK);
+		}
+		iov++;
+		nr_req--;
+	}
+  }
   return(OK);
 }
 
@@ -379,14 +308,25 @@ PRIVATE void w_init()
 
   int drive;
   struct wini *wn;
+  unsigned long capacity;
+  static struct int13ext_params {
+	u16_t	len;
+	u16_t	flags;
+	u32_t	cylinders;
+	u32_t	heads;
+	u32_t	sectors;
+	u32_t	capacity[2];
+	u16_t	bts_per_sec;
+	u16_t	config[2];
+  } i13e_par;
 
-  /* Set the geometry of the drives */
+  /* Get the geometry of the drives */
   for (drive = 0; drive < nr_drives; drive++) {
 	(void) w_prepare(drive * DEV_PER_DRIVE);
 	wn = w_wn;
 	reg86.b.intno = 0x13;
-	reg86.b.ah = BIOS_ASK;
-	reg86.b.dl = HD_CODE + drive;
+	reg86.b.ah = 0x08;	/* Get drive parameters. */
+	reg86.b.dl = 0x80 + drive;
 	level0(int86);
 	nr_drives = !(reg86.w.f & 0x0001) ? reg86.b.dl : drive;
 	if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
@@ -396,11 +336,38 @@ PRIVATE void w_init()
 	wn->sectors = reg86.b.cl & 0x3F;
 	wn->cylinders = (reg86.b.ch | ((reg86.b.cl & 0xC0) << 2)) + 1;
 
-	wn->part[0].dv_size = ((unsigned long) wn->cylinders
-			* wn->heads * wn->sectors) << SECTOR_SHIFT;
+	capacity = (unsigned long) wn->cylinders * wn->heads * wn->sectors;
 
-	printf("%s: %d cylinders, %d heads, %d sectors per track\n",
-		w_name(), wn->cylinders, wn->heads, wn->sectors);
+	reg86.b.intno = 0x13;
+	reg86.b.ah = 0x41;	/* INT 13 Extensions - Installation check */
+	reg86.w.bx = 0x55AA;
+	reg86.b.dl = 0x80 + drive;
+	if (pc_at) level0(int86);
+
+	if (!(reg86.w.f & 0x0001) && reg86.w.bx == 0xAA55
+				&& (reg86.w.cx & 0x0001)) {
+		/* INT 13 Extensions available. */
+		reg86.b.intno = 0x13;
+		reg86.b.ah = 0x48;	/* Ext. Get drive parameters. */
+		reg86.b.dl = 0x80 + drive;
+		reg86.w.si = vir2phys(&i13e_par) % HCLICK_SIZE;
+		reg86.w.ds = vir2phys(&i13e_par) / HCLICK_SIZE;
+		i13e_par.len = 0x001E;	/* Input size of parameter packet */
+		level0(int86);
+		if (!(reg86.w.f & 0x0001)) {
+			wn->int13ext = 1;	/* Extensions can be used. */
+			capacity = i13e_par.capacity[0];
+			if (i13e_par.capacity[1] != 0) capacity = 0xFFFFFFFF;
+		}
+	}
+
+	if (wn->int13ext) {
+		printf("%s: %lu sectors\n", w_name(), capacity);
+	} else {
+		printf("%s: %d cylinders, %d heads, %d sectors per track\n",
+			w_name(), wn->cylinders, wn->heads, wn->sectors);
+	}
+	wn->part[0].dv_size = mul64u(capacity, SECTOR_SIZE);
   }
 }
 

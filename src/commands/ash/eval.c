@@ -641,6 +641,7 @@ evalcommand(cmd, flags, backcmd)
 		if (cmdentry.cmdtype == CMDUNKNOWN) {	/* command not found */
 			exitstatus = 2;
 			flushout(&errout);
+			popstackmark(&smark);
 			return;
 		}
 		/* implement the bltin builtin here */
@@ -653,6 +654,7 @@ evalcommand(cmd, flags, backcmd)
 					outfmt(&errout, "%s: not found\n", *argv);
 					exitstatus = 2;
 					flushout(&errout);
+					popstackmark(&smark);
 					return;
 				}
 				if (cmdentry.u.index != BLTINCMD)

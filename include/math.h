@@ -3,13 +3,13 @@
 #ifndef _MATH_H
 #define _MATH_H
 
-#define HUGE_VAL	(__huge_val())		/* may be infinity */
-
-/* Function Prototypes. */
 #ifndef _ANSI_H
 #include <ansi.h>
 #endif
 
+#define HUGE_VAL	(__huge_val())		/* may be infinity */
+
+/* Function Prototypes. */
 _PROTOTYPE( double __huge_val,	(void)					);
 _PROTOTYPE( int __IsNan,	(double _x)				);
 

@@ -1,4 +1,4 @@
-/*	part 1.48 - Partition table editor		Author: Kees J. Bot
+/*	part 1.56 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 22k heap+stack.
  */
@@ -16,35 +16,39 @@
 #include <time.h>
 #include <dirent.h>
 #include <limits.h>
+#include <a.out.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
+#include <minix/u64.h>
 #include <ibm/partition.h>
 #include <termios.h>
 
-#if !__minix_vmd
-#define div64u(i, j)	((i) / (j))
-#endif
+/* True if a partition is an extended partition. */
+#define ext_part(s)	((s) == 0x05 || (s) == 0x0F)
+
+/* Minix master bootstrap code. */
+static char MASTERBOOT[] = "/usr/mdec/masterboot";
 
 /* Template:
                       ----first----  --geom/last--  ------sectors-----
-    Device             Cyl Head Sec   Cyl Head Sec      Base      Size       Kb
-    /dev/hd0                          977    5  17
-    /dev/hd0:2           0    0   2   976    4  16         2     83043    41521
+    Device             Cyl Head Sec   Cyl Head Sec      Base      Size        Kb
+    /dev/c0d0                          977    5  17
+    /dev/c0d0:2          0    0   2   976    4  16         2     83043     41521
 Num Sort   Type
- 1* hd1  81 MINIX        0    0   3    33    4   9         3      2880     1440
- 2  hd2  81 MINIX       33    4  10   178    2   2      2883     12284     6142
- 3  hd3  81 MINIX      178    2   3   976    4  16     15167     67878    33939
- 4  hd4  00 None         0    0   0     0    0  -1         0         0        0
+ 0* p0   81 MINIX        0    0   3    33    4   9         3      2880      1440
+ 1  p1   81 MINIX       33    4  10   178    2   2      2883     12284      6142
+ 2  p2   81 MINIX      178    2   3   976    4  16     15167     67878     33939
+ 3  p3   00 None         0    0   0     0    0  -1         0         0         0
 
  */
 #define MAXSIZE		99999999L	/* Will 100 G be enough this year? */
 #define SECTOR_SIZE	512
 #define DEV_FD0		0x200		/* Device number of /dev/fd0 */
-#define DEV_HD0		0x300		/* Device number of /dev/hd0 */
+#define DEV_C0D0	0x300		/* Device number of /dev/c0d0 */
 
 #define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
 #define arraylimit(a)	((a) + arraysize(a))
@@ -204,14 +208,13 @@ void *alloc(size_t n)
 			((dev_t) (((major) << MAJOR) | ((minor) << MINOR)))
 #endif
 
-typedef enum parttype { DUNNO, SUBPART, PRIMARY } parttype_t;
+typedef enum parttype { DUNNO, SUBPART, PRIMARY, FLOPPY } parttype_t;
 
 typedef struct device {
 	struct device *next, *prev;	/* Circular dequeue. */
 	dev_t	rdev;			/* Device number (sorting only). */
-	char	*name;			/* E.g. /dev/hd0 */
-	char	*subname;		/* E.g. /dev/hd0:2 */
-	char	part[6];		/* E.g. hd2a */
+	char	*name;			/* E.g. /dev/c0d0 */
+	char	*subname;		/* E.g. /dev/c0d0:2 */
 	parttype_t parttype;
 } device_t;
 
@@ -219,12 +222,10 @@ device_t *firstdev= nil, *curdev;
 
 void newdevice(char *name, int scanning)
 /* Add a device to the device list.  If scanning is set then we are reading
- * /dev, so insert the device in device number order and make /dev/hd0 current.
+ * /dev, so insert the device in device number order and make /dev/c0d0 current.
  */
 {
 	device_t *new, *nextdev, *prevdev;
-	char *base;
-	int max, len;
 	struct stat st;
 
 	st.st_rdev= 0;
@@ -254,17 +255,13 @@ void newdevice(char *name, int scanning)
 	strcpy(new->name, name);
 	new->subname= new->name;
 	new->parttype= DUNNO;
-	if (major(st.st_rdev) == major(DEV_FD0)) {
-		new->parttype= SUBPART;
+	if (major(st.st_rdev) == major(DEV_FD0) && minor(st.st_rdev) < 112) {
+		new->parttype= FLOPPY;
 	} else
-	if (st.st_rdev >= DEV_HD0 && minor(st.st_rdev) < 128
+	if (st.st_rdev >= DEV_C0D0 && minor(st.st_rdev) < 128
 			&& minor(st.st_rdev) % 5 == 0) {
 		new->parttype= PRIMARY;
 	}
-	if ((base= strrchr(name, '/')) == nil) base= name; else base++;
-	max= new->parttype == SUBPART ? 4 : 5;
-	len= strlen(base);
-	strcpy(new->part, len < max ? base : base + len - max);
 
 	if (firstdev == nil) {
 		firstdev= new;
@@ -282,8 +279,8 @@ void newdevice(char *name, int scanning)
 	prevdev->next= new;
 
 	if (new->rdev < firstdev->rdev) firstdev= new;
-	if (new->rdev == DEV_HD0) curdev= new;
-	if (curdev->rdev != DEV_HD0) curdev= firstdev;
+	if (new->rdev == DEV_C0D0) curdev= new;
+	if (curdev->rdev != DEV_C0D0) curdev= firstdev;
 }
 
 void getdevices(void)
@@ -599,21 +596,24 @@ typedef struct indicators {	/* Partition type to partition name. */
 } indicators_t;
 
 indicators_t ind_table[]= {
-	{ NO_PART,	"None"		},
-	{ 0x01,		"DOS-12"	},
+	{ 0x00,		"None"		},
+	{ 0x01,		"FAT-12"	},
 	{ 0x02,		"XENIX /"	},
 	{ 0x03,		"XENIX usr"	},
-	{ 0x04,		"DOS-16"	},
-	{ 0x05,		"DOS-EXT"	},
-	{ 0x06,		"DOS-BIG"	},
+	{ 0x04,		"FAT-16"	},
+	{ 0x05,		"EXTENDED"	},
+	{ 0x06,		"FAT-16"	},
 	{ 0x07,		"HPFS/NTFS"	},
 	{ 0x08,		"AIX"		},
 	{ 0x09,		"COHERENT"	},
 	{ 0x0A,		"OS/2"		},
-	{ 0x0B,		"FAT32"		},
-	{ 0x0C,		"FAT32"		},
+	{ 0x0B,		"FAT-32"	},
+	{ 0x0C,		"FAT?"		},
+	{ 0x0E,		"FAT?"		},
+	{ 0x0F,		"EXTENDED"	},
 	{ 0x10,		"OPUS"		},
 	{ 0x40,		"VENIX286"	},
+	{ 0x42,		"W2000 Dyn"	},
 	{ 0x52,		"MICROPORT"	},
 	{ 0x63,		"386/IX"	},
 	{ 0x64,		"NOVELL286"	},
@@ -669,9 +669,7 @@ typedef enum objtype {
 	O_SCYL, O_SHEAD, O_SSEC, O_LCYL, O_LHEAD, O_LSEC, O_BASE, O_SIZE, O_KB
 } objtype_t;
 
-#define ljust(type)	((type) <= O_TYPTXT)
-#define center(type)	((type) == O_SORT)
-#define rjust(type)	((type) >= O_NUM)
+#define rjust(type)	((type) >= O_TYPHEX)
 #define computed(type)	((type) >= O_TYPTXT)
 
 typedef struct object {
@@ -819,39 +817,17 @@ void print(object_t *op)
 		break;
 	case O_NUM:
 				/* Position and active flag. */
-		sprintf(op->value, "%d%c", (int) (pe - table),
+		sprintf(op->value, "%d%c", (int) (pe - table - 1),
 					pe->bootind & ACTIVE_FLAG ? '*' : ' ');
 		break;
 	case O_SORT:
 				/* Position if the driver sorts the table. */
-		name= curdev->part;
-		n= strlen(name);
-		switch (device < 0 ? DUNNO : curdev->parttype) {
-		case DUNNO:
-			sprintf(op->value, "%d", sort_index[pe - table]);
-			n= 1;
-			break;
-		case PRIMARY:
-			if (n > op->len) {
-				name+= (n - op->len); n= op->len;
-			}
-			strcpy(op->value, name);
-			op->value[n-1] += sort_index[pe - table];
-			break;
-		case SUBPART:
-			if (n > op->len-1) {
-				name+= (n - (op->len-1)); n= op->len-1;
-			}
-			strcpy(op->value, name);
-			op->value[n++] = 'a' + pe - table - 1;
-			break;
-		}
-		if (n < op->len) {
-			memmove(op->value+1, op->value, n);
-			op->value[0]= ' ';
-			n++;
-		}
-		op->value[n]= 0;
+		sprintf(op->value, "%s%d",
+			curdev->parttype >= PRIMARY ? "p" :
+				curdev->parttype == SUBPART ? "s" : "",
+			(curdev->parttype == SUBPART ||
+				curdev->parttype == FLOPPY ? pe - table
+					: sort_index[pe - table]) - 1);
 		break;
 	case O_TYPHEX:
 				/* Hex partition type indicator. */
@@ -860,8 +836,6 @@ void print(object_t *op)
 	case O_TYPTXT:
 				/* Ascii partition type indicator. */
 		strcpy(op->value, typ2txt(pe->sysind));
-		if (pe->sysind == OLD_MINIX_PART && pe->lowsec & 1)
-			op->flags|= OF_BAD;
 		break;
 	case O_SCYL:
 				/* Partition's start cylinder. */
@@ -943,17 +917,12 @@ void print(object_t *op)
 		op->flags|= OF_BAD;
 	}
 
-	/* Left, center or right justified? */
-	if (ljust(op->type)) {
-		memset(op->value + n, ' ', op->len - n);
-	} else
-	if (center(op->type)) {
-		memset(op->value + n, ' ', op->len - n);
-		memmove(op->value + (op->len - n) / 2, op->value, n);
-		memset(op->value, ' ', (op->len - n) / 2);
-	} else {
+	/* Right or left justified? */
+	if (rjust(op->type)) {
 		memmove(op->value + (op->len - n), op->value, n);
 		memset(op->value, ' ', op->len - n);
+	} else {
+		memset(op->value + n, ' ', op->len - n);
 	}
 	op->value[op->len]= 0;
 
@@ -1495,7 +1464,6 @@ typedef struct diving {
 	struct diving	*up;
 	struct part_entry  old0;
 	char		*oldsubname;
-	char		oldpart[6];
 	parttype_t	oldparttype;
 	unsigned long	oldoffset;
 	unsigned long	oldextbase;
@@ -1512,7 +1480,7 @@ void m_in(int ev, object_t *op)
 
 	if (ev != '>' || device < 0 || pe == nil || pe == &table[0]
 		|| (!(pe->sysind == MINIX_PART && offset == 0)
-					&& pe->sysind != EXT_PART)
+					&& !ext_part(pe->sysind))
 		|| pe->size == 0) return;
 
 	ext= *pe;
@@ -1525,7 +1493,6 @@ void m_in(int ev, object_t *op)
 	newdiv= alloc(sizeof(*newdiv));
 	newdiv->old0= table[0];
 	newdiv->oldsubname= curdev->subname;
-	strcpy(newdiv->oldpart, curdev->part);
 	newdiv->oldparttype= curdev->parttype;
 	newdiv->oldoffset= offset;
 	newdiv->oldextbase= extbase;
@@ -1538,20 +1505,15 @@ void m_in(int ev, object_t *op)
 	curdev->subname= alloc((n + 3) * sizeof(curdev->subname[0]));
 	strcpy(curdev->subname, diving->oldsubname);
 	curdev->subname[n++]= ':';
-	curdev->subname[n++]= '0' + (pe - table);
+	curdev->subname[n++]= '0' + (pe - table - 1);
 	curdev->subname[n]= 0;
 
-	if (curdev->parttype != DUNNO) curdev->parttype--;
+	curdev->parttype= curdev->parttype == PRIMARY ? SUBPART : DUNNO;
 	offset= ext.lowsec;
-	if (ext.sysind == EXT_PART && extbase == 0) {
+	if (ext_part(ext.sysind) && extbase == 0) {
 		extbase= ext.lowsec;
 		extsize= ext.size;
 		curdev->parttype= DUNNO;
-	}
-	if (curdev->parttype == SUBPART) {
-		n= strlen(curdev->part);
-		if (n == 5) { strcpy(curdev->part, curdev->part + 1); n--; }
-		curdev->part[n-1] += sort_index[pe - table];
 	}
 
 	submerged= 1;
@@ -1577,7 +1539,6 @@ void m_out(int ev, object_t *op)
 	free(curdev->subname);
 	curdev->subname= olddiv->oldsubname;
 
-	strcpy(curdev->part, olddiv->oldpart);
 	curdev->parttype= olddiv->oldparttype;
 	offset= olddiv->oldoffset;
 	extbase= olddiv->oldextbase;
@@ -1588,20 +1549,98 @@ void m_out(int ev, object_t *op)
 	if (diving == nil) submerged= 0;	/* We surfaced. */
 }
 
-int seek_sector(int device, unsigned long sector)
-/* Seek to the given sector. */
+void installboot(unsigned char *bootblock, char *masterboot)
+/* Install code from a master bootstrap into a boot block. */
 {
-#if __minix_vmd
-	if (fcntl(device, F_SEEK, mul64u(offset, SECTOR_SIZE)) == 0)
-		return 0;
-#endif
-	if ((off_t)(offset * SECTOR_SIZE) / SECTOR_SIZE != sector) {
-		errno= EINVAL;
-		return -1;
+	FILE *mfp;
+	struct exec hdr;
+	int n;
+	char *err;
+
+	if ((mfp= fopen(masterboot, "r")) == nil) {
+		err= strerror(errno);
+		goto m_err;
 	}
-	if (lseek(device, (off_t) offset * SECTOR_SIZE, SEEK_SET) == -1)
-		return -1;
-	return 0;
+
+	n= fread(&hdr, sizeof(char), A_MINHDR, mfp);
+	if (ferror(mfp)) {
+		err= strerror(errno);
+		fclose(mfp);
+		goto m_err;
+	}
+
+	if (n < A_MINHDR || BADMAG(hdr) || hdr.a_cpu != A_I8086) {
+		err= "Not an 8086 executable";
+		fclose(mfp);
+		goto m_err;
+	}
+
+	if (hdr.a_text + hdr.a_data > PART_TABLE_OFF) {
+		err= "Does not fit in a boot sector";
+		fclose(mfp);
+		goto m_err;
+	}
+
+	fseek(mfp, hdr.a_hdrlen, 0);
+	fread(bootblock, sizeof(char), (size_t) (hdr.a_text + hdr.a_data), mfp);
+	if (ferror(mfp)) {
+		err= strerror(errno);
+		fclose(mfp);
+		goto m_err;
+	}
+	fclose(mfp);
+
+	/* Bootstrap installed. */
+	return;
+
+    m_err:
+	stat_start(1);
+	printf("%s: %s", masterboot, err);
+	stat_end(5);
+}
+
+ssize_t boot_readwrite(int rw)
+/* Read (0) or write (1) the boot sector. */
+{
+	u64_t off64 = mul64u(offset, SECTOR_SIZE);
+	int r;
+
+#if __minix_vmd
+	/* Minix-vmd has a 64 bit seek. */
+	if (fcntl(device, F_SEEK, off64) < 0) return -1;
+#else
+	/* Minix has to gross things with the partition base. */
+	struct partition geom0, geom_seek;
+
+	if (offset >= (LONG_MAX / SECTOR_SIZE - 1)) {
+		/* Move partition base. */
+		if (ioctl(device, DIOCGETP, &geom0) < 0) return -1;
+		geom_seek.base = add64(geom0.base, off64);
+		geom_seek.size = cvu64(cmp64(add64u(off64, SECTOR_SIZE),
+			geom0.size) <= 0 ? BLOCK_SIZE : 0);
+		sync();
+		if (ioctl(device, DIOCSETP, &geom_seek) < 0) return -1;
+		if (lseek(device, (off_t) 0, SEEK_SET) == -1) return -1;
+	} else {
+		/* Can reach this point normally. */
+		if (lseek(device, (off_t) offset * SECTOR_SIZE, SEEK_SET) == -1)
+			return -1;
+	}
+#endif
+
+	switch (rw) {
+	case 0:	r= read(device, bootblock, SECTOR_SIZE);	break;
+	case 1:	r= write(device, bootblock, SECTOR_SIZE);	break;
+	}
+
+#if !__minix_vmd
+	if (offset >= (LONG_MAX / SECTOR_SIZE - 1)) {
+		/* Restore partition base and size. */
+		sync();
+		if (ioctl(device, DIOCSETP, &geom0) < 0) return -1;
+	}
+#endif
+	return r;
 }
 
 void m_read(int ev, object_t *op)
@@ -1616,10 +1655,9 @@ void m_read(int ev, object_t *op)
 	stat_start(0);
 	fflush(stdout);
 
-	if (((device= open(curdev->name, mode= O_RDWR|O_CREAT, 0666)) < 0
-		    && (errno != EACCES
+	if (((device= open(curdev->name, mode= O_RDWR, 0666)) < 0
+		&& (errno != EACCES
 			|| (device= open(curdev->name, mode= O_RDONLY)) < 0))
-		|| seek_sector(device, offset) < 0
 	) {
 		stat_start(1);
 		printf("%s: %s", curdev->name, strerror(errno));
@@ -1639,7 +1677,7 @@ void m_read(int ev, object_t *op)
 	}
 	memset(bootblock, 0, sizeof(bootblock));
 
-	n= read(device, bootblock, SECTOR_SIZE);
+	n= boot_readwrite(0);
 
 	if (n <= 0) stat_start(1);
 	if (n < 0) {
@@ -1662,7 +1700,7 @@ void m_read(int ev, object_t *op)
 		/* Invalid boot block, install bootstrap, wipe partition table.
 		 */
 		memset(bootblock, 0, sizeof(bootblock));
-		memcpy(bootblock, (void *) bootstrap, sizeof(bootstrap));
+		installboot(bootblock, MASTERBOOT);
 		memset(table+1, 0, NR_PARTITIONS * sizeof(table[1]));
 		stat_start(1);
 		printf("%s: Invalid partition table (reset)", curdev->subname);
@@ -1675,8 +1713,7 @@ void m_read(int ev, object_t *op)
 	for (i= 1; i <= NR_PARTITIONS; i++) {
 		pe= &table[i];
 		if (extbase != 0 && pe->sysind != NO_PART)
-			pe->lowsec+= pe->sysind == EXT_PART
-						? extbase : offset;
+			pe->lowsec+= ext_part(pe->sysind) ? extbase : offset;
 		existing[i]= pe->sysind != NO_PART;
 	}
 	geometry();
@@ -1685,7 +1722,7 @@ void m_read(int ev, object_t *op)
 	/* Warn about grave dangers ahead. */
 	if (extbase != 0) {
 		stat_start(1);
-		printf("Warning: You are in a DOS extended partition.");
+		printf("Warning: You are in an extended partition.");
 		stat_end(5);
 	}
 }
@@ -1718,7 +1755,7 @@ void m_write(int ev, object_t *op)
 	if (extbase != 0) {
 		/* Will this stop the luser?  Probably not... */
 		stat_start(1);
-		printf("You have changed a DOS extended partition.  Bad Idea.");
+		printf("You have changed an extended partition.  Bad Idea.");
 		stat_end(5);
 	}
 	stat_start(1);
@@ -1742,7 +1779,7 @@ void m_write(int ev, object_t *op)
 
 			/* Fear and loathing time: */
 			if (extbase != 0)
-				pe->lowsec-= pe->sysind == EXT_PART
+				pe->lowsec-= ext_part(pe->sysind)
 						? extbase : offset;
 		}
 	}
@@ -1750,9 +1787,7 @@ void m_write(int ev, object_t *op)
 	bootblock[510]= 0x55;
 	bootblock[511]= 0xAA;
 
-	if (seek_sector(device, offset) < 0
-		|| write(device, bootblock, SECTOR_SIZE) < 0
-	) {
+	if (boot_readwrite(1) < 0) {
 		stat_start(1);
 		printf("%s: %s", curdev->name, strerror(errno));
 		stat_end(5);
@@ -2023,7 +2058,7 @@ int main(int argc, char **argv)
 	op= newobject(O_TEXT, 0, 1, 38, 12); op->text= "Cyl Head Sec";
 	op= newobject(O_TEXT, 0, 1, 56,  4); op->text= "Base";
 	op= newobject(O_TEXT, 0, 1, 66,  4); op->text= size_last;
-	op= newobject(O_TEXT, 0, 1, 77,  2); op->text= "Kb";
+	op= newobject(O_TEXT, 0, 1, 78,  2); op->text= "Kb";
 	op= newobject(O_TEXT, 0, 4,  0, 15); op->text= "Num Sort   Type";
 
 	/* The device is the current object: */
@@ -2031,36 +2066,36 @@ int main(int argc, char **argv)
 	op= newobject(O_SUB,       0, 3,  4, 15);
 
 	/* Geometry: */
-	op= newobject(O_CYL,  OF_MOD, 2, 40,  4); op->entry= &table[0];
+	op= newobject(O_CYL,  OF_MOD, 2, 40,  5); op->entry= &table[0];
 	op= newobject(O_HEAD, OF_MOD, 2, 45,  3); op->entry= &table[0];
 	op= newobject(O_SEC,  OF_MOD, 2, 49,  2); op->entry= &table[0];
 
 	/* Objects for the device: */
-	op= newobject(O_SCYL,  0, 3, 25,  4); op->entry= &table[0];
+	op= newobject(O_SCYL,  0, 3, 25,  5); op->entry= &table[0];
 	op= newobject(O_SHEAD, 0, 3, 30,  3); op->entry= &table[0];
 	op= newobject(O_SSEC,  0, 3, 34,  2); op->entry= &table[0];
-	op= newobject(O_LCYL,  0, 3, 40,  4); op->entry= &table[0];
+	op= newobject(O_LCYL,  0, 3, 40,  5); op->entry= &table[0];
 	op= newobject(O_LHEAD, 0, 3, 45,  3); op->entry= &table[0];
 	op= newobject(O_LSEC,  0, 3, 49,  2); op->entry= &table[0];
-	op= newobject(O_BASE,  0, 3, 59,  8); op->entry= &table[0];
-	op= newobject(O_SIZE,  0, 3, 69,  8); op->entry= &table[0];
-	op= newobject(O_KB,    0, 3, 78,  8); op->entry= &table[0];
+	op= newobject(O_BASE,  0, 3, 59,  9); op->entry= &table[0];
+	op= newobject(O_SIZE,  0, 3, 69,  9); op->entry= &table[0];
+	op= newobject(O_KB,    0, 3, 79,  9); op->entry= &table[0];
 
 	/* Objects for each partition: */
 	for (r= 5, pe= table+1; pe <= table+NR_PARTITIONS; r++, pe++) {
-		op= newobject(O_NUM,    OF_MOD, r,  2,  2); op->entry= pe;
-		op= newobject(O_SORT,        0, r,  3,  5); op->entry= pe;
+		op= newobject(O_NUM,    OF_MOD, r,  1,  2); op->entry= pe;
+		op= newobject(O_SORT,        0, r,  5,  2); op->entry= pe;
 		op= newobject(O_TYPHEX, OF_MOD, r, 10,  2); op->entry= pe;
 		op= newobject(O_TYPTXT, OF_MOD, r, 12,  9); op->entry= pe;
-		op= newobject(O_SCYL,   OF_MOD, r, 25,  4); op->entry= pe;
+		op= newobject(O_SCYL,   OF_MOD, r, 25,  5); op->entry= pe;
 		op= newobject(O_SHEAD,  OF_MOD, r, 30,  3); op->entry= pe;
 		op= newobject(O_SSEC,   OF_MOD, r, 34,  2); op->entry= pe;
-		op= newobject(O_LCYL,   OF_MOD, r, 40,  4); op->entry= pe;
+		op= newobject(O_LCYL,   OF_MOD, r, 40,  5); op->entry= pe;
 		op= newobject(O_LHEAD,  OF_MOD, r, 45,  3); op->entry= pe;
 		op= newobject(O_LSEC,   OF_MOD, r, 49,  2); op->entry= pe;
-		op= newobject(O_BASE,   OF_MOD, r, 59,  8); op->entry= pe;
-		op= newobject(O_SIZE,   OF_MOD, r, 69,  8); op->entry= pe;
-		op= newobject(O_KB,     OF_MOD, r, 78,  8); op->entry= pe;
+		op= newobject(O_BASE,   OF_MOD, r, 59,  9); op->entry= pe;
+		op= newobject(O_SIZE,   OF_MOD, r, 69,  9); op->entry= pe;
+		op= newobject(O_KB,     OF_MOD, r, 79,  9); op->entry= pe;
 	}
 
 	for (i= 1; i < argc; i++) newdevice(argv[i], 0);

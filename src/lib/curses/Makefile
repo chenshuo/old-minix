@@ -1,6 +1,6 @@
 # Makefile for lib/curses.
 
-CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -m
+CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE
 CC1	= $(CC) $(CFLAGS) -c
 
 LIBRARY	= ../libcurses.a

@@ -4,9 +4,10 @@
 #include <minix/com.h>
 #include "proc.h"
 
-char *vargv;
-
 FORWARD _PROTOTYPE(char *proc_name, (int proc_nr));
+
+#define click_to_round_k(n) \
+	((unsigned) ((((unsigned long) (n) << CLICK_SHIFT) + 512) / 1024))
 
 /*===========================================================================*
  *				p_dmp    				     *
@@ -20,20 +21,22 @@ PUBLIC void p_dmp()
   static struct proc *oldrp = BEG_PROC_ADDR;
   int n = 0;
   phys_clicks text, data, size;
-  int proc_nr;
 
   printf("\n--pid --pc- ---sp- flag -user --sys-- -text- -data- -size- -recv- command\n");
 
   for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
-	proc_nr = proc_number(rp);
-	if (rp->p_flags & P_SLOT_FREE) continue;
+	if (isemptyp(rp)) continue;
 	if (++n > 20) break;
 	text = rp->p_map[T].mem_phys;
 	data = rp->p_map[D].mem_phys;
 	size = rp->p_map[T].mem_len
 		+ ((rp->p_map[S].mem_phys + rp->p_map[S].mem_len) - data);
-	printf("%5d %5lx %6lx %2x %7U %7U %5uK %5uK %5uK ",
-	       proc_nr < 0 ? proc_nr : rp->p_pid,
+	if (rp->p_pid == 0) {
+		printf("(%3d)", proc_number(rp));
+	} else {
+		printf("%5d", rp->p_pid);
+	}
+	printf(" %5lx %6lx %2x %7lu %7lu %5uK %5uK %5uK ",
 	       (unsigned long) rp->p_reg.pc,
 	       (unsigned long) rp->p_reg.sp,
 	       rp->p_flags,
@@ -59,7 +62,6 @@ PUBLIC void p_dmp()
 /*===========================================================================*
  *				map_dmp    				     *
  *===========================================================================*/
-#if (SHADOWING == 0)
 PUBLIC void map_dmp()
 {
   register struct proc *rp;
@@ -69,7 +71,7 @@ PUBLIC void map_dmp()
 
   printf("\nPROC NAME-  -----TEXT-----  -----DATA-----  ----STACK-----  -SIZE-\n");
   for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
-	if (rp->p_flags & P_SLOT_FREE) continue;
+	if (isemptyp(rp)) continue;
 	if (++n > 20) break;
 	size = rp->p_map[T].mem_len
 		+ ((rp->p_map[S].mem_phys + rp->p_map[S].mem_len)
@@ -85,36 +87,6 @@ PUBLIC void map_dmp()
   if (rp == END_PROC_ADDR) rp = cproc_addr(HARDWARE); else printf("--more--\r");
   oldrp = rp;
 }
-
-#else
-
-PUBLIC void map_dmp()
-{
-  register struct proc *rp;
-  static struct proc *oldrp = cproc_addr(HARDWARE);
-  int n = 0;
-  vir_clicks base, limit;
-
-  printf("\nPROC NAME-  --TEXT---  --DATA---  --STACK-- SHADOW FLIP P BASE  SIZE\n");
-  for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
-	if (rp->p_flags & P_SLOT_FREE) continue;
-	if (++n > 20) break;
-	base = rp->p_map[T].mem_phys;
-	limit = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	printf("%3d %-6.6s  %4x %4x  %4x %4x  %4x %4x   %4x %4d %d %4uK\n",
-	       proc_number(rp),
-	       rp->p_name,
-	       rp->p_map[T].mem_phys, rp->p_map[T].mem_len,
-	       rp->p_map[D].mem_phys, rp->p_map[D].mem_len,
-	       rp->p_map[S].mem_phys, rp->p_map[S].mem_len,
-	       rp->p_shadow, rp->p_nflips, rp->p_physio,
-	       click_to_round_k(base), click_to_round_k(limit));
-  }
-  if (rp == END_PROC_ADDR) rp = cproc_addr(HARDWARE); else printf("--more--\r");
-  oldrp = rp;
-}
-
-#endif
 
 #if (CHIP == M68000)
 FORWARD _PROTOTYPE(void mem_dmp, (char *adr, int len));
@@ -135,11 +107,11 @@ PUBLIC void p_dmp()
          "\nproc pid     pc     sp  splow flag  user    sys   recv   command\n");
 
   for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
-	if (rp->p_flags & P_SLOT_FREE) continue;
+	if (isemptyp(rp)) continue;
 	if (++n > 20) break;
 	base = rp->p_map[T].mem_phys;
 	limit = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	printf("%4u %4u %6lx %6lx %6lx %4x %5U %6U   ",
+	printf("%4u %4u %6lx %6lx %6lx %4x %5lu %6lu   ",
 	       proc_number(rp),
 	       rp->p_pid,
 	       (unsigned long) rp->p_reg.pc,
@@ -184,15 +156,8 @@ struct proc *rp;
   for (i = 0; i < NR_REGS; i++) 
 	printf("%3s = %08lx%s",regs[i], *regptr++, (i&3) == 3 ? "\n" : ", ");
   printf(" a7 = %08lx\n", rp->p_reg.sp);
-#if (SHADOWING == 1)
     mem_dmp((char *) (((long) rp->p_reg.pc & ~31L) - 96), 128);
     mem_dmp((char *) (((long) rp->p_reg.sp & ~31L) - 32), 256);
-#else
-    mem_dmp((char *) (((long) rp->p_reg.pc & ~31L) - 96 +
-			((long)rp->p_map[T].mem_phys<<CLICK_SHIFT)), 128);
-    mem_dmp((char *) (((long) rp->p_reg.sp & ~31L) - 32 +
-			((long)rp->p_map[S].mem_phys<<CLICK_SHIFT)), 256);
-#endif
 }
 
 

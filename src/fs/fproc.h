@@ -31,3 +31,5 @@ EXTERN struct fproc {
 #define SUSPENDED          1	/* process is suspended on pipe or task */
 #define NOT_REVIVING       0	/* process is not being revived */
 #define REVIVING           1	/* process is being revived from suspension */
+#define PID_FREE	   0	/* process slot free */
+#define PID_SERVER	 (-1)	/* process has become a server */

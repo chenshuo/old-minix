@@ -41,6 +41,7 @@
 #define	_PATH_NETWORKS	"/etc/networks"
 #define	_PATH_PROTOCOLS	"/etc/protocols"
 #define	_PATH_SERVICES	"/etc/services"
+#define	_PATH_SERVACCES	"/etc/serv.access"
 
 /*
  * Structures returned by network data base library.  All addresses are
@@ -101,7 +102,7 @@ void		endnetent _ARGS((void));
 void		endprotoent _ARGS((void));
 void		endservent _ARGS((void));
 struct hostent	*gethostbyaddr _ARGS((const char *, int, int));
-struct hostent	*gethostbyname _ARGS((char *));
+struct hostent	*gethostbyname _ARGS((const char *));
 struct hostent	*gethostent _ARGS((void));
 struct netent	*getnetbyaddr _ARGS((long, int)); /* u_long? */
 struct netent	*getnetbyname _ARGS((const char *));
@@ -118,5 +119,10 @@ void		sethostent _ARGS((int));
 void		setnetent _ARGS((int));
 void		setprotoent _ARGS((int));
 void		setservent _ARGS((int));
+#ifdef _MINIX
+int		servxcheck _ARGS((int _fd, const char *_service,
+			void (*_logf) _ARGS((int _pass, const char *_name))));
+char		*servxfile _ARGS((const char *_file));
+#endif
 
 #endif /* !_NETDB_H_ */

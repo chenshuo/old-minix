@@ -101,6 +101,9 @@ void error();
 char *errmsg();
 #endif
 
+/* Errmsg uses confusingly different messages.  Prefer strerror().  -- kjb */
+#define errmsg(errno, action)	strerror(errno)
+
 
 /*
  * BSD setjmp saves the signal mask, which violates ANSI C and takes time,

@@ -8,7 +8,19 @@
 #ifndef _SYS__ASYNCHIO_H
 #define _SYS__ASYNCHIO_H
 
-typedef int asynchio_t;
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
+typedef struct {
+	char	state;
+	char	op;
+	char	fd;
+	char	req;
+	void	*data;
+	ssize_t	count;
+	int	errno;
+} asynchio_t;
 
 #define ASYN_NONBLOCK	0x01
 

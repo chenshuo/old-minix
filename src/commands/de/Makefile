@@ -1,7 +1,7 @@
 # Makefile for de
 
 CC	= cc
-CFLAGS	= -m -O -D_MINIX -D_POSIX_SOURCE -D_POSIX_1_SOURCE=2
+CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -D_POSIX_1_SOURCE=2
 
 all:	de
 

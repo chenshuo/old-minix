@@ -42,9 +42,7 @@ typedef struct icmp_port
 #define ICPS_MAIN	2
 #define ICPS_ERROR	3
 
-#define ICMP_PORT_NR	IP_PORT_NR
-
-PRIVATE  icmp_port_t icmp_port_table[ICMP_PORT_NR];
+PRIVATE icmp_port_t *icmp_port_table;
 
 FORWARD void icmp_main ARGS(( icmp_port_t *icmp_port ));
 FORWARD acc_t *icmp_getdata ARGS(( int port, size_t offset,
@@ -80,6 +78,11 @@ FORWARD acc_t *icmp_err_pack ARGS(( acc_t *pack, icmp_hdr_t **icmp_hdr ));
 FORWARD void icmp_bufcheck ARGS(( void ));
 #endif
 
+PUBLIC void icmp_prep()
+{
+	icmp_port_table= alloc(ip_conf_nr * sizeof(icmp_port_table[0]));
+}
+
 PUBLIC void icmp_init()
 {
 	int i;
@@ -87,8 +90,7 @@ PUBLIC void icmp_init()
 
 	assert (BUF_S >= sizeof (nwio_ipopt_t));
 
-	for (i= 0, icmp_port= icmp_port_table; i<ICMP_PORT_NR; i++,
-		icmp_port++)
+	for (i= 0, icmp_port= icmp_port_table; i<ip_conf_nr; i++, icmp_port++)
 	{
 #if ZERO
 		icmp_port->icp_flags= ICPF_EMPTY;
@@ -103,8 +105,7 @@ PUBLIC void icmp_init()
 	bf_logon(icmp_buffree, icmp_bufcheck);
 #endif
 
-	for (i= 0, icmp_port= icmp_port_table; i<ICMP_PORT_NR; i++,
-		icmp_port++)
+	for (i= 0, icmp_port= icmp_port_table; i<ip_conf_nr; i++, icmp_port++)
 	{
 		icmp_main (icmp_port);
 	}
@@ -119,8 +120,7 @@ icmp_port_t *icmp_port;
 	case ICPS_BEGIN:
 		icmp_port->icp_head_queue= 0;
 		icmp_port->icp_ipfd= ip_open (icmp_port->icp_ipport,
-			icmp_port-icmp_port_table, icmp_getdata,
-			icmp_putdata, 0);
+			icmp_port->icp_ipport, icmp_getdata, icmp_putdata, 0);
 		if (icmp_port->icp_ipfd<0)
 		{
 			DBLOCK(1, printf("unable to open ip_port %d\n",
@@ -293,7 +293,7 @@ int code;
 	icmp_hdr_t *icmp_hdr;
 	icmp_port_t *icmp_port;
 
-	assert(0 <= port_nr && port_nr < ICMP_PORT_NR);
+	assert(0 <= port_nr && port_nr < ip_conf_nr);
 	icmp_port= &icmp_port_table[port_nr];
 	pack= icmp_err_pack(pack, &icmp_hdr);
 	if (pack == NULL)
@@ -315,7 +315,7 @@ ipaddr_t gw;
 	icmp_hdr_t *icmp_hdr;
 	icmp_port_t *icmp_port;
 
-	assert(0 <= port_nr && port_nr < ICMP_PORT_NR);
+	assert(0 <= port_nr && port_nr < ip_conf_nr);
 	icmp_port= &icmp_port_table[port_nr];
 	pack= icmp_err_pack(pack, &icmp_hdr);
 	if (pack == NULL)
@@ -339,7 +339,7 @@ int code;
 	icmp_hdr_t *icmp_hdr;
 	icmp_port_t *icmp_port;
 
-	assert(0 <= port_nr && port_nr < ICMP_PORT_NR);
+	assert(0 <= port_nr && port_nr < ip_conf_nr);
 	icmp_port= &icmp_port_table[port_nr];
 	pack= icmp_err_pack(pack, &icmp_hdr);
 	if (pack == NULL)
@@ -632,7 +632,7 @@ int priority;
 
 	if (priority == ICMP_PRI_QUEUE)
 	{
-		for (i=0, icmp_port= icmp_port_table; i<ICMP_PORT_NR;
+		for (i=0, icmp_port= icmp_port_table; i<ip_conf_nr;
 			i++, icmp_port++)
 		{
 			while(icmp_port->icp_head_queue)
@@ -653,8 +653,7 @@ PRIVATE void icmp_bufcheck()
 	icmp_port_t *icmp_port;
 	acc_t *pack;
 
-	for (i= 0, icmp_port= icmp_port_table; i<ICMP_PORT_NR; 
-							i++, icmp_port++)
+	for (i= 0, icmp_port= icmp_port_table; i<ip_conf_nr; i++, icmp_port++)
 	{
 		for (pack= icmp_port->icp_head_queue; pack; 
 			pack= pack->acc_ext_link)

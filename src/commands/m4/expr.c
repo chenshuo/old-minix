@@ -22,8 +22,15 @@
  *              |       "(" query ")"
  *      constant:       num
  *              |       "'" CHAR "'"
- *      num     :       DIGIT
- *              |       DIGIT num
+ *      num     :       decnum
+ *              |       "0" octnum
+ *		|	"0x" hexnum
+ *	octnum	:	OCTDIGIT
+ *		|	OCTDIGIT octnum
+ *	decnum	:	DECDIGIT
+ *		|	DECDIGIT decnum
+ *	hexnum	:	HEXDIGIT
+ *		|	HEXDIGIT hexnum
  *      shop    :       "<<"
  *              |       ">>"
  *      eqlrel  :       "="
@@ -54,8 +61,6 @@
 #define LEQ     3
 #define GTR     4
 #define GEQ     5
-#define OCTAL   8
-#define DECIMAL 10
  
 static char *nxtch;     /* Parser scan pointer */
  
@@ -459,12 +464,30 @@ int num()
         register int rval, c, base;
         int ndig;
  
-        base = ((c = skipws()) == '0') ? OCTAL : DECIMAL;
-        rval = 0;
         ndig = 0;
-        while (c >= '0' && c <= (base == OCTAL ? '7' : '9')) {
+        if ((c = skipws()) == '0') {
+        	c = getch ();
+        	if (c == 'x' || c == 'X') {
+        		base = 16;
+        		c = getch ();
+        	} else {
+        		base = 8;
+        		ndig = 1;
+        	}
+        } else {
+        	base = 10;
+        }
+        rval = 0;
+        for (;;) {
+		if (isdigit(c))         c -= '0';
+		else if (isupper (c))   c -= ('A' - 10);
+		else if (islower (c))   c -= ('a' - 10);
+		else                    break;
+		if (c < 0 || c >= base)
+			break;
+
                 rval *= base;
-                rval += (c - '0');
+                rval += c;
                 c = getch();
                 ndig++;
         }

@@ -12,10 +12,10 @@ CFLAGS = -I$i
 LDFLAGS = -i
 
 OBJ = 	main.o forkexit.o break.o exec.o \
-	signal.o alloc.o utility.o table.o putk.o trace.o getset.o
+	signal.o alloc.o utility.o table.o putk.o trace.o getset.o misc.o
 
 mm:	$(OBJ)
-	$(CC) -o $@ $(LDFLAGS) $(OBJ)
+	$(CC) -o $@ $(LDFLAGS) $(OBJ) -lsys
 	install -S 256w $@
 
 all install:	# Nothing.
@@ -29,7 +29,10 @@ a =	mm.h $h/config.h $s/types.h $h/const.h $h/type.h \
 	$i/limits.h $i/errno.h const.h type.h proto.h glo.h
 
 alloc.o:	$a
+alloc.o:	$i/signal.h
 alloc.o:	$h/com.h
+alloc.o:	$h/callnr.h
+alloc.o:	mproc.h
 
 break.o:	$a
 break.o:	$i/signal.h
@@ -66,6 +69,13 @@ main.o:	$i/fcntl.h
 main.o:	$s/ioctl.h
 main.o:	mproc.h
 main.o:	param.h
+
+misc.o:	$a
+misc.o:	$h/callnr.h
+misc.o:	$i/signal.h
+misc.o:	$s/svrctl.h
+misc.o:	mproc.h
+misc.o:	param.h
 
 putk.o:	$a
 putk.o:	$h/com.h

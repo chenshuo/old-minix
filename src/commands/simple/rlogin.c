@@ -100,8 +100,9 @@ extern char *krb_realmofhost();
 #define	SIGUSR1	30
 #endif
 
-/* standard Minix doesn't really have SIGCHLD */
+/* Standard Minix' SIGCHLD doesn't seem to work properly yet. */
 #if __minix && !__minix_vmd
+#define BUGCHLD
 #undef SIGCHLD
 #define SIGCHLD SIGTERM
 #endif
@@ -202,10 +203,8 @@ int main(argc, argv)
 	struct passwd *pw;
 	struct servent *sp;
 	struct termios ttyb;
-#if __minix_vmd
 	nwio_tcpopt_t tcpopt;
 	int error;
-#endif
 	int argoff, ch, dflag, one, uid;
 	char *host, *p, *user, term[1024];
 
@@ -370,7 +369,6 @@ try_connect:
 	if (rem < 0)
 		exit(1);
 
-#if __minix_vmd
 	/* Enable BSD compatibility for urgent data. */
 	tcpopt.nwto_flags= NWTO_BSD_URG;
 	error= ioctl(rem, NWIOSTCPOPT, &tcpopt);
@@ -379,7 +377,6 @@ try_connect:
 		fprintf(stderr, "rlogin: NWIOSTCPOPT failed: %s\n",
 			strerror(errno));
 	}
-#endif
 
 	(void)setuid(uid);
 	doit();
@@ -429,14 +426,14 @@ doit()
 		r = reader();
 		if (r == 0) {
 			msg("connection closed.");
-#if __minix && !__minix_vmd
+#ifdef BUGCHLD
 			kill(getppid(), SIGCHLD);
 #endif
 			exit(0);
 		}
 		sleep(1);
 		msg("\007connection closed.");
-#if __minix && !__minix_vmd
+#ifdef BUGCHLD
 		kill(getppid(), SIGCHLD);
 #endif
 		exit(1);
@@ -733,7 +730,7 @@ stop(cmdc)
 }
 #endif
 
-#if !__minix || __minix_vmd
+#ifdef SIGWINCH
 static void
 sigwinch(sig)
 	int sig;
@@ -781,7 +778,7 @@ sendwindow()
 	wp->ws_xpixel = htons(winsize.ws_xpixel);
 	wp->ws_ypixel = htons(winsize.ws_ypixel);
 }
-#endif /* !__minix || __minix_vmd */
+#endif /* SIGWINCH */
 
 #if !__minix_vmd
 /*
@@ -828,11 +825,11 @@ reader()
 		if (rcvcnt < 0) {
 			if (errno == EINTR)
 				continue;
-			(void)fprintf(stderr, "rlogin: read: %s.\n",
-			    strerror(errno));
-#if __minix_vmd
 			if (errno == EURG) {
 				nwio_tcpopt_t tcpopt;
+#if DEBUG
+fprintf(stderr, "\n\rEURG\n\r");
+#endif
 				tcpopt.nwto_flags= NWTO_RCV_URG;
 				if (ioctl(rem, NWIOSTCPOPT, &tcpopt) == -1) {
 					fprintf(stderr,
@@ -842,7 +839,22 @@ reader()
 				}
 				continue;
 			}
+			if (errno == ENOURG) {
+				nwio_tcpopt_t tcpopt;
+#if DEBUG
+fprintf(stderr, "\n\rENOURG\n\r");
 #endif
+				tcpopt.nwto_flags= NWTO_RCV_NOTURG;
+				if (ioctl(rem, NWIOSTCPOPT, &tcpopt) == -1) {
+					fprintf(stderr,
+				"rlogin: trouble with not-urgent data: %s\n",
+						strerror(errno));
+					return(-1);
+				}
+				continue;
+			}
+			(void)fprintf(stderr, "rlogin: read: %s\n",
+				strerror(errno));
 			return(-1);
 		}
 	}
@@ -1372,9 +1384,11 @@ completed_0(result, error)
 			more2write_rem= 1;
 		}
 		return;
+	} else
+	if (result < 0) {
+		fprintf(stderr, "rlogin: %s\n", strerror(error));
 	}
-	fprintf(stderr, "completed_0: %d, %d\n", result, error);
-	abort();
+	done(1);
 }
 
 static void
@@ -1409,9 +1423,11 @@ completed_1(result, error)
 			more2read_rem= 1;
 		}
 		return;
+	} else
+	if (result < 0) {
+		fprintf(stderr, "rlogin: %s\n", strerror(error));
 	}
-	fprintf(stderr, "completed_1: %d, %d\n", result, error);
-	abort();
+	done(1);
 }
 
 static void
@@ -1549,8 +1565,10 @@ fprintf(stderr, "\n\rENOURG\n\r");
 		msg("connection closed.");
 		done(0);
 	}
-	fprintf(stderr, "completed_rd_rem: %d, %d\n", result, error);
-	abort();
+	if (result < 0) {
+		fprintf(stderr, "rlogin: %s\n", strerror(error));
+	}
+	done(1);
 }
 
 static void
@@ -1590,8 +1608,10 @@ completed_wr_rem(result, error)
 		}
 		return;
 	}
-	fprintf(stderr, "completed_wr_rem: %d, %d\n", result, error);
-	abort();
+	if (result < 0) {
+		fprintf(stderr, "rlogin: %s\n", strerror(error));
+	}
+	done(1);
 }
 
 static void

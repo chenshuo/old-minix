@@ -1,6 +1,6 @@
 # Makefile for patch
 
-CFLAGS= -O -DVOIDSIG -wo -D_MINIX -D_POSIX_SOURCE -DSMALL -m
+CFLAGS= -O -DVOIDSIG -wo -D_MINIX -D_POSIX_SOURCE -DSMALL
 
 OBJ = patch.o pch.o inp.o util.o version.o
 

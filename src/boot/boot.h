@@ -89,10 +89,16 @@ int writesectors(u32_t bufaddr, u32_t sector, U8_t count);
 			/* Write 1 or more sectors to "device". */
 int getch(void);
 			/* Read a keypress. */
+void ungetch(int c);
+			/* Undo a keypress. */
 int escape(void);
 			/* True if escape typed. */
 void putch(int c);
 			/* Send a character to the screen. */
+#if BIOS
+void pause(void);
+#endif			/* Wait for an interrupt. */
+
 void set_mode(unsigned mode);
 void clear_screen(void);
 			/* Set video mode / clear the screen. */
@@ -106,7 +112,7 @@ u32_t get_tick(void);
 
 void bootstrap(int device, struct part_entry *entry);
 			/* Execute a bootstrap routine for a different O.S. */
-u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
+void minix(u32_t koff, u32_t kcs, u32_t kds,
 				char *bootparams, size_t paramsize, u32_t aout);
 			/* Start Minix. */
 
@@ -138,9 +144,10 @@ EXTERN environment *env;	/* Lists the environment. */
 char *b_value(char *name);	/* Get/set the value of a variable. */
 int b_setvar(int flags, char *name, char *value);
 
+void parse_code(char *code);	/* Parse boot monitor commands. */
+
 EXTERN int fsok;	/* True if the boot device contains an FS. */
 EXTERN u32_t lowsec;	/* Offset to the file system on the boot device. */
-EXTERN u32_t reboot_code; /* Program returned by a rebooting Minix. */
 
 /* Called by boot.c: */
 
@@ -167,12 +174,6 @@ char *unix_err(int err);
 			/* Give a descriptive text for some UNIX errors. */
 int run_trailer(void);
 			/* Run the trailer function. */
-
-#if BIOS
-/* Use the kernel printf(): */
-void printk(char *fmt, ...);
-#define	printf	printk
-#endif
 
 #if DOS
 /* The monitor runs under MS-DOS. */

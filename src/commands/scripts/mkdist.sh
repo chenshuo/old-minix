@@ -1,10 +1,7 @@
 #!/bin/sh
 #
-#	mkdist 2.5 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 3.4 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
-# (An external program can use the X_* hooks to add
-# a few extra files and actions.  It needs to use a sed script to change
-# them though, the shell doesn't get it otherwise.)
 
 PATH=/bin:/usr/bin
 export PATH
@@ -22,17 +19,14 @@ bin
 bin/MAKEDEV
 bin/arch
 bin/badblocks
-bin/basename
 bin/chmod
 bin/clone
 bin/compress
 bin/cp
 bin/cpdir
-bin/de
 bin/df
-bin/dosdir
-bin/dosread
-bin/doswrite
+`test -f /usr/bin/mtools || echo bin/dos*`
+`test -f /usr/bin/mtools && echo bin/mtools`
 bin/edparams
 bin/getty
 bin/grep
@@ -48,13 +42,12 @@ bin/mined
 bin/mkdir
 bin/mkfs
 bin/mknod
-bin/more
+bin/mkswap
 bin/mv
 bin/od
 bin/part
 bin/partition
 bin/readall
-bin/readfs
 bin/repartition
 bin/rm
 bin/rmdir
@@ -64,15 +57,15 @@ bin/shutdown
 bin/sleep
 bin/sort
 bin/stty
+bin/sysenv
 bin/tar
-bin/tee
-bin/time
 bin/uname
 bin/uncompress
 bin/update
 bin/vol
-bin/yap
 bin/zcat
+etc
+etc/rc
 lib
 lib/keymaps
 `cd /usr && echo lib/keymaps/*`
@@ -80,9 +73,9 @@ lib/pwdauth
 mdec
 mdec/boot
 mdec/bootblock
+mdec/jumpboot
 mdec/masterboot
 tmp
-$X_USRLIST
 "
 
 # Find the root device, and the real root device.
@@ -127,22 +120,29 @@ fi
 
 read ret
 umount /dev/fd$drive 2>/dev/null
-umount /dev/fd${drive}b 2>/dev/null
+umount /dev/fd${drive}p1 2>/dev/null
 mkfs -1 -i 272 /dev/fd$drive 480 || exit
-partition -mf /dev/fd$drive 0 81:960 81:480 >/dev/null || exit
+partition -mf /dev/fd$drive 0 81:960 81:240 81:240 >/dev/null || exit
 repartition /dev/fd$drive >/dev/null || exit
-mkfs -1 /dev/fd${drive}b || exit
+mkfs -1 /dev/fd${drive}p1 || exit
+mkfs -1 /dev/fd${drive}p2 || exit
 mount /dev/fd$drive /mnt || exit
-mount /dev/fd${drive}b $rootdir/minix || exit	# Hide /minix for a moment
+mount /dev/fd${drive}p1 $rootdir/minix || exit	# Hide /minix and /etc
+mount /dev/fd${drive}p2 $rootdir/etc 2>/dev/null # (complains about /etc/mtab)
 cpdir -vx $rootdir /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/root || exit
 install -d -o 0 -g 0 -m 555 /mnt/mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/usr || exit
-umount /dev/fd${drive}b || exit			# Unhide /minix
+umount /dev/fd${drive}p2 || exit		# Unhide /etc
+umount /dev/fd${drive}p1 || exit		# Unhide /minix
 install -d -o 2 -g 0 -m 755 /mnt/minix || exit
+install -d -o 2 -g 0 -m 755 /mnt/etc || exit
 set `ls -t $rootdir/minix`			# Install the latest kernel
 install -c $rootdir/minix/$1 /mnt/minix/`uname -r`.`uname -v` || exit
+cpdir -v /usr/src/etc /mnt/etc || exit		# Install a fresh /etc
+chown -R 0:0 /mnt/etc				# Patch up owner and mode
+chmod 600 /mnt/etc/shadow
 
 # Change /etc/fstab.
 echo >/mnt/etc/fstab "\
@@ -153,22 +153,21 @@ usr=unknown"
 
 # How to install?
 echo >/mnt/etc/issue "\
+
 Login as root and run 'setup' to install Minix."
 
-eval "$X_ROOT1"
 umount /dev/fd$drive || exit
 umount $root 2>/dev/null
 installboot -d /dev/fd$drive /usr/mdec/bootblock boot >/dev/null
-eval "$X_ROOT2"
 
 # Partition the root floppy whether necessary or not.  (Two images can be
 # concatenated, or a combined image can be split later.)
-partition -mf /dev/fd$drive 0 81:960 0:0 81:1440 >/dev/null || exit
+partition -mf /dev/fd$drive 0 81:960 0:0 81:1440 81:480 >/dev/null || exit
 
 if [ "$single" ]
 then
 	repartition /dev/fd$drive >/dev/null
-	part=c
+	part=p2
 else
 	echo -n "Insert the usr diskette in drive $drive and hit RETURN"
 	read ret
@@ -179,9 +178,7 @@ mkfs -1 -i 96 /dev/fd$drive$part 720 || exit
 mount /dev/fd$drive$part /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 (cd /usr && exec tar cfD - $usrlist) | (cd /mnt && exec tar xvfp -) || exit
-eval "$X_USR1"
 umount /dev/fd$drive$part || exit
-eval "$X_USR2"
 
 # Put a "boot the other drive" bootblock on the /usr floppy.
 installboot -m /dev/fd$drive$part /usr/mdec/masterboot >/dev/null

@@ -32,9 +32,15 @@ FORWARD void ip_bufcheck ARGS(( void ));
 #endif
 FORWARD void ip_bad_callback ARGS(( struct ip_port *ip_port ));
 
-PUBLIC ip_port_t ip_port_table[IP_PORT_NR];
+PUBLIC ip_port_t *ip_port_table;
 PUBLIC ip_fd_t ip_fd_table[IP_FD_NR];
 PUBLIC ip_ass_t ip_ass_table[IP_ASS_NR];
+
+PUBLIC void ip_prep()
+{
+	ip_port_table= alloc(ip_conf_nr * sizeof(ip_port_table[0]));
+	icmp_prep();
+}
 
 PUBLIC void ip_init()
 {
@@ -42,6 +48,7 @@ PUBLIC void ip_init()
 	ip_ass_t *ip_ass;
 	ip_fd_t *ip_fd;
 	ip_port_t *ip_port;
+	struct ip_conf *icp;
 
 	assert (BUF_S >= sizeof(struct nwio_ethopt));
 	assert (BUF_S >= IP_MAX_HDR_SIZE + ETH_HDR_SIZE);
@@ -63,21 +70,23 @@ PUBLIC void ip_init()
 	}
 #endif
 
-	for (i=0, ip_port= ip_port_table; i<IP_PORT_NR; i++, ip_port++)
+	for (i=0, ip_port= ip_port_table, icp= ip_conf;
+		i<ip_conf_nr; i++, ip_port++, icp++)
 	{
+		ip_port->ip_port= i;
 #if ZERO
 		ip_port->ip_flags= IPF_EMPTY;
 #endif
 		ip_port->ip_dev_main= (ip_dev_t)ip_bad_callback;
 		ip_port->ip_dev_set_ipaddr= (ip_dev_t)ip_bad_callback;
 		ip_port->ip_dev_send= (ip_dev_send_t)ip_bad_callback;
-		ip_port->ip_minor= ip_conf[i].ic_minor;
-		ip_port->ip_dl_type= ip_conf[i].ic_devtype;
+		ip_port->ip_dl_type= icp->ic_devtype;
 		ip_port->ip_mss= IP_DEF_MSS;
+
 		switch(ip_port->ip_dl_type)
 		{
 		case IPDL_ETH:
-			ip_port->ip_dl.dl_eth.de_port= ip_conf[i].ic_port;
+			ip_port->ip_dl.dl_eth.de_port= icp->ic_port;
 			result= ipeth_init(ip_port);
 			if (result == -1)
 				continue;
@@ -85,17 +94,18 @@ PUBLIC void ip_init()
 			break;
 #if ENABLE_PSIP
 		case IPDL_PSIP:
-			ip_port->ip_dl.dl_ps.ps_port= ip_conf[i].ic_port;
+			ip_port->ip_dl.dl_ps.ps_port= icp->ic_port;
 			result= ipps_init(ip_port);
 			if (result == -1)
 				continue;
 			assert(result == NW_OK);
 			break;
 #endif
+#if !CRAMPED
 		default:
 			ip_panic(( "unknown ip_dl_type %d", 
 							ip_port->ip_dl_type ));
-			break;
+#endif
 		}
 #if ZERO
 		ip_port->ip_loopb_head= NULL;
@@ -119,16 +129,15 @@ PUBLIC void ip_init()
 	icmp_init();
 	ipr_init();
 
-	for (i=0, ip_port= ip_port_table; i<IP_PORT_NR; i++, ip_port++)
+	for (i=0, ip_port= ip_port_table; i<ip_conf_nr; i++, ip_port++)
 	{
 		if (!(ip_port->ip_flags & IPF_CONFIGURED))
 			continue;
 		ip_port->ip_frame_id= (u16_t)get_time();
 
-		result= sr_add_minor(ip_port->ip_minor,
-			ip_port-ip_port_table, ip_open, ip_close,
-			ip_read, ip_write, ip_ioctl, ip_cancel);
-		assert (result>=0);
+		sr_add_minor(if2minor(ip_conf[i].ic_ifno, IP_DEV_OFF),
+			i, ip_open, ip_close, ip_read,
+			ip_write, ip_ioctl, ip_cancel);
 
 		(*ip_port->ip_dev_main)(ip_port);
 	}
@@ -170,9 +179,10 @@ int which_operation;
 		assert (!repl_res);
 		break;
 #endif
+#if !CRAMPED
 	default:
 		ip_panic(( "unknown cancel request" ));
-		break;
+#endif
 	}
 	return NW_OK;
 }
@@ -199,7 +209,7 @@ put_pkt_t put_pkt;
 	if (i>=IP_FD_NR)
 	{
 		DBLOCK(1, printf("out of fds\n"));
-		return EOUTOFBUFS;
+		return EAGAIN;
 	}
 
 	ip_fd= &ip_fd_table[i];
@@ -252,7 +262,7 @@ int priority;
 	ip_ass_t *ip_ass;
 	acc_t *pack, *next_pack;
 
-	for (i= 0, ip_port= ip_port_table; i<IP_PORT_NR; i++, ip_port++)
+	for (i= 0, ip_port= ip_port_table; i<ip_conf_nr; i++, ip_port++)
 	{
 		if (ip_port->ip_dl_type == IPDL_ETH)
 		{
@@ -371,7 +381,7 @@ PRIVATE void ip_bufcheck()
 	ip_ass_t *ip_ass;
 	acc_t *pack;
 
-	for (i= 0, ip_port= ip_port_table; i<IP_PORT_NR; i++, ip_port++)
+	for (i= 0, ip_port= ip_port_table; i<ip_conf_nr; i++, ip_port++)
 	{
 		if (ip_port->ip_dl_type == IPDL_ETH)
 		{
@@ -420,8 +430,9 @@ PRIVATE void ip_bufcheck()
 PRIVATE void ip_bad_callback(ip_port)
 struct ip_port *ip_port;
 {
-	ip_panic(( "no callback filled in for port %d", 
-						ip_port-ip_port_table ));
+#if !CRAMPED
+	ip_panic(( "no callback filled in for port %d", ip_port->ip_port ));
+#endif
 }
 
 /*

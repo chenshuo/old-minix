@@ -16,6 +16,7 @@ all:	\
 	japanese.map \
 	latin-am.map \
 	olivetti.map \
+	polish.map \
 	scandinavn.map \
 	spanish.map \
 	uk.map \
@@ -30,6 +31,7 @@ install:	\
 	$(LK)/japanese.map \
 	$(LK)/latin-am.map \
 	$(LK)/olivetti.map \
+	$(LK)/polish.map \
 	$(LK)/scandinavn.map \
 	$(LK)/spanish.map \
 	$(LK)/uk.map \
@@ -58,6 +60,9 @@ $(LK)/latin-am.map:	latin-am.map
 	install -c $? $@
 
 $(LK)/olivetti.map:	olivetti.map
+	install -c $? $@
+
+$(LK)/polish.map:	polish.map
 	install -c $? $@
 
 $(LK)/scandinavn.map:	scandinavn.map

@@ -14,7 +14,7 @@
  *
  * The file contains one entry point:
  *
- *   mixer_task:  main entry when system is brought up
+ *   sb16mixer_task:  main entry when system is brought up
  *
  *  May 20 1995			Author: Michel R. Prevenier 
  */
@@ -30,7 +30,7 @@
 #endif
 #include "sb16.h"
 
-#if ENABLE_SB_AUDIO
+#if ENABLE_SB16
 
 /* Function prototypes */
 FORWARD _PROTOTYPE( int mixer_init, (void)); 
@@ -46,9 +46,9 @@ PRIVATE int mixer_avail = 0;	/* Mixer exists? */
 
 
 /*=========================================================================*
- *				mixer_task				   *
+ *				sb16mixer_task				   *
  *=========================================================================*/
-PUBLIC void mixer_task()
+PUBLIC void sb16mixer_task()
 {
   message mess;
   int err, caller, proc_nr;
@@ -432,4 +432,4 @@ int flag;	/* 0 = get, 1 = set */
    	
   return OK;
 }
-#endif /* ENABLE_AUDIO */
+#endif /* ENABLE_SB16 */

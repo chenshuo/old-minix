@@ -1,15 +1,16 @@
 /* Function prototypes. */
 
-struct mproc;		/* need types outside of parameter list --kub */
+struct mproc;
 struct stat;
 
 /* alloc.c */
 _PROTOTYPE( phys_clicks alloc_mem, (phys_clicks clicks)			);
 _PROTOTYPE( void free_mem, (phys_clicks base, phys_clicks clicks)	);
-_PROTOTYPE( phys_clicks max_hole, (void)				);
 _PROTOTYPE( void mem_init, (phys_clicks *total, phys_clicks *free)	);
-_PROTOTYPE( phys_clicks mem_left, (void)				);
-_PROTOTYPE( int do_brk3, (void)						);
+_PROTOTYPE( int swap_on, (char *file, u32_t offset, u32_t size)	);
+_PROTOTYPE( int swap_off, (void)					);
+_PROTOTYPE( void swap_in, (void)					);
+_PROTOTYPE( void swap_inqueue, (struct mproc *rmp)			);
 
 /* break.c */
 _PROTOTYPE( int adjust, (struct mproc *rmp,
@@ -20,6 +21,8 @@ _PROTOTYPE( int size_ok, (int file_type, vir_clicks tc, vir_clicks dc,
 
 /* exec.c */
 _PROTOTYPE( int do_exec, (void)						);
+_PROTOTYPE( void rw_seg, (int rw, int fd, int proc, int seg,
+						phys_bytes seg_bytes)	);
 _PROTOTYPE( struct mproc *find_share, (struct mproc *mp_ign, Ino_t ino,
 			Dev_t dev, time_t ctime)			);
 
@@ -35,14 +38,15 @@ _PROTOTYPE( int do_getset, (void)					);
 /* main.c */
 _PROTOTYPE( void main, (void)						);
 
+/* misc.c */
+_PROTOTYPE( int do_reboot, (void)					);
+_PROTOTYPE( int do_svrctl, (void)					);
+
 #if (MACHINE == MACINTOSH)
 _PROTOTYPE( phys_clicks start_click, (void)				);
 #endif
 
-_PROTOTYPE( void reply, (int proc_nr, int result, int res2, char *respt));
-
-/* putk.c */
-_PROTOTYPE( void putk, (int c)						);
+_PROTOTYPE( void setreply, (int proc_nr, int result)			);
 
 /* signal.c */
 _PROTOTYPE( int do_alarm, (void)					);
@@ -57,7 +61,7 @@ _PROTOTYPE( int do_sigpending, (void)					);
 _PROTOTYPE( int do_sigprocmask, (void)					);
 _PROTOTYPE( int do_sigreturn, (void)					);
 _PROTOTYPE( int do_sigsuspend, (void)					);
-_PROTOTYPE( int do_reboot, (void)					);
+_PROTOTYPE( void check_pending, (struct mproc *rmp)			);
 
 /* trace.c */
 _PROTOTYPE( int do_trace, (void)					);

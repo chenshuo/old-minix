@@ -16,6 +16,7 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/type.h>
+#include <minix/syslib.h>
 #include <kernel/const.h>
 #include <kernel/type.h>
 #include <ibm/partition.h>
@@ -34,6 +35,8 @@
 #define K_RET	 0x0020	/* Returns to the monitor on reboot. */
 #define K_INT86	 0x0040	/* Requires generic INT support. */
 #define K_MEML	 0x0080	/* Pass a list of free memory. */
+#define K_BRET	 0x0100	/* New monitor code on shutdown in boot parameters. */
+#define K_ALL	 0x01FF	/* All feature bits this monitor supports. */
 
 
 /* Data about the different processes. */
@@ -89,48 +92,6 @@ void pretty_image(char *image)
 	}
 }
 
-char *params2params(size_t *size)
-/* Repackage the environment settings for the kernel. */
-{
-	char *parms;
-	size_t i, z;
-	environment *e;
-
-	i= 0;
-	z= 64;
-	parms= malloc(z * sizeof(char *));
-
-	for (e= env; e != nil; e= e->next) {
-		char *name= e->name, *value= e->value;
-		size_t n;
-		dev_t dev;
-
-		if (!(e->flags & E_VAR)) continue;
-
-		if (e->flags & E_DEV) {
-			if ((dev= name2dev(value)) == -1) {
-				free(parms);
-				errno= 0;
-				return nil;
-			}
-			value= ul2a10((u16_t) dev);
-		}
-
-		n= i + strlen(name) + 1 + strlen(value) + 1;
-		if (n > z) {
-			z+= n;
-			parms= realloc(parms, z * sizeof(char));
-		}
-		strcpy(parms + i, name);
-		strcat(parms + i, "=");
-		strcat(parms + i, value);
-		i= n;
-	}
-	parms[i++]= 0;	/* End marked with empty string. */
-	*size= i;
-	return parms;
-}
-
 void raw_clear(u32_t addr, u32_t count)
 /* Clear "count" bytes at absolute address "addr". */
 {
@@ -157,6 +118,63 @@ void raw_clear(u32_t addr, u32_t count)
 unsigned click_shift;
 unsigned click_size;	/* click_size = Smallest kernel memory object. */
 unsigned k_flags;	/* Not all kernels are created equal. */
+u32_t reboot_code;	/* Obsolete reboot code return pointer. */
+
+int params2params(char *params, size_t psize)
+/* Repackage the environment settings for the kernel. */
+{
+	size_t i, n;
+	environment *e;
+	char *name, *value;
+	dev_t dev;
+
+	i= 0;
+	for (e= env; e != nil; e= e->next) {
+		name= e->name;
+		value= e->value;
+
+		if (!(e->flags & E_VAR)) continue;
+
+		if (e->flags & E_DEV) {
+			if ((dev= name2dev(value)) == -1) return 0;
+			value= ul2a10((u16_t) dev);
+		}
+
+		n= i + strlen(name) + 1 + strlen(value) + 1;
+		if (n < psize) {
+			strcpy(params + i, name);
+			strcat(params + i, "=");
+			strcat(params + i, value);
+		}
+		i= n;
+	}
+
+	if (!(k_flags & K_MEML)) {
+		/* Require old memory size variables. */
+
+		value= ul2a10((mem[0].base + mem[0].size) / 1024);
+		n= i + 7 + 1 + strlen(value) + 1;
+		if (n < psize) {
+			strcpy(params + i, "memsize=");
+			strcat(params + i, value);
+		}
+		i= n;
+		value= ul2a10(mem[1].size / 1024);
+		n= i + 7 + 1 + strlen(value) + 1;
+		if (n < psize) {
+			strcpy(params + i, "emssize=");
+			strcat(params + i, value);
+		}
+		i= n;
+	}
+
+	if (i >= psize) {
+		printf("Too many boot parameters\n");
+		return 0;
+	}
+	params[i]= 0;	/* End marked with empty string. */
+	return 1;
+}
 
 void patch_sizes(void)
 /* Patch sizes of each process into kernel data space, kernel ds into kernel
@@ -305,6 +323,12 @@ int get_clickshift(u32_t ksec, struct image_header *hdr)
 	click_shift= * (u16_t *) (textp + CLICK_OFF);
 	k_flags= * (u16_t *) (textp + FLAGS_OFF);
 
+	if ((k_flags & ~K_ALL) != 0) {
+		printf("%s requires features this monitor doesn't offer\n",
+			hdr->name);
+		return 0;
+	}
+
 	if (click_shift < HCLICK_SHIFT || click_shift > 16) {
 		printf("%s click size is bad\n", hdr->name);
 		errno= 0;
@@ -357,10 +381,13 @@ void exec_image(char *image)
 	long a_text, a_data, a_bss, a_stack;
 	int banner= 0;
 	long processor= a2l(b_value("processor"));
-	char *params;
-	size_t paramsize;
 	u16_t mode;
 	char *console;
+	char params[SECTOR_SIZE];
+	extern char *sbrk(int);
+
+	/* The stack is pretty deep here, so check if heap and stack collide. */
+	(void) sbrk(0);
 
 	printf("\nLoading ");
 	pretty_image(image);
@@ -540,7 +567,7 @@ void exec_image(char *image)
 	if (!run_trailer()) { errno= 0; return; }
 
 	/* Translate the boot parameters to what Minix likes best. */
-	if ((params= params2params(&paramsize)) == nil) return;
+	if (!params2params(params, sizeof(params))) { errno= 0; return; }
 
 	/* Set the video to the required mode. */
 	if ((console= b_value("console")) == nil || (mode= a2x(console)) == 0) {
@@ -553,9 +580,14 @@ void exec_image(char *image)
 	(void) dev_close();
 
 	/* Minix. */
-	reboot_code= minix(process[KERNEL].entry, process[KERNEL].cs,
-				process[KERNEL].ds, params, paramsize, aout);
-	free(params);
+	minix(process[KERNEL].entry, process[KERNEL].cs,
+			process[KERNEL].ds, params, sizeof(params), aout);
+
+	if (!(k_flags & K_BRET)) {
+		extern u32_t reboot_code;
+		raw_copy(mon2abs(params), reboot_code, sizeof(params));
+	}
+	parse_code(params);
 
 	/* Return from Minix; boot file system still around? */
 	(void) dev_open();

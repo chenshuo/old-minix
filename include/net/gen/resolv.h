@@ -93,7 +93,7 @@ int dn_comp _ARGS(( const u8_t *exp_dn, u8_t *comp_dn, int length,
 	u8_t **dnptrs, u8_t **lastdnptr ));
 int dn_expand  _ARGS(( const u8_t *msg, const u8_t *eomorig,
 	const u8_t *comp_dn, u8_t *exp_dn, int length ));
-int __dn_skipname _ARGS(( const u8_t *comp_dn, const u8_t *eom ));
+int dn_skipname _ARGS(( const u8_t *comp_dn, const u8_t *eom ));
 
 char *__hostalias _ARGS(( const char *name ));
 

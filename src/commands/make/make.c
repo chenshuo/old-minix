@@ -23,9 +23,10 @@
  *************************************************************************/
 
 #include "h.h"
+#include <sys/wait.h>
+#include <unistd.h>
 
-/* Files made with a make rule newer than the youngest file. */
-#define NEWER	((time_t) -1 < 0 ? (time_t) LONG_MAX : (time_t) -1)
+_PROTOTYPE(static void tellstatus, (FILE *out, char *name, int status));
 
 static bool  execflag;
 
@@ -82,6 +83,25 @@ int makeold(name) char *name;
   return utime(name, &a);
 }
 #endif
+
+
+static void tellstatus(out, name, status)
+FILE *out;
+char *name;
+int status;
+{
+  char cwd[PATH_MAX];
+
+  fprintf(out, "%s in %s: ",
+	name, getcwd(cwd, sizeof(cwd)) == NULL ? "?" : cwd);
+
+  if (WIFEXITED(status)) {
+	fprintf(out, "Exit code %d", WEXITSTATUS(status));
+  } else {
+	fprintf(out, "Signal %d%s",
+		WTERMSIG(status), status & 0x80 ? " - core dumped" : "");
+  }
+}
 
 
 /*
@@ -148,10 +168,12 @@ struct line *lp;
 		if ((estat = dosh(q, shell)) != 0) {
 		    if (estat == -1)
 			fatal("Couldn't execute %s", shell,0);
-		    else if (signore)
-			printf("%s: Error code %d (Ignored)\n", myname, estat);
-		    else {
-			fprintf(stderr,"%s: Error code %d\n", myname, estat);
+		    else if (signore) {
+			tellstatus(stdout, myname, estat);
+			printf(" (Ignored)\n");
+		    } else {
+			tellstatus(stderr, myname, estat);
+			fprintf(stderr, "\n");
 			if (!(np->n_flag & N_PREC))
 #ifdef unix
 			    if (makeold(np->n_name) == 0)
@@ -396,6 +418,7 @@ struct name *np;
 		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
+	np->n_flag &= ~N_EXISTS;
   } else {
 	np->n_time = info.st_mtime;
 	np->n_flag |= N_EXISTS;
@@ -406,13 +429,14 @@ struct name *np;
   int fd;
 
   if((fd=Fopen(np->n_name,0)) < 0) {
-          np->n_time = 0L;
+        np->n_time = 0L;
+	np->n_flag &= ~N_EXISTS;
   }
   else {
-          Fdatime(&fm,fd,0);
-          Fclose(fd);
-          np->n_time = mstonix((unsigned int)fm.date,(unsigned int)fm.time);
-          np->n_flag |= N_EXISTS;
+        Fdatime(&fm,fd,0);
+        Fclose(fd);
+        np->n_time = mstonix((unsigned int)fm.date,(unsigned int)fm.time);
+        np->n_flag |= N_EXISTS;
   }
 #endif
 #ifdef eon
@@ -424,6 +448,7 @@ struct name *np;
 		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
+	np->n_flag &= ~N_EXISTS;
   }
   else if (getstat(fd, &info) < 0)
 	fatal("Can't getstat %s: %s", np->n_name, errno);
@@ -443,6 +468,7 @@ struct name *np;
 		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
+	np->n_flag &= ~N_EXISTS;
   }
   else if (getmdate(fd, &info) < 0)
 	fatal("Can't getstat %s: %s", np->n_name, errno);
@@ -526,19 +552,26 @@ int          level;
   register struct depend  *dp;
   register struct line    *lp;
   register struct depend  *qdp;
-  time_t  dtime = 0;
+  time_t  now, t, dtime = 0;
   bool    dbgfirst     = TRUE;
   char   *basename  = (char *) 0;
   char   *inputname = (char *) 0;
-
 
   if (np->n_flag & N_DONE) {
      if(dbginfo) dbgprint(level,np,"already done");
      return 0;
   }
 
-  if (!(np->n_flag & N_EXISTS))
-     modtime(np);		/*  Gets modtime of this file  */
+  modtime(np);		/*  Gets modtime of this file  */
+
+  while (time(&now) == np->n_time) {
+     /* Time of target is equal to the current time.  This bothers us, because
+      * we can't tell if it needs to be updated if we update a file it depends
+      * on within a second.  So wait a second.  (A per-second timer is too
+      * coarse for today's fast machines.)
+      */
+     sleep(1);
+  }
 
   if (rules) {
      for (lp = np->n_line; lp; lp = lp->l_next)
@@ -584,21 +617,19 @@ int          level;
   np->n_flag |= N_DONE;
 
   if (quest) {
-     time_t t;
-
      t = np->n_time;
-     np->n_time = NEWER;
+     np->n_time = now;
      return (t < dtime);
   }
   else if ((np->n_time < dtime || !( np->n_flag & N_EXISTS))
                && !(np->n_flag & N_DOUBLE)) {
      execflag = FALSE;
      make1(np, (struct line *)0, qdp, basename, inputname); /* free()'s qdp */
-     np->n_time = NEWER;
+     np->n_time = now;
      if ( execflag) np->n_flag |= N_EXEC;
   }
   else if ( np->n_flag & N_EXEC ) {
-     np->n_time = NEWER;
+     np->n_time = now;
   }
 
   if (dbginfo) {

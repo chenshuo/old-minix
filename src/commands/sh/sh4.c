@@ -192,7 +192,7 @@ loop:
 	for (;;) {
 		c = subgetc('"', foundequals);
 		if (c == 0 ||
-		    f & (DOBLANK && any(c, ifs->value)) ||
+		    (f & DOBLANK && any(c, ifs->value)) ||
 		    (!INSUB() && any(c, "\"'"))) {
 		        scanequals = 0;
 			unget(c);
@@ -304,6 +304,7 @@ int quoted;
 			s[1] = 0;
 		}
 	}
+	e.linep = s;
 	vp = lookup(s);
 	if ((dolp = vp->value) == null) {
 		switch (c) {
@@ -313,12 +314,13 @@ int quoted;
 				gflg++;
 				break;
 			}
+			cp = evalstr(strsave(cp, areanum),DOSUB);
 			setval(vp, cp);
 			dolp = vp->value;
 			break;
 
 		case '-':
-			dolp = strsave(cp, areanum);
+			dolp = evalstr(strsave(cp, areanum),DOSUB);
 			break;
 
 		case '?':
@@ -326,18 +328,18 @@ int quoted;
 				prs("missing value for ");
 				err(s);
 			} else
-				err(cp);
+			        err(evalstr(strsave(cp, areanum),DOSUB));
 			gflg++;
 			break;
 		}
-	} else if (c == '+')
-		dolp = strsave(cp, areanum);
+	} else if (c == '+') {
+		dolp = evalstr(strsave(cp, areanum),DOSUB);
+	}
 	if (flag['u'] && dolp == null) {
 		prs("unset variable: ");
 		err(s);
 		gflg++;
 	}
-	e.linep = s;
 	PUSHIO(aword, dolp, quoted ? qstrchar : strchar);
 	return(0);
 }
@@ -349,15 +351,27 @@ static int
 grave(quoted)
 int quoted;
 {
-	register char *cp;
-	register int i;
+        int otask;
+        struct io *oiop;
+	register char *cp,*s;
+	register int i,c;
 	int pf[2];
 
-	for (cp = e.iop->argp->aword; *cp != '`'; cp++)
-		if (*cp == 0) {
-			err("no closing `");
-			return(0);
-		}
+	c = readc();
+        s = e.linep;
+        *e.linep++ = c;
+	oiop = e.iop;
+	otask = e.iop->task;
+	e.iop->task = XOTHER;
+	while ((c = subgetc('\'', 0))!=0 && c!='`')
+		if (e.linep < elinep)
+			*e.linep++ = c;
+	if (oiop == e.iop)
+		e.iop->task = otask;
+	if (c != '`') {
+		err("no closing `");
+		return(0);
+	}
 	if (openpipe(pf) < 0)
 		return(0);
 	if ((i = fork()) == -1) {
@@ -366,12 +380,12 @@ int quoted;
 		return(0);
 	}
 	if (i != 0) {
-		e.iop->argp->aword = ++cp;
+		e.linep = s;
 		close(pf[1]);
 		PUSHIO(afile, remap(pf[0]), quoted? qgravechar: gravechar);
 		return(1);
 	}
-	*cp = 0;
+	*e.linep = 0;
 	/* allow trapped signals */
 	for (i=0; i<=_NSIG; i++)
 		if (ourtrap[i] && signal(i, SIG_IGN) != SIG_IGN)
@@ -381,9 +395,9 @@ int quoted;
 	flag['e'] = 0;
 	flag['v'] = 0;
 	flag['n'] = 0;
-	cp = strsave(e.iop->argp->aword, 0);
+	cp = strsave(e.linep = s, 0);
 	areanum = 1;
-	freehere(areanum);
+	inithere();
 	freearea(areanum);	/* free old space */
 	e.oenv = NULL;
 	e.iop = (e.iobase = iostack) - 1;

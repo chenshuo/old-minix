@@ -112,6 +112,7 @@ main(argc, argv)
 			parsenode();
 	}
 	output(argv[2]);
+	return 0;
 }
 
 

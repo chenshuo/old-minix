@@ -18,6 +18,7 @@ Copyright 1995 Philip Homburg
 
 struct acc;
 
+void udp_prep ARGS(( void ));
 void udp_init ARGS(( void ));
 int udp_open ARGS(( int port, int srfd,
 	get_userdata_t get_userdata, put_userdata_t put_userdata, 

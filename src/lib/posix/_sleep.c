@@ -1,61 +1,67 @@
-/*  sleep(3)
- *
- *  Sleep(n) pauses for 'n' seconds by scheduling an alarm interrupt.
- *
- *  Changed to conform with POSIX      Terrence W. Holm      Oct. 1988
+/*	sleep() - Sleep for a number of seconds.	Author: Kees J. Bot
+ *								24 Apr 2000
+ * (Inspired by the Minix-vmd version of same, except that
+ * this implementation doesn't bother to check if all the signal
+ * functions succeed.  Under Minix that is no problem.)
  */
 
 #include <lib.h>
 #define sleep _sleep
 #include <signal.h>
 #include <unistd.h>
+#include <time.h>
 
-FORWARD _PROTOTYPE( void _alfun, (int signo) );
-
-PRIVATE void _alfun(signo)
-int signo;
+static void handler(int sig)
 {
-/* Dummy signal handler used with sleep() below. */
+	/* Dummy signal handler. */
 }
 
-PUBLIC unsigned sleep(secs)
-unsigned secs;
+unsigned sleep(unsigned sleep_seconds)
 {
-  unsigned current_secs;
-  unsigned remaining_secs;
-  struct sigaction act, oact;
-  sigset_t ss;
+	sigset_t ss_full, ss_orig, ss_alarm;
+	struct sigaction action_alarm, action_orig;
+	unsigned alarm_seconds, nap_seconds;
 
-  if (secs == 0) return(0);
+	/* Mask all signals. */
+	sigfillset(&ss_full);
+	sigprocmask(SIG_BLOCK, &ss_full, &ss_orig);
 
-  current_secs = alarm(0);	/* is there currently an alarm?  */
+	/* Cancel currently running alarm. */
+	alarm_seconds= alarm(0);
 
-  if (current_secs == 0 || current_secs > secs) {
-	act.sa_flags = 0;
-	act.sa_mask = 0;
-	act.sa_handler = _alfun;
-	sigaction(SIGALRM, &act, &oact);
+	/* How long can we nap without interruptions? */
+	nap_seconds= sleep_seconds;
+	if (alarm_seconds != 0 && alarm_seconds < sleep_seconds) {
+		nap_seconds= alarm_seconds;
+	}
 
-	alarm(secs);
-	sigemptyset(&ss);
-	sigsuspend(&ss);
-	remaining_secs = alarm(0);
+	/* Now sleep. */
+	action_alarm.sa_handler= handler;
+	sigemptyset(&action_alarm.sa_mask);
+	action_alarm.sa_flags= 0;
+	sigaction(SIGALRM, &action_alarm, &action_orig);
+	alarm(nap_seconds);
 
-	sigaction(SIGALRM, &oact, (struct sigaction *) NULL);
+	/* Wait for a wakeup call, either our alarm, or some other signal. */
+	ss_alarm= ss_orig;
+	sigdelset(&ss_alarm, SIGALRM);
+	sigsuspend(&ss_alarm);
 
-	if (current_secs > secs)
-		alarm(current_secs - (secs - remaining_secs));
+	/* Cancel alarm, set mask and stuff back to normal. */
+	nap_seconds -= alarm(0);
+	sigaction(SIGALRM, &action_orig, NULL);
+	sigprocmask(SIG_SETMASK, &ss_orig, NULL);
 
-	return(remaining_secs);
-  }
+	/* Restore alarm counter to the time remaining. */
+	if (alarm_seconds != 0 && alarm_seconds >= nap_seconds) {
+		alarm_seconds -= nap_seconds;
+		if (alarm_seconds == 0) {
+			raise(SIGALRM);		/* Alarm expires now! */
+		} else {
+			alarm(alarm_seconds);	/* Count time remaining. */
+		}
+	}
 
-  /* Current_secs <= secs,  ie. alarm should occur before secs.  */
-
-  alarm(current_secs);
-  pause();
-  remaining_secs = alarm(0);
-
-  alarm(remaining_secs);
-
-  return(secs - (current_secs - remaining_secs));
+	/* Return time not slept. */
+	return sleep_seconds - nap_seconds;
 }

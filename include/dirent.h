@@ -11,6 +11,10 @@
 #ifndef _DIRENT_H
 #define _DIRENT_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 /* _fl_direct is a flexible directory entry.  Actually it's a union of 8
  * characters and the 3 fields defined below. 
  */
@@ -49,10 +53,6 @@ struct dirent {		/* Largest entry (8 slots) */
 };
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( int closedir, (DIR *_dirp)					);
 _PROTOTYPE( DIR *opendir, (const char *_dirname)			);
 _PROTOTYPE( struct dirent *readdir, (DIR *_dirp)			);

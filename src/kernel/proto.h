@@ -18,8 +18,8 @@ _PROTOTYPE( void xt_winchester_task, (void)				);
 /* aha1540.c */
 _PROTOTYPE( void aha1540_scsi_task, (void)				);
 
-/* dosfat.c, dosfile.c */
-_PROTOTYPE( void dosfat_task, (void)					);
+/* fatfile.c, dosfile.c */
+_PROTOTYPE( void fatfile_task, (void)					);
 _PROTOTYPE( void dosfile_task, (void)					);
 _PROTOTYPE( void dosfile_stop, (void)					);
 
@@ -38,6 +38,9 @@ _PROTOTYPE( void reg_dmp, (struct proc *rp)				);
 _PROTOTYPE( void dp8390_task, (void)					);
 _PROTOTYPE( void dp_dump, (void)					);
 _PROTOTYPE( void dp8390_stop, (void)					);
+
+/* driver.c */
+_PROTOTYPE( void nop_task, (void)					);
 
 /* floppy.c, stfloppy.c */
 _PROTOTYPE( void floppy_task, (void)					);
@@ -75,10 +78,10 @@ _PROTOTYPE( void unhold, (void)						);
 _PROTOTYPE( void rs_init, (struct tty *tp)				);
 
 /* sb16_dsp.c */
-_PROTOTYPE( void dsp_task, (void)					);
+_PROTOTYPE( void sb16_task, (void)					);
 
 /* sb16_mixer.c */
-_PROTOTYPE( void mixer_task, (void)					);
+_PROTOTYPE( void sb16mixer_task, (void)					);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);
@@ -88,6 +91,8 @@ _PROTOTYPE( phys_bytes numap, (int proc_nr, vir_bytes vir_addr,
 _PROTOTYPE( void sys_task, (void)					);
 _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
+_PROTOTYPE( int vir_copy, (int src_proc, vir_bytes src_vir,
+		int dst_proc, vir_bytes dst_vir, vir_bytes bytes)	);
 
 /* table.c */
 _PROTOTYPE( void mapdrivers, (void)					);
@@ -128,7 +133,6 @@ _PROTOTYPE( void select_console, (int cons_line)			);
 /* cstart.c */
 _PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mds,
 				U16_t parmoff, U16_t parmsize)		);
-_PROTOTYPE( char *k_getenv, (char *name)				);
 
 /* exception.c */
 _PROTOTYPE( void exception, (unsigned vec_nr)				);
@@ -153,7 +157,7 @@ _PROTOTYPE( void lock, (void)						);
 _PROTOTYPE( void unlock, (void)						);
 _PROTOTYPE( void enable_irq, (unsigned irq)				);
 _PROTOTYPE( int disable_irq, (unsigned irq)				);
-_PROTOTYPE( u16_t mem_rdw, (segm_t segm, vir_bytes offset)		);
+_PROTOTYPE( u16_t mem_rdw, (U16_t segm, vir_bytes offset)		);
 _PROTOTYPE( void out_byte, (port_t port, int value)			);
 _PROTOTYPE( void out_word, (port_t port, int value)			);
 _PROTOTYPE( void phys_copy, (phys_bytes source, phys_bytes dest,
@@ -231,10 +235,11 @@ _PROTOTYPE( void pr_restart, (void)					);
 /* protect.c */
 _PROTOTYPE( void prot_init, (void)					);
 _PROTOTYPE( void init_codeseg, (struct segdesc_s *segdp, phys_bytes base,
-		phys_bytes size, int privilege)				);
+		vir_bytes size, int privilege)				);
 _PROTOTYPE( void init_dataseg, (struct segdesc_s *segdp, phys_bytes base,
-		phys_bytes size, int privilege)				);
+		vir_bytes size, int privilege)				);
 _PROTOTYPE( phys_bytes seg2phys, (U16_t seg)				);
+_PROTOTYPE( void phys2seg, (u16_t *seg, vir_bytes *off, phys_bytes phys));
 _PROTOTYPE( void enable_iop, (struct proc *pp)				);
 
 /* pty.c */
@@ -297,12 +302,6 @@ _PROTOTYPE( void kb_timer, (void)					);
 _PROTOTYPE( int kb_read, (int minor, char **bufindirect)		);
 _PROTOTYPE( void kb_init, (int minor)					);
 
-/* stshadow.c */
-_PROTOTYPE( void mkshadow, (struct proc *p, phys_clicks c2)		);
-_PROTOTYPE( void rmshadow, (struct proc *p, phys_clicks *basep,
-		phys_clicks *sizep)					);
-_PROTOTYPE( void unshadow, (struct proc *p)				);
- 
 /* stvdu.c */
 _PROTOTYPE( void flush, (struct tty *tp)				);
 _PROTOTYPE( void console, (struct tty *tp)				);
@@ -374,14 +373,12 @@ _PROTOTYPE( void _fpprestore, (struct state_frame *p)			);
 _PROTOTYPE( void _fpprestreg, (struct fpp_model *p)			);
 #endif
 
-#if (SHADOWING == 0)
 /* pmmu.c */
 _PROTOTYPE(void pmmuinit , (void)					);
 _PROTOTYPE(void pmmu_init_proc , (struct proc *rp )			);
 _PROTOTYPE(void pmmu_restore , (struct proc *rp )			);
 _PROTOTYPE(void pmmu_delete , (struct proc *rp )			);
 _PROTOTYPE(void pmmu_flush , (struct proc *rp )				);
-#endif
 
 #endif /* (CHIP == M68000) */
 

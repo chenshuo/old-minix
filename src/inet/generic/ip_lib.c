@@ -148,7 +148,7 @@ assert (acc->acc_length >= IP_MIN_HDR_SIZE);
 PUBLIC ipaddr_t ip_get_ifaddr(port_nr)
 int port_nr;
 {
-	assert(port_nr >= 0 && port_nr < IP_PORT_NR);
+	assert(port_nr >= 0 && port_nr < ip_conf_nr);
 
 	return ip_port_table[port_nr].ip_ipaddr;
 }

@@ -13,7 +13,7 @@ Created:	March 15, 1994 by Philip Homburg <philip@cs.vu.nl>
 #include "dp8390.h"
 #include "ne2000.h"
 
-#if (ENABLE_NETWORKING && ENABLE_NE2000) || __minix_vmd
+#if (ENABLE_DP8390 && ENABLE_NE2000) || __minix_vmd
 
 #define N 100
 
@@ -313,7 +313,7 @@ dpeth_t *dep;
 	outb_ne(dep, NE_RESET, byte);
 }
 
-#endif /* ENABLE_NETWORKING && ENABLE_NE2000 */
+#endif /* ENABLE_DP8390 && ENABLE_NE2000 */
 
 /*
  * $PchId: ne2000.c,v 1.4 1996/01/19 23:30:34 philip Exp $

@@ -27,6 +27,7 @@
 #include <sys/ioctl.h>
 #include <sys/mtio.h>
 #include <minix/partition.h>
+#include <minix/u64.h>
 
 /* Preferred block size to variable block length tapes, block devices or files.
  */
@@ -194,11 +195,7 @@ char *argv[];
 		if (ioctl(fd, DIOCGETP, &part) < 0) {
 			autovolsize = 0;
 		} else {
-#if __minix_vmd
 			volume_size = cv64ul(part.size);
-#else
-			volume_size = part.size;
-#endif
 		}
 	}
 
@@ -216,7 +213,7 @@ char *argv[];
 void usage()
 {
   fprintf(stderr,
-	"Usage: vol [-rw] [-b blocksize] [-m max] [size] block-special\n");
+	"Usage: vol [-rw1] [-b blocksize] [-m max] [size] block-special\n");
   exit(1);
 }
 

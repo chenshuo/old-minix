@@ -249,6 +249,7 @@ int archive_stat(name, stp) char *name; struct stat *stp;
   char *file;
   static dev_t ardev;
   static ino_t arino = 0;
+  static time_t armtime;
 
   if (!is_archive_ref(name)) { errno = EINVAL; return -1; }
   *lpar= 0;
@@ -263,6 +264,7 @@ int archive_stat(name, stp) char *name; struct stat *stp;
 	 */
 	arino = stp->st_ino;
 	ardev = stp->st_dev;
+	armtime = stp->st_mtime;
 	deltab();
 
 	if ((afd= open(name, O_RDONLY)) < 0) goto bail_out;
@@ -295,6 +297,7 @@ int archive_stat(name, stp) char *name; struct stat *stp;
   if (r == 0) {
 	/* Search the cache. */
 	r = searchtab(file, &stp->st_mtime, 1);
+	if (stp->st_mtime > armtime) stp->st_mtime = armtime;
   }
 
 bail_out:

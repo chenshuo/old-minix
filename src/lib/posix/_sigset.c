@@ -18,8 +18,8 @@
 /* Low bit of signal masks. */
 #define SIGBIT_0	((sigset_t) 1)
 
-/* Mask of valid signals (0 - _NSIG).  Assume the shift doesn't overflow. */
-#define SIGMASK		((SIGBIT_0 << (_NSIG + 1)) - 1)
+/* Mask of valid signals (0 - _NSIG). */
+#define SIGMASK		(((SIGBIT_0 << _NSIG) << 1) - 1)
 
 #define sigisvalid(signo) ((unsigned) (signo) <= _NSIG)
 
@@ -62,7 +62,7 @@ sigset_t *set;
 }
 
 PUBLIC int sigismember(set, signo)
-sigset_t *set;
+_CONST sigset_t *set;
 int signo;
 {
   if (!sigisvalid(signo)) {

@@ -12,11 +12,10 @@
 #include "kernel.h"
 #include "driver.h"
 #include "drvlib.h"
+#include <stdlib.h>
+#include <ibm/int86.h>
 
 #if ENABLE_DOSFILE
-
-/* If the DMA buffer is large enough then use it always. */
-#define USE_BUF		(DMA_BUF_SIZE > BLOCK_SIZE)
 
 /* Limit byte count to something DOS will find reasonable. */
 #define MAX_COUNT	MIN(DMA_BUF_SIZE, 16384)
@@ -32,32 +31,20 @@ PRIVATE struct drive {		/* main drive struct, one entry per drive */
   unsigned open_ct;		/* in-use count */
   int dfd;			/* DOS file descriptor if open_ct > 0 */
   char rw;			/* opened read-write? */
-  struct device part[DEV_PER_DRIVE];    /* primary partitions: dosd[0-4] */
+  struct device part[DEV_PER_DRIVE];    /* disks and partitions */
 } drive[MAX_DRIVES], *d_dr;
 
-PRIVATE struct trans {
-  struct iorequest_s *iop;	/* belongs to this I/O request */
-  unsigned long pos;		/* first byte to transfer */
-  unsigned count;		/* byte count */
-  phys_bytes phys;		/* user physical address */
-  phys_bytes buf;		/* buffer physical address */
-} dtrans[NR_IOREQS];
-
-PRIVATE struct trans *d_tp;		/* to add transfer requests */
-PRIVATE unsigned d_count;		/* number of bytes to transfer */
-PRIVATE unsigned long d_nextpos;	/* next block on disk to transfer */
-PRIVATE int d_opcode;			/* DEV_READ or DEV_WRITE */
 PRIVATE int d_drive;			/* selected drive */
 PRIVATE struct device *d_dv;		/* device's base and size */
 
 FORWARD _PROTOTYPE( struct device *d_prepare, (int device) );
 FORWARD _PROTOTYPE( char *d_name, (void) );
-FORWARD _PROTOTYPE( int d_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int d_finish, (void) );
+FORWARD _PROTOTYPE( int d_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( int d_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int d_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void dosclose, (int handle) );
-FORWARD _PROTOTYPE( char *doserror, (int err) );
+FORWARD _PROTOTYPE( char *doserror, (unsigned err) );
 FORWARD _PROTOTYPE( void d_geometry, (struct partition *entry));
 
 
@@ -68,8 +55,7 @@ PRIVATE struct driver d_dtab = {
   d_do_close,	/* release device */
   do_diocntl,	/* get or set a partition's geometry */
   d_prepare,	/* prepare for I/O on a given minor device */
-  d_schedule,	/* precompute cylinder, head, sector, etc. */
-  d_finish,	/* do the I/O */
+  d_transfer,	/* do the I/O */
   nop_cleanup,	/* no cleanup needed */
   d_geometry	/* tell the geometry of the disk */
 };
@@ -92,10 +78,7 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  /* Nothing to transfer as yet. */
-  d_count = 0;
-
-  if (device < NR_DEVICES) {			/* dosd0, dosd1, ... */
+  if (device < NR_DEVICES) {			/* d0, d0p[0-3], d1, ... */
 	d_drive = device / DEV_PER_DRIVE;	/* save drive number */
 	d_dr = &drive[d_drive];
 	d_dv = &d_dr->part[device % DEV_PER_DRIVE];
@@ -112,194 +95,126 @@ int device;
 PRIVATE char *d_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "dosd15";
-  unsigned device = d_drive * DEV_PER_DRIVE;
+  static char name[] = "dosfile-d0";
 
-  if (device < 10) {
-	name[4] = '0' + device;
-	name[5] = 0;
-  } else {
-	name[4] = '0' + device / 10;
-	name[5] = '0' + device % 10;
-  }
+  name[9] = '0' + d_drive;
   return name;
 }
 
 
 /*===========================================================================*
- *				d_schedule				     *
+ *				d_transfer				     *
  *===========================================================================*/
-PRIVATE int d_schedule(proc_nr, iop)
+PRIVATE int d_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-/* Gather I/O requests on consecutive blocks so they may be read/written
- * in one DOS read/write command if using a buffer.  Check and gather all the
- * requests and try to finish them as fast as possible if unbuffered.
- */
-  int r, opcode;
+  struct drive *dr = d_dr;
+  iovec_t *iop, *iov_end = iov + nr_req;
+  unsigned nbytes, count, chunk;
   unsigned long pos;
-  unsigned nbytes, count;
-  phys_bytes user_phys, buf_phys;
+  unsigned long dv_size = cv64ul(d_dv->dv_size);
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-
-  /* From/to this position on the device */
-  pos = iop->io_position;
-
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read or write? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-
-  /* Which block on disk and how close to EOF? */
-  if (pos >= d_dv->dv_size) return(OK);		/* At EOF */
-  if (pos + nbytes > d_dv->dv_size) nbytes = d_dv->dv_size - pos;
-  pos = d_dv->dv_base + pos;
-
-  if (USE_BUF && d_count > 0 && pos != d_nextpos) {
-	/* This new request can't be chained to the job being built */
-	if ((r = d_finish()) != OK) return(r);
-  }
-
-  /* The next consecutive byte */
-  if (USE_BUF) d_nextpos = pos + nbytes;
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	count = nbytes;
-
-	if (USE_BUF) {
-		if (d_count == MAX_COUNT) {
-			/* Can't transfer more than the buffer allows. */
-			if ((r = d_finish()) != OK) return(r);
+  while (nr_req > 0) {
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) {
+		if (nbytes + iop->iov_size > MAX_COUNT) {
+			/* Don't do half a segment if you can avoid it. */
+			if (nbytes == 0) nbytes = MAX_COUNT;
+			break;
 		}
-
-		if (d_count + count > MAX_COUNT)
-			count = MAX_COUNT - d_count;
-	} else {
-		if (d_tp == dtrans + NR_IOREQS) {
-			/* All transfer slots in use. */
-			if ((r = d_finish()) != OK) return(r);
-		}
+		nbytes += iop->iov_size;
 	}
 
-	if (d_count == 0) {
-		/* The first request in a row, initialize. */
-		d_opcode = opcode;
-		d_tp = dtrans;
-	}
+	/* Which block on disk and how close to EOF? */
+	pos = position;
+	if (pos >= dv_size) return(OK);		/* At EOF */
+	if (pos + nbytes > dv_size) nbytes = dv_size - pos;
+	pos = cv64ul(d_dv->dv_base) + pos;
 
-	if (USE_BUF) {
-		buf_phys = tmp_phys + d_count;
-	} else {
-		/* Memory chunk to copy. */
-		buf_phys = user_phys;
-
-		if (buf_phys >= (1L << 20)) {
-			/* DOS can only address the first megabyte. */
-			if (count > DMA_BUF_SIZE) count = DMA_BUF_SIZE;
-			buf_phys = tmp_phys;
-		}
-	}
-
-	/* Store I/O parameters */
-	d_tp->iop = iop;
-	d_tp->pos = pos;
-	d_tp->count = count;
-	d_tp->phys = user_phys;
-	d_tp->buf = buf_phys;
-
-	/* Update counters */
-	d_tp++;
-	d_count += count;
-	pos += count;
-	user_phys += count;
-	nbytes -= count;
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				d_finish				     *
- *===========================================================================*/
-PRIVATE int d_finish()
-{
-/* Carry out the I/O requests gathered in dtrans[]. */
-
-  struct trans *tp = dtrans, *tp2;
-  unsigned count;
-
-  if (d_count == 0) return(OK);	/* Spurious finish. */
-
-  do {
-	if (d_opcode == DEV_WRITE) {
-		tp2 = tp;
+	if (opcode == DEV_SCATTER) {
+		/* Copy from user space to the DMA buffer. */
 		count = 0;
-		do {
-			if (USE_BUF || tp2->buf == tmp_phys) {
-				phys_copy(tp2->phys, tp2->buf,
-						(phys_bytes) tp2->count);
-			}
-			count += tp2->count;
-			tp2++;
-		} while (USE_BUF && count < d_count);
-	} else {
-		count = USE_BUF ? d_count : tp->count;
+		for (iop = iov; count < nbytes; iop++) {
+			chunk = iov->iov_size;
+			if (count + chunk > nbytes) chunk = nbytes - count;
+			phys_copy(user_base + iop->iov_addr, tmp_phys + count,
+							(phys_bytes) chunk);
+			count += chunk;
+		}
 	}
 
 	/* Need to seek to a new position? */
-	if (tp->pos != d_dr->curpos) {
+	if (pos != dr->curpos) {
 		reg86.b.intno = 0x21;
 		reg86.w.ax = 0x4200;	/* LSEEK absolute */
-		reg86.w.bx = d_dr->dfd;
-		reg86.w.dx = tp->pos & 0xFFFF;
-		reg86.w.cx = tp->pos >> 16;
+		reg86.w.bx = dr->dfd;
+		reg86.w.dx = pos & 0xFFFF;
+		reg86.w.cx = pos >> 16;
 		level0(int86);
 		if (reg86.w.f & 0x0001) {	/* Seek failed */
 			printf("%s: seek to %lu failed: %s\n",
-				d_name(), tp->pos, doserror(reg86.w.ax));
-			d_dr->curpos = -1;
-			return(tp->iop->io_nbytes = EIO);
+				d_name(), pos, doserror(reg86.w.ax));
+			dr->curpos = -1;
+			return(EIO);
 		}
-		d_dr->curpos = tp->pos;
+		dr->curpos = pos;
 	}
 
 	/* Do the transfer using a DOS read or write call */
 	reg86.b.intno = 0x21;
-	reg86.b.ah = d_opcode == DEV_WRITE ? 0x40 : 0x3F;
-	reg86.w.bx = d_dr->dfd;
-	reg86.w.cx = count;
-	reg86.w.dx = tp->buf % HCLICK_SIZE;
-	reg86.w.ds = tp->buf / HCLICK_SIZE;
+	reg86.b.ah = opcode == DEV_SCATTER ? 0x40 : 0x3F;
+	reg86.w.bx = dr->dfd;
+	reg86.w.cx = nbytes;
+	reg86.w.dx = tmp_phys % HCLICK_SIZE;
+	reg86.w.ds = tmp_phys / HCLICK_SIZE;
 	level0(int86);
-	if ((reg86.w.f & 0x0001) || reg86.w.ax != count) {
+	if ((reg86.w.f & 0x0001) || reg86.w.ax != nbytes) {
 		/* Read or write error or unexpected EOF */
-		d_dr->curpos = -1;
-		return(tp->iop->io_nbytes = EIO);
+		dr->curpos = -1;
+		return(EIO);
+	}
+	dr->curpos += nbytes;
+
+	if (opcode == DEV_GATHER) {
+		/* Copy from the DMA buffer to user space. */
+		count = 0;
+		for (iop = iov; count < nbytes; iop++) {
+			chunk = iov->iov_size;
+			if (count + chunk > nbytes) chunk = nbytes - count;
+			phys_copy(tmp_phys + count, user_base + iop->iov_addr,
+							(phys_bytes) chunk);
+			count += chunk;
+		}
 	}
 
-	d_dr->curpos += count;
-	d_count -= count;
-
-	do {
-		if (d_opcode == DEV_READ) {
-			if (USE_BUF || tp->buf == tmp_phys) {
-				phys_copy(tp->buf, tp->phys,
-						(phys_bytes) tp->count);
-			}
+	/* Book the bytes successfully transferred. */
+	position += nbytes;
+	for (;;) {
+		if (nbytes < iov->iov_size) {
+			/* Not done with this one yet. */
+			iov->iov_addr += nbytes;
+			iov->iov_size -= nbytes;
+			break;
 		}
-		tp->iop->io_nbytes -= tp->count;
-		count -= tp->count;
-		tp++;
-	} while (count > 0);
-  } while (d_count > 0);
-
+		nbytes -= iov->iov_size;
+		iov->iov_addr += iov->iov_size;
+		iov->iov_size = 0;
+		if (nbytes == 0) {
+			/* The rest is optional, so we return to give FS a
+			 * chance to think it over.
+			 */
+			return(OK);
+		}
+		iov++;
+		nr_req--;
+	}
+  }
   return(OK);
 }
 
@@ -319,7 +234,7 @@ message *m_ptr;
   dr = d_dr;
 
   if (dr->open_ct == 0) {
-	if ((file = k_getenv(d_name())) == NULL) {
+	if ((file = getenv(d_name())) == NULL) {
 		printf("%s: boot environent variable '%s' not set\n",
 			d_name(), d_name());
 		return(EIO);
@@ -370,11 +285,11 @@ message *m_ptr;
 		return(EIO);
 	}
 	dr->curpos = ((u32_t) reg86.w.dx << 16) | reg86.w.ax;
-	if (dr->part[0].dv_size != dr->curpos) {
+	if (cv64ul(dr->part[0].dv_size) != dr->curpos) {
 		printf("%s: using '%s', %lu bytes%s\n",
 			d_name(), file, dr->curpos,
 			dr->rw ? "" : " (read-only)");
-		dr->part[0].dv_size = dr->curpos;
+		dr->part[0].dv_size = cvul64(dr->curpos);
 	}
 
 	reg86.b.intno = 0x21;
@@ -391,17 +306,18 @@ message *m_ptr;
 	}
 	dr->clustersize = reg86.b.al << SECTOR_SHIFT;
 
-	/* Read-only "disk" to be opened for writing? */
-	if (!dr->rw && (m_ptr->COUNT & W_BIT)) {
-		/* Oops, back out... */
-		dosclose(dr->dfd);
-		return(EACCES);
-	}
-
 	/* Partition the "disk". */
 	partition(&d_dtab, d_drive * DEV_PER_DRIVE, P_PRIMARY);
   }
+
+  /* Record one more user. */
   dr->open_ct++;
+
+  if (!dr->rw && (m_ptr->COUNT & W_BIT)) {
+	/* Read-only "disk" can't be opened for writing. */
+	if (--dr->open_ct == 0) dosclose(dr->dfd);
+	return(EACCES);
+  }
   return(OK);
 }
 
@@ -454,7 +370,7 @@ int handle;				/* file handle */
  *				doserror				      *
  *============================================================================*/
 PRIVATE char *doserror(err)
-int err;
+unsigned err;
 {
 /* Translate some DOS error codes to text. */
   static struct errlist {
@@ -472,15 +388,13 @@ int err;
   };
   struct errlist *ep;
   static char unknown[]= "Error 65535";
-  unsigned e;
   char *p;
 
   for (ep = errlist; ep < errlist + sizeof(errlist)/sizeof(errlist[0]); ep++) {
 	if (ep->err == err) return ep->what;
   }
   p = unknown + sizeof(unknown) - 1;
-  e = err;
-  do *--p = '0' + (e % 10); while ((e /= 10) > 0);
+  do *--p = '0' + (err % 10); while ((err /= 10) > 0);
   strcpy(unknown + 6, p);
   return unknown;
 }
@@ -495,7 +409,7 @@ struct partition *entry;
   /* The number of sectors per track is chosen to match the cluster size
    * to make it easy for people to place partitions on cluster boundaries.
    */
-  entry->cylinders = d_dr->part[0].dv_size / d_dr->clustersize / 64;
+  entry->cylinders = cv64ul(d_dr->part[0].dv_size) / d_dr->clustersize / 64;
   entry->heads = 64;
   entry->sectors = d_dr->clustersize >> SECTOR_SHIFT;
 }

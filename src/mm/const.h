@@ -11,6 +11,4 @@
 #define MAX_PAGES       4096	/* how many pages in the virtual addr space */
 #endif
 
-#define printf        printk
-
 #define INIT_PID	   1	/* init's process id number */

@@ -1,6 +1,6 @@
 # Makefile for sh
 
-CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -m -wa
+CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -wa
 LDFLAGS	= -i
 
 OBJ	= sh1.o sh2.o sh3.o sh4.o sh5.o sh6.o
@@ -11,13 +11,16 @@ sh:	$(OBJ)
 	cc $(LDFLAGS) -o $@ $(OBJ)
 	install -S 11kw sh
 
-install:	/usr/bin/sh /bin/sh
+install:	/usr/bin/msh
 
-/usr/bin/sh:	sh
-	install -cs -o bin sh $@
+/usr/bin/msh:	sh
+	install -cs -o bin $? $@
 
-/bin/sh:	/usr/bin/sh
-	install -lcs /usr/bin/sh $@
+#/usr/bin/sh:	/usr/bin/msh
+#	install -l $? $@
+#
+#/bin/sh:	/usr/bin/msh
+#	install -lcs $? $@
 
 $(OBJ):	sh.h
 

@@ -152,7 +152,9 @@ readin()
     char *bp;
     vertex *child,*parent;
     edge *e;
-    while(gets(buf) != NULL) {
+    while(fgets(buf,sizeof(buf),stdin) != NULL) {
+	bp = buf + strlen(buf);
+	if (bp > buf && bp[-1] == '\n') *--bp = 0;
         bp = copyupto(name,buf,' ');
         child = add_v(name);
         parent = add_v(bp);

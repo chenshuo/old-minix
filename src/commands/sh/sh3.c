@@ -398,7 +398,7 @@ int pipein, pipeout;
 	case IOHERE:
 	case IOHERE|IOXHERE:
 		u = herein(iop->io_name, iop->io_flag&IOXHERE);
-		cp = "here file";
+		cp = "here file ";
 		break;
 
 	case IOWRITE|IOCAT:
@@ -419,9 +419,14 @@ int pipein, pipeout;
 		return(0);
 	}
 	if (u < 0) {
+		int e=errno;
 		prs(cp);
+                if (iop->io_flag&IOHERE) prs(iop->io_name);
 		prs(": cannot ");
-		warn(msg);
+	        prs(msg);
+	        prs(" (");
+	        prs(strerror(e));
+		warn(")");
 		return(1);
 	} else {
 		if (u != iop->io_unit) {

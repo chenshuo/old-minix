@@ -163,7 +163,7 @@ error(va_alist)
 }
 
 
-
+#ifdef notdef	/* These strange error messages only confuse. -- kjb */
 /*
  * Table of error messages.
  */
@@ -187,9 +187,7 @@ STATIC const struct errname errormsg[] = {
 	ENOTDIR, E_OPEN,	"no such file",
 	ENOTDIR, E_CREAT,	"directory nonexistent",
 	ENOTDIR, E_EXEC,	"not found",
-#if __minix_vmd
 	ENOEXEC, ALL,	"not an executable",
-#endif
 	EISDIR, ALL,	"is a directory",
 /*    EMFILE, ALL,	"too many open files", */
 	ENFILE, ALL,	"file table overflow",
@@ -251,3 +249,4 @@ errmsg(e, action) {
 	fmtstr(buf, sizeof buf, "error %d", e);
 	return buf;
 }
+#endif

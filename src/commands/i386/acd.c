@@ -1,13 +1,6 @@
-/*	acd 1.9 - A compiler driver			Author: Kees J. Bot
+/*	acd 1.10 - A compiler driver			Author: Kees J. Bot
  *								7 Jan 1993
  * Needs about 25kw heap + stack.
- *
- * Copyright 1994 Kees J. Bot, All rights reserved.
- * This program and documentation may be freely used under the following
- * restrictions: Changes that do not increase the functionality or that are
- * incompatible with the original may not be released to the public without
- * permission from the author.  Use of so called "C beautifiers" is explicitly
- * prohibited.
  */
 char version[] = "1.9";
 
@@ -1420,11 +1413,11 @@ int wordlist(cell_t **pw, int atom)
 }
 
 char *template;		/* Current name of a temporary file. */
+static char *tp;	/* Current place withing the tempfile. */
 
 char *maketemp(void)
 /* Return a name that can be used as a temporary filename. */
 {
-	static char *tp= nil;
 	int i= 0;
 
 	if (tp == nil) {
@@ -1443,6 +1436,38 @@ char *maketemp(void)
 		default:	tp[i]++;	return template;
 		}
 	}
+}
+
+void inittemp(char *tmpdir)
+/* Initialize the temporary filename generator. */
+{
+	template= allocate(nil, (strlen(tmpdir)+20) * sizeof(*template));
+	sprintf(template, "%s/acd%d", tmpdir, getpid());
+	tp= template + strlen(template);
+
+	/* Create a directory within tempdir that we can safely play in. */
+	while (action != 1 && mkdir(template, 0700) < 0) {
+		if (errno == EEXIST) {
+			(void) maketemp();
+		} else {
+			report(template);
+			action= 0;
+		}
+	}
+	if (verbose >= 2) printf("mkdir %s\n", template);
+	while (*tp != 0) tp++;
+	*tp++= '/';
+	*tp= 0;
+}
+
+void deltemp(void)
+/* Remove our temporary temporaries directory. */
+{
+	while (*--tp != '/') {}
+	*tp = 0;
+	if (rmdir(template) < 0 && errno != ENOENT) report(template);
+	if (verbose >= 2) printf("rmdir %s\n", template);
+	deallocate(template);
 }
 
 cell_t *splitenv(char *env)
@@ -2565,6 +2590,7 @@ void usage(void)
 
 int main(int argc, char **argv)
 {
+	char *tmpdir;
 	program_t *prog;
 	cell_t **pa;
 	int i;
@@ -2576,8 +2602,8 @@ int main(int argc, char **argv)
 		program++;
 
 	/* Directory for temporary files. */
-	if ((template= getenv("TMPDIR")) == nil || *template == 0)
-		template= "/tmp";
+	if ((tmpdir= getenv("TMPDIR")) == nil || *tmpdir == 0)
+		tmpdir= "/tmp";
 
 	/* Transform arguments to a list, processing the few ACD options. */
 	pa= &L_args;
@@ -2604,9 +2630,9 @@ int main(int argc, char **argv)
 		if (argv[i][0] == '-' && argv[i][1] == 'T') {
 			if (argv[i][2] == 0) {
 				if (++i == argc) usage();
-				template= argv[i];
+				tmpdir= argv[i];
 			} else
-				template= argv[i]+2;
+				tmpdir= argv[i]+2;
 		} else {
 			/* Any other argument must be processed. */
 			*pa= cons(CELL, findword(argv[i]));
@@ -2621,7 +2647,7 @@ int main(int argc, char **argv)
 	if (descr == nil) descr= DESCR;
 #endif
 
-	template= copystr(template);
+	inittemp(tmpdir);
 
 	/* Catch user signals. */
 	if (signal(SIGHUP, SIG_IGN) != SIG_IGN) signal(SIGHUP, interrupt);
@@ -2665,7 +2691,7 @@ int main(int argc, char **argv)
 		dec(junk->wait);
 		deallocate(junk);
 	}
-	deallocate(template);
+	deltemp();
 	dec(V_stop);
 	dec(L_args);
 	dec(L_files);

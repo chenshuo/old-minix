@@ -3,6 +3,10 @@
 #ifndef _UTSNAME_H
 #define _UTSNAME_H
 
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
 struct utsname {
   char sysname[15+1];
   char nodename[255+1];
@@ -13,10 +17,6 @@ struct utsname {
 };
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( int uname, (struct utsname *_name)				);
 
 #endif /* _UTSNAME_H */

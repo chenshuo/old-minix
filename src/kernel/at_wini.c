@@ -9,6 +9,8 @@
  *
  * Changes:
  *	13 Apr 1992 by Kees J. Bot: device dependent/independent split.
+ *	14 May 2000 by Kees J. Bot: d-d/i rewrite.
+ *	23 Mar 2000 by Michael Temari: added ATAPI CDROM support.
  */
 
 #include "kernel.h"
@@ -16,6 +18,8 @@
 #include "drvlib.h"
 
 #if ENABLE_AT_WINI
+
+#define ATAPI_DEBUG	    0	/* To debug ATAPI code. */
 
 /* I/O Ports used by winchester disk controllers. */
 
@@ -43,6 +47,7 @@
 #define	  STATUS_CRD		0x04	/* corrected data */
 #define	  STATUS_IDX		0x02	/* index pulse */
 #define	  STATUS_ERR		0x01	/* error */
+#define	  STATUS_ADMBSY	       0x100	/* administratively busy (software) */
 #define REG_ERROR	    1	/* error code */
 #define	  ERROR_BB		0x80	/* bad block */
 #define	  ERROR_ECC		0x40	/* bad ecc bytes */
@@ -70,7 +75,51 @@
 #define   CTL_RESET		0x04	/* reset controller */
 #define   CTL_INTDISABLE	0x02	/* disable interrupts */
 
+#if ENABLE_ATAPI
+#define   ERROR_SENSE           0xF0    /* sense key mask */
+#define     SENSE_NONE          0x00    /* no sense key */
+#define     SENSE_RECERR        0x10    /* recovered error */
+#define     SENSE_NOTRDY        0x20    /* not ready */
+#define     SENSE_MEDERR        0x30    /* medium error */
+#define     SENSE_HRDERR        0x40    /* hardware error */
+#define     SENSE_ILRQST        0x50    /* illegal request */
+#define     SENSE_UATTN         0x60    /* unit attention */
+#define     SENSE_DPROT         0x70    /* data protect */
+#define     SENSE_ABRT          0xb0    /* aborted command */
+#define     SENSE_MISCOM        0xe0    /* miscompare */
+#define   ERROR_MCR             0x08    /* media change requested */
+#define   ERROR_ABRT            0x04    /* aborted command */
+#define   ERROR_EOM             0x02    /* end of media detected */
+#define   ERROR_ILI             0x01    /* illegal length indication */
+#define REG_FEAT            1   /* features */
+#define   FEAT_OVERLAP          0x02    /* overlap */
+#define   FEAT_DMA              0x01    /* dma */
+#define REG_IRR             2   /* interrupt reason register */
+#define   IRR_REL               0x04    /* release */
+#define   IRR_IO                0x02    /* direction for xfer */
+#define   IRR_COD               0x01    /* command or data */
+#define REG_SAMTAG          3
+#define REG_CNT_LO          4   /* low byte of cylinder number */
+#define REG_CNT_HI          5   /* high byte of cylinder number */
+#define REG_DRIVE           6   /* drive select */
+#define REG_STATUS          7   /* status */
+#define   STATUS_BSY            0x80    /* controller busy */
+#define   STATUS_DRDY           0x40    /* drive ready */
+#define   STATUS_DMADF          0x20    /* dma ready/drive fault */
+#define   STATUS_SRVCDSC        0x10    /* service or dsc */
+#define   STATUS_DRQ            0x08    /* data transfer request */
+#define   STATUS_CORR           0x04    /* correctable error occurred */
+#define   STATUS_CHECK          0x01    /* check error */
+
+#define   ATAPI_PACKETCMD       0xA0    /* packet command */
+#define   ATAPI_IDENTIFY        0xA1    /* identify drive */
+#define   SCSI_READ10           0x28    /* read from disk */
+
+#define CD_SECTOR_SIZE		2048	/* sector size of a CD-ROM */
+#endif /* ATAPI */
+
 /* Interrupt request lines. */
+#define NO_IRQ		 0	/* no IRQ set yet */
 #define AT_IRQ0		14	/* interrupt number for controller 0 */
 #define AT_IRQ1		15	/* interrupt number for controller 1 */
 
@@ -94,7 +143,7 @@ struct command {
 #define WAKEUP		(32*HZ)	/* drive may be out for 31 seconds max */
 
 /* Miscellaneous. */
-#define MAX_DRIVES         4	/* this driver supports 4 drives (hd0 - hd19) */
+#define MAX_DRIVES         4	/* this driver supports 4 drives (d0 - d3) */
 #if _WORD_SIZE > 2
 #define MAX_SECS	 256	/* controller can transfer this many sectors */
 #else
@@ -104,11 +153,16 @@ struct command {
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
-#define TIMEOUT        32000	/* controller timeout in ms */
+#define TIMEOUT        31500	/* controller timeout in ms */
 #define RECOVERYTIME     500	/* controller recovery time in ms */
 #define INITIALIZED	0x01	/* drive is initialized */
 #define DEAF		0x02	/* controller must be reset */
 #define SMART		0x04	/* drive supports ATA commands */
+#if ENABLE_ATAPI
+#define ATAPI		0x08	/* it is an ATAPI device */
+#else
+#define ATAPI		   0	/* don't bother with ATAPI; optimise out */
+#endif
 
 
 /* Variables. */
@@ -126,22 +180,11 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned precomp;		/* write precompensation cylinder / 4 */
   unsigned max_count;		/* max request for this drive */
   unsigned open_ct;		/* in-use count */
-  struct device part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
+  struct device part[DEV_PER_DRIVE];	/* disks and partitions */
+  struct device subpart[SUB_PER_DRIVE];	/* subpartitions */
 } wini[MAX_DRIVES], *w_wn;
 
-PRIVATE struct trans {
-  struct iorequest_s *iop;	/* belongs to this I/O request */
-  unsigned long block;		/* first sector to transfer */
-  unsigned count;		/* byte count */
-  phys_bytes phys;		/* user physical address */
-} wtrans[NR_IOREQS];
-
 PRIVATE int win_tasknr;			/* my task number */
-PRIVATE struct trans *w_tp;		/* to add transfer requests */
-PRIVATE unsigned w_count;		/* number of bytes to transfer */
-PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
-PRIVATE int w_opcode;			/* DEV_READ or DEV_WRITE */
 PRIVATE int w_command;			/* current command in execution */
 PRIVATE int w_status;			/* status after interrupt */
 PRIVATE int w_drive;			/* selected drive */
@@ -153,23 +196,27 @@ FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
 FORWARD _PROTOTYPE( int w_identify, (void) );
 FORWARD _PROTOTYPE( char *w_name, (void) );
 FORWARD _PROTOTYPE( int w_specify, (void) );
-FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int w_finish, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( int com_out, (struct command *cmd) );
 FORWARD _PROTOTYPE( void w_need_reset, (void) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int com_simple, (struct command *cmd) );
 FORWARD _PROTOTYPE( void w_timeout, (void) );
 FORWARD _PROTOTYPE( int w_reset, (void) );
-FORWARD _PROTOTYPE( int w_intr_wait, (void) );
+FORWARD _PROTOTYPE( void w_intr_wait, (void) );
+FORWARD _PROTOTYPE( int at_intr_wait, (void) );
 FORWARD _PROTOTYPE( int w_waitfor, (int mask, int value) );
 FORWARD _PROTOTYPE( int w_handler, (int irq) );
 FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry) );
-
-/* w_waitfor loop unrolled once for speed. */
-#define waitfor(mask, value)	\
-	((in_byte(w_wn->base + REG_STATUS) & mask) == value \
-		|| w_waitfor(mask, value))
+#if ENABLE_ATAPI
+FORWARD _PROTOTYPE( int atapi_sendpacket, (u8_t *packet, unsigned cnt) );
+FORWARD _PROTOTYPE( int atapi_intr_wait, (void) );
+FORWARD _PROTOTYPE( int atapi_open, (void) );
+FORWARD _PROTOTYPE( void atapi_close, (void) );
+FORWARD _PROTOTYPE( int atapi_transfer, (int proc_nr, int opcode,
+			off_t position, iovec_t *iov, unsigned nr_req) );
+#endif
 
 
 /* Entry points to this driver. */
@@ -179,15 +226,10 @@ PRIVATE struct driver w_dtab = {
   w_do_close,		/* release device */
   do_diocntl,		/* get or set a partition's geometry */
   w_prepare,		/* prepare for I/O on a given minor device */
-  w_schedule,		/* precompute cylinder, head, sector, etc. */
-  w_finish,		/* do the I/O */
+  w_transfer,		/* do the I/O */
   nop_cleanup,		/* nothing to clean up */
   w_geometry,		/* tell the geometry of the disk */
 };
-
-#if ENABLE_ATAPI
-#include "atapi.c"	/* extra code for ATAPI CD-ROM */
-#endif
 
 
 /*===========================================================================*
@@ -214,7 +256,7 @@ PRIVATE void init_params()
 
   u16_t parv[2];
   unsigned int vector;
-  int drive, nr_drives, i;
+  int drive, nr_drives;
   struct wini *wn;
   u8_t params[16];
   phys_bytes param_phys = vir2phys(params);
@@ -240,15 +282,9 @@ PRIVATE void init_params()
 	}
 	wn->ldhpref = ldh_init(drive);
 	wn->max_count = MAX_SECS << SECTOR_SHIFT;
-	if (drive < 2) {
-		/* Controller 0. */
-		wn->base = REG_BASE0;
-		wn->irq = AT_IRQ0;
-	} else {
-		/* Controller 1. */
-		wn->base = REG_BASE1;
-		wn->irq = AT_IRQ1;
-	}
+
+	/* Base I/O register to address controller. */
+	wn->base = drive < 2 ? REG_BASE0 : REG_BASE1;
   }
 }
 
@@ -262,9 +298,7 @@ message *m_ptr;
 {
 /* Device open: Initialize the controller and read the partition table. */
 
-  int r;
   struct wini *wn;
-  struct command cmd;
 
   if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
   wn = w_wn;
@@ -278,9 +312,18 @@ message *m_ptr;
 		return(ENXIO);
 	}
   }
-  if (wn->open_ct++ == 0) {
+  if (wn->open_ct == 0) {
+#if ENABLE_ATAPI
+	if (wn->state & ATAPI) {
+		int r;
+
+		if (m_ptr->COUNT & W_BIT) return(EACCES);
+		if ((r = atapi_open()) != OK) return(r);
+	}
+#endif
 	/* Partition the disk. */
 	partition(&w_dtab, w_drive * DEV_PER_DRIVE, P_PRIMARY);
+	wn->open_ct++;
   }
   return(OK);
 }
@@ -294,15 +337,12 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  /* Nothing to transfer as yet. */
-  w_count = 0;
-
-  if (device < NR_DEVICES) {			/* hd0, hd1, ... */
+  if (device < NR_DEVICES) {			/* d0, d0p[0-3], d1, ... */
 	w_drive = device / DEV_PER_DRIVE;	/* save drive number */
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->part[device % DEV_PER_DRIVE];
   } else
-  if ((unsigned) (device -= MINOR_hd1a) < NR_SUBDEVS) {	/* hd1a, hd1b, ... */
+  if ((unsigned) (device -= MINOR_d0p0s0) < NR_SUBDEVS) {/*d[0-7]p[0-3]s[0-3]*/
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
@@ -335,15 +375,7 @@ PRIVATE int w_identify()
 			|((u32_t) id_byte(n)[2] << 16) \
 			|((u32_t) id_byte(n)[3] << 24))
 
-  /* Check if the one of the registers exists. */
-  r = in_byte(wn->base + REG_CYL_LO);
-  out_byte(wn->base + REG_CYL_LO, ~r);
-  if (in_byte(wn->base + REG_CYL_LO) == r) return(ERR);
-
-  /* Looks OK; register IRQ and try an ATA identify command. */
-  put_irq_handler(wn->irq, w_handler);
-  enable_irq(wn->irq);
-
+  /* Try to identify the device. */
   cmd.ldh     = wn->ldhpref;
   cmd.command = ATA_IDENTIFY;
   if (com_simple(&cmd) == OK) {
@@ -380,6 +412,20 @@ PRIVATE int w_identify()
 			wn->lcylinders /= 2;
 		}
 	}
+#if ENABLE_ATAPI
+  } else
+  if (cmd.command = ATAPI_IDENTIFY, com_simple(&cmd) == OK) {
+	/* An ATAPI device. */
+	wn->state |= ATAPI;
+
+	/* Device information. */
+	port_read(wn->base + REG_DATA, tmp_phys, 512);
+
+	/* Why are the strings byte swapped??? */
+	for (i = 0; i < 40; i++) id_string[i] = id_byte(27)[i^1];
+
+	size = 0;	/* Size set later. */
+#endif
   } else {
 	/* Not an ATA device; no translations, no special features.  Don't
 	 * touch it unless the BIOS knows about it.
@@ -390,21 +436,24 @@ PRIVATE int w_identify()
 	wn->psectors = wn->lsectors;
 	size = (u32_t) wn->pcylinders * wn->pheads * wn->psectors;
   }
-  /* The fun ends at 4 GB. */
-  if (size > ((u32_t) -1) / SECTOR_SIZE) size = ((u32_t) -1) / SECTOR_SIZE;
 
-  /* Base and size of the whole drive */
-  wn->part[0].dv_base = 0;
-  wn->part[0].dv_size = size << SECTOR_SHIFT;
+  /* Size of the whole drive */
+  wn->part[0].dv_size = mul64u(size, SECTOR_SIZE);
 
   if (w_specify() != OK && w_specify() != OK) return(ERR);
 
   printf("%s: ", w_name());
-  if (wn->state & SMART) {
+  if (wn->state & (SMART|ATAPI)) {
 	printf("%.40s\n", id_string);
   } else {
 	printf("%ux%ux%u\n", wn->pcylinders, wn->pheads, wn->psectors);
   }
+
+  /* Everything looks OK; register IRQ so we can stop polling. */
+  wn->irq = w_drive < 2 ? AT_IRQ0 : AT_IRQ1;
+  put_irq_handler(wn->irq, w_handler);
+  enable_irq(wn->irq);
+
   return(OK);
 }
 
@@ -415,16 +464,9 @@ PRIVATE int w_identify()
 PRIVATE char *w_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "at-hd15";
-  unsigned device = w_drive * DEV_PER_DRIVE;
+  static char name[] = "at-d0";
 
-  if (device < 10) {
-	name[5] = '0' + device;
-	name[6] = 0;
-  } else {
-	name[5] = '0' + device / 10;
-	name[6] = '0' + device % 10;
-  }
+  name[4] = '0' + w_drive;
   return name;
 }
 
@@ -441,228 +483,152 @@ PRIVATE int w_specify()
 
   if ((wn->state & DEAF) && w_reset() != OK) return(ERR);
 
-  /* Specify parameters: precompensation, number of heads and sectors. */
-  cmd.precomp = wn->precomp;
-  cmd.count   = wn->psectors;
-  cmd.ldh     = w_wn->ldhpref | (wn->pheads - 1);
-  cmd.command = CMD_SPECIFY;		/* Specify some parameters */
+  if (!(wn->state & ATAPI)) {
+	/* Specify parameters: precompensation, number of heads and sectors. */
+	cmd.precomp = wn->precomp;
+	cmd.count   = wn->psectors;
+	cmd.ldh     = w_wn->ldhpref | (wn->pheads - 1);
+	cmd.command = CMD_SPECIFY;		/* Specify some parameters */
 
-  if (com_simple(&cmd) != OK) return(ERR);
-
-  if (!(wn->state & SMART)) {
-	/* Calibrate an old disk. */
-	cmd.sector  = 0;
-	cmd.cyl_lo  = 0;
-	cmd.cyl_hi  = 0;
-	cmd.ldh     = w_wn->ldhpref;
-	cmd.command = CMD_RECALIBRATE;
-
+	/* Output command block and see if controller accepts the parameters. */
 	if (com_simple(&cmd) != OK) return(ERR);
-  }
 
+	if (!(wn->state & SMART)) {
+		/* Calibrate an old disk. */
+		cmd.sector  = 0;
+		cmd.cyl_lo  = 0;
+		cmd.cyl_hi  = 0;
+		cmd.ldh     = w_wn->ldhpref;
+		cmd.command = CMD_RECALIBRATE;
+
+		if (com_simple(&cmd) != OK) return(ERR);
+	}
+  }
   wn->state |= INITIALIZED;
   return(OK);
 }
 
 
 /*===========================================================================*
- *				w_schedule				     *
+ *				w_transfer				     *
  *===========================================================================*/
-PRIVATE int w_schedule(proc_nr, iop)
+PRIVATE int w_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-/* Gather I/O requests on consecutive blocks so they may be read/written
- * in one controller command.  (There is enough time to compute the next
- * consecutive request while an unwanted block passes by.)
- */
   struct wini *wn = w_wn;
-  int r, opcode;
-  unsigned long pos;
-  unsigned nbytes, count;
-  unsigned long block;
-  phys_bytes user_phys;
-
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
-
-  /* From/to this position on the device */
-  pos = iop->io_position;
-  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
-
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read or write? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-
-  /* Which block on disk and how close to EOF? */
-  if (pos >= w_dv->dv_size) return(OK);		/* At EOF */
-  if (pos + nbytes > w_dv->dv_size) nbytes = w_dv->dv_size - pos;
-  block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
-
-  if (w_count > 0 && block != w_nextblock) {
-	/* This new request can't be chained to the job being built */
-	if ((r = w_finish()) != OK) return(r);
-  }
-
-  /* The next consecutive block */
-  w_nextblock = block + (nbytes >> SECTOR_SHIFT);
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	count = nbytes;
-
-	if (w_count == wn->max_count) {
-		/* The drive can't do more then max_count at once */
-		if ((r = w_finish()) != OK) return(r);
-	}
-
-	if (w_count + count > wn->max_count)
-		count = wn->max_count - w_count;
-
-	if (w_count == 0) {
-		/* The first request in a row, initialize. */
-		w_opcode = opcode;
-		w_tp = wtrans;
-	}
-
-	/* Store I/O parameters */
-	w_tp->iop = iop;
-	w_tp->block = block;
-	w_tp->count = count;
-	w_tp->phys = user_phys;
-
-	/* Update counters */
-	w_tp++;
-	w_count += count;
-	block += count >> SECTOR_SHIFT;
-	user_phys += count;
-	nbytes -= count;
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				w_finish				     *
- *===========================================================================*/
-PRIVATE int w_finish()
-{
-/* Carry out the I/O requests gathered in wtrans[]. */
-
-  struct trans *tp = wtrans;
-  struct wini *wn = w_wn;
+  iovec_t *iop, *iov_end = iov + nr_req;
   int r, errors;
+  unsigned long block;
+  unsigned long dv_size = cv64ul(w_dv->dv_size);
   struct command cmd;
-  unsigned cylinder, head, sector, secspcyl;
+  unsigned cylinder, head, sector, nbytes, count, chunk;
+  unsigned secspcyl = wn->pheads * wn->psectors;
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
-  if (w_count == 0) return(OK);	/* Spurious finish. */
+#if ENABLE_ATAPI
+  if (w_wn->state & ATAPI) {
+	return atapi_transfer(proc_nr, opcode, position, iov, nr_req);
+  }
+#endif
 
-  r = ERR;	/* Trigger the first com_out */
+  /* Check disk address. */
+  if ((position & SECTOR_MASK) != 0) return(EINVAL);
+
   errors = 0;
 
-  do {
-	if (r != OK) {
-		/* The controller must be (re)programmed. */
+  while (nr_req > 0) {
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) nbytes += iop->iov_size;
+	if ((nbytes & SECTOR_MASK) != 0) return(EINVAL);
 
-		/* First check to see if a reinitialization is needed. */
-		if (!(wn->state & INITIALIZED) && w_specify() != OK)
-			return(tp->iop->io_nbytes = EIO);
+	/* Which block on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);		/* At EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+	block = div64u(add64ul(w_dv->dv_base, position), SECTOR_SIZE);
 
-		/* Tell the controller to transfer w_count bytes */
-		cmd.precomp = wn->precomp;
-		cmd.count   = (w_count >> SECTOR_SHIFT) & BYTE;
-		if (wn->ldhpref & LDH_LBA) {
-			cmd.sector  = (tp->block >>  0) & 0xFF;
-			cmd.cyl_lo  = (tp->block >>  8) & 0xFF;
-			cmd.cyl_hi  = (tp->block >> 16) & 0xFF;
-			cmd.ldh     = wn->ldhpref | ((tp->block >> 24) & 0xF);
-		} else {
-			secspcyl = wn->pheads * wn->psectors;
-			cylinder = tp->block / secspcyl;
-			head = (tp->block % secspcyl) / wn->psectors;
-			sector = tp->block % wn->psectors;
-			cmd.sector  = sector + 1;
-			cmd.cyl_lo  = cylinder & BYTE;
-			cmd.cyl_hi  = (cylinder >> 8) & BYTE;
-			cmd.ldh     = wn->ldhpref | head;
-		}
-		cmd.command = w_opcode == DEV_WRITE ? CMD_WRITE : CMD_READ;
-
-		if ((r = com_out(&cmd)) != OK) {
-			if (++errors == MAX_ERRORS) {
-				w_command = CMD_IDLE;
-				return(tp->iop->io_nbytes = EIO);
-			}
-			continue;	/* Retry */
-		}
+	if (nbytes >= wn->max_count) {
+		/* The drive can't do more then max_count at once. */
+		nbytes = wn->max_count;
 	}
 
-	/* For each sector, wait for an interrupt and fetch the data (read),
-	 * or supply data to the controller and wait for an interrupt (write).
-	 */
+	/* First check to see if a reinitialization is needed. */
+	if (!(wn->state & INITIALIZED) && w_specify() != OK) return(EIO);
 
-	if (w_opcode == DEV_READ) {
-		if ((r = w_intr_wait()) == OK) {
-			/* Copy data from the device's buffer to user space. */
-
-			port_read(wn->base + REG_DATA, tp->phys, SECTOR_SIZE);
-
-			tp->phys += SECTOR_SIZE;
-			tp->iop->io_nbytes -= SECTOR_SIZE;
-			w_count -= SECTOR_SIZE;
-			if ((tp->count -= SECTOR_SIZE) == 0) tp++;
-		} else {
-			/* Any faulty data? */
-			if (w_status & STATUS_DRQ) {
-				port_read(wn->base + REG_DATA, tmp_phys,
-								SECTOR_SIZE);
-			}
-		}
+	/* Tell the controller to transfer nbytes bytes. */
+	cmd.precomp = wn->precomp;
+	cmd.count   = (nbytes >> SECTOR_SHIFT) & BYTE;
+	if (wn->ldhpref & LDH_LBA) {
+		cmd.sector  = (block >>  0) & 0xFF;
+		cmd.cyl_lo  = (block >>  8) & 0xFF;
+		cmd.cyl_hi  = (block >> 16) & 0xFF;
+		cmd.ldh     = wn->ldhpref | ((block >> 24) & 0xF);
 	} else {
-		/* Wait for data requested. */
-		if (!waitfor(STATUS_DRQ, STATUS_DRQ)) {
-			r = ERR;
+		cylinder = block / secspcyl;
+		head = (block % secspcyl) / wn->psectors;
+		sector = block % wn->psectors;
+		cmd.sector  = sector + 1;
+		cmd.cyl_lo  = cylinder & BYTE;
+		cmd.cyl_hi  = (cylinder >> 8) & BYTE;
+		cmd.ldh     = wn->ldhpref | head;
+	}
+	cmd.command = opcode == DEV_SCATTER ? CMD_WRITE : CMD_READ;
+
+	r = com_out(&cmd);
+
+	while (r == OK && nbytes > 0) {
+		/* For each sector, wait for an interrupt and fetch the data
+		 * (read), or supply data to the controller and wait for an
+		 * interrupt (write).
+		 */
+
+		if (opcode == DEV_GATHER) {
+			/* First an interrupt, then data. */
+			if ((r = at_intr_wait()) != OK) {
+				/* An error, send data to the bit bucket. */
+				if (w_status & STATUS_DRQ) {
+					port_read(w_wn->base + REG_DATA,
+						tmp_phys, SECTOR_SIZE);
+				}
+				break;
+			}
+		}
+
+		/* Wait for data transfer requested. */
+		if (!w_waitfor(STATUS_DRQ, STATUS_DRQ)) { r = ERR; break; }
+
+		/* Copy bytes to or from the device's buffer. */
+		if (opcode == DEV_GATHER) {
+			port_read(w_wn->base + REG_DATA,
+				user_base + iov->iov_addr, SECTOR_SIZE);
 		} else {
-			/* Fill the buffer of the drive. */
+			port_write(w_wn->base + REG_DATA,
+				user_base + iov->iov_addr, SECTOR_SIZE);
 
-			port_write(wn->base + REG_DATA, tp->phys, SECTOR_SIZE);
-			r = w_intr_wait();
+			/* Data sent, wait for an interrupt. */
+			if ((r = at_intr_wait()) != OK) break;
 		}
 
-		if (r == OK) {
-			/* Book the bytes successfully written. */
-
-			tp->phys += SECTOR_SIZE;
-			tp->iop->io_nbytes -= SECTOR_SIZE;
-			w_count -= SECTOR_SIZE;
-			if ((tp->count -= SECTOR_SIZE) == 0) tp++;
-		}
+		/* Book the bytes successfully transferred. */
+		nbytes -= SECTOR_SIZE;
+		position += SECTOR_SIZE;
+		iov->iov_addr += SECTOR_SIZE;
+		if ((iov->iov_size -= SECTOR_SIZE) == 0) { iov++; nr_req--; }
 	}
 
+	/* Any errors? */
 	if (r != OK) {
-		/* Don't retry if sector marked bad or too many errors */
+		/* Don't retry if sector marked bad or too many errors. */
 		if (r == ERR_BAD_SECTOR || ++errors == MAX_ERRORS) {
 			w_command = CMD_IDLE;
-			return(tp->iop->io_nbytes = EIO);
+			return(EIO);
 		}
-
-		/* Reset if halfway, but bail out if optional I/O. */
-		if (errors == MAX_ERRORS / 2) {
-			w_need_reset();
-			if (tp->iop->io_request & OPTIONAL_IO) {
-				w_command = CMD_IDLE;
-				return(tp->iop->io_nbytes = EIO);
-			}
-		}
-		continue;	/* Retry */
 	}
-	errors = 0;
-  } while (w_count > 0);
+  }
 
   w_command = CMD_IDLE;
   return(OK);
@@ -680,7 +646,7 @@ struct command *cmd;		/* Command block */
   struct wini *wn = w_wn;
   unsigned base = wn->base;
 
-  if (!waitfor(STATUS_BSY, 0)) {
+  if (!w_waitfor(STATUS_BSY, 0)) {
 	printf("%s: controller not ready\n", w_name());
 	return(ERR);
   }
@@ -688,7 +654,7 @@ struct command *cmd;		/* Command block */
   /* Select drive. */
   out_byte(base + REG_LDH, cmd->ldh);
 
-  if (!waitfor(STATUS_BSY, 0)) {
+  if (!w_waitfor(STATUS_BSY, 0)) {
 	printf("%s: drive not ready\n", w_name());
 	return(ERR);
   }
@@ -702,11 +668,8 @@ struct command *cmd;		/* Command block */
   out_byte(base + REG_SECTOR, cmd->sector);
   out_byte(base + REG_CYL_LO, cmd->cyl_lo);
   out_byte(base + REG_CYL_HI, cmd->cyl_hi);
-  lock();
-  out_byte(base + REG_COMMAND, cmd->command);
-  w_command = cmd->command;
-  w_status = STATUS_BSY;
-  unlock();
+  w_status = STATUS_ADMBSY;
+  out_byte(base + REG_COMMAND, w_command = cmd->command);
   return(OK);
 }
 
@@ -737,6 +700,9 @@ message *m_ptr;
 
   if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
   w_wn->open_ct--;
+#if ENABLE_ATAPI
+  if (w_wn->open_ct == 0 && (w_wn->state & ATAPI)) atapi_close();
+#endif
   return(OK);
 }
 
@@ -750,7 +716,7 @@ struct command *cmd;		/* Command block */
 /* A simple controller command, only one interrupt and no data-out phase. */
   int r;
 
-  if ((r = com_out(cmd)) == OK) r = w_intr_wait();
+  if ((r = com_out(cmd)) == OK) r = at_intr_wait();
   w_command = CMD_IDLE;
   return(r);
 }
@@ -797,7 +763,6 @@ PRIVATE int w_reset()
  */
 
   struct wini *wn;
-  int err;
 
   /* Wait for any internal drive recovery. */
   milli_delay(RECOVERYTIME);
@@ -809,7 +774,7 @@ PRIVATE int w_reset()
   milli_delay(1);
 
   /* Wait for controller ready */
-  if (!w_waitfor(STATUS_BSY | STATUS_RDY, STATUS_RDY)) {
+  if (!w_waitfor(STATUS_BSY, 0)) {
 	printf("%s: reset failed, drive busy\n", w_name());
 	return(ERR);
   }
@@ -826,29 +791,40 @@ PRIVATE int w_reset()
 /*============================================================================*
  *				w_intr_wait				      *
  *============================================================================*/
-PRIVATE int w_intr_wait()
+PRIVATE void w_intr_wait()
 {
-/* Wait for a task completion interrupt and return results. */
+/* Wait for a task completion interrupt. */
 
   message mess;
+
+  if (w_wn->irq != NO_IRQ) {
+	/* Wait for an interrupt that sets w_status to "not busy". */
+	while (w_status & (STATUS_ADMBSY|STATUS_BSY)) receive(HARDWARE, &mess);
+  } else {
+	/* Interrupt not yet allocated; use polling. */
+	(void) w_waitfor(STATUS_BSY, 0);
+  }
+}
+
+
+/*============================================================================*
+ *				at_intr_wait				      *
+ *============================================================================*/
+PRIVATE int at_intr_wait()
+{
+/* Wait for an interrupt, study the status bits and return error/success. */
   int r;
 
-  /* Wait for an interrupt that sets w_status to "not busy". */
-  while (w_status & STATUS_BSY) receive(HARDWARE, &mess);
-
-  /* Check status. */
-  lock();
-  if ((w_status & (STATUS_BSY | STATUS_RDY | STATUS_WF | STATUS_ERR))
-							== STATUS_RDY) {
+  w_intr_wait();
+  if ((w_status & (STATUS_BSY | STATUS_WF | STATUS_ERR)) == 0) {
 	r = OK;
-	w_status |= STATUS_BSY;	/* assume still busy with I/O */
   } else
   if ((w_status & STATUS_ERR) && (in_byte(w_wn->base + REG_ERROR) & ERROR_BB)) {
   	r = ERR_BAD_SECTOR;	/* sector marked bad, retries won't help */
   } else {
   	r = ERR;		/* any other error */
   }
-  unlock();
+  w_status |= STATUS_ADMBSY;	/* assume still busy with I/O */
   return(r);
 }
 
@@ -866,7 +842,8 @@ int value;			/* required status */
 
   milli_start(&ms);
   do {
-       if ((in_byte(w_wn->base + REG_STATUS) & mask) == value) return 1;
+       w_status = in_byte(w_wn->base + REG_STATUS);
+       if ((w_status & mask) == value) return 1;
   } while (milli_elapsed(&ms) < TIMEOUT);
 
   w_need_reset();	/* Controller gone deaf. */
@@ -894,8 +871,279 @@ int irq;
 PRIVATE void w_geometry(entry)
 struct partition *entry;
 {
-  entry->cylinders = w_wn->lcylinders;
-  entry->heads = w_wn->lheads;
-  entry->sectors = w_wn->lsectors;
+  struct wini *wn = w_wn;
+
+  if (wn->state & ATAPI) {		/* Make up some numbers. */
+	entry->cylinders = div64u(wn->part[0].dv_size, SECTOR_SIZE) / (64*32);
+	entry->heads = 64;
+	entry->sectors = 32;
+  } else {				/* Return logical geometry. */
+	entry->cylinders = wn->lcylinders;
+	entry->heads = wn->lheads;
+	entry->sectors = wn->lsectors;
+  }
 }
+
+
+#if ENABLE_ATAPI
+/*===========================================================================*
+ *				atapi_open				     *
+ *===========================================================================*/
+PRIVATE int atapi_open()
+{
+/* Should load and lock the device and obtain its size.  For now just set the
+ * size of the device to something big.  What is really needed is a generic
+ * SCSI layer that does all this stuff for ATAPI and SCSI devices (kjb). (XXX)
+ */
+  w_wn->part[0].dv_size = mul64u(800L*1024, 1024);
+  return(OK);
+}
+
+/*===========================================================================*
+ *				atapi_close				     *
+ *===========================================================================*/
+PRIVATE void atapi_close()
+{
+/* Should unlock the device.  For now do nothing.  (XXX) */
+}
+
+/*===========================================================================*
+ *				atapi_transfer				     *
+ *===========================================================================*/
+PRIVATE int atapi_transfer(proc_nr, opcode, position, iov, nr_req)
+int proc_nr;			/* process doing the request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
+{
+  struct wini *wn = w_wn;
+  iovec_t *iop, *iov_end = iov + nr_req;
+  int r, errors, fresh;
+  u64_t pos;
+  unsigned long block;
+  unsigned long dv_size = cv64ul(w_dv->dv_size);
+  unsigned nbytes, nblocks, count, before, chunk;
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
+  u8_t packet[12];
+
+  errors = fresh = 0;
+
+  while (nr_req > 0 && !fresh) {
+	/* The Minix block size is smaller than the CD block size, so we
+	 * may have to read extra before or after the good data.
+	 */
+	pos = add64ul(w_dv->dv_base, position);
+	block = div64u(pos, CD_SECTOR_SIZE);
+	before = rem64u(pos, CD_SECTOR_SIZE);
+
+	/* How many bytes to transfer? */
+	nbytes = count = 0;
+	for (iop = iov; iop < iov_end; iop++) {
+		nbytes += iop->iov_size;
+		if ((before + nbytes) % CD_SECTOR_SIZE == 0) count = nbytes;
+	}
+
+	/* Does one of the memory chunks end nicely on a CD sector multiple? */
+	if (count != 0) nbytes = count;
+
+	/* Data comes in as words, so we have to enforce even byte counts. */
+	if ((before | nbytes) & 1) return(EINVAL);
+
+	/* Which block on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);		/* At EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+
+	nblocks = (before + nbytes + CD_SECTOR_SIZE - 1) / CD_SECTOR_SIZE;
+	if (ATAPI_DEBUG) {
+		printf("block=%lu, before=%u, nbytes=%u, nblocks=%u\n",
+			block, before, nbytes, nblocks);
+	}
+
+	/* First check to see if a reinitialization is needed. */
+	if (!(wn->state & INITIALIZED) && w_specify() != OK) return(EIO);
+
+	/* Build an ATAPI command packet. */
+	packet[0] = SCSI_READ10;
+	packet[1] = 0;
+	packet[2] = (block >> 24) & 0xFF;
+	packet[3] = (block >> 16) & 0xFF;
+	packet[4] = (block >>  8) & 0xFF;
+	packet[5] = (block >>  0) & 0xFF;
+	packet[7] = (nblocks >> 8) & 0xFF;
+	packet[8] = (nblocks >> 0) & 0xFF;
+	packet[9] = 0;
+	packet[10] = 0;
+	packet[11] = 0;
+
+	/* Tell the controller to execute the packet command. */
+	r = atapi_sendpacket(packet, nblocks * CD_SECTOR_SIZE);
+	if (r != OK) goto err;
+
+	/* Read chunks of data. */
+	while ((r = atapi_intr_wait()) > 0) {
+		count = r;
+
+		if (ATAPI_DEBUG) {
+			printf("before=%u, nbytes=%u, count=%u\n",
+				before, nbytes, count);
+		}
+
+		while (before > 0 && count > 0) {	/* Discard before. */
+			chunk = before;
+			if (chunk > count) chunk = count;
+			if (chunk > DMA_BUF_SIZE) chunk = DMA_BUF_SIZE;
+			port_read(w_wn->base + REG_DATA, tmp_phys, chunk);
+			before -= chunk;
+			count -= chunk;
+		}
+
+		while (nbytes > 0 && count > 0) {	/* Requested data. */
+			chunk = nbytes;
+			if (chunk > count) chunk = count;
+			if (chunk > iov->iov_size) chunk = iov->iov_size;
+			port_read(w_wn->base + REG_DATA,
+					user_base + iov->iov_addr, chunk);
+			position += chunk;
+			nbytes -= chunk;
+			count -= chunk;
+			iov->iov_addr += chunk;
+			fresh = 0;
+			if ((iov->iov_size -= chunk) == 0) {
+				iov++;
+				nr_req--;
+				fresh = 1;	/* new element is optional */
+			}
+		}
+
+		while (count > 0) {		/* Excess data. */
+			chunk = count;
+			if (chunk > DMA_BUF_SIZE) chunk = DMA_BUF_SIZE;
+			port_read(w_wn->base + REG_DATA, tmp_phys, chunk);
+			count -= chunk;
+		}
+	}
+
+	if (r < 0) {
+  err:		/* Don't retry if too many errors. */
+		if (++errors == MAX_ERRORS) {
+			w_command = CMD_IDLE;
+			return(EIO);
+		}
+	}
+  }
+
+  w_command = CMD_IDLE;
+  return(OK);
+}
+
+/*===========================================================================*
+ *				atapi_sendpacket			     *
+ *===========================================================================*/
+PRIVATE int atapi_sendpacket(packet, cnt)
+u8_t *packet;
+unsigned cnt;
+{
+/* Send an Atapi Packet Command */
+  struct wini *wn = w_wn;
+  message mess;
+
+  /* Select Master/Slave drive */
+  out_byte(wn->base + REG_DRIVE, wn->ldhpref);
+
+  if (!w_waitfor(STATUS_BSY | STATUS_DRQ, 0)) {
+	printf("%s: drive not ready\n", w_name());
+	return(ERR);
+  }
+
+  /* Schedule wakeup call. */
+  clock_mess(WAKEUP, w_timeout);
+
+#if _WORD_SIZE > 2
+  if (cnt > 0xFFFE) cnt = 0xFFFE;	/* Max data per interrupt. */
+#endif
+
+  out_byte(wn->base + REG_FEAT, 0);
+  out_byte(wn->base + REG_IRR, 0);
+  out_byte(wn->base + REG_SAMTAG, 0);
+  out_byte(wn->base + REG_CNT_LO, (cnt >> 0) & 0xFF);
+  out_byte(wn->base + REG_CNT_HI, (cnt >> 8) & 0xFF);
+  out_byte(wn->base + REG_COMMAND, w_command = ATAPI_PACKETCMD);
+
+  if (!w_waitfor(STATUS_BSY | STATUS_DRQ, STATUS_DRQ)) {
+	printf("%s: timeout (BSY|DRQ -> DRQ)\n");
+	return(ERR);
+  }
+  w_status |= STATUS_ADMBSY;		/* Command not at all done yet. */
+
+  /* Send the command packet to the device. */
+  port_write(wn->base + REG_DATA, vir2phys(packet), 12);
+  return(OK);
+}
+
+/*============================================================================*
+ *				atapi_intr_wait				      *
+ *============================================================================*/
+PRIVATE int atapi_intr_wait()
+{
+/* Wait for an interrupt and study the results.  Returns a number of bytes
+ * that need to be transferred, or an error code.
+ */
+  struct wini *wn = w_wn;
+  int e;
+  int len;
+  int irr;
+  int r;
+  int phase;
+
+  w_intr_wait();
+
+  e = in_byte(wn->base + REG_ERROR);
+  len = in_byte(wn->base + REG_CNT_LO);
+  len |= in_byte(wn->base + REG_CNT_HI) << 8;
+  irr = in_byte(wn->base + REG_IRR);
+  if (ATAPI_DEBUG) {
+	printf("S=%02x E=%02x L=%04x I=%02x\n", w_status, e, len, irr);
+  }
+  if (w_status & (STATUS_BSY | STATUS_CHECK)) return ERR;
+
+  phase = (w_status & STATUS_DRQ) | (irr & (IRR_COD | IRR_IO));
+
+  switch (phase) {
+  case IRR_COD | IRR_IO:
+	if (ATAPI_DEBUG) printf("ACD: Phase Command Complete\n");
+	r = OK;
+	break;
+  case 0:
+	if (ATAPI_DEBUG) printf("ACD: Phase Command Aborted\n");
+	r = ERR;
+	break;
+  case STATUS_DRQ | IRR_COD:
+	if (ATAPI_DEBUG) printf("ACD: Phase Command Out\n");
+	r = ERR;
+	break;
+  case STATUS_DRQ:
+	if (ATAPI_DEBUG) printf("ACD: Phase Data Out %d\n", len);
+	r = len;
+	break;
+  case STATUS_DRQ | IRR_IO:
+	if (ATAPI_DEBUG) printf("ACD: Phase Data In %d\n", len);
+	r = len;
+	break;
+  default:
+	if (ATAPI_DEBUG) printf("ACD: Phase Unknown\n");
+	r = ERR;
+	break;
+  }
+
+#if 0
+  /* retry if the media changed */
+  XXX while (phase == (IRR_IO | IRR_COD) && (w_status & STATUS_CHECK)
+	&& (e & ERROR_SENSE) == SENSE_UATTN && --try > 0);
+#endif
+
+  w_status |= STATUS_ADMBSY;	/* Assume not done yet. */
+  return(r);
+}
+#endif /* ENABLE_ATAPI */
 #endif /* ENABLE_AT_WINI */

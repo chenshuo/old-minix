@@ -17,7 +17,7 @@
 #include "dp8390.h"
 #include "3c503.h"
 
-#if (ENABLE_NETWORKING && ENABLE_3C503) || __minix_vmd
+#if (ENABLE_DP8390 && ENABLE_3C503) || __minix_vmd
 
 _PROTOTYPE(static void el2_init, (dpeth_t *dep));
 _PROTOTYPE(static void el2_stop, (dpeth_t *dep));
@@ -181,6 +181,6 @@ dpeth_t * dep;
   return 1;
 }
 
-#endif /* ENABLE_NETWORKING && ENABLE_3C503 */
+#endif /* ENABLE_DP8390 && ENABLE_3C503 */
 
 /** 3c503.c **/

@@ -12,6 +12,7 @@
  *
  * The entry points into this file are:
  *   do_exec:	 perform the EXEC system call
+ *   rw_seg:	 read or write a segment from or to a file
  *   find_share: find a process whose text segment can be shared
  */
 
@@ -24,19 +25,21 @@
 #include "mproc.h"
 #include "param.h"
 
-FORWARD _PROTOTYPE( void load_seg, (int fd, int seg, vir_bytes seg_bytes) );
 FORWARD _PROTOTYPE( int new_mem, (struct mproc *sh_mp, vir_bytes text_bytes,
 		vir_bytes data_bytes, vir_bytes bss_bytes,
 		vir_bytes stk_bytes, phys_bytes tot_bytes)		);
-FORWARD _PROTOTYPE( void patch_ptr, (char stack [ARG_MAX ], vir_bytes base) );
+FORWARD _PROTOTYPE( void patch_ptr, (char stack[ARG_MAX], vir_bytes base) );
+FORWARD _PROTOTYPE( int insert_arg, (char stack[ARG_MAX],
+		vir_bytes *stk_bytes, char *arg, int replace)		);
+FORWARD _PROTOTYPE( char *patch_stack, (int fd, char stack[ARG_MAX],
+		vir_bytes *stk_bytes, char *script)			);
 FORWARD _PROTOTYPE( int read_header, (int fd, int *ft, vir_bytes *text_bytes,
 		vir_bytes *data_bytes, vir_bytes *bss_bytes,
 		phys_bytes *tot_bytes, long *sym_bytes, vir_clicks sc,
 		vir_bytes *pc)						);
 
-#if (SHADOWING == 1)
-FORWARD _PROTOTYPE( int relocate, (int fd, unsigned char *buf)		);
-#endif
+#define ESCRIPT	(-2000)		/* Returned by read_header for a #! script. */
+#define PTRSIZE	sizeof(char *)	/* Size of pointers in argv[] and envp[]. */
 
 /*===========================================================================*
  *				do_exec					     *
@@ -53,12 +56,12 @@ PUBLIC int do_exec()
   int m, r, fd, ft, sn;
   static char mbuf[ARG_MAX];	/* buffer for stack and zeroes */
   static char name_buf[PATH_MAX]; /* the name of the file to exec */
-  char *new_sp, *basename;
+  char *new_sp, *name, *basename;
   vir_bytes src, dst, text_bytes, data_bytes, bss_bytes, stk_bytes, vsp;
   phys_bytes tot_bytes;		/* total space for program, including gap */
   long sym_bytes;
   vir_clicks sc;
-  struct stat s_buf;
+  struct stat s_buf[2], *s_p;
   vir_bytes pc;
 
   /* Do some validity checks. */
@@ -73,31 +76,38 @@ PUBLIC int do_exec()
   r = sys_copy(who, D, (phys_bytes) src,
 		MM_PROC_NR, D, (phys_bytes) dst, (phys_bytes) exec_len);
   if (r != OK) return(r);	/* file name not in user data segment */
-  tell_fs(CHDIR, who, FALSE, 0);	/* switch to the user's FS environ. */
-  fd = allowed(name_buf, &s_buf, X_BIT);	/* is file executable? */
-  if (fd < 0) return(fd);	/* file was not executable */
-
-  /* Read the file header and extract the segment sizes. */
-  sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-  m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, 
-					&tot_bytes, &sym_bytes, sc, &pc);
-  if (m < 0) {
-	close(fd);		/* something wrong with header */
-	return(ENOEXEC);
-  }
 
   /* Fetch the stack from the user before destroying the old core image. */
   src = (vir_bytes) stack_ptr;
   dst = (vir_bytes) mbuf;
   r = sys_copy(who, D, (phys_bytes) src,
   			MM_PROC_NR, D, (phys_bytes) dst, (phys_bytes)stk_bytes);
-  if (r != OK) {
-	close(fd);		/* can't fetch stack (e.g. bad virtual addr) */
-	return(EACCES);
+
+  if (r != OK) return(EACCES);	/* can't fetch stack (e.g. bad virtual addr) */
+
+  r = 0;	/* r = 0 (first attempt), or 1 (interpreted script) */
+  name = name_buf;	/* name of file to exec. */
+  do {
+	s_p = &s_buf[r];
+	tell_fs(CHDIR, who, FALSE, 0);  /* switch to the user's FS environ */
+	fd = allowed(name, s_p, X_BIT);	/* is file executable? */
+	if (fd < 0) return(fd);		/* file was not executable */
+
+	/* Read the file header and extract the segment sizes. */
+	sc = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
+
+	m = read_header(fd, &ft, &text_bytes, &data_bytes, &bss_bytes, 
+					&tot_bytes, &sym_bytes, sc, &pc);
+	if (m != ESCRIPT || ++r > 1) break;
+  } while ((name = patch_stack(fd, mbuf, &stk_bytes, name_buf)) != NULL);
+
+  if (m < 0) {
+	close(fd);		/* something wrong with header */
+	return(stk_bytes > ARG_MAX ? ENOMEM : ENOEXEC);
   }
 
   /* Can the process' text be shared with that of one already running? */
-  sh_mp = find_share(rmp, s_buf.st_ino, s_buf.st_dev, s_buf.st_ctime);
+  sh_mp = find_share(rmp, s_p->st_ino, s_p->st_dev, s_p->st_ctime);
 
   /* Allocate new memory and release old memory.  Fix map and tell kernel. */
   r = new_mem(sh_mp, text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes);
@@ -107,9 +117,9 @@ PUBLIC int do_exec()
   }
 
   /* Save file identification to allow it to be shared. */
-  rmp->mp_ino = s_buf.st_ino;
-  rmp->mp_dev = s_buf.st_dev;
-  rmp->mp_ctime = s_buf.st_ctime;
+  rmp->mp_ino = s_p->st_ino;
+  rmp->mp_dev = s_p->st_dev;
+  rmp->mp_ctime = s_p->st_ctime;
 
   /* Patch up stack and copy it from MM to new core image. */
   vsp = (vir_bytes) rmp->mp_seg[S].mem_vir << CLICK_SHIFT;
@@ -119,32 +129,26 @@ PUBLIC int do_exec()
   src = (vir_bytes) mbuf;
   r = sys_copy(MM_PROC_NR, D, (phys_bytes) src,
   			who, D, (phys_bytes) vsp, (phys_bytes)stk_bytes);
-  if (r != OK) panic("do_exec stack copy err", NO_NUM);
+  if (r != OK) panic("do_exec stack copy err on", who);
 
   /* Read in text and data segments. */
   if (sh_mp != NULL) {
 	lseek(fd, (off_t) text_bytes, SEEK_CUR);  /* shared: skip text */
   } else {
-	load_seg(fd, T, text_bytes);
+	rw_seg(0, fd, who, T, text_bytes);
   }
-  load_seg(fd, D, data_bytes);
-
-#if (SHADOWING == 1)
-  if (lseek(fd, (off_t)sym_bytes, SEEK_CUR) == (off_t) -1) ;	/* error */
-  if (relocate(fd, (unsigned char *)mbuf) < 0) 	;		/* error */
-  pc += (vir_bytes) rp->mp_seg[T].mem_vir << CLICK_SHIFT;
-#endif
+  rw_seg(0, fd, who, D, data_bytes);
 
   close(fd);			/* don't need exec file any more */
 
   /* Take care of setuid/setgid bits. */
   if ((rmp->mp_flags & TRACED) == 0) { /* suppress if tracing */
-	if (s_buf.st_mode & I_SET_UID_BIT) {
-		rmp->mp_effuid = s_buf.st_uid;
+	if (s_buf[0].st_mode & I_SET_UID_BIT) {
+		rmp->mp_effuid = s_buf[0].st_uid;
 		tell_fs(SETUID,who, (int)rmp->mp_realuid, (int)rmp->mp_effuid);
 	}
-	if (s_buf.st_mode & I_SET_GID_BIT) {
-		rmp->mp_effgid = s_buf.st_gid;
+	if (s_buf[0].st_mode & I_SET_GID_BIT) {
+		rmp->mp_effgid = s_buf[0].st_gid;
 		tell_fs(SETGID,who, (int)rmp->mp_realgid, (int)rmp->mp_effgid);
 	}
   }
@@ -168,10 +172,11 @@ PUBLIC int do_exec()
   tell_fs(EXEC, who, 0, 0);	/* allow FS to handle FD_CLOEXEC files */
 
   /* System will save command line for debugging, ps(1) output, etc. */
-  basename = strrchr(name_buf, '/');
-  if (basename == NULL) basename = name_buf; else basename++;
+  basename = strrchr(name, '/');
+  if (basename == NULL) basename = name; else basename++;
   sys_exec(who, new_sp, rmp->mp_flags & TRACED, basename, pc);
-  return(OK);
+
+  return(E_NO_MESSAGE);		/* no reply, new program just runs */
 }
 
 
@@ -224,7 +229,12 @@ vir_bytes *pc;			/* program entry point (initial PC) */
    * is ignored here.
    */
 
-  if (read(fd, (char *) &hdr, A_MINHDR) != A_MINHDR) return(ENOEXEC);
+  if ((m= read(fd, &hdr, A_MINHDR)) < 2) return(ENOEXEC);
+
+  /* Interpreted script? */
+  if (((char *) &hdr)[0] == '#' && ((char *) &hdr)[1] == '!') return(ESCRIPT);
+
+  if (m != A_MINHDR) return(ENOEXEC);
 
   /* Check magic number, cpu type, and flags. */
   if (BADMAG(hdr)) return(ENOEXEC);
@@ -247,28 +257,9 @@ vir_bytes *pc;			/* program entry point (initial PC) */
   if (*tot_bytes == 0) return(ENOEXEC);
 
   if (*ft != SEPARATE) {
-
-#if (SHADOWING == 0)
 	/* If I & D space is not separated, it is all considered data. Text=0*/
 	*data_bytes += *text_bytes;
 	*text_bytes = 0;
-#else
-	/*
-	 * Treating text as data increases the shadowing overhead.
-	 * Under the assumption that programs DO NOT MODIFY TEXT
-	 * we can share the text between father and child processes.
-	 * This is similar to the UNIX V7 -n option of ld(1).
-	 * However, for MINIX the linker did not provide alignment
-	 * to click boundaries, so an incomplete text click at the end
-	 * must be treated as data.
-	 * Correct tot_bytes, since it excludes the text segment.
-	 */
-	*data_bytes += *text_bytes;
-	*text_bytes = (*text_bytes >> CLICK_SHIFT) << CLICK_SHIFT;
-	*data_bytes -= *text_bytes;
-	*tot_bytes -= *text_bytes;
-#endif
-
   }
   *pc = hdr.a_entry;	/* initial address to start execution */
 
@@ -304,22 +295,21 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   register struct mproc *rmp;
   vir_clicks text_clicks, data_clicks, gap_clicks, stack_clicks, tot_clicks;
   phys_clicks new_base;
-
-#if (SHADOWING == 1)
-  phys_clicks base, size;
-#else
   static char zero[1024];		/* used to zero bss */
   phys_bytes bytes, base, count, bss_offset;
-#endif
 
   /* No need to allocate text if it can be shared. */
   if (sh_mp != NULL) text_bytes = 0;
+
+  /* Allow the old data to be swapped out to make room.  (Which is really a
+   * waste of time, because we are going to throw it away anyway.)
+   */
+  rmp->mp_flags |= WAITING;
 
   /* Acquire the new memory.  Each of the 4 parts: text, (data+bss), gap,
    * and stack occupies an integral number of clicks, starting at click
    * boundary.  The data and bss parts are run together with no space.
    */
-
   text_clicks = ((unsigned long) text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   data_clicks = (data_bytes + bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   stack_clicks = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
@@ -327,16 +317,13 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   gap_clicks = tot_clicks - data_clicks - stack_clicks;
   if ( (int) gap_clicks < 0) return(ENOMEM);
 
-  /* Check to see if there is a hole big enough.  If so, we can risk first
-   * releasing the old core image before allocating the new one, since we
-   * know it will succeed.  If there is not enough, return failure.
-   */
-  if (text_clicks + tot_clicks > max_hole()) return(EAGAIN);
+  /* Try to allocate memory for the new process. */
+  new_base = alloc_mem(text_clicks + tot_clicks);
+  if (new_base == NO_MEM) return(EAGAIN);
 
-  /* There is enough memory for the new core image.  Release the old one. */
+  /* We've got memory for the new core image.  Release the old one. */
   rmp = mp;
 
-#if (SHADOWING == 0)
   if (find_share(rmp, rmp->mp_ino, rmp->mp_dev, rmp->mp_ctime) == NULL) {
 	/* No other process shares the text segment, so free it. */
 	free_mem(rmp->mp_seg[T].mem_phys, rmp->mp_seg[T].mem_len);
@@ -344,14 +331,11 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   /* Free the data and stack segments. */
   free_mem(rmp->mp_seg[D].mem_phys,
       rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir);
-#endif
 
   /* We have now passed the point of no return.  The old core image has been
-   * forever lost.  The call must go through now.  Set up and report new map.
+   * forever lost, memory for a new core image has been allocated.  Set up
+   * and report new map.
    */
-  new_base = alloc_mem(text_clicks + tot_clicks);	/* new core image */
-  if (new_base == NO_MEM) panic("MM hole list is inconsistent", NO_NUM);
-
   if (sh_mp != NULL) {
 	/* Share the text segment. */
 	rmp->mp_seg[T] = sh_mp->mp_seg[T];
@@ -368,19 +352,15 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   rmp->mp_seg[S].mem_len = stack_clicks;
 
 #if (CHIP == M68000)
-#if (SHADOWING == 0)
   rmp->mp_seg[T].mem_vir = 0;
   rmp->mp_seg[D].mem_vir = rmp->mp_seg[T].mem_len;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + rmp->mp_seg[D].mem_len + gap_clicks;
-#else
-  rmp->mp_seg[T].mem_vir = rmp->mp_seg[T].mem_phys;
-  rmp->mp_seg[D].mem_vir = rmp->mp_seg[D].mem_phys;
-  rmp->mp_seg[S].mem_vir = rmp->mp_seg[S].mem_phys;
-#endif
 #endif
 
-#if (SHADOWING == 0)
   sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel */
+
+  /* The old memory may have been swapped out, but the new memory is real. */
+  rmp->mp_flags &= ~(WAITING|ONSWAP|SWAPIN);
 
   /* Zero the bss, gap, and stack segment. */
   bytes = (phys_bytes)(data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
@@ -398,14 +378,6 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
 	base += count;
 	bytes -= count;
   }
-#endif
-
-#if (SHADOWING == 1)
-  sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
-			&base, &size);
-  free_mem(base, size);
-#endif
-
   return(OK);
 }
 
@@ -431,7 +403,7 @@ vir_bytes base;			/* virtual address of stack base inside user */
   ap++;				/* now points to argv[0] */
   while (flag < 2) {
 	if (ap >= (char **) &stack[ARG_MAX]) return;	/* too bad */
-	if (*ap != NIL_PTR) {
+	if (*ap != NULL) {
 		v = (vir_bytes) *ap;	/* v is relative pointer */
 		v += base;		/* relocate it */
 		*ap = (char *) v;	/* put it back */
@@ -444,36 +416,151 @@ vir_bytes base;			/* virtual address of stack base inside user */
 
 
 /*===========================================================================*
- *				load_seg				     *
+ *				insert_arg				     *
  *===========================================================================*/
-PRIVATE void load_seg(fd, seg, seg_bytes)
-int fd;				/* file descriptor to read from */
-int seg;			/* T or D */
-vir_bytes seg_bytes;		/* how big is the segment */
+PRIVATE int insert_arg(stack, stk_bytes, arg, replace)
+char stack[ARG_MAX];		/* pointer to stack image within MM */
+vir_bytes *stk_bytes;		/* size of initial stack */
+char *arg;			/* argument to prepend/replace as new argv[0] */
+int replace;
 {
-/* Read in text or data from the exec file and copy to the new core image.
- * This procedure is a little bit tricky.  The logical way to load a segment
- * would be to read it block by block and copy each block to the user space
- * one at a time.  This is too slow, so we do something dirty here, namely
- * send the user space and virtual address to the file system in the upper
- * 10 bits of the file descriptor, and pass it the user virtual address
+/* Patch the stack so that arg will become argv[0].  Be careful, the stack may
+ * be filled with garbage, although it normally looks like this:
+ *	nargs argv[0] ... argv[nargs-1] NULL envp[0] ... NULL
+ * followed by the strings "pointed" to by the argv[i] and the envp[i].  The
+ * pointers are really offsets from the start of stack.
+ * Return true iff the operation succeeded.
+ */
+  int offset, a0, a1, old_bytes = *stk_bytes;
+
+  /* Prepending arg adds at least one string and a zero byte. */
+  offset = strlen(arg) + 1;
+
+  a0 = (int) ((char **) stack)[1];	/* argv[0] */
+  if (a0 < 4 * PTRSIZE || a0 >= old_bytes) return(FALSE);
+
+  a1 = a0;		/* a1 will point to the strings to be moved */
+  if (replace) {
+	/* Move a1 to the end of argv[0][] (argv[1] if nargs > 1). */
+	do {
+		if (a1 == old_bytes) return(FALSE);
+		--offset;
+	} while (stack[a1++] != 0);
+  } else {
+	offset += PTRSIZE;	/* new argv[0] needs new pointer in argv[] */
+	a0 += PTRSIZE;		/* location of new argv[0][]. */
+  }
+
+  /* stack will grow by offset bytes (or shrink by -offset bytes) */
+  if ((*stk_bytes += offset) > ARG_MAX) return(FALSE);
+
+  /* Reposition the strings by offset bytes */
+  memmove(stack + a1 + offset, stack + a1, old_bytes - a1);
+
+  strcpy(stack + a0, arg);	/* Put arg in the new space. */
+
+  if (!replace) {
+	/* Make space for a new argv[0]. */
+	memmove(stack + 2 * PTRSIZE, stack + 1 * PTRSIZE, a0 - 2 * PTRSIZE);
+
+	((char **) stack)[0]++;	/* nargs++; */
+  }
+  /* Now patch up argv[] and envp[] by offset. */
+  patch_ptr(stack, (vir_bytes) offset);
+  ((char **) stack)[1] = (char *) a0;	/* set argv[0] correctly */
+  return(TRUE);
+}
+
+
+/*===========================================================================*
+ *				patch_stack				     *
+ *===========================================================================*/
+PRIVATE char *patch_stack(fd, stack, stk_bytes, script)
+int fd;				/* file descriptor to open script file */
+char stack[ARG_MAX];		/* pointer to stack image within MM */
+vir_bytes *stk_bytes;		/* size of initial stack */
+char *script;			/* name of script to interpret */
+{
+/* Patch the argument vector to include the path name of the script to be
+ * interpreted, and all strings on the #! line.  Returns the path name of
+ * the interpreter.
+ */
+  char *sp, *interp = NULL;
+  int n;
+  enum { INSERT=FALSE, REPLACE=TRUE };
+
+  /* Make script[] the new argv[0]. */
+  if (!insert_arg(stack, stk_bytes, script, REPLACE)) return(NULL);
+
+  if (lseek(fd, 2L, 0) == -1			/* just behind the #! */
+    || (n= read(fd, script, PATH_MAX)) < 0	/* read line one */
+    || (sp= memchr(script, '\n', n)) == NULL)	/* must be a proper line */
+	return(NULL);
+
+  /* Move sp backwards through script[], prepending each string to stack. */
+  for (;;) {
+	/* skip spaces behind argument. */
+	while (sp > script && (*--sp == ' ' || *sp == '\t')) {}
+	if (sp == script) break;
+
+	sp[1] = 0;
+	/* Move to the start of the argument. */
+	while (sp > script && sp[-1] != ' ' && sp[-1] != '\t') --sp;
+
+	interp = sp;
+	if (!insert_arg(stack, stk_bytes, sp, INSERT)) return(NULL);
+  }
+
+  /* Round *stk_bytes up to the size of a pointer for alignment contraints. */
+  *stk_bytes= ((*stk_bytes + PTRSIZE - 1) / PTRSIZE) * PTRSIZE;
+
+  close(fd);
+  return(interp);
+}
+
+
+/*===========================================================================*
+ *				rw_seg					     *
+ *===========================================================================*/
+PUBLIC void rw_seg(rw, fd, proc, seg, seg_bytes0)
+int rw;				/* 0 = read, 1 = write */
+int fd;				/* file descriptor to read from / write to */
+int proc;			/* process number */
+int seg;			/* T, D, or S */
+phys_bytes seg_bytes0;		/* how much is to be transferred? */
+{
+/* Transfer text or data from/to a file and copy to/from a process segment.
+ * This procedure is a little bit tricky.  The logical way to transfer a
+ * segment would be block by block and copying each block to/from the user
+ * space one at a time.  This is too slow, so we do something dirty here,
+ * namely send the user space and virtual address to the file system in the
+ * upper 10 bits of the file descriptor, and pass it the user virtual address
  * instead of a MM address.  The file system extracts these parameters when 
- * gets a read call from the memory manager, which is the only process that
- * is permitted to use this trick.  The file system then copies the whole 
- * segment directly to user space, bypassing MM completely.
+ * gets a read or write call from the memory manager, which is the only process
+ * that is permitted to use this trick.  The file system then copies the whole 
+ * segment directly to/from user space, bypassing MM completely.
+ *
+ * The byte count on read is usually smaller than the segment count, because
+ * a segment is padded out to a click multiple, and the data segment is only
+ * partially initialized.
  */
 
-  int new_fd, bytes;
+  int new_fd, bytes, r;
   char *ubuf_ptr;
+  struct mem_map *sp = &mproc[proc].mp_seg[seg];
+  phys_bytes seg_bytes = seg_bytes0;
 
-  new_fd = (who << 8) | (seg << 6) | fd;
-  ubuf_ptr = (char *) ((vir_bytes)mp->mp_seg[seg].mem_vir << CLICK_SHIFT);
+  new_fd = (proc << 7) | (seg << 5) | fd;
+  ubuf_ptr = (char *) ((vir_bytes) sp->mem_vir << CLICK_SHIFT);
+
   while (seg_bytes != 0) {
-	bytes = (INT_MAX / BLOCK_SIZE) * BLOCK_SIZE;
-	if (seg_bytes < bytes)
-		bytes = (int)seg_bytes;
-	if (read(new_fd, ubuf_ptr, bytes) != bytes)
-		break;		/* error */
+	bytes = MIN((INT_MAX / BLOCK_SIZE) * BLOCK_SIZE, seg_bytes);
+	if (rw == 0) {
+		r = read(new_fd, ubuf_ptr, bytes);
+	} else {
+		r = write(new_fd, ubuf_ptr, bytes);
+	}
+	if (r != bytes) break;
 	ubuf_ptr += bytes;
 	seg_bytes -= bytes;
   }
@@ -496,8 +583,7 @@ time_t ctime;
   struct mproc *sh_mp;
 
   for (sh_mp = &mproc[INIT_PROC_NR]; sh_mp < &mproc[NR_PROCS]; sh_mp++) {
-	if ((sh_mp->mp_flags & (IN_USE | HANGING | SEPARATE))
-					!= (IN_USE | SEPARATE)) continue;
+	if (!(sh_mp->mp_flags & SEPARATE)) continue;
 	if (sh_mp == mp_ign) continue;
 	if (sh_mp->mp_ino != ino) continue;
 	if (sh_mp->mp_dev != dev) continue;
@@ -506,68 +592,3 @@ time_t ctime;
   }
   return(NULL);
 }
-
-
-#if (SHADOWING == 1)
-/*===========================================================================*
- *				relocate				     *
- *===========================================================================*/
-PRIVATE int relocate(fd, buf)
-int fd;				/* file descriptor to read from */
-unsigned char *buf;		/* borrowed from do_exec() */
-{
-  register int n;
-  register unsigned char *p, c;
-  register phys_bytes off;
-  register phys_bytes adr;
-
-  /* Read in relocation info from the exec file and relocate.
-   * Relocation info is in GEMDOS format. Only longs can be relocated.
-   *
-   * The GEMDOS format starts with a long L: the offset to the
-   * beginning of text for the first long to be relocated.
-   * If L==0 then no relocations have to be made.
-   *
-   * The long is followed by zero or more bytes. Each byte B is
-   * processed separately, in one of the following ways:
-   *
-   * B==0:
-   *	end of relocation
-   * B==1:
-   *	no relocation, but add 254 to the current offset
-   * B==0bWWWWWWW0:
-   *	B is added to the current offset and the long addressed
-   *	is relocated. Note that 00000010 means 1 word distance.
-   * B==0bXXXXXXX1:
-   *	illegal
-   */
-  off = (phys_bytes)mp->mp_seg[T].mem_phys << CLICK_SHIFT;
-  p = buf;
-  n = read(fd, (char *)p, ARG_MAX);
-  if (n < sizeof(long)) return(-1);	/* error */
-  if (*((long *)p) == 0) return(0);	/* ok */
-  adr = off + *((long *)p);
-  n -= sizeof(long);
-  p += sizeof(long);
-  *((long *)adr) += off;
-  while (1) {			/* once per relocation byte */
-	if (--n < 0) {
-		p = buf;
-		n = read(fd, (char *)p, ARG_MAX);
-		if (--n < 0)
-			return(-1);	/* error */
-	}
-	c = *p++;
-	if (c == 1)
-		adr += 254;
-	else if (c == 0)
-		return(0);	/* ok */
-	else if (c & 1)
-		return(-1);	/* error */
-	else {
-		adr += c;
-		*((long *)adr) += off;
-	}
-  }
-}
-#endif

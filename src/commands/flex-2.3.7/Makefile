@@ -140,7 +140,7 @@ install:	\
 	$(SKELETON_FILE)
 
 $(DESTDIR)$(BINDIR)/flex:	flex
-	install -cs -o bin flex $@
+	install -S 512k -cs -o bin flex $@
 
 $(DESTDIR)$(BINDIR)/lex:	$(DESTDIR)$(BINDIR)/flex
 	install -l $(DESTDIR)$(BINDIR)/flex $@

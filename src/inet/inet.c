@@ -29,7 +29,7 @@ from FS:
 | NW_CANCEL	| minor dev | proc nr |       |          |         |
 |_______________|___________|_________|_______|__________|_________|
 
-from DL_ETH:
+from the Ethernet task:
  _______________________________________________________________________
 |		|           |         |          |            |         |
 | m_type	|  DL_PORT  | DL_PROC |	DL_COUNT |  DL_STAT   | DL_TIME |
@@ -44,11 +44,10 @@ from DL_ETH:
 
 #include "inet.h"
 
-#define _MINIX_SOURCE 1
-#define _MINIX
+#define _MINIX	1
 
 #include <unistd.h>
-#include <sys/stat.h>
+#include <sys/svrctl.h>
 
 #include "mq.h"
 #include "proto.h"
@@ -70,6 +69,9 @@ from DL_ETH:
 
 THIS_FILE
 
+int this_proc;		/* Process number of this server. */
+int synal_tasknr;	/* Task number of the synchronous alarm task. */
+
 #ifdef BUF_CONSISTENCY_CHECK
 extern int inet_buf_debug;
 #endif
@@ -83,17 +85,8 @@ PUBLIC void main()
 	mq_t *mq;
 	int r;
 	int source;
-	struct stat stb;
 
 	DBLOCK(1, printf("%s\n", version));
-
-#ifdef BUF_CONSISTENCY_CHECK
-	inet_buf_debug= 100;
-	if (inet_buf_debug)
-	{
-		ip_warning(( "buffer consistency check enabled" ));
-	}
-#endif
 
 	nw_init();
 	while (TRUE)
@@ -136,21 +129,16 @@ PUBLIC void main()
 		{
 			sr_rec(mq);
 		}
-		else if (source == DL_ETH)
-		{
-compare(mq->mq_mess.m_type, ==, DL_TASK_REPLY);
-			eth_rec(&mq->mq_mess);
-			mq_free(mq);
-		}
-		else if (source == SYN_ALRM_TASK)
+		else if (source == synal_tasknr)
 		{
 			clck_tick (&mq->mq_mess);
 			mq_free(mq);
 		}
 		else
 		{
-			ip_panic(("message from unknown source: %d",
-				mq->mq_mess.m_source));
+compare(mq->mq_mess.m_type, ==, DL_TASK_REPLY);
+			eth_rec(&mq->mq_mess);
+			mq_free(mq);
 		}
 	}
 	ip_panic(("task is not allowed to terminate"));
@@ -158,6 +146,48 @@ compare(mq->mq_mess.m_type, ==, DL_TASK_REPLY);
 
 PRIVATE void nw_init()
 {
+	struct fssignon device;
+	struct systaskinfo info;
+
+	/* Read configuration. */
+	read_conf();
+	eth_prep();
+	arp_prep();
+	psip_prep();
+	ip_prep();
+	tcp_prep();
+	udp_prep();
+
+	/* Sign on as a server at all offices in the proper order. */
+	if (svrctl(MMSIGNON, (void *) NULL) == -1) {
+		printf("inet: server signon failed\n");
+		exit(1);
+	}
+	if (svrctl(SYSSIGNON, (void *) &info) == -1) pause();
+
+	/* Our new identity as a server. */
+	this_proc = info.proc_nr;
+
+	/* Register the device group. */
+	device.dev= ip_dev;
+	device.style= STYLE_CLONE;
+	if (svrctl(FSSIGNON, (void *) &device) == -1) {
+		printf("inet: error %d on registering ethernet devices\n",
+			errno);
+		pause();
+	}
+
+#ifdef BUF_CONSISTENCY_CHECK
+	inet_buf_debug= 100;
+	if (inet_buf_debug)
+	{
+		ip_warning(( "buffer consistency check enabled" ));
+	}
+#endif
+
+	if (sys_findproc("SYN_AL", &synal_tasknr, 0) != OK)
+		ip_panic(( "unable to find synchronous alarm task\n"));
+
 	mq_init();
 	bf_init();
 	clck_init();

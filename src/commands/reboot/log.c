@@ -3,7 +3,7 @@
 
   Author: Edvard Tuinder  <v892231@si.hhs.NL>
 
-  shutdown is logged in /usr/adm/wtmp and in /usr/adm/authlog (if desired)
+  shutdown is logged in /usr/adm/wtmp and in /usr/adm/log (if desired)
   halt is logged only in /usr/adm/wtmp as `halt' to prevent last from
        reporting halt's as crashes.
 
@@ -22,7 +22,7 @@
 #undef WTMP
 
 static char WTMP[] = "/usr/adm/wtmp";	/* Record of logins and logouts. */
-static char SHUT_LOG[] = "/usr/adm/authlog";
+static char SHUT_LOG[] = "/usr/adm/log";
 
 char who[8];
 extern char *prog;

@@ -15,6 +15,7 @@ typedef struct nwio_route
 	u32_t nwr_dist;
 	u32_t nwr_flags;
 	u32_t nwr_pref;
+	u32_t nwr_mtu;		/* Ignored, compatibility with VMD */
 	ipaddr_t nwr_ifaddr;
 } nwio_route_t;
 

@@ -8,6 +8,8 @@
 #include "driver.h"
 #include "drvlib.h"
 
+/* Extended partition? */
+#define ext_part(s)	((s) == 0x05 || (s) == 0x0F)
 
 FORWARD _PROTOTYPE( void extpartition, (struct driver *dp, int extdev,
 						unsigned long extbase) );
@@ -37,9 +39,10 @@ int style;		/* partitioning style: floppy, primary, sub. */
   unsigned long base, limit, part_limit;
 
   /* Get the geometry of the device to partition */
-  if ((dv = (*dp->dr_prepare)(device)) == NIL_DEV || dv->dv_size == 0) return;
-  base = dv->dv_base >> SECTOR_SHIFT;
-  limit = base + (dv->dv_size >> SECTOR_SHIFT);
+  if ((dv = (*dp->dr_prepare)(device)) == NIL_DEV
+				|| cmp64u(dv->dv_size, 0) == 0) return;
+  base = div64u(dv->dv_base, SECTOR_SIZE);
+  limit = base + div64u(dv->dv_size, SECTOR_SIZE);
 
   /* Read the partition table for the device. */
   if (!get_part_table(dp, device, 0L, table)) return;
@@ -47,7 +50,7 @@ int style;		/* partitioning style: floppy, primary, sub. */
   /* Compute the device number of the first partition. */
   switch (style) {
   case P_FLOPPY:
-	device += MINOR_fd0a;
+	device += MINOR_fd0p0;
 	break;
   case P_PRIMARY:
 	sort(table);		/* sort a primary partition table */
@@ -56,7 +59,7 @@ int style;		/* partitioning style: floppy, primary, sub. */
   case P_SUB:
 	disk = device / DEV_PER_DRIVE;
 	par = device % DEV_PER_DRIVE - 1;
-	device = MINOR_hd1a + (disk * NR_PARTITIONS + par) * NR_PARTITIONS;
+	device = MINOR_d0p0s0 + (disk * NR_PARTITIONS + par) * NR_PARTITIONS;
   }
 
   /* Find an array of devices. */
@@ -72,8 +75,8 @@ int style;		/* partitioning style: floppy, primary, sub. */
 	if (pe->lowsec < base) pe->lowsec = base;
 	if (part_limit < pe->lowsec) part_limit = pe->lowsec;
 
-	dv->dv_base = pe->lowsec << SECTOR_SHIFT;
-	dv->dv_size = (part_limit - pe->lowsec) << SECTOR_SHIFT;
+	dv->dv_base = mul64u(pe->lowsec, SECTOR_SIZE);
+	dv->dv_size = mul64u(part_limit - pe->lowsec, SECTOR_SIZE);
 
 	if (style == P_PRIMARY) {
 		/* Each Minix primary partition can be subpartitioned. */
@@ -81,7 +84,7 @@ int style;		/* partitioning style: floppy, primary, sub. */
 			partition(dp, device + par, P_SUB);
 
 		/* An extended partition has logical partitions. */
-		if (pe->sysind == EXT_PART)
+		if (ext_part(pe->sysind))
 			extpartition(dp, device + par, pe->lowsec);
 	}
   }
@@ -106,7 +109,7 @@ unsigned long extbase;	/* sector offset of the base extended partition */
 
   disk = extdev / DEV_PER_DRIVE;
   par = extdev % DEV_PER_DRIVE - 1;
-  subdev = MINOR_hd1a + (disk * NR_PARTITIONS + par) * NR_PARTITIONS;
+  subdev = MINOR_d0p0s0 + (disk * NR_PARTITIONS + par) * NR_PARTITIONS;
 
   offset = 0;
   do {
@@ -119,15 +122,15 @@ unsigned long extbase;	/* sector offset of the base extended partition */
 	nextoffset = 0;
 	for (par = 0; par < NR_PARTITIONS; par++) {
 		pe = &table[par];
-		if (pe->sysind == EXT_PART) {
+		if (ext_part(pe->sysind)) {
 			nextoffset = pe->lowsec;
 		} else
 		if (pe->sysind != NO_PART) {
 			if ((dv = (*dp->dr_prepare)(subdev)) == NIL_DEV) return;
 
-			dv->dv_base = (extbase + offset
-					+ pe->lowsec) << SECTOR_SHIFT;
-			dv->dv_size = pe->size << SECTOR_SHIFT;
+			dv->dv_base = mul64u(extbase + offset + pe->lowsec,
+								SECTOR_SIZE);
+			dv->dv_size = mul64u(pe->size, SECTOR_SIZE);
 
 			/* Out of devices? */
 			if (++subdev % NR_PARTITIONS == 0) return;
@@ -149,16 +152,19 @@ struct part_entry *table;	/* four entries */
 /* Read the partition table for the device, return true iff there were no
  * errors.
  */
-  message mess;
+  iovec_t iovec1;
+  off_t position;
+  int proc_nr;
 
-  mess.DEVICE = device;
-  mess.POSITION = offset << SECTOR_SHIFT;
-  mess.COUNT = SECTOR_SIZE;
-  mess.ADDRESS = (char *) tmp_buf;
-  mess.PROC_NR = proc_number(proc_ptr);
-  mess.m_type = DEV_READ;
-
-  if (do_rdwt(dp, &mess) != SECTOR_SIZE) {
+  /* Read the partition table at 'offset'. */
+  proc_nr = proc_number(proc_ptr);
+  position = offset << SECTOR_SHIFT;
+  iovec1.iov_addr = (vir_bytes) tmp_buf;
+  iovec1.iov_size = SECTOR_SIZE;
+  if ((*dp->dr_prepare)(device) != NIL_DEV) {
+	(void) (*dp->dr_transfer)(proc_nr, DEV_GATHER, position, &iovec1, 1);
+  }
+  if (iovec1.iov_size != 0) {
 	printf("%s: can't read partition table\n", (*dp->dr_name)());
 	return 0;
   }

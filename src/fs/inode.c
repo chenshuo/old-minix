@@ -16,7 +16,6 @@
  */
 
 #include "fs.h"
-#include <minix/boot.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
@@ -127,7 +126,7 @@ mode_t bits;			/* mode of the inode */
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
 	minor = (int) (sp->s_dev >> MINOR) & BYTE;
 	printf("Out of i-nodes on %sdevice %d/%d\n",
-		sp->s_dev == ROOT_DEV ? "root " : "", major, minor);
+		sp->s_dev == root_dev ? "root " : "", major, minor);
 	return(NIL_INODE);
   }
   sp->s_isearch = b;		/* next time start here */

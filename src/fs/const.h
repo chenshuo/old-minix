@@ -33,9 +33,8 @@
 #define PREFETCH           2	/* tells get_block not to read or mark dev */
 
 #define XPIPE  (-NR_TASKS-1)	/* used in fp_task when susp'd on pipe */
-#define XOPEN  (-NR_TASKS-2)	/* used in fp_task when susp'd on open */
-#define XLOCK  (-NR_TASKS-3)	/* used in fp_task when susp'd on lock */
-#define XPOPEN (-NR_TASKS-4)	/* used in fp_task when susp'd on pipe open */
+#define XLOCK  (-NR_TASKS-2)	/* used in fp_task when susp'd on lock */
+#define XPOPEN (-NR_TASKS-3)	/* used in fp_task when susp'd on pipe open */
 
 #define NO_BIT   ((bit_t) 0)	/* returned by alloc_bit() to signal failure */
 
@@ -56,6 +55,8 @@
 #define DONT_SWAP          1	/* tells conv2/conv4 not to swap bytes */
 
 #define END_OF_FILE   (-104)	/* eof detected */
+
+#define DEV_RAM	((dev_t) 0x100)	/* device number of /dev/ram */
 
 #define ROOT_INODE         1	/* inode number for root directory */
 #define BOOT_BLOCK  ((block_t) 0)	/* block number of boot block */
@@ -78,5 +79,3 @@
 #define V2_INODE_SIZE             usizeof (d2_inode)  /* bytes in V2 dsk ino */
 #define V2_INDIRECTS   (BLOCK_SIZE/V2_ZONE_NUM_SIZE)  /* # zones/indir block */
 #define V2_INODES_PER_BLOCK (BLOCK_SIZE/V2_INODE_SIZE)/* # V2 dsk inodes/blk */
-
-#define printf printk

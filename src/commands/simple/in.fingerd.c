@@ -17,6 +17,7 @@ static char sccsid[] = "@(#)in.fingerd.c 1.1 87/12/21 SMI"; /* from UCB 5.1 6/6/
 #include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
 int main _ARGS(( int argc, char *argv[] ));
 void fatal _ARGS(( char *prog, char *s ));
@@ -31,7 +32,9 @@ int main(argc, argv)
 	char *av[4];
 
 	line[0] = '\0';
-	gets(line);
+	fgets(line, sizeof(line), stdin);
+	sp = line + strlen(line);
+	if (sp > line && *--sp == '\n') *sp = '\0';
 	sp = line;
 	av[0] = "finger";
 	i = 1;
@@ -61,7 +64,7 @@ int main(argc, argv)
 			close(p[1]);
 		}
 		execv("/usr/bin/finger", av);
-		printf("No local finger program found\n");
+		printf("No finger program found\n");
 		fflush(stdout);
 		_exit(1);
 	}

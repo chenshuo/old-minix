@@ -5,8 +5,8 @@
 
   This program informs the users that the system is going
   down, when and why. After that a shutdown notice is written in
-  both /usr/adm/wtmp and /usr/adm/authlog (if existing).
-  Then reboot(2) is called to really close the system.
+  both /usr/adm/wtmp and by syslog(3).  Then reboot(2) is called
+  to really close the system.
 
   This actually is a ``nice'' halt(8).
 
@@ -38,8 +38,7 @@
 #undef WTMP
 
 static char WTMP[] =		"/usr/adm/wtmp";
-static char SHUT_LOG[] =	"/usr/adm/authlog";
-static char SHUT_PID[] =	"/usr/adm/shutdown.pid";
+static char SHUT_PID[] =	"/usr/run/shutdown.pid";
 static char NOLOGIN[] =		"/etc/nologin";
 
 #ifndef __STDC__
@@ -48,9 +47,7 @@ static char NOLOGIN[] =		"/etc/nologin";
 #endif
 
 void usage _ARGS(( void ));
-void write_log _ARGS(( void ));
 void write_pid _ARGS(( void ));
-void bye_bye _ARGS(( void ));
 int inform_user_time _ARGS(( void ));
 void inform_user _ARGS(( void ));
 void terminate _ARGS(( void ));
@@ -64,7 +61,7 @@ char *itoa _ARGS(( int n ));
 long wait_time=0L;
 char message[1024];
 char info[80];
-int reboot_flag=RBT_HALT;		/* default is halt */
+int reboot_flag='h';			/* default is halt */
 char *reboot_code="";			/* optional monitor code */
 int info_min, info_hour;
 char *prog;
@@ -133,6 +130,8 @@ char *argv[];
   int i, now = 0, nologin = 0, want_terminate = 0, want_message = 0, check = 0;
   char *opt;
   int tty;
+  static char HALT1[] = "-?";
+  static char *HALT[] = { "shutdown", HALT1, NULL, NULL };
 
   /* Parse options. */
   for (i = 1; i < argc && argv[i][0] == '-'; i++) {
@@ -147,25 +146,23 @@ char *argv[];
 	want_terminate = 1;
 	break;
       case 'h':
-	reboot_flag=RBT_HALT;
-	break;
       case 'r':
-	reboot_flag=RBT_REBOOT;
-	break;
       case 'x':
-	reboot_flag=RBT_MONITOR;
-	if (*++opt == 0) {
-	  if (++i == argc) {
-	    fprintf (stderr,"shutdown: option '-x' requires an argument\n");
-	    usage();
+	reboot_flag = *opt;
+	if (reboot_flag == 'x') {
+	  if (*++opt == 0) {
+	    if (++i == argc) {
+	      fprintf (stderr,"shutdown: option '-x' requires an argument\n");
+	      usage();
+	    }
+	    opt=argv[i];
 	  }
-	  opt=argv[i];
+	  reboot_code=opt;
+	  opt="";
 	}
-	reboot_code=opt;
-	opt="";
 	break;
       case 'R':
-	reboot_flag=RBT_RESET;
+	reboot_flag = 'R';
 	break;
       case 'm':
 	want_message = 1;
@@ -251,7 +248,23 @@ char *argv[];
   }
   wait_time = 0;
   inform_user();
-  bye_bye();				/* NOW! */
+
+  unlink(SHUT_PID);			/* No way of stopping anymore */
+  unlink(NOLOGIN);
+
+  HALT[1][1] = reboot_flag;
+  if (reboot_flag == 'x') HALT[2] = reboot_code;
+#if __minix_vmd
+  execv("/usr/sbin/halt", HALT);
+#else
+  execv("/usr/bin/halt", HALT);
+#endif
+  if (errno != ENOENT)
+    fprintf(stderr, "Can't execute 'halt': %s\n", strerror(errno));
+
+  sleep(2);
+  reboot(RBT_HALT);
+  fprintf(stderr, "Reboot call failed: %s\n", strerror(errno));
   exit(1);
 }
 
@@ -363,27 +376,6 @@ void inform_user()
   wall(mes,message);
 }
 
-void bye_bye()
-{
-  unlink(SHUT_PID);		/* No way of stopping anymore */
-  unlink(NOLOGIN);
-
-  /* Make sure that we don't die. */
-  signal(SIGHUP, SIG_IGN);
-  signal(SIGTERM, SIG_IGN);
-
-  /* Tell init to stop spawning getty's. */
-  kill(1, SIGTERM);
-  /* Give everybody a chance to die peacefully. */
-  kill(-1, SIGTERM);
-  sleep(2);
-
-  write_log();
-  reboot(reboot_flag, reboot_code, strlen(reboot_code));
-  fprintf(stderr, "reboot call failed: %s\n", strerror(errno));
-  return;
-}
-
 void write_pid()
 {
   char pid[5];
@@ -414,17 +406,3 @@ int crash_check()
   close(fd);
   return crashed;
 }
-
-#if __minix && !__minix_vmd
-
-int setsid()
-{
-  /* Standard Minix does not have setsid() yet.  All we need it for is to
-   * block keyboard signals, so this will have to do.
-   */
-  signal(SIGHUP, SIG_IGN);
-  signal(SIGINT, SIG_IGN);
-  signal(SIGQUIT, SIG_IGN);
-  signal(SIGTERM, SIG_IGN);
-}
-#endif

@@ -21,7 +21,7 @@ Copyright 1995 Philip Homburg
 
 THIS_FILE
 
-PUBLIC tcp_port_t tcp_port_table[TCP_PORT_NR];
+PUBLIC tcp_port_t *tcp_port_table;
 PUBLIC tcp_fd_t tcp_fd_table[TCP_FD_NR];
 PUBLIC tcp_conn_t tcp_conn_table[TCP_CONN_NR];
 
@@ -57,9 +57,14 @@ FORWARD void tcp_bufcheck ARGS(( void ));
 #endif
 FORWARD void tcp_setup_conn ARGS(( tcp_conn_t *tcp_conn ));
 
+PUBLIC void tcp_prep()
+{
+	tcp_port_table= alloc(ip_conf_nr * sizeof(tcp_port_table[0]));
+}
+
 PUBLIC void tcp_init()
 {
-	int i, j, k, result;
+	int i, j, k;
 	tcp_fd_t *tcp_fd;
 	tcp_port_t *tcp_port;
 	tcp_conn_t *tcp_conn;
@@ -89,10 +94,9 @@ PUBLIC void tcp_init()
 	bf_logon(tcp_buffree, tcp_bufcheck);
 #endif
 
-	for (i=0, tcp_port= tcp_port_table; i<TCP_PORT_NR; i++, tcp_port++)
+	for (i=0, tcp_port= tcp_port_table; i<ip_conf_nr; i++, tcp_port++)
 	{
-		tcp_port->tp_minor= tcp_conf[i].tc_minor;
-		tcp_port->tp_ipdev= tcp_conf[i].tc_port;
+		tcp_port->tp_ipdev= i;
 
 #if ZERO
 		tcp_port->tp_flags= TPF_EMPTY;
@@ -110,10 +114,9 @@ PUBLIC void tcp_init()
 			}
 		}
 
-		result= sr_add_minor (tcp_port->tp_minor,
-			tcp_port-tcp_port_table, tcp_open, tcp_close,
-			tcp_read, tcp_write, tcp_ioctl, tcp_cancel);
-		assert (result>=0);
+		sr_add_minor(if2minor(ip_conf[i].ic_ifno, TCP_DEV_OFF),
+			i, tcp_open, tcp_close, tcp_read,
+			tcp_write, tcp_ioctl, tcp_cancel);
 
 		tcp_main(tcp_port);
 	}
@@ -131,7 +134,7 @@ tcp_port_t *tcp_port;
 	case TPS_EMPTY:
 		tcp_port->tp_state= TPS_SETPROTO;
 		tcp_port->tp_ipfd= ip_open(tcp_port->tp_ipdev,
-			tcp_port-tcp_port_table, tcp_get_data,
+			tcp_port->tp_ipdev, tcp_get_data,
 			tcp_put_data, tcp_put_pkt);
 		if (tcp_port->tp_ipfd < 0)
 		{
@@ -168,7 +171,7 @@ tcp_port_t *tcp_port;
 		tcp_port->tp_flags &= ~TPF_SUSPEND;
 		tcp_port->tp_pack= 0;
 
-		tcp_conn= &tcp_conn_table[tcp_port-tcp_port_table];
+		tcp_conn= &tcp_conn_table[tcp_port->tp_ipdev];
 		tcp_conn->tc_flags= TCF_INUSE;
 		assert(!tcp_conn->tc_busy);
 		tcp_conn->tc_locport= 0;
@@ -230,9 +233,10 @@ tcp_port_t *tcp_port;
 		read_ip_packets(tcp_port);
 		return;
 
+#if !CRAMPED
 	default:
 		ip_panic(( "unknown state" ));
-		break;
+#endif
 	}
 }
 
@@ -593,7 +597,7 @@ put_pkt_t put_pkt;
 		i++);
 	if (i>=TCP_FD_NR)
 	{
-		return EOUTOFBUFS;
+		return EAGAIN;
 	}
 
 	tcp_fd= &tcp_fd_table[i];
@@ -1068,20 +1072,20 @@ int fd;
 {
 	tcpport_t port, nw_port;
 
-	for (port= 0x8000; port < 0xffff-TCP_FD_NR; port+= TCP_FD_NR)
+	nw_port= htons(0xC000+fd);
+	if (is_unused_port(nw_port))
+		return nw_port;
+
+	for (port= 0xC000+TCP_FD_NR; port < 0xFFFF; port++)
 	{
 		nw_port= htons(port);
 		if (is_unused_port(nw_port))
 			return nw_port;
 	}
-	for (port= 0x8000; port < 0xffff; port++)
-	{
-		nw_port= htons(port);
-		if (is_unused_port(nw_port))
-			return nw_port;
-	}
+#if !CRAMPED
 	ip_panic(( "unable to find unused port (shouldn't occur)" ));
 	return 0;
+#endif
 }
 
 PRIVATE int is_unused_port(port)
@@ -1099,9 +1103,9 @@ tcpport_t port;
 		if (tcp_fd->tf_tcpconf.nwtc_locport == port)
 			return FALSE;
 	}
-	for (i= TCP_PORT_NR, tcp_conn= tcp_conn_table+i;
+	for (i= ip_conf_nr, tcp_conn= tcp_conn_table+i;
 		i<TCP_CONN_NR; i++, tcp_conn++)
-		/* the first TCP_PORT_NR ports are special */
+		/* the first ip_conf_nr ports are special */
 	{
 		if (!(tcp_conn->tc_flags & TCF_INUSE))
 			continue;
@@ -1176,9 +1180,9 @@ PRIVATE tcp_conn_t *find_empty_conn()
 	tcp_conn_t *tcp_conn;
 	int state;
 
-	for (i=TCP_PORT_NR, tcp_conn= tcp_conn_table+i;
+	for (i=ip_conf_nr, tcp_conn= tcp_conn_table+i;
 		i<TCP_CONN_NR; i++, tcp_conn++)
-		/* the first TCP_PORT_NR connection are reserved for
+		/* the first ip_conf_nr connections are reserved for
 		 * RSTs
 		 */
 	{
@@ -1222,9 +1226,9 @@ ipaddr_t remaddr;
 
 	assert(remport);
 	assert(remaddr);
-	for (i=TCP_PORT_NR, tcp_conn= tcp_conn_table+i; i<TCP_CONN_NR;
+	for (i=ip_conf_nr, tcp_conn= tcp_conn_table+i; i<TCP_CONN_NR;
 		i++, tcp_conn++)
-		/* the first TCP_PORT_NR connection are reserved for
+		/* the first ip_conf_nr connections are reserved for
 			RSTs */
 	{
 		if (tcp_conn->tc_flags == TCF_EMPTY)
@@ -1295,9 +1299,9 @@ tcp_hdr_t *tcp_hdr;
 	best_level= 0;
 	best_conn= NULL;
 	listen_conn= NULL;
-	for (i= TCP_PORT_NR, tcp_conn= tcp_conn_table+i;
+	for (i= ip_conf_nr, tcp_conn= tcp_conn_table+i;
 		i<TCP_CONN_NR; i++, tcp_conn++)
-		/* the first TCP_PORT_NR connection are reserved for
+		/* the first ip_conf_nr connections are reserved for
 			RSTs */
 	{
 		if (!(tcp_conn->tc_flags & TCF_INUSE))
@@ -1374,7 +1378,7 @@ tcp_hdr_t *tcp_hdr;
 			return NULL;
 		}
 
-		for (i=0, tcp_conn= tcp_conn_table; i<TCP_PORT_NR;
+		for (i=0, tcp_conn= tcp_conn_table; i<ip_conf_nr;
 			i++, tcp_conn++)
 		{
 			/* find valid port to send RST */
@@ -1430,7 +1434,7 @@ tcpport_t remport;
 	tcp_conn_t *tcp_conn;
 	tcp_fd_t *fd;
 
-	for (i= TCP_PORT_NR, tcp_conn= tcp_conn_table+i;
+	for (i= ip_conf_nr, tcp_conn= tcp_conn_table+i;
 		i<TCP_CONN_NR; i++, tcp_conn++)
 	{
 		if (!(tcp_conn->tc_flags & TCF_INUSE))
@@ -1728,9 +1732,10 @@ assert (tcp_fd->tf_flags & TFF_IOCTL_IP);
 			break;
 		}
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(( "unknown cancel request" ));
-		break;
+#endif
 	}
 	return NW_OK;
 }
@@ -1816,6 +1821,7 @@ tcp_fd_t *tcp_fd;
 	tcp_conn->tc_connInprogress= 1;
 	tcp_conn->tc_orglisten= FALSE;
 	tcp_conn->tc_state= TCS_SYN_SENT;
+	tcp_conn->tc_rt_dead= TCP_DEF_RT_MAX_CONNECT;
 
 	/* Start the timer (if necessary) */
 	tcp_set_send_timer(tcp_conn);
@@ -1998,7 +2004,7 @@ PRIVATE void tcp_bufcheck()
 	tcp_conn_t *tcp_conn;
 	tcp_port_t *tcp_port;
 
-	for (i= 0, tcp_port= tcp_port_table; i<TCP_PORT_NR; i++, tcp_port++)
+	for (i= 0, tcp_port= tcp_port_table; i<ip_conf_nr; i++, tcp_port++)
 	{
 		if (tcp_port->tp_pack)
 			bf_check_acc(tcp_port->tp_pack);
@@ -2030,7 +2036,8 @@ tcp_conn_t *tcp_conn;
 	new_ttl= tcp_conn->tc_ttl;
 	if (new_ttl == IP_MAX_TTL)
 	{
-		tcp_close_connection(tcp_conn, EDSTNOTRCH);
+		if (tcp_conn->tc_state == TCS_SYN_SENT)
+			tcp_close_connection(tcp_conn, EDSTNOTRCH);
 		return;
 	}
 	else if (new_ttl == TCP_DEF_TTL)
@@ -2116,5 +2123,5 @@ tcp_conn_t *tcp_conn;
 }
 
 /*
- * $PchId: tcp.c,v 1.14 1997/01/31 08:50:48 philip Exp $
+ * $PchId: tcp.c,v 1.14.2.2 1999/11/17 22:05:27 philip Exp $
  */

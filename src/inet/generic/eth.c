@@ -20,7 +20,7 @@ Copyright 1995 Philip Homburg
 
 THIS_FILE
 
-#define ETH_FD_NR	32
+#define ETH_FD_NR	(4*IP_PORT_MAX)
 #define EXPIRE_TIME	60*HZ	/* seconds */
 
 typedef struct eth_fd
@@ -61,10 +61,15 @@ FORWARD void reply_thr_put ARGS(( eth_fd_t *eth_fd,
 	size_t result, int for_ioctl ));
 FORWARD u32_t compute_rec_conf ARGS(( eth_port_t *eth_port ));
 
-PUBLIC eth_port_t eth_port_table[ETH_PORT_NR];
+PUBLIC eth_port_t *eth_port_table;
 
 PRIVATE eth_fd_t eth_fd_table[ETH_FD_NR];
-PRIVATE ether_addr_t broadcast= {255, 255, 255, 255, 255, 255};
+PRIVATE ether_addr_t broadcast= { { 255, 255, 255, 255, 255, 255 } };
+
+PUBLIC void eth_prep()
+{
+	eth_port_table= alloc(eth_conf_nr * sizeof(eth_port_table[0]));
+}
 
 PUBLIC void eth_init()
 {
@@ -78,7 +83,7 @@ PUBLIC void eth_init()
 #if ZERO
 	for (i=0; i<ETH_FD_NR; i++)
 		eth_fd_table[i].ef_flags= EFF_EMPTY;
-	for (i=0; i<ETH_PORT_NR; i++)
+	for (i=0; i<eth_conf_nr; i++)
 	{
 		eth_port_table[i].etp_flags= EFF_EMPTY;
 		eth_port_table[i].etp_type_any= NULL;
@@ -119,7 +124,7 @@ put_pkt_t put_pkt;
 	if (i>=ETH_FD_NR)
 	{
 		DBLOCK(1, printf("out of fds\n"));
-		return EOUTOFBUFS;
+		return EAGAIN;
 	}
 
 	eth_fd= &eth_fd_table[i];
@@ -159,8 +164,6 @@ ioreq_t req;
 			u32_t new_en_flags, new_di_flags,
 				old_en_flags, old_di_flags;
 			u32_t flags;
-			eth_fd_t *loc_fd;
-			int i;
 
 			data= (*eth_fd->ef_get_userdata)(eth_fd->
 				ef_srfd, 0, sizeof(nwio_ethopt_t), TRUE);
@@ -435,7 +438,8 @@ size_t data_len;
 	if (nweo_flags & NWEO_REMSPEC)
 		eth_hdr->eh_dst= eth_fd->ef_ethopt.nweo_rem;
 
-	eth_hdr->eh_src= eth_port->etp_ethaddr;
+	if (!(nweo_flags & NWEO_EN_PROMISC))
+		eth_hdr->eh_src= eth_port->etp_ethaddr;
 
 	if (nweo_flags & NWEO_TYPESPEC)
 		eth_hdr->eh_proto= eth_fd->ef_ethopt.nweo_type;
@@ -511,8 +515,10 @@ assert (eth_fd->ef_flags & EFF_WRITE_IP);
 		eth_fd->ef_flags &= ~EFF_WRITE_IP;
 		reply_thr_get(eth_fd, EINTR, FALSE);
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(( "got unknown cancel request" ));
+#endif
 	}
 	return NW_OK;
 }
@@ -659,10 +665,10 @@ PUBLIC void eth_restart_write(eth_port)
 eth_port_t *eth_port;
 {
 	eth_fd_t *eth_fd;
-	acc_t *pack;
 	int i, r;
 
-	assert(eth_port->etp_wr_pack == NULL);
+	if (eth_port->etp_wr_pack)
+		return;
 
 	if (!(eth_port->etp_flags & EPF_MORE2WRITE))
 		return;
@@ -696,7 +702,6 @@ acc_t *pack;
 size_t pack_size;
 {
 
-	time_t exp_tim;
 	eth_hdr_t *eth_hdr;
 	ether_addr_t *dst_addr;
 	int pack_stat;
@@ -902,7 +907,7 @@ PRIVATE void eth_bufcheck()
 	eth_fd_t *eth_fd;
 	acc_t *pack;
 
-	for (i= 0; i<ETH_PORT_NR; i++)
+	for (i= 0; i<eth_conf_nr; i++)
 	{
 		bf_check_acc(eth_port_table[i].etp_rd_pack);
 		bf_check_acc(eth_port_table[i].etp_wr_pack);

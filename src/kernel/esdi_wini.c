@@ -23,6 +23,7 @@
  *
  * Changes:
  *	 3 May 1992 by Kees J. Bot: device dependent/independent split.
+ *	27 May 2000 by Kees J. Bot: d-d/i rewrite.
  */
 #include "kernel.h"
 #include "driver.h"
@@ -73,7 +74,6 @@
 /*****  miscellaneous  */
 
 #define  ERR            (-1)	/* general error code                    */
-#define  ERR_BAD_SECTOR (-2)	/* block marked bad detected             */
 #define  MAX_ERRORS     4	/* maximum number of read/write retries  */
 #define  MAX_DRIVES     2	/* maximum number of physical drives     */
 #define  NR_DEVICES     (MAX_DRIVES*DEV_PER_DRIVE)
@@ -89,27 +89,15 @@
 
 PRIVATE struct wini {		/* disk/partition information            */
   unsigned open_ct;			/* in-use count			 */
-  struct device part[DEV_PER_DRIVE];	/* primary partitions: hd[0-4]   */
-  struct device subpart[SUB_PER_DRIVE];	/* subpartitions: hd[1-4][a-d] */
+  struct device part[DEV_PER_DRIVE];	/* disks and partitions		 */
+  struct device subpart[SUB_PER_DRIVE];	/* subpartitions		 */            
 } wini[MAX_DRIVES], *w_wn;
-
-PRIVATE struct trans {
-  struct iorequest_s *iop;	/* belongs to this I/O request           */
-  unsigned long block;		/* first sector to transfer              */
-  unsigned count;		/* byte count                            */
-  phys_bytes phys;		/* user physical address                 */
-  phys_bytes dma;		/* DMA physical address                  */
-} wtrans[NR_IOREQS];
 
 PRIVATE int win_tasknr;		/* my task number			 */
 PRIVATE int nr_drives;		/* actual number of physical disk drive  */
 PRIVATE int command[4];		/* controller command buffer             */
 PRIVATE unsigned int status_block[9];	/* status block output from a command */
 PRIVATE int dma_channel;	/* fixed disk dma channel number         */
-PRIVATE struct trans *w_tp;	/* to add transfer requests              */
-PRIVATE unsigned w_count;	/* number of bytes to transfer           */
-PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
-PRIVATE int w_opcode;		/* DEV_READ or DEV_WRITE                 */
 PRIVATE int w_drive;		/* selected drive                        */
 PRIVATE int w_istat;		/* interrupt status of last command      */
 PRIVATE struct device *w_dv;	/* device's base and size                */
@@ -123,13 +111,15 @@ FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
 FORWARD _PROTOTYPE( int w_command, (int device, int cmd, int num_words) );
-FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int w_finish, (void) );
-FORWARD _PROTOTYPE( int w_transfer, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( int w_transfer, (int proc_nr, int opcode, off_t position,
+					iovec_t *iov, unsigned nr_req) );
+FORWARD _PROTOTYPE( int w_1rdwt, (int opcode, unsigned long block,
+					phys_bytes address, unsigned count) );
 FORWARD _PROTOTYPE( int w_att_write, (int value) );
 FORWARD _PROTOTYPE( void w_interrupt, (int dma) );
 FORWARD _PROTOTYPE( int w_handler, (int irq) );
-FORWARD _PROTOTYPE( void w_dma_setup, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( void w_dma_setup, (int opcode, phys_bytes address,
+							unsigned count) );
 FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
 
 
@@ -140,8 +130,7 @@ PRIVATE struct driver w_dtab = {
   w_do_close,	/* release device */
   do_diocntl,	/* get or set a partition's geometry */
   w_prepare,	/* prepare for I/O on a given minor device */
-  w_schedule,	/* precompute cylinder, head, sector, etc. */
-  w_finish,	/* do the I/O */
+  w_transfer,	/* do the I/O */
   nop_cleanup,	/* no cleanup needed */
   w_geometry	/* tell the geometry of the disk */
 };
@@ -166,15 +155,12 @@ int device;
 {
 /* Prepare for I/O on a device. */
 
-  /* Nothing to transfer as yet. */
-  w_count = 0;
-
-  if (device < NR_DEVICES) {			/* hd0, hd1, ... */
+  if (device < NR_DEVICES) {			/* d0, d0p[0-3], d1, ... */
 	w_drive = device / DEV_PER_DRIVE;	/* save drive number */
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->part[device % DEV_PER_DRIVE];
   } else
-  if ((unsigned) (device -= MINOR_hd1a) < NR_SUBDEVS) {	/* hd1a, hd1b, ... */
+  if ((unsigned) (device -= MINOR_d0p0s0) < NR_SUBDEVS) {/*d[0-7]p[0-3]s[0-3]*/
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
@@ -191,9 +177,9 @@ int device;
 PRIVATE char *w_name()
 {
 /* Return a name for the current device. */
-  static char name[] = "esdi-hd5";
+  static char name[] = "esdi-d0";
 
-  name[7] = '0' + w_drive * DEV_PER_DRIVE;
+  name[6] = '0' + w_drive;
   return name;
 }
 
@@ -286,7 +272,7 @@ PRIVATE void w_init()
 		dma_channel = (status_block[2] & 0x3C00) >> 10;
 	}
 	printf("%s: %lu sectors\n", w_name(), size);
-	w_wn->part[0].dv_size = size << SECTOR_SHIFT;
+	w_wn->part[0].dv_size = mul64u(size, SECTOR_SIZE);
   }
 }
 
@@ -361,182 +347,137 @@ int num_words;			/* i expected size of status block       */
 
 
 /*===========================================================================*
- *				w_schedule				     *
+ *				w_transfer				     *
  *===========================================================================*/
-PRIVATE int w_schedule(proc_nr, iop)
+PRIVATE int w_transfer(proc_nr, opcode, position, iov, nr_req)
 int proc_nr;			/* process doing the request */
-struct iorequest_s *iop;	/* pointer to read or write request */
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+off_t position;			/* offset on device to read or write */
+iovec_t *iov;			/* pointer to read or write request vector */
+unsigned nr_req;		/* length of request vector */
 {
-/* Gather I/O requests on consecutive blocks so they may be read/written
- * in one command if using a buffer.  Check and gather all the requests
- * and try to finish them as fast as possible if unbuffered.
- */
-  int r, opcode;
-  unsigned long pos;
-  unsigned nbytes, count;
+  iovec_t *iop, *iov_end = iov + nr_req;
+  int r, errors;
+  unsigned nbytes, count, chunk, dma_count;
   unsigned long block;
-  phys_bytes user_phys, dma_phys;
+  unsigned long dv_size = cv64ul(w_dv->dv_size);
+  phys_bytes dma_phys;
+  phys_bytes user_base = proc_vir2phys(proc_addr(proc_nr), 0);
 
-  /* This many bytes to read/write */
-  nbytes = iop->io_nbytes;
-  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+  /* Check disk address. */
+  if ((position & SECTOR_MASK) != 0) return(EINVAL);
 
-  /* From/to this position on the device */
-  pos = iop->io_position;
-  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+  errors = 0;
 
-  /* To/from this user address */
-  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
-  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
-
-  /* Read or write? */
-  opcode = iop->io_request & ~OPTIONAL_IO;
-
-  /* Which block on disk and how close to EOF? */
-  if (pos >= w_dv->dv_size) return(OK);		/* At EOF */
-  if (pos + nbytes > w_dv->dv_size) nbytes = w_dv->dv_size - pos;
-  block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
-
-  if (USE_BUF && w_count > 0 && block != w_nextblock) {
-	/* This new request can't be chained to the job being built */
-	if ((r = w_finish()) != OK) return(r);
-  }
-
-  /* The next consecutive block */
-  if (USE_BUF) w_nextblock = block + (nbytes >> SECTOR_SHIFT);
-
-  /* While there are "unscheduled" bytes in the request: */
-  do {
-	count = nbytes;
-
-	if (USE_BUF) {
-		if (w_count == DMA_BUF_SIZE) {
-			/* Can't transfer more than the buffer allows. */
-			if ((r = w_finish()) != OK) return(r);
+  while (nr_req > 0) {
+	/* How many bytes to transfer? */
+	nbytes = 0;
+	for (iop = iov; iop < iov_end; iop++) {
+		if (USE_BUF && nbytes + iop->iov_size > DMA_BUF_SIZE) {
+			/* Don't do half a segment if you can avoid it. */
+			if (nbytes == 0) nbytes = DMA_BUF_SIZE;
+			break;
 		}
-
-		if (w_count + count > DMA_BUF_SIZE)
-			count = DMA_BUF_SIZE - w_count;
-	} else {
-		if (w_tp == wtrans + NR_IOREQS) {
-			/* All transfer slots in use. */
-			if ((r = w_finish()) != OK) return(r);
-		}
+		nbytes += iop->iov_size;
+		if ((nbytes & SECTOR_MASK) != 0) return(EINVAL);
 	}
 
-	if (w_count == 0) {
-		/* The first request in a row, initialize. */
-		w_opcode = opcode;
-		w_tp = wtrans;
-	}
+	/* Which block on disk and how close to EOF? */
+	if (position >= dv_size) return(OK);		/* At EOF */
+	if (position + nbytes > dv_size) nbytes = dv_size - position;
+	block = div64u(add64ul(w_dv->dv_base, position), SECTOR_SIZE);
 
-	if (USE_BUF) {
-		dma_phys = tmp_phys + w_count;
-	} else {
-		/* Note: No 64K boundary problem, the better PS/2's have a
-		 * working DMA chip.
-		 */
-		dma_phys = user_phys;
-	}
+	/* Degrade to per-sector mode if there were errors. */
+	if (errors > 0) nbytes = SECTOR_SIZE;
 
-	/* Store I/O parameters */
-	w_tp->iop = iop;
-	w_tp->block = block;
-	w_tp->count = count;
-	w_tp->phys = user_phys;
-	w_tp->dma = dma_phys;
-
-	/* Update counters */
-	w_tp++;
-	w_count += count;
-	block += count >> SECTOR_SHIFT;
-	user_phys += count;
-	nbytes -= count;
-  } while (nbytes > 0);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				w_finish				     *
- *===========================================================================*/
-PRIVATE int w_finish()
-{
-/*     carries out the I/O requests gathered in wtrans[]
- *
- *     fills the disk information structure for one block at a time or many
- *     in a row before calling 'w_transfer' to do the dirty work.  while
- *     unsuccessful operations are re-tried, this may be superfluous, since
- *     the controller does the same on its own.  turns on the fixed disk
- *     activity light, while busy.  computers need blinking lights, right?
- */
-
-  struct trans *tp = wtrans, *tp2;
-  unsigned count;
-  int r, errors = 0, many = USE_BUF;
-
-  if (w_count == 0) return(OK);	/* Spurious finish. */
-
-  do {
-	if (w_opcode == DEV_WRITE) {
-		tp2 = tp;
+	if (!USE_BUF) {
+		/* How many bytes can be found on consecutive chunks? */
+		dma_phys = user_base + iov[0].iov_addr;
 		count = 0;
-		do {
-			if (USE_BUF || tp2->dma == tmp_phys) {
-				phys_copy(tp2->phys, tp2->dma,
-						(phys_bytes) tp2->count);
-			}
-			count += tp2->count;
-			tp2++;
-		} while (many && count < w_count);
+		for (iop = iov; count < nbytes; iop++) {
+			if (iop->iov_addr != iov[0].iov_addr + count) break;
+			count += iop->iov_size;
+		}
+		if (count < nbytes) nbytes = count;
 	} else {
-		count = many ? w_count : tp->count;
+		dma_phys = tmp_phys;
+		if (opcode == DEV_SCATTER) {
+			/* Copy from user space to the DMA buffer. */
+			count = 0;
+			for (iop = iov; count < nbytes; iop++) {
+				chunk = iov->iov_size;
+				if (count + chunk > nbytes)
+					chunk = nbytes - count;
+				phys_copy(user_base + iop->iov_addr,
+						dma_phys + count,
+						(phys_bytes) chunk);
+				count += chunk;
+			}
+		}
 	}
 
 	/* Turn on the disk activity light. */
 	out_byte(SYS_PORTA, in_byte(SYS_PORTA) | LIGHT_ON);
 
 	/* Perform the transfer. */
-	r = w_transfer(tp, count);
+	r = w_1rdwt(opcode, block, dma_phys, nbytes);
 
 	/* Turn off the disk activity light. */
 	out_byte(SYS_PORTA, in_byte(SYS_PORTA) & ~LIGHT_ON);
 
 	if (r != OK) {
-		/* An error occurred, try again block by block unless */
-		if (r == ERR_BAD_SECTOR || ++errors == MAX_ERRORS)
-			return(tp->iop->io_nbytes = EIO);
-
-		many = 0;
+		/* An error occurred, try again sector by sector unless */
+		if (++errors == MAX_ERRORS) return(EIO);
 		continue;
 	}
-	errors = 0;
 
-	w_count -= count;
-
-	do {
-		if (w_opcode == DEV_READ) {
-			if (USE_BUF || tp->dma == tmp_phys) {
-				phys_copy(tp->dma, tp->phys,
-						(phys_bytes) tp->count);
-			}
+	if (USE_BUF && opcode == DEV_GATHER) {
+		/* Copy from the DMA buffer to user space. */
+		count = 0;
+		for (iop = iov; count < nbytes; iop++) {
+			chunk = iov->iov_size;
+			if (count + chunk > nbytes)
+				chunk = nbytes - count;
+			phys_copy(dma_phys + count,
+					user_base + iop->iov_addr,
+					(phys_bytes) chunk);
+			count += chunk;
 		}
-		tp->iop->io_nbytes -= tp->count;
-		count -= tp->count;
-		tp++;
-	} while (count > 0);
-  } while (w_count > 0);
+	}
 
+	/* Book the bytes successfully transferred. */
+	position += nbytes;
+	for (;;) {
+		if (nbytes < iov->iov_size) {
+			/* Not done with this one yet. */
+			iov->iov_addr += nbytes;
+			iov->iov_size -= nbytes;
+			break;
+		}
+		nbytes -= iov->iov_size;
+		iov->iov_addr += iov->iov_size;
+		iov->iov_size = 0;
+		if (nbytes == 0) {
+			/* The rest is optional, so we return to give FS a
+			 * chance to think it over.
+			 */
+			return(OK);
+		}
+		iov++;
+		nr_req--;
+	}
+  }
   return(OK);
 }
 
 
 /*===========================================================================*
- *				w_transfer				     *
+ *				w_1rdwt					     *
  *===========================================================================*/
-PRIVATE int w_transfer(tp, count)
-struct trans *tp;		/* pointer to the transfer struct */
+PRIVATE int w_1rdwt(opcode, block, address, count)
+int opcode;			/* DEV_GATHER or DEV_SCATTER */
+unsigned long block;		/* block on disk */
+phys_bytes address;		/* address in memory */
 unsigned int count;		/* bytes to transfer */
 {
 /*     reads/writes a single block of data from/to the hard disk
@@ -557,10 +498,10 @@ unsigned int count;		/* bytes to transfer */
   int status;			/* basic status register value           */
 
   device = w_drive << 5;
-  command[0] = (w_opcode == DEV_WRITE ? 0x4602 : 0x4601) | device;
+  command[0] = (opcode == DEV_SCATTER ? 0x4602 : 0x4601) | device;
   command[1] = count >> SECTOR_SHIFT;
-  command[2] = (int) (tp->block & 0xFFFF);
-  command[3] = (int) (tp->block >> 16);
+  command[2] = (int) (block & 0xFFFF);
+  command[3] = (int) (block >> 16);
 
   w_att_write(device | ATT_CMD);
 
@@ -582,7 +523,7 @@ unsigned int count;		/* bytes to transfer */
 	w_interrupt(0);
 	return(ERR);
   }
-  w_dma_setup(tp, count);
+  w_dma_setup(opcode, address, count);
 
   w_interrupt(1);
 
@@ -670,8 +611,9 @@ int irq;
 /*==========================================================================*
  *			w_dma_setup					    *
  *==========================================================================*/
-PRIVATE void w_dma_setup(tp, count)
-struct trans *tp;
+PRIVATE void w_dma_setup(opcode, address, count)
+int opcode;
+phys_bytes address;
 unsigned int count;
 {
 /*     programs the dma controller to move data to and from the hard disk.
@@ -685,16 +627,16 @@ unsigned int count;
   /* Disable access to dma channel 5     */
   out_byte(DMA_EXTCMD, 0x20 + dma_channel);
   /* Clear the address byte pointer      */
-  out_byte(DMA_EXEC, (int)  tp->dma >>  0);	/* address bits 0..7   */
-  out_byte(DMA_EXEC, (int)  tp->dma >>  8);	/* address bits 8..15  */
-  out_byte(DMA_EXEC, (int) (tp->dma >> 16));	/* address bits 16..19 */
+  out_byte(DMA_EXEC, (int)  address >>  0);	/* address bits 0..7   */
+  out_byte(DMA_EXEC, (int)  address >>  8);	/* address bits 8..15  */
+  out_byte(DMA_EXEC, (int) (address >> 16));	/* address bits 16..19 */
   out_byte(DMA_EXTCMD, 0x40 + dma_channel);
   /* Clear the count byte pointer        */
   out_byte(DMA_EXEC, (count - 1) >> 0);		/* count bits 0..7     */
   out_byte(DMA_EXEC, (count - 1) >> 8);		/* count bits 8..15    */
   out_byte(DMA_EXTCMD, 0x70 + dma_channel);
   /* Set the transfer mode               */
-  out_byte(DMA_EXEC, w_opcode == DEV_WRITE ? 0x44 : 0x4C);
+  out_byte(DMA_EXEC, opcode == DEV_SCATTER ? 0x44 : 0x4C);
   out_byte(DMA_EXTCMD, 0xA0 + dma_channel);
   /* Enable access to dma channel 5      */
   unlock();
@@ -707,8 +649,12 @@ unsigned int count;
 PRIVATE void w_geometry(entry)
 struct partition *entry;
 {
-  entry->cylinders = (w_wn->part[0].dv_size >> SECTOR_SHIFT) / (64 * 32);
+  entry->cylinders = div64u(w_wn->part[0].dv_size, SECTOR_SIZE) / (64 * 32);
   entry->heads = 64;
   entry->sectors = 32;
 }
 #endif /* ENABLE_ESDI_WINI */
+
+/*
+ * $PchId: esdi_wini.c,v 1.9 1999/01/13 21:35:40 philip Exp $
+ */

@@ -18,7 +18,6 @@ extern ipaddr_t myipaddr, rmtipaddr, dataaddr;
 extern tcpport_t myport, rmtport, dataport;
 extern int ftpdata_fd;
 extern int loggedin, gotuser, anonymous;
-extern char newroot[128];
 extern char *days[], *months[];
 extern char username[80];
 extern char anonpass[128];
@@ -27,3 +26,4 @@ extern char line[512];
 
 _PROTOTYPE(void cvtline, (char **args));
 _PROTOTYPE(void logit, (char *type, char *parm));
+_PROTOTYPE(void loganon, (int anon));

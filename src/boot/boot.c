@@ -1,14 +1,8 @@
 /*	boot.c - Load and start Minix.			Author: Kees J. Bot
  *								27 Dec 1991
- *
- * Copyright 1998 Kees J. Bot, All rights reserved.
- * This package may be freely used and modified except that changes that
- * do not increase the functionality or that are incompatible with the
- * original may not be released to the public without permission from the
- * author.  Use of so called "C beautifiers" is explicitly prohibited.
  */
 
-char version[]=		"2.11";
+char version[]=		"2.16";
 
 #define BIOS	(!UNIX)		/* Either uses BIOS or UNIX syscalls. */
 
@@ -27,6 +21,7 @@ char version[]=		"2.11";
 #include <minix/type.h>
 #include <minix/const.h>
 #include <minix/minlib.h>
+#include <minix/syslib.h>
 #if BIOS
 #include <kernel/const.h>
 #include <kernel/type.h>
@@ -137,7 +132,6 @@ void readblock(off_t blk, char *buf)
 
 #define istty		(1)
 #define alarm(n)	(0)
-#define pause()		(0)
 
 #endif /* BIOS */
 
@@ -239,11 +233,19 @@ int escape(void)
 	return 0;
 }
 
+static unsigned char unchar;
+
 int getch(void)
 {
-	char c;
+	unsigned char c;
 
 	fflush(stdout);
+
+	if (unchar != 0) {
+		c= unchar;
+		unchar= 0;
+		return c;
+	}
 
 	switch (read(0, &c, 1)) {
 	case -1:
@@ -257,13 +259,15 @@ int getch(void)
 			putch('\n');
 			exit(0);
 		}
-		return c & 0xFF;
+		return c;
 	}
 }
 
+#define ungetch(c)	((void) (unchar = (c)))
+
 #define get_tick()		((u32_t) time(nil))
-#define clear_screen()		printf("[clear]");
-#define boot_device(device)	printf("[boot %s]\n", device);
+#define clear_screen()		printf("[clear]")
+#define boot_device(device)	printf("[boot %s]\n", device)
 #define bootminix()		(run_trailer() && printf("[boot]\n"))
 
 #endif /* UNIX */
@@ -401,6 +405,15 @@ void voidtoken(void)
 	free(poptoken());
 }
 
+void parse_code(char *code)
+/* Tokenize a string of monitor code, making sure there is a delimiter.  It is
+ * to be executed next.  (Prepended to the current input.)
+ */
+{
+	if (cmds != nil && cmds->token[0] != ';') (void) tokenize(&cmds, ";");
+	(void) tokenize(&cmds, code);
+}
+
 int interrupt(void)
 /* Clean up after an ESC has been typed. */
 {
@@ -417,7 +430,7 @@ int interrupt(void)
 int activate;
 
 struct biosdev {
-	char name[6];
+	char name[8];
 	int device, primary, secondary;
 } bootdev, tmpdev;
 
@@ -439,8 +452,7 @@ int get_master(char *master, struct part_entry **table, u32_t pos)
 	do {
 		for (pt= table; pt < table + NR_PARTITIONS-1; pt++) {
 			if (pt[0]->sysind == NO_PART
-				|| (pt[0]->lowsec > pt[1]->lowsec
-						&& pt[1]->sysind != NO_PART)) {
+					|| pt[0]->lowsec > pt[1]->lowsec) {
 				pe= pt[0]; pt[0]= pt[1]; pt[1]= pe;
 			}
 		}
@@ -454,7 +466,6 @@ void initialize(void)
 	struct part_entry *table[NR_PARTITIONS];
 	int r, p;
 	u32_t masterpos;
-	static char sub[]= "a";
 	char *argp;
 
 	/* Copy the boot program to the far end of low memory, this must be
@@ -499,15 +510,15 @@ void initialize(void)
 
 	if (device < 0x80) {
 		/* Floppy. */
-		strcpy(bootdev.name, "fd");
-		strcat(bootdev.name, ul2a10(bootdev.device));
+		strcpy(bootdev.name, "fd0");
+		bootdev.name[2] += bootdev.device;
 		return;
 	}
 
-	/* Get the partition table from the very first sector, and determine
-	 * the partition we booted from using the information from the booted
-	 * partition entry as passed on by the bootstrap (rem_part).  All we
-	 * need from it is the partition offset.
+	/* Disk: Get the partition table from the very first sector, and
+	 * determine the partition we booted from using the information from
+	 * the booted partition entry as passed on by the bootstrap (rem_part).
+	 * All we need from it is the partition offset.
 	 */
 	raw_copy(mon2abs(&lowsec),
 		vec2abs(&rem_part) + offsetof(struct part_entry, lowsec),
@@ -534,7 +545,8 @@ void initialize(void)
 			break;
 		}
 
-		if (p == NR_PARTITIONS || bootdev.primary >= 0) {
+		if (p == NR_PARTITIONS || bootdev.primary >= 0
+					|| table[p]->sysind != MINIX_PART) {
 			/* The boot partition cannot be named, this only means
 			 * that "bootdev" doesn't work.
 			 */
@@ -546,11 +558,13 @@ void initialize(void)
 		bootdev.primary= p;
 		masterpos= table[p]->lowsec;
 	}
-	strcpy(bootdev.name, "hd");
-	strcat(bootdev.name, ul2a10((device - 0x80) * (1 + NR_PARTITIONS)
-						+ 1 + bootdev.primary));
-	sub[0]= 'a' + bootdev.secondary;
-	if (bootdev.secondary >= 0) strcat(bootdev.name, sub);
+	strcpy(bootdev.name, "d0p0");
+	bootdev.name[1] += (device - 0x80);
+	bootdev.name[3] += bootdev.primary;
+	if (bootdev.secondary >= 0) {
+		strcat(bootdev.name, "s0");
+		bootdev.name[5] += bootdev.secondary;
+	}
 
 #else /* DOS */
 	/* Take the monitor out of the memory map if we have memory to spare,
@@ -582,12 +596,13 @@ void initialize(void)
 		readerr(0, r); exit(1);
 	}
 
-	strcpy(bootdev.name, "dosd0");
+	strcpy(bootdev.name, "d0");
 	bootdev.primary= -1;
 	for (p= 0; p < NR_PARTITIONS; p++) {
 		if (table[p]->bootind != 0 && table[p]->sysind == MINIX_PART) {
 			bootdev.primary= p;
-			bootdev.name[4]= '1' + p;
+			strcat(bootdev.name, "p0");
+			bootdev.name[3] += p;
 			lowsec= table[p]->lowsec;
 			break;
 		}
@@ -597,7 +612,30 @@ void initialize(void)
 
 #endif /* BIOS */
 
-char null[]= "";	/* This kludge saves lots of memory. */
+/* Reserved names: */
+enum resnames {
+	R_NULL, R_BOOT, R_DELAY, R_ECHO, R_EXIT, R_HELP,
+	R_LS, R_MENU, R_SAVE, R_SET, R_TRAP, R_UNSET
+};
+
+char resnames[][6] = {
+	"", "boot", "delay", "echo", "exit", "help",
+	"ls", "menu", "save", "set", "trap", "unset",
+};
+
+/* Using this for all null strings saves a lot of memory. */
+#define null (resnames[0])
+
+int reserved(char *s)
+/* Recognize reserved strings. */
+{
+	int r;
+
+	for (r= R_BOOT; r <= R_UNSET; r++) {
+		if (strcmp(s, resnames[r]) == 0) return r;
+	}
+	return R_NULL;
+}
 
 void sfree(char *s)
 /* Free a non-null string. */
@@ -659,6 +697,7 @@ int b_setenv(int flags, char *name, char *arg, char *value)
 	environment **aenv, *e;
 
 	if (*(aenv= searchenv(name)) == nil) {
+		if (reserved(name)) return E_RESERVED;
 		e= malloc(sizeof(*e));
 		e->name= copystr(name);
 		e->flags= flags;
@@ -668,12 +707,10 @@ int b_setenv(int flags, char *name, char *arg, char *value)
 	} else {
 		e= *aenv;
 
-		/* Don't touch reserved names and don't change special
-		 * variables to functions or vv.
-		 */
-		if (e->flags & E_RESERVED || (e->flags & E_SPECIAL
+		/* Don't change special variables to functions or vv. */
+		if (e->flags & E_SPECIAL
 			&& (e->flags & E_FUNCTION) != (flags & E_FUNCTION)
-		)) return e->flags;
+		) return e->flags;
 
 		e->flags= (e->flags & E_STICKY) | flags;
 		if (is_default(e)) {
@@ -775,7 +812,7 @@ void get_parameters(void)
 {
 	char params[SECTOR_SIZE + 1];
 	token **acmds;
-	int r;
+	int r, bus;
 	memory *mp;
 	static char bus_type[][4] = {
 		"xt", "at", "mca"
@@ -805,13 +842,10 @@ void get_parameters(void)
 		strcat(params, ul2a(mp->size, 0x10));
 	}
 	b_setvar(E_SPECIAL|E_VAR, "memory", params);
+	b_setvar(E_SPECIAL|E_VAR, "c0",
+			DOS ? "dosfile" : get_bus() == 1 ? "at" : "bios");
 #if DOS
-	b_setvar(E_SPECIAL|E_VAR, "dosd0", vdisk);
-#else /* !DOS */
-	/* Obsolete memory size variables. */
-	b_setvar(E_SPECIAL|E_VAR, "memsize",
-				ul2a10((mem[0].base + mem[0].size) / 1024));
-	b_setvar(E_SPECIAL|E_VAR, "emssize", ul2a10(mem[1].size / 1024));
+	b_setvar(E_SPECIAL|E_VAR, "dosfile-d0", vdisk);
 #endif
 
 #endif
@@ -821,6 +855,7 @@ void get_parameters(void)
 	b_setvar(E_SPECIAL|E_VAR, "video", "?");
 	b_setvar(E_SPECIAL|E_VAR, "chrome", "?");
 	b_setvar(E_SPECIAL|E_VAR, "memory", "?");
+	b_setvar(E_SPECIAL|E_VAR, "c0", "?");
 #endif
 
 	/* Variables boot needs: */
@@ -831,20 +866,8 @@ void get_parameters(void)
 	b_setvar(E_SPECIAL|E_FUNCTION, "main", "menu");
 	b_setvar(E_SPECIAL|E_FUNCTION, "trailer", "echo \\c");
 
-	/* Default menu function: */
-	b_setenv(E_RESERVED|E_FUNCTION, "\1", "=,Start Minix", "boot");
-
-	/* Reserved names: */
-	b_setvar(E_RESERVED, "boot", null);
-	b_setvar(E_RESERVED, "menu", null);
-	b_setvar(E_RESERVED, "set", null);
-	b_setvar(E_RESERVED, "unset", null);
-	b_setvar(E_RESERVED, "save", null);
-	b_setvar(E_RESERVED, "ls", null);
-	b_setvar(E_RESERVED, "echo", null);
-	b_setvar(E_RESERVED, "trap", null);
-	b_setvar(E_RESERVED, "help", null);
-	b_setvar(E_RESERVED, "exit", null);
+	/* Default hidden menu function: */
+	b_setenv(E_RESERVED|E_FUNCTION, null, "=,Start Minix", "boot");
 
 	/* Tokenize bootparams sector. */
 	if ((r= readsectors(mon2abs(params), lowsec+PARAMSEC, 1)) != 0) {
@@ -858,25 +881,9 @@ void get_parameters(void)
 #if UNIX
 	(void) tokenize(acmds, ":;");
 #elif DOS
-	tokenize(tokenize(acmds, ":;leader;"), drun);
+	(void) tokenize(tokenize(acmds, ":;leader;"), drun);
 #else /* BIOS */
 	(void) tokenize(acmds, ":;leader;main");
-#endif
-}
-
-void remote_code(void)
-/* A rebooting Minix returns a bit of code for the monitor. */
-{
-#if BIOS
-	if (reboot_code != 0) {
-		char code[SECTOR_SIZE + 2];
-
-		raw_copy(mon2abs(code), reboot_code, SECTOR_SIZE);
-		code[SECTOR_SIZE]= 0;
-		strcat(code, ";");
-		(void) tokenize(&cmds, code);
-		reboot_code= 0;
-	}
 #endif
 }
 
@@ -932,6 +939,8 @@ void show_env(void)
 /* Show the environment settings. */
 {
 	environment *e;
+	unsigned more= 0;
+	int c;
 
 	for (e= env; e != nil; e= e->next) {
 		if (e->flags & E_RESERVED) continue;
@@ -942,6 +951,17 @@ void show_env(void)
 		} else {
 			printf(is_default(e) ? "%s = (%s)\n" : "%s = %s\n",
 				e->name, e->value);
+		}
+
+		if (e->next != nil && istty && ++more % 20 == 0) {
+			printf("More? ");
+			c= getch();
+			if (c == ESC || c > ' ') {
+				putch('\n');
+				if (c > ' ') ungetch(c);
+				break;
+			}
+			printf("\b\b\b\b\b\b");
 		}
 	}
 }
@@ -973,14 +993,13 @@ int numeric(char *s)
 /* Device numbers of standard Minix devices. */
 #define DEV_RAM		0x0100
 #define DEV_FD0		0x0200
-#define DEV_HD0		0x0300
-#define DEV_SD0  	0x0A00
-#define minor_1a	   128
+static dev_t dev_cNd0[] = { 0x0300, 0x0800, 0x0A00, 0x0C00, 0x1000 };
+#define minor_p0s0	   128
 
 dev_t name2dev(char *name)
-/* Translate, say, /dev/hd3 to a device number.  If the name can't be
+/* Translate, say, /dev/c0d0p2 to a device number.  If the name can't be
  * found on the boot device, then do some guesswork.  The global structure
- * "tmpdev" will be filled in based on the name, so that "boot hd6" knows
+ * "tmpdev" will be filled in based on the name, so that "boot d1p0" knows
  * what device to boot without interpreting device numbers.
  */
 {
@@ -990,7 +1009,7 @@ dev_t name2dev(char *name)
 	struct stat st;
 	char *n, *s;
 
-	/* "boot *hd3" means: make partition 3 active before you boot it. */
+	/* "boot *d0p2" means: make partition 2 active before you boot it. */
 	if ((activate= (name[0] == '*'))) name++;
 
 	/* The special name "bootdev" must be translated to the boot device. */
@@ -1005,7 +1024,7 @@ dev_t name2dev(char *name)
 
 	/* If our boot device doesn't have a file system, or we want to know
 	 * what a name means for the BIOS, then we need to interpret the
-	 * device name ourselves: "fd" = floppy, "hd" = hard disk, etc.
+	 * device name ourselves: "fd" = floppy, "c0d0" = hard disk, etc.
 	 */
 	tmpdev.device= tmpdev.primary= tmpdev.secondary= -1;
 	dev= -1;
@@ -1023,20 +1042,54 @@ dev_t name2dev(char *name)
 	if ((n[0] == 'h' || n[0] == 's') && n[1] == 'd' && numprefix(n+2, &s)
 		&& (*s == 0 || (between('a', *s, 'd') && s[1] == 0))
 	) {
-		/* Hard disk. */
+		/* Old style hard disk (backwards compatibility.) */
 		dev= a2l(n+2);
 		tmpdev.device= dev / (1 + NR_PARTITIONS);
 		tmpdev.primary= (dev % (1 + NR_PARTITIONS)) - 1;
 		if (*s != 0) {
 			/* Subpartition. */
 			tmpdev.secondary= *s - 'a';
-			dev= minor_1a
+			dev= minor_p0s0
 				+ (tmpdev.device * NR_PARTITIONS
 					+ tmpdev.primary) * NR_PARTITIONS
 				+ tmpdev.secondary;
 		}
 		tmpdev.device+= 0x80;
-		dev+= n[0] == 'h' ? DEV_HD0 : DEV_SD0;
+		dev+= n[0] == 'h' ? dev_cNd0[0] : dev_cNd0[2];
+	} else {
+		/* Hard disk. */
+		int ctrlr= 0;
+
+		if (n[0] == 'c' && between('0', n[1], '4')) {
+			ctrlr= (n[1] - '0');
+			tmpdev.device= 0;
+			n+= 2;
+		}
+		if (n[0] == 'd' && between('0', n[1], '7')) {
+			tmpdev.device= (n[1] - '0');
+			n+= 2;
+			if (n[0] == 'p' && between('0', n[1], '3')) {
+				tmpdev.primary= (n[1] - '0');
+				n+= 2;
+				if (n[0] == 's' && between('0', n[1], '3')) {
+					tmpdev.secondary= (n[1] - '0');
+					n+= 2;
+				}
+			}
+		}
+		if (*n == 0) {
+			dev= dev_cNd0[ctrlr];
+			if (tmpdev.secondary < 0) {
+				dev += tmpdev.device * (NR_PARTITIONS+1)
+					+ (tmpdev.primary + 1);
+			} else {
+				dev += minor_p0s0
+					+ (tmpdev.device * NR_PARTITIONS
+					    + tmpdev.primary) * NR_PARTITIONS
+					+ tmpdev.secondary;
+			}
+			tmpdev.device+= 0x80;
+		}
 	}
 
 	/* Look the name up on the boot device for the UNIX device number. */
@@ -1299,9 +1352,9 @@ void help(void)
 		{ nil,	"Names:" },
 		{ "rootdev",		"Root device" },
 		{ "ramimagedev",	"RAM disk image if root is RAM" },
-		{ "ramsize",		"RAM disk size if root is not RAM" },
+		{ "ramsize",		"RAM disk size" },
 		{ "bootdev",		"Special name for the boot device" },
-		{ "fd0, hd3, hd2a",	"Devices (as in /dev)" },
+		{ "fd0, d0p2, c0d0p1s0",	"Devices (as in /dev)" },
 		{ "image",		"Name of the kernel image" },
 		{ "main",		"Startup function" },
 		{ nil,	"Commands:" },
@@ -1332,7 +1385,8 @@ void execute(void)
 /* Get one command from the command chain and execute it. */
 {
 	token *second, *third, *fourth, *sep;
-	char *name= cmds->token;
+	char *name;
+	int res;
 	size_t n= 0;
 
 	if (err) {
@@ -1342,13 +1396,15 @@ void execute(void)
 	}
 
 	if (expired()) {	/* Timer expired? */
-		(void) tokenize(tokenize(&cmds, Thandler), ";");
+		parse_code(Thandler);
 		unschedule();
 	}
 
 	/* There must be a separator lurking somewhere. */
 	for (sep= cmds; sep != nil && sep->token[0] != ';'; sep= sep->next) n++;
 
+	name= cmds->token;
+	res= reserved(name);
 	if ((second= cmds->next) != nil
 		&& (third= second->next) != nil)
 			fourth= third->next;
@@ -1450,18 +1506,14 @@ void execute(void)
 		return;
 	} else
 		/* unset name ..., echo word ...? */
-	if (n >= 1 && (
-		strcmp(name, "unset") == 0
-		|| strcmp(name, "echo") == 0
-	)) {
-		int cmd= name[0];
+	if (n >= 1 && (res == R_UNSET || res == R_ECHO)) {
 		char *arg= poptoken(), *p;
 
 		for (;;) {
 			free(arg);
 			if (cmds == sep) break;
 			arg= poptoken();
-			if (cmd == 'u') {	/* unset arg */
+			if (res == R_UNSET) {	/* unset arg */
 				b_unset(arg);
 			} else {		/* echo arg */
 				p= arg;
@@ -1501,30 +1553,26 @@ void execute(void)
 		return;
 	} else
 		/* boot -opts? */
-	if (n == 2 && strcmp(name, "boot") == 0 && second->token[0] == '-') {
+	if (n == 2 && res == R_BOOT && second->token[0] == '-') {
 		static char optsvar[]= "bootopts";
 		(void) b_setvar(E_VAR, optsvar, second->token);
+		voidtoken();
+		voidtoken();
 		bootminix();
 		b_unset(optsvar);
-		voidtoken();
-		voidtoken();
 		return;
 	} else
 		/* boot device, ls dir, delay msec? */
-	if (n == 2 && (
-		strcmp(name, "boot") == 0
-		|| strcmp(name, "delay") == 0
-		|| strcmp(name, "ls") == 0
-	)) {
-		if (name[0] == 'b') boot_device(second->token);
-		if (name[0] == 'd') delay(second->token);
-		if (name[0] == 'l') ls(second->token);
+	if (n == 2 && (res == R_BOOT || res == R_DELAY || res == R_LS)) {
+		if (res == R_BOOT) boot_device(second->token);
+		if (res == R_DELAY) delay(second->token);
+		if (res == R_LS) ls(second->token);
 		voidtoken();
 		voidtoken();
 		return;
 	} else
 		/* trap msec command? */
-	if (n == 3 && strcmp(name, "trap") == 0 && numeric(second->token)) {
+	if (n == 3 && res == R_TRAP && numeric(second->token)) {
 		long msec= a2l(second->token);
 
 		voidtoken();
@@ -1534,29 +1582,32 @@ void execute(void)
 	} else
 		/* Simple command. */
 	if (n == 1) {
-		char *cmd= poptoken();
 		char *body;
 		int ok= 0;
 
-		if (strcmp(cmd, "boot") == 0) { bootminix(); ok= 1; }
-		if (strcmp(cmd, "delay") == 0) { delay("500"); ok= 1; }
-		if (strcmp(cmd, "ls") == 0) { ls(null); ok= 1; }
-		if (strcmp(cmd, "menu") == 0) { menu(); ok= 1; }
-		if (strcmp(cmd, "save") == 0) { save_parameters(); ok= 1; }
-		if (strcmp(cmd, "set") == 0) { show_env(); ok= 1; }
-		if (strcmp(cmd, "help") == 0) { help(); ok= 1; }
-		if (strcmp(cmd, "exit") == 0) { exit(0); }
+		name= poptoken();
+
+		switch (res) {
+		case R_BOOT:	bootminix();	ok= 1;	break;
+		case R_DELAY:	delay("500");	ok= 1;	break;
+		case R_LS:	ls(null);	ok= 1;	break;
+		case R_MENU:	menu();		ok= 1;	break;
+		case R_SAVE:	save_parameters(); ok= 1;break;
+		case R_SET:	show_env();	ok= 1;	break;
+		case R_HELP:	help();		ok= 1;	break;
+		case R_EXIT:	exit(0);
+		}
 
 		/* Command to check bootparams: */
-		if (strcmp(cmd, ":") == 0) ok= 1;
+		if (strcmp(name, ":") == 0) ok= 1;
 
 		/* User defined function. */
-		if (!ok && (body= b_body(cmd)) != nil) {
+		if (!ok && (body= b_body(name)) != nil) {
 			(void) tokenize(&cmds, body);
 			ok= 1;
 		}
-		if (!ok) printf("%s: unknown function", cmd);
-		free(cmd);
+		if (!ok) printf("%s: unknown function", name);
+		free(name);
 		if (ok) return;
 	} else {
 		/* Syntax error. */
@@ -1589,14 +1640,13 @@ void monitor(void)
 /* Read a line and tokenize it. */
 {
 	char *line;
-	token **acmds= &cmds;
 
 	unschedule();		/* Kill a trap. */
 	err= 0;			/* Clear error state. */
 
 	if (istty) printf("%s>", bootdev.name);
 	line= readline();
-	acmds= tokenize(acmds, line);
+	(void) tokenize(&cmds, line);
 	free(line);
 	(void) escape();	/* Forget if ESC typed. */
 }
@@ -1617,10 +1667,8 @@ void boot(void)
 
 	while (1) {
 		/* While there are commands, execute them! */
-		while (cmds != nil) {
-			execute();
-			remote_code();
-		}
+		while (cmds != nil) execute();
+
 		/* The "monitor" is just a "read one command" thing. */
 		monitor();
 	}
@@ -1654,7 +1702,7 @@ void main(int argc, char **argv)
 
 	bootdev.name= argv[1];
 	if (strncmp(bootdev.name, "/dev/", 5) == 0) bootdev.name+= 5;
-	if ((bootdev.device= open(argv[1], O_RDWR | O_CREAT, 0666)) < 0)
+	if ((bootdev.device= open(argv[1], O_RDWR, 0666)) < 0)
 		fatal(bootdev.name);
 
 	/* Check if it is a bootable Minix device. */
@@ -1690,9 +1738,7 @@ void main(int argc, char **argv)
 		while (cmds != nil || i < argc) {
 			if (cmds == nil) {
 				/* A command line command. */
-				token **acmds;
-				acmds= tokenize(&cmds, argv[i++]);
-				(void) tokenize(acmds, ";");
+				parse_code(argv[i++]);
 			}
 			execute();
 

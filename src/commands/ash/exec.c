@@ -154,7 +154,7 @@ tryexec(cmd, argv, envp)
 #else
 	execve(cmd, argv, envp);
 #endif
-#if !__minix_vmd
+#if HASHBANG
 	e = errno;
 	if (e == ENOEXEC) {
 		initshellproc();
@@ -177,7 +177,7 @@ tryexec(cmd, argv, envp)
 }
 
 
-#if !defined(BSD) && !__minix_vmd
+#if !defined(BSD) && HASHBANG
 /*
  * Execute an interpreter introduced by "#!", for systems where this
  * feature has not been built into the kernel.  If the interpreter is

@@ -1,9 +1,9 @@
-/*	cp 1.9 - copy files				Author: Kees J. Bot
- *	mv     - move files					20 Jul 1993
- *	rm     - remove files
- *	ln     - make a link
- *	cpdir  - copy a directory tree (cp -psmr)
- *	clone  - make a link farm (ln -fmr)
+/*	cp 1.11 - copy files				Author: Kees J. Bot
+ *	mv      - move files					20 Jul 1993
+ *	rm      - remove files
+ *	ln      - make a link
+ *	cpdir   - copy a directory tree (cp -psmr)
+ *	clone   - make a link farm (ln -fmr)
  */
 #define nil 0
 #include <stdio.h>
@@ -234,74 +234,138 @@ int writable(const struct stat *stp)
 	return stp->st_mode & S_IWOTH;
 }
 
+#ifndef PATH_MAX
+#define PATH_MAX	1024
+#endif
+
+static char *link_islink(struct stat *stp, const char *file)
+{
+    /* Tell if a file, which stat(2) information in '*stp', has been seen
+     * earlier by this function under a different name.  If not return a
+     * null pointer with errno set to ENOENT, otherwise return the name of
+     * the link.  Return a null pointer with an error code in errno for any
+     * error, using E2BIG for a too long file name.
+     *
+     * Use link_islink(nil, nil) to reset all bookkeeping.
+     *
+     * Call for a file twice to delete it from the store.
+     */
+
+    typedef struct link {	/* In-memory link store. */
+	struct link	*next;		/* Hash chain on inode number. */
+	ino_t		ino;		/* File's inode number. */
+	off_t		off;		/* Offset to more info in temp file. */
+    } link_t;
+    typedef struct dlink {	/* On-disk link store. */
+	dev_t		dev;		/* Device number. */
+	char		file[PATH_MAX];	/* Name of earlier seen link. */
+    } dlink_t;
+    static link_t *links[256];		/* Hash list of known links. */
+    static int tfd= -1;			/* Temp file for file name storage. */
+    static dlink_t dlink;
+    link_t *lp, **plp;
+    size_t len;
+    off_t off;
+
+    if (file == nil) {
+	/* Reset everything. */
+	for (plp= links; plp < arraylimit(links); plp++) {
+	    while ((lp= *plp) != nil) {
+		*plp= lp->next;
+		free(lp);
+	    }
+	}
+	if (tfd != -1) close(tfd);
+	tfd= -1;
+	return nil;
+    }
+
+    /* The file must be a non-directory with more than one link. */
+    if (S_ISDIR(stp->st_mode) || stp->st_nlink <= 1) {
+	errno= ENOENT;
+	return nil;
+    }
+
+    plp= &links[stp->st_ino % arraysize(links)];
+
+    while ((lp= *plp) != nil) {
+	if (lp->ino == stp->st_ino) {
+	    /* May have seen this link before.  Get it and check. */
+	    if (lseek(tfd, lp->off, SEEK_SET) == -1) return nil;
+	    if (read(tfd, &dlink, sizeof(dlink)) < 0) return nil;
+
+	    /* Only need to check the device number. */
+	    if (dlink.dev == stp->st_dev) {
+		if (strcmp(file, dlink.file) == 0) {
+		    /* Called twice.  Forget about this link. */
+		    *plp= lp->next;
+		    free(lp);
+		    errno= ENOENT;
+		    return nil;
+		}
+
+		/* Return the name of the earlier link. */
+		return dlink.file;
+	    }
+	}
+	plp= &lp->next;
+    }
+
+    /* First time I see this link.  Add it to the store. */
+    if (tfd == -1) {
+	for (;;) {
+	    char *tmp;
+
+	    tmp= tmpnam(nil);
+	    tfd= open(tmp, O_RDWR|O_CREAT|O_EXCL, 0600);
+	    if (tfd < 0) {
+		if (errno != EEXIST) return nil;
+	    } else {
+		(void) unlink(tmp);
+		break;
+	    }
+	}
+    }
+    if ((len= strlen(file)) >= PATH_MAX) {
+	errno= E2BIG;
+	return nil;
+    }
+
+    dlink.dev= stp->st_dev;
+    strcpy(dlink.file, file);
+    len += offsetof(dlink_t, file) + 1;
+    if ((off= lseek(tfd, 0, SEEK_END)) == -1) return nil;
+    if (write(tfd, &dlink, len) != len) return nil;
+
+    if ((lp= malloc(sizeof(*lp))) == nil) return nil;
+    lp->next= nil;
+    lp->ino= stp->st_ino;
+    lp->off= off;
+    *plp= lp;
+    errno= ENOENT;
+    return nil;
+}
+
 int trylink(const char *src, const char *dst, struct stat *srcst,
 						struct stat *dstst)
 /* Keep the link structure intact if src has been seen before. */
 {
-	typedef struct oldlink {
-		struct oldlink	*next;
-		char		*olddst;
-		dev_t		dev;
-		ino_t		ino;
-		ino_t		count;
-	} oldlink_t;
-	static oldlink_t *oldies[0x100];
-	oldlink_t *op, **pop;
-	int found, linked;
+	char *olddst;
+	int linked;
 
-#if DEBUG
-	if (src == nil) {
-		/* Time to clean house (consistency freak on the loose). */
-		for (pop= oldies; pop < arraylimit(oldies); pop++) {
-			while ((op= *pop) != nil) {
-				*pop= op->next;
-				deallocate(op->olddst);
-				deallocate(op);
-			}
-		}
-		return 0;
-	}
-#endif
 	if (action == COPY && expand) return 0;
 
-	pop= &oldies[(unsigned) srcst->st_ino % arraysize(oldies)];
-	found= 0;
-
-	while ((op= *pop) != nil && srcst->st_ino <= op->ino) {
-		if (srcst->st_ino == op->ino && srcst->st_dev == op->dev) {
-			found= 1;
-			break;
-		}
-		pop= &op->next;
-	}
-
-	if (!found) {
-		if (srcst->st_nlink > 1) {
-			/* Remember this one for later. */
-			op= allocate(nil, sizeof(*op));
-			op->olddst= allocate(nil,
-				(strlen(dst) + 1) * sizeof(*op->olddst));
-			strcpy(op->olddst, dst);
-			op->ino= srcst->st_ino;
-			op->dev= srcst->st_dev;
-			op->count= srcst->st_nlink;
-			op->next= *pop;
-			*pop= op;
-		}
+	if ((olddst= link_islink(srcst, dst)) == nil) {
+		/* if (errno != ENOENT) ... */
 		return 0;
 	}
+
 	/* Try to link the file copied earlier to the new file. */
 	if (dstst->st_ino != 0) (void) unlink(dst);
 
-	if ((linked= (link(op->olddst, dst) == 0)) && vflag)
-		printf("ln %s %s\n", op->olddst, dst);
+	if ((linked= (link(olddst, dst) == 0)) && vflag)
+		printf("ln %s %s\n", olddst, dst);
 
-	if (--op->count == 1) {
-		/* All the links to the file have been seen. */
-		*pop= op->next;
-		deallocate(op->olddst);
-		deallocate(op);
-	}
 	return linked;
 }
 
@@ -882,7 +946,7 @@ void do1(pathname_t *src, pathname_t *dst, int depth)
 		}
 	}
 
-	if (!S_ISDIR(srcst.st_mode)) {
+	if (srcst.st_ino == 0 || !S_ISDIR(srcst.st_mode)) {
 		/* Copy/move/remove/link a single file. */
 		switch (action) {
 		case COPY:
@@ -1283,7 +1347,6 @@ void main(int argc, char **argv)
 	path_drop(&dst);
 
 #if DEBUG
-	(void) trylink(nil, nil, nil, nil);
 	if (nchunks != 0) {
 		fprintf(stderr, "(%ld chunks of memory not freed)\n",
 			(long) nchunks);

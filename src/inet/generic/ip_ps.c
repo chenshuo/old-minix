@@ -27,12 +27,9 @@ FORWARD int ipps_send ARGS(( struct ip_port *ip_port, ipaddr_t dest,
 PUBLIC int ipps_init(ip_port)
 ip_port_t *ip_port;
 {
-	int ip_port_nr;
 	int result;
 
-	ip_port_nr= ip_port-ip_port_table;
-
-	result= psip_enable(ip_port->ip_dl.dl_ps.ps_port, ip_port_nr);
+	result= psip_enable(ip_port->ip_dl.dl_ps.ps_port, ip_port->ip_port);
 	if (result == -1)
 		return -1;
 #if ZERO
@@ -52,7 +49,7 @@ int ip_port_nr;
 	acc_t *pack;
 	ip_port_t *ip_port;
 
-	assert(ip_port_nr >= 0 && ip_port_nr < IP_PORT_NR);
+	assert(ip_port_nr >= 0 && ip_port_nr < ip_conf_nr);
 	ip_port= &ip_port_table[ip_port_nr];
 	assert(ip_port->ip_dl_type == IPDL_PSIP);
 
@@ -80,7 +77,7 @@ acc_t *pack;
 {
 	ip_port_t *ip_port;
 
-	assert(ip_port_nr >= 0 && ip_port_nr < IP_PORT_NR);
+	assert(ip_port_nr >= 0 && ip_port_nr < ip_conf_nr);
 	ip_port= &ip_port_table[ip_port_nr];
 	assert(ip_port->ip_dl_type == IPDL_PSIP);
 	ip_arrived(ip_port, pack);

@@ -10,9 +10,6 @@ Copyright 1995 Philip Homburg
 #define NWEO_DEFAULT    (NWEO_EN_LOC | NWEO_DI_BROAD | NWEO_DI_MULTI | \
 	NWEO_DI_PROMISC | NWEO_REMANY | NWEO_RWDATALL)
 
-#define ETH0	0	/* port number of ethernet port 0 */
-#define ETH1	1	/* port number of ethernet port 1 */
-
 #define eth_addrcmp(a,b) (memcmp((_VOIDSTAR)&a, (_VOIDSTAR)&b, \
 	sizeof(a)))
 
@@ -22,6 +19,7 @@ struct acc;
 
 /* prototypes */
 
+void eth_prep ARGS(( void ));
 void eth_init ARGS(( void ));
 int eth_open ARGS(( int port, int srfd,
 	get_userdata_t get_userdata, put_userdata_t put_userdata,

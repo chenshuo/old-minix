@@ -269,7 +269,7 @@ ioreq_t req;
 
 		data= bf_packIffLess (data, sizeof(nwio_route_t) );
 		route_ent= (nwio_route_t *)ptr2acc_data(data);
-		result= ipr_add_iroute(ip_fd->if_port-ip_port_table, 
+		result= ipr_add_iroute(ip_fd->if_port->ip_port, 
 			route_ent->nwr_dest, route_ent->nwr_netmask, 
 			route_ent->nwr_gateway,
 			(route_ent->nwr_flags & NWRF_UNREACHABLE) ? 
@@ -319,7 +319,7 @@ ioreq_t req;
 
 		data= bf_packIffLess (data, sizeof(nwio_route_t) );
 		route_ent= (nwio_route_t *)ptr2acc_data(data);
-		result= ipr_del_iroute(ip_fd->if_port-ip_port_table, 
+		result= ipr_del_iroute(ip_fd->if_port->ip_port, 
 			route_ent->nwr_dest, route_ent->nwr_netmask, 
 			route_ent->nwr_gateway,
 			(route_ent->nwr_flags & NWRF_UNREACHABLE) ? 
@@ -341,7 +341,7 @@ ioreq_t req;
 
 		data= bf_packIffLess (data, sizeof(nwio_route_t) );
 		route_ent= (nwio_route_t *)ptr2acc_data(data);
-		result= ipr_add_oroute(ip_fd->if_port-ip_port_table, 
+		result= ipr_add_oroute(ip_fd->if_port->ip_port, 
 			route_ent->nwr_dest, route_ent->nwr_netmask, 
 			route_ent->nwr_gateway, (time_t)0, 
 			route_ent->nwr_dist,

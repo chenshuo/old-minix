@@ -29,16 +29,23 @@ FORWARD _PROTOTYPE( eth_port_t *find_port, (message *m) );
 
 PUBLIC void osdep_eth_init()
 {
-	int i, r;
+	int i, r, tasknr;
+	struct eth_conf *ecp;
 	eth_port_t *eth_port;
 	message mess, repl_mess;
 
-	for (i= 0; i<ETH_PORT_NR; i++)
+	for (i= 0, eth_port= eth_port_table, ecp= eth_conf;
+		i<eth_conf_nr; i++, eth_port++, ecp++)
 	{
-		eth_port= &eth_port_table[i];
+		r= sys_findproc(ecp->ec_task, &tasknr, 0);
+		if (r != OK)
+		{
+			ip_panic(( "unable to find task %s: %d\n",
+				ecp->ec_task, r ));
+		}
 
-		eth_port->etp_osdep.etp_port= eth_conf[i].ec_port;
-		eth_port->etp_osdep.etp_minor= eth_conf[i].ec_minor;
+		eth_port->etp_osdep.etp_port= ecp->ec_port;
+		eth_port->etp_osdep.etp_task= tasknr;
 		ev_init(&eth_port->etp_osdep.etp_recvev);
 
 		mess.m_type= DL_INIT;
@@ -46,7 +53,7 @@ PUBLIC void osdep_eth_init()
 		mess.DL_PROC= this_proc;
 		mess.DL_MODE= DL_NOMODE;
 
-		r= send(DL_ETH, &mess);
+		r= send(eth_port->etp_osdep.etp_task, &mess);
 		if (r<0)
 		{
 #if !CRAMPED
@@ -57,7 +64,7 @@ PUBLIC void osdep_eth_init()
 			continue;
 		}
 
-		if (receive(DL_ETH, &mess)<0)
+		if (receive(eth_port->etp_osdep.etp_task, &mess)<0)
 			ip_panic(("unable to receive"));
 
 		if (mess.m3_i1 == ENXIO)
@@ -65,30 +72,26 @@ PUBLIC void osdep_eth_init()
 #if !CRAMPED
 			printf(
 		"osdep_eth_init: no ethernet device at task=%d,port=%d\n",
-				DL_ETH, eth_port->etp_osdep.etp_port);
+				eth_port->etp_osdep.etp_task,
+				eth_port->etp_osdep.etp_port);
 #endif
 			continue;
 		}
-		if (mess.m3_i1 < 0)
-			ip_panic(("osdep_eth_init: DL_INIT returned error %d\n",
-				mess.m3_i1));
-			
 		if (mess.m3_i1 != eth_port->etp_osdep.etp_port)
-			ip_panic((
-	"osdep_eth_init: got reply for wrong port (got %d, expected %d)\n",
-				mess.m3_i1, eth_port->etp_osdep.etp_port));
+			ip_panic(("osdep_eth_init: DL_INIT error or wrong port: %d\n",
+				mess.m3_i1));
 
 		eth_port->etp_ethaddr= *(ether_addr_t *)mess.m3_ca1;
 
-		if (sr_add_minor (eth_port->etp_osdep.etp_minor, 
-			eth_port- eth_port_table, eth_open, eth_close, eth_read, 
-			eth_write, eth_ioctl, eth_cancel)<0)
-			ip_panic(("can't sr_init"));
+		sr_add_minor(if2minor(ecp->ec_ifno, ETH_DEV_OFF),
+			i, eth_open, eth_close, eth_read, 
+			eth_write, eth_ioctl, eth_cancel);
 
 		eth_port->etp_flags |= EPF_ENABLED;
 		eth_port->etp_wr_pack= 0;
 		eth_port->etp_rd_pack= 0;
 		setup_read (eth_port);
+		eth_port++;
 	}
 }
 
@@ -152,12 +155,12 @@ acc_t *pack;
 
 	for (;;)
 	{
-		r= send (DL_ETH, &mess1);
+		r= send (eth_port->etp_osdep.etp_task, &mess1);
 		if (r != ELOCKED)
 			break;
 
 		/* ethernet task is sending to this task, I hope */
-		r= receive(DL_ETH, &block_msg);
+		r= receive(eth_port->etp_osdep.etp_task, &block_msg);
 		if (r < 0)
 			ip_panic(("unable to receive"));
 
@@ -186,7 +189,7 @@ acc_t *pack;
 	if (r < 0)
 		ip_panic(("unable to send"));
 
-	r= receive(DL_ETH, &mess1);
+	r= receive(eth_port->etp_osdep.etp_task, &mess1);
 	if (r < 0)
 		ip_panic(("unable to receive"));
 
@@ -236,16 +239,20 @@ message *m;
 	int stat;
 
 	assert(m->m_type == DL_TASK_REPLY);
-	assert(m->m_source == DL_ETH);
 
 	set_time (m->DL_CLCK);
 
-	for (i=0, loc_port= eth_port_table; i<ETH_PORT_NR; i++, loc_port++)
+	for (i=0, loc_port= eth_port_table; i<eth_conf_nr; i++, loc_port++)
 	{
-		if (loc_port->etp_osdep.etp_port == m->DL_PORT)
+		if (loc_port->etp_osdep.etp_port == m->DL_PORT &&
+			loc_port->etp_osdep.etp_task == m->m_source)
 			break;
 	}
-	assert (i<ETH_PORT_NR);
+	if (i == eth_conf_nr)
+	{
+		ip_panic(("message from unknown source: %d:%d",
+			m->m_source, m->DL_PORT));
+	}
 
 	stat= m->DL_STAT & 0xffff;
 
@@ -272,10 +279,10 @@ eth_stat_t *eth_stat;
 
 	for (;;)
 	{
-		result= send(DL_ETH, &mess);
+		result= send(eth_port->etp_osdep.etp_task, &mess);
 		if (result != ELOCKED)
 			break;
-		result= receive(DL_ETH, &mlocked);
+		result= receive(eth_port->etp_osdep.etp_task, &mlocked);
 		assert(result == OK);
 
 		compare(mlocked.m_type, ==, DL_TASK_REPLY);
@@ -283,7 +290,7 @@ eth_stat_t *eth_stat;
 	}
 	assert(result == OK);
 
-	result= receive(DL_ETH, &mess);
+	result= receive(eth_port->etp_osdep.etp_task, &mess);
 	assert(result == OK);
 	assert(mess.m_type == DL_TASK_REPLY);
 
@@ -325,11 +332,12 @@ u32_t flags;
 
 	do
 	{
-		result= send (DL_ETH, &mess);
-		if (result == ELOCKED)	/* DL_ETH is sending to this task,
-					   I hope */
+		result= send (eth_port->etp_osdep.etp_task, &mess);
+		if (result == ELOCKED)
+		/* Ethernet task is sending to this task, I hope */
 		{
-			if (receive (DL_ETH, &repl_mess)< 0)
+			if (receive (eth_port->etp_osdep.etp_task,
+				&repl_mess)< 0)
 			{
 				ip_panic(("unable to receive"));
 			}
@@ -342,7 +350,7 @@ u32_t flags;
 	if (result < 0)
 		ip_panic(("unable to send(%d)", result));
 
-	if (receive (DL_ETH, &repl_mess) < 0)
+	if (receive (eth_port->etp_osdep.etp_task, &repl_mess) < 0)
 		ip_panic(("unable to receive"));
 
 	assert (repl_mess.m_type == DL_INIT_REPLY);
@@ -427,12 +435,12 @@ eth_port_t *eth_port;
 
 		for (;;)
 		{
-			r= send (DL_ETH, &mess1);
+			r= send (eth_port->etp_osdep.etp_task, &mess1);
 			if (r != ELOCKED)
 				break;
 
 			/* ethernet task is sending to this task, I hope */
-			r= receive(DL_ETH, &block_msg);
+			r= receive(eth_port->etp_osdep.etp_task, &block_msg);
 			if (r < 0)
 				ip_panic(("unable to receive"));
 
@@ -463,7 +471,7 @@ eth_port_t *eth_port;
 		if (r < 0)
 			ip_panic(("unable to send"));
 
-		r= receive (DL_ETH, &mess1);
+		r= receive (eth_port->etp_osdep.etp_task, &mess1);
 		if (r < 0)
 			ip_panic(("unable to receive"));
 
@@ -544,12 +552,12 @@ message *m;
 	eth_port_t *loc_port;
 	int i;
 
-	for (i=0, loc_port= eth_port_table; i<ETH_PORT_NR; i++, loc_port++)
+	for (i=0, loc_port= eth_port_table; i<eth_conf_nr; i++, loc_port++)
 	{
 		if (loc_port->etp_osdep.etp_port == m->DL_PORT)
 			break;
 	}
-	assert (i<ETH_PORT_NR);
+	assert (i<eth_conf_nr);
 	return loc_port;
 }
 

@@ -31,7 +31,7 @@
  * The info is obtained from the following fields of proc, mproc and fproc:
  * F	- kernel status field, p_flags
  * S	- kernel status field, p_flags; mm status field, mp_flags (R if p_flags
- *	  is 0; Z if mp_flags == HANGING; T if mp_flags == STOPPED; else W).
+ *	  is 0; Z if mp_flags == ZOMBIE; T if mp_flags == STOPPED; else W).
  * UID	- mm eff uid field, mp_effuid
  * PID	- mm pid field, mp_pid
  * PPID	- mm parent process index field, mp_parent (used as index in proc).
@@ -127,9 +127,9 @@ int kmemfd, memfd;		/* file descriptors of [k]mem */
  * fff s uuu ppppp ppppp ppppp ssss rrrrrrrrrr tttmmm:ss cccccccc...
  */
 #define S_HEADER "  PID TTY  TIME CMD\n"
-#define S_FORMAT "%5d %3s%3ld:%02ld %s\n"
+#define S_FORMAT "%5s %3s %s %s\n"
 #define L_HEADER "  F S UID   PID  PPID  PGRP   SZ       RECV TTY  TIME CMD\n"
-#define L_FORMAT "%3o %c %3d %5d %5d %5d %4d %10s %3s%3ld:%02ld %s\n"
+#define L_FORMAT "%3o %c %3d %5s %5d %5d %4d %10s %3s %s %s\n"
 
 struct pstat {			/* structure filled by pstat() */
   dev_t ps_dev;			/* major/minor of controlling tty */
@@ -226,11 +226,15 @@ struct pstat *bufp;
 		blkstr = "pause";
 	else if (bufp->ps_mflags & WAITING)
 		blkstr = "wait";
+	else if (bufp->ps_mflags & SIGSUSPENDED)
+		blkstr = "ssusp";
   } else if (bufp->ps_recv == FS_PROC_NR) {
-	if (-bufp->ps_ftask == XOPEN)
-		blkstr = "xopen";
-	else if (-bufp->ps_ftask == XPIPE)
-		blkstr = "xpipe";
+	if (-bufp->ps_ftask == XPIPE)
+		blkstr = "pipe";
+	else if (-bufp->ps_ftask == XPOPEN)
+		blkstr = "popen";
+	else if (-bufp->ps_ftask == XLOCK)
+		blkstr = "flock";
 	else
 		blkstr = taskname(-bufp->ps_ftask);
   }
@@ -268,6 +272,9 @@ char *argv[];
   char *mm_path;		/* mm, */
   char *fs_path;		/* and fs used in ps -U */
   struct psinfo psinfo;
+  char pid[2 + sizeof(pid_t) * 3];
+  unsigned long ustime;
+  char cpu[sizeof(clock_t) * 3 + 1 + 2];
 
   (void) signal(SIGSEGV, disaster);	/* catch a common crash */
 
@@ -331,10 +338,27 @@ char *argv[];
   for (i = -nr_tasks; i < nr_procs; i++) {
 	if (pstat(i, &buf) != -1 &&
 	    (opt_all || buf.ps_euid == uid || buf.ps_ruid == uid) &&
-	    (opt_notty || majdev(buf.ps_dev) == TTY_MAJ))
+	    (opt_notty || majdev(buf.ps_dev) == TTY_MAJ)) {
+		if (buf.ps_pid == 0) {
+			sprintf(pid, "(%d)", i);
+		} else {
+			sprintf(pid, "%d", buf.ps_pid);
+		}
+
+		ustime = (buf.ps_utime + buf.ps_stime) / HZ;
+		if (ustime < 60 * 60) {
+			sprintf(cpu, "%2lu:%02lu", ustime / 60, ustime % 60);
+		} else
+		if (ustime < 100L * 60 * 60) {
+			ustime /= 60;
+			sprintf(cpu, "%2luh%02lu", ustime / 60, ustime % 60);
+		} else {
+			sprintf(cpu, "%4luh", ustime / 3600);
+		}
+
 		if (opt_long) printf(L_FORMAT,
 			       buf.ps_flags, buf.ps_state,
-			       buf.ps_euid, buf.ps_pid, buf.ps_ppid,
+			       buf.ps_euid, pid, buf.ps_ppid,
 			       buf.ps_pgrp,
 			       off_to_k((buf.ps_tsize
 					 + buf.ps_stack - buf.ps_data
@@ -343,19 +367,16 @@ char *argv[];
 				prrecv(&buf) :
 				""),
 			       tname((Dev_t) buf.ps_dev),
-			    (buf.ps_utime + buf.ps_stime) / HZ / 60,
-			    (buf.ps_utime + buf.ps_stime) / HZ % 60,
-			       i <= init_proc_nr ? taskname(i) :
-			       (buf.ps_args == NULL ? "" :
-				buf.ps_args));
+			       cpu,
+			       i <= init_proc_nr || buf.ps_args == NULL
+				       ? taskname(i) : buf.ps_args);
 		else
 			printf(S_FORMAT,
-			       buf.ps_pid, tname((Dev_t) buf.ps_dev),
-			    (buf.ps_utime + buf.ps_stime) / HZ / 60,
-			    (buf.ps_utime + buf.ps_stime) / HZ % 60,
-			       i <= init_proc_nr ? taskname(i) :
-			       (buf.ps_args == NULL ? "" :
-				buf.ps_args));
+			       pid, tname((Dev_t) buf.ps_dev),
+			       cpu,
+			       i <= init_proc_nr || buf.ps_args == NULL
+				       ? taskname(i) : buf.ps_args);
+	}
   }
   return(0);
 }
@@ -429,7 +450,7 @@ struct pstat *bufp;
 
   if (p_nr < -nr_tasks || p_nr >= nr_procs) return -1;
 
-  if ((ps_proc[p_ki].p_flags & P_SLOT_FREE)
+  if ((ps_proc[p_ki].p_priority == PPRI_NONE)
   				&& !(ps_mproc[p_nr].mp_flags & IN_USE))
 	return -1;
 
@@ -451,7 +472,8 @@ struct pstat *bufp;
 	bufp->ps_pgrp = ps_mproc[p_nr].mp_procgrp;
 	bufp->ps_mflags = ps_mproc[p_nr].mp_flags;
   } else {
-	bufp->ps_pid = bufp->ps_ppid = 0;
+	bufp->ps_pid = 0;
+	bufp->ps_ppid = 0;
 	bufp->ps_ruid = bufp->ps_euid = 0;
 	bufp->ps_pgrp = 0;
 	bufp->ps_mflags = 0;
@@ -459,13 +481,13 @@ struct pstat *bufp;
 
   /* State is interpretation of combined kernel/mm flags for non-tasks */
   if (p_nr >= low_user) {		/* non-tasks */
-	if (ps_mproc[p_nr].mp_flags & HANGING)
+	if (ps_mproc[p_nr].mp_flags & ZOMBIE)
 		bufp->ps_state = Z_STATE;	/* zombie */
 	else if (ps_mproc[p_nr].mp_flags & STOPPED)
 		bufp->ps_state = T_STATE;	/* stopped (traced) */
 	else if (ps_proc[p_ki].p_flags == 0)
 		bufp->ps_state = R_STATE;	/* in run-queue */
-	else if (ps_mproc[p_nr].mp_flags & (WAITING | PAUSED) ||
+	else if (ps_mproc[p_nr].mp_flags & (WAITING | PAUSED | SIGSUSPENDED) ||
 		 ps_fproc[p_nr].fp_suspended == SUSPENDED)
 		bufp->ps_state = S_STATE;	/* sleeping */
 	else

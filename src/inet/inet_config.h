@@ -18,63 +18,58 @@ Copyright 1995 Philip Homburg
 #define ENABLE_TCP	1
 #define ENABLE_UDP	1
 
-#define ETH_PORT_NR	2	/* 2 ethernet devices */
-#define ARP_PORT_NR	2
-#define PSIP_PORT_NR	(2 * ENABLE_PSIP)
-#define IP_PORT_NR	(ETH_PORT_NR + PSIP_PORT_NR)
-#define TCP_PORT_NR	(ETH_PORT_NR + PSIP_PORT_NR)
-#define UDP_PORT_NR	(ETH_PORT_NR + PSIP_PORT_NR)
+/* Inet configuration file. */
+#define PATH_INET_CONF	"/etc/inet.conf"
+
+#define IP_PORT_MAX  (1*sizeof(char*))	/* Up to this many network devices */
+extern int eth_conf_nr;		/* Number of ethernets */
+extern int psip_conf_nr;	/* Number of Pseudo IP networks */
+extern int ip_conf_nr;		/* Number of configured TCP/IP layers */
+
+extern dev_t ip_dev;		/* Device number of /dev/ip */
 
 struct eth_conf
 {
-	int ec_minor;		/* Which minor should be used for registering
-				 * this device */
-	int ec_port;		/* Port number for that task */
+	char *ec_task;		/* Kernel ethernet task name */
+	u8_t ec_port;		/* Task port */
+	u8_t ec_ifno;		/* Interface number of /dev/eth* */
 };
-extern struct eth_conf eth_conf[];
-
-#if 0
-struct arp_conf
-{
-	int ac_port;		/* ethernet port number */
-};
-extern struct arp_conf arp_conf[];
-#endif
 
 struct psip_conf
 {
-	int pc_minor;		/* Minor device to be used for registering
-				 * this device */
+	u8_t pc_ifno;		/* Interface number of /dev/psip* */
 };
-extern struct psip_conf psip_conf[];
 
 struct ip_conf
 {
-	int ic_minor;		/* Minor device to be used for registering
-				 * this device */
-	int ic_devtype;		/* underlying device type */
-	int ic_port;		/* port of underlying device */
+	u8_t ic_devtype;	/* Underlying device type: Ethernet / PSIP */
+	u8_t ic_port;		/* Port of underlying device */
+	u8_t ic_ifno;		/* Interface number of /dev/ip*, tcp*, udp* */
 };
-extern struct ip_conf ip_conf[];
 
-struct tcp_conf
-{
-	int tc_minor;		/* Which minor should be used for registering
-				 * this device */
-	int tc_port;		/* IP port number */
-};
-extern struct tcp_conf tcp_conf[];
+/* Types of networks. */
+#define NETTYPE_ETH	1
+#define NETTYPE_PSIP	2
 
-struct udp_conf
-{
-	int uc_minor;		/* Which minor should be used for registering
-				 * this device */
-	int uc_port;		/* IP port number */
-};
-extern struct udp_conf udp_conf[];
+/* To compute the minor device number for a device on an interface. */
+#define if2minor(ifno, dev)	((ifno) * 16 + (dev))
+
+/* Offsets of the minor device numbers within a group per interface. */
+#define ETH_DEV_OFF	1
+#define PSIP_DEV_OFF	1
+#define IP_DEV_OFF	2
+#define TCP_DEV_OFF	3
+#define UDP_DEV_OFF	4
+
+extern struct eth_conf eth_conf[IP_PORT_MAX];
+extern struct psip_conf psip_conf[IP_PORT_MAX];
+extern struct ip_conf ip_conf[IP_PORT_MAX];
+void read_conf(void);
+extern char *sbrk(int);
+void *alloc(size_t size);
 
 #endif /* INET__INET_CONFIG_H */
 
 /*
- * $PchId: inet_config.h,v 1.5 1995/11/21 06:42:18 philip Exp $
+ * $PchId: inet_config.h,v 1.6 1998/10/23 20:14:28 philip Exp $
  */

@@ -150,7 +150,7 @@ ip_hdr_t *pack_hdr;
 		}
 		if ((ass_ent->ia_min_ttl) * HZ + first_time <
 			get_time())
-			icmp_snd_time_exceeded(ip_port-ip_port_table, pack,
+			icmp_snd_time_exceeded(ip_port->ip_port, pack,
 				ICMP_FRAG_REASSEM);
 		else
 			return pack;
@@ -283,7 +283,7 @@ ipaddr_t dst;
 		}
 		curr_acc= new_ass_ent->ia_frags;
 		new_ass_ent->ia_frags= 0;
-		icmp_snd_time_exceeded(ip_port-ip_port_table, curr_acc,
+		icmp_snd_time_exceeded(ip_port->ip_port, curr_acc,
 			ICMP_FRAG_REASSEM);
 	}
 	new_ass_ent->ia_min_ttl= IP_MAX_TTL;
@@ -608,7 +608,7 @@ assert (pack->acc_length >= IP_MIN_HDR_SIZE);
 	/* Try to decrement the ttl field with one. */
 	if (ip_hdr->ih_ttl < 2)
 	{
-		icmp_snd_time_exceeded(ip_port-ip_port_table, pack, ICMP_TTL_EXC);
+		icmp_snd_time_exceeded(ip_port->ip_port, pack, ICMP_TTL_EXC);
 		return;
 	}
 	ip_hdr->ih_ttl--;
@@ -624,19 +624,19 @@ assert (pack->acc_length >= IP_MIN_HDR_SIZE);
 			bf_afree(pack);
 		else
 		{
-			icmp_snd_unreachable(ip_port-ip_port_table, pack,
+			icmp_snd_unreachable(ip_port->ip_port, pack,
 				ICMP_HOST_UNRCH);
 		}
 		return;
 	}
-	iroute= iroute_frag(ip_port-ip_port_table, dest);
+	iroute= iroute_frag(ip_port->ip_port, dest);
 	if (iroute == NULL || iroute->irt_dist == IRTD_UNREACHABLE)
 	{
 		/* Also unreachable */
 		/* Finding out if we send a network unreachable is too much
 		 * trouble.
 		 */
-		icmp_snd_unreachable(ip_port-ip_port_table, pack,
+		icmp_snd_unreachable(ip_port->ip_port, pack,
 			ICMP_HOST_UNRCH);
 		return;
 	}
@@ -704,7 +704,7 @@ assert (pack->acc_length >= IP_MIN_HDR_SIZE);
 		 * a host redirect is too much trouble.
 		 */
 		pack->acc_linkC++;
-		icmp_snd_redirect(ip_port-ip_port_table, pack,
+		icmp_snd_redirect(ip_port->ip_port, pack,
 			ICMP_REDIRECT_HOST, iroute->irt_gateway);
 	}
 	else
@@ -776,7 +776,7 @@ assert (pack->acc_length >= IP_MIN_HDR_SIZE);
 #if !CRAMPED
 		printf(
 		"ip[%d]: broadcast packet for ip-nonbroadcast addr, src=",
-			ip_port-ip_port_table);
+			ip_port->ip_port);
 		writeIpAddr(ip_hdr->ih_src);
 		printf(" dst=");
 		writeIpAddr(ip_hdr->ih_dst);

@@ -26,22 +26,19 @@ _PROTOTYPE( void invalidate2, (Dev_t device)				);
 #endif
 
 /* device.c */
-_PROTOTYPE( void call_task, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void dev_opcl, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( int dev_io, (int rw_flag, int nonblock, Dev_t dev,
-			off_t pos, int bytes, int proc, char *buff)	);
+_PROTOTYPE( int dev_open, (Dev_t dev, int proc, int flags)		);
+_PROTOTYPE( void dev_close, (Dev_t dev)					);
+_PROTOTYPE( int dev_io, (int op, Dev_t dev, int proc, void *buf,
+			off_t pos, int bytes, int flags)		);
+_PROTOTYPE( int gen_opcl, (int op, Dev_t dev, int proc, int flags)	);
+_PROTOTYPE( void gen_io, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( int no_dev, (int op, Dev_t dev, int proc, int flags)		);
+_PROTOTYPE( int tty_opcl, (int op, Dev_t dev, int proc, int flags)	);
+_PROTOTYPE( int ctty_opcl, (int op, Dev_t dev, int proc, int flags)	);
+_PROTOTYPE( int clone_opcl, (int op, Dev_t dev, int proc, int flags)	);
+_PROTOTYPE( void ctty_io, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( int do_ioctl, (void)					);
-_PROTOTYPE( void no_dev, (int task_nr, message *m_ptr)			);
-_PROTOTYPE( void call_ctty, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void tty_open, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void ctty_close, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void ctty_open, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( int do_setsid, (void)					);
-#if ENABLE_NETWORKING
-_PROTOTYPE( void net_open, (int task_nr, message *mess_ptr)		);
-#else
-#define net_open  0
-#endif
 
 /* filedes.c */
 _PROTOTYPE( struct filp *find_filp, (struct inode *rip, Mode_t bits)	);
@@ -81,6 +78,7 @@ _PROTOTYPE( int do_exec, (void)						);
 _PROTOTYPE( int do_revive, (void)					);
 _PROTOTYPE( int do_set, (void)						);
 _PROTOTYPE( int do_sync, (void)						);
+_PROTOTYPE( int do_svrctl, (void)					);
 
 /* mount.c */
 _PROTOTYPE( int do_mount, (void)					);
@@ -117,9 +115,6 @@ _PROTOTYPE( int do_chown, (void)					);
 _PROTOTYPE( int do_umask, (void)					);
 _PROTOTYPE( int forbidden, (struct inode *rip, Mode_t access_desired)	);
 _PROTOTYPE( int read_only, (struct inode *ip)				);
-
-/* putk.c */
-_PROTOTYPE( void putk, (int c)						);
 
 /* read.c */
 _PROTOTYPE( int do_read, (void)						);

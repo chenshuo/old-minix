@@ -114,6 +114,7 @@ int retry;
 #ifdef DEBUG
 		fprintf(stderr, "ftpd: child %d  parent %d  listen try %d\n", getpid(), getppid(), retry);
 #endif
+		alarm(300);	/* do not wait for ever */
 		s = ioctl(ftpdata_fd, NWIOTCPLISTEN, &tcplopt);
 		if(!(s == -1 && errno == EAGAIN)) break;
 		if(retry++ > 10) break;

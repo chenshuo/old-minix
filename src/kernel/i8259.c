@@ -93,14 +93,9 @@ int mine;
 PRIVATE int spurious_irq(irq)
 int irq;
 {
-/* Default interrupt handler.  It complains a lot. */
+/* Default interrupt handler.  Should never be called... */
 
-  if (irq < 0 || irq >= NR_IRQ_VECTORS)
-	panic("invalid call to spurious_irq", irq);
-
-  printf("spurious irq %d\n", irq);
-
-  return 1;	/* Reenable interrupt */
+  return 0;	/* Leave interrupt masked */
 }
 
 /*=========================================================================*

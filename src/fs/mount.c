@@ -17,8 +17,6 @@
 #include "param.h"
 #include "super.h"
 
-PRIVATE message dev_mess;
-
 FORWARD _PROTOTYPE( dev_t name_to_dev, (char *path)			);
 
 /*===========================================================================*
@@ -33,7 +31,7 @@ PUBLIC int do_mount()
   dev_t dev;
   mode_t bits;
   int rdir, mdir;		/* TRUE iff {root|mount} file is dir */
-  int r, found, major, task;
+  int r, found;
 
   /* Only the super-user may do MOUNT. */
   if (!super_user) return(EPERM);
@@ -52,16 +50,8 @@ PUBLIC int do_mount()
   if (found) return(EBUSY);	/* already mounted */
   if (sp == NIL_SUPER) return(ENFILE);	/* no super block available */
 
-  dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
-  dev_mess.DEVICE = dev;		/* Touch the device. */  
-  if (rd_only) dev_mess.COUNT = R_BIT;
-  else  dev_mess.COUNT = R_BIT|W_BIT;
-
-  major = (dev >> MAJOR) & BYTE;
-  if (major <= 0 || major >= max_major) return(ENODEV);
-  task = dmap[major].dmap_task;		/* device task nr */
-  (*dmap[major].dmap_open)(task, &dev_mess);
-  if (dev_mess.REP_STATUS != OK) return(EINVAL);
+  /* Open the device the file system lives on. */
+  if (dev_open(dev, who, rd_only ? R_BIT : (R_BIT|W_BIT)) != OK) return(EINVAL);
 
   /* Fill in the super block. */
   sp->s_dev = dev;		/* read_super() needs to know which dev */
@@ -69,25 +59,19 @@ PUBLIC int do_mount()
 
   /* Is it recognized as a Minix filesystem? */
   if (r != OK) {
-	dev_mess.m_type = DEV_CLOSE;
-	dev_mess.DEVICE = dev;
-	(*dmap[major].dmap_close)(task, &dev_mess);
+	dev_close(dev);
 	return(r);
   }
 
   /* Now get the inode of the file to be mounted on. */
   if (fetch_name(name2, name2_length, M1) != OK) {
 	sp->s_dev = NO_DEV;
-	dev_mess.m_type = DEV_CLOSE;
-	dev_mess.DEVICE = dev;
-	(*dmap[major].dmap_close)(task, &dev_mess);
+	dev_close(dev);
 	return(err_code);
   }
   if ( (rip = eat_path(user_path)) == NIL_INODE) {
 	sp->s_dev = NO_DEV;
-	dev_mess.m_type = DEV_CLOSE;
-	dev_mess.DEVICE = dev;
-	(*dmap[major].dmap_close)(task, &dev_mess);
+	dev_close(dev);
 	return(err_code);
   }
 
@@ -120,10 +104,7 @@ PUBLIC int do_mount()
 	(void) do_sync();
 	invalidate(dev);
 
-	sp->s_dev = NO_DEV;
-	dev_mess.m_type = DEV_CLOSE;
-	dev_mess.DEVICE = dev;
-	(*dmap[major].dmap_close)(task, &dev_mess);
+	dev_close(dev);
 	return(r);
   }
 
@@ -147,7 +128,6 @@ PUBLIC int do_umount()
   struct super_block *sp, *sp1;
   dev_t dev;
   int count;
-  int major, task;
 
   /* Only the super-user may do UMOUNT. */
   if (!super_user) return(EPERM);
@@ -178,11 +158,8 @@ PUBLIC int do_umount()
   invalidate(dev);		/* invalidate cache entries for this dev */
   if (sp == NIL_SUPER) return(EINVAL);
 
-  major = (dev >> MAJOR) & BYTE;	/* major device nr */
-  task = dmap[major].dmap_task;	/* device task nr */
-  dev_mess.m_type = DEV_CLOSE;		/* distinguish from open */
-  dev_mess.DEVICE = dev;
-  (*dmap[major].dmap_close)(task, &dev_mess);
+  /* Close the device the file system lives on. */
+  dev_close(dev);
 
   /* Finish off the unmount. */
   sp->s_imount->i_mount = NO_MOUNT;	/* inode returns to normal */

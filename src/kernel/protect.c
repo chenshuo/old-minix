@@ -25,11 +25,7 @@ struct gatedesc_s {
   u16_t selector;
   u8_t pad;			/* |000|XXXXX| ig & trpg, |XXXXXXXX| task g */
   u8_t p_dpl_type;		/* |P|DL|0|TYPE| */
-#if _WORD_SIZE == 4
   u16_t offset_high;
-#else
-  u16_t reserved;
-#endif
 };
 
 struct tss_s {
@@ -73,10 +69,10 @@ PUBLIC struct segdesc_s gdt[GDT_SIZE];
 PRIVATE struct gatedesc_s idt[IDT_SIZE];	/* zero-init so none present */
 PUBLIC struct tss_s tss;	/* zero init */
 
-FORWARD _PROTOTYPE( void int_gate, (unsigned vec_nr, phys_bytes base,
+FORWARD _PROTOTYPE( void int_gate, (unsigned vec_nr, vir_bytes offset,
 		unsigned dpl_type) );
 FORWARD _PROTOTYPE( void sdesc, (struct segdesc_s *segdp, phys_bytes base,
-		phys_bytes size) );
+		vir_bytes size) );
 
 /*=========================================================================*
  *				prot_init				   *
@@ -88,11 +84,11 @@ PUBLIC void prot_init()
  */
 
   extern int etext, end;
-#define code_bytes ((phys_bytes) &etext)	/* Size of code segment. */
-#define data_bytes ((phys_bytes) &end)		/* Size of data segment. */
+#define code_bytes ((vir_bytes) &etext)		/* Size of code segment. */
+#define data_bytes ((vir_bytes) &end)		/* Size of data segment. */
   struct gate_table_s *gtp;
   struct desctableptr_s *dtp;
-  unsigned ldt_selector;
+  unsigned ldt_index;
   register struct proc *rp;
 
   static struct gate_table_s {
@@ -155,24 +151,22 @@ PUBLIC void prot_init()
   /* Build segment descriptors for tasks and interrupt handlers. */
   init_codeseg(&gdt[CS_INDEX], code_base, code_bytes, INTR_PRIVILEGE);
   init_dataseg(&gdt[DS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
-  init_dataseg(&gdt[ES_INDEX], 0L, 0L, TASK_PRIVILEGE);
+  init_dataseg(&gdt[ES_INDEX], 0L, 0, TASK_PRIVILEGE);
 
   /* Build scratch descriptors for functions in klib88. */
-  init_dataseg(&gdt[DS_286_INDEX], (phys_bytes) 0,
-	       (phys_bytes) MAX_286_SEG_SIZE, TASK_PRIVILEGE);
-  init_dataseg(&gdt[ES_286_INDEX], (phys_bytes) 0,
-	       (phys_bytes) MAX_286_SEG_SIZE, TASK_PRIVILEGE);
+  init_dataseg(&gdt[DS_286_INDEX], 0L, 0, TASK_PRIVILEGE);
+  init_dataseg(&gdt[ES_286_INDEX], 0L, 0, TASK_PRIVILEGE);
 
   /* Build local descriptors in GDT for LDT's in process table.
    * The LDT's are allocated at compile time in the process table, and
    * initialized whenever a process' map is initialized or changed.
    */
-  for (rp = BEG_PROC_ADDR, ldt_selector = FIRST_LDT_INDEX * DESC_SIZE;
-       rp < END_PROC_ADDR; ++rp, ldt_selector += DESC_SIZE) {
-	init_dataseg(&gdt[ldt_selector / DESC_SIZE], vir2phys(rp->p_ldt),
-		     (phys_bytes) sizeof rp->p_ldt, INTR_PRIVILEGE);
-	gdt[ldt_selector / DESC_SIZE].access = PRESENT | LDT;
-	rp->p_ldt_sel = ldt_selector;
+  for (rp = BEG_PROC_ADDR, ldt_index = FIRST_LDT_INDEX;
+       rp < END_PROC_ADDR; ++rp, ldt_index++) {
+	init_dataseg(&gdt[ldt_index], vir2phys(rp->p_ldt),
+				     sizeof(rp->p_ldt), INTR_PRIVILEGE);
+	gdt[ldt_index].access = PRESENT | LDT;
+	rp->p_ldt_sel = ldt_index * DESC_SIZE;
   }
 
   /* Build main TSS.
@@ -183,14 +177,13 @@ PUBLIC void prot_init()
    * process table.
    */
   tss.ss0 = DS_SELECTOR;
-  init_dataseg(&gdt[TSS_INDEX], vir2phys(&tss), (phys_bytes) sizeof tss,
-  							INTR_PRIVILEGE);
+  init_dataseg(&gdt[TSS_INDEX], vir2phys(&tss), sizeof(tss), INTR_PRIVILEGE);
   gdt[TSS_INDEX].access = PRESENT | (INTR_PRIVILEGE << DPL_SHIFT) | TSS_TYPE;
 
   /* Build descriptors for interrupt gates in IDT. */
   for (gtp = &gate_table[0];
        gtp < &gate_table[sizeof gate_table / sizeof gate_table[0]]; ++gtp) {
-	int_gate(gtp->vec_nr, (phys_bytes) (vir_bytes) gtp->gate,
+	int_gate(gtp->vec_nr, (vir_bytes) gtp->gate,
 		 PRESENT | INT_GATE_TYPE | (gtp->privilege << DPL_SHIFT));
   }
 
@@ -206,7 +199,7 @@ PUBLIC void prot_init()
 PUBLIC void init_codeseg(segdp, base, size, privilege)
 register struct segdesc_s *segdp;
 phys_bytes base;
-phys_bytes size;
+vir_bytes size;
 int privilege;
 {
 /* Build descriptor for a code segment. */
@@ -223,7 +216,7 @@ int privilege;
 PUBLIC void init_dataseg(segdp, base, size, privilege)
 register struct segdesc_s *segdp;
 phys_bytes base;
-phys_bytes size;
+vir_bytes size;
 int privilege;
 {
 /* Build descriptor for a data segment. */
@@ -239,15 +232,15 @@ int privilege;
 PRIVATE void sdesc(segdp, base, size)
 register struct segdesc_s *segdp;
 phys_bytes base;
-phys_bytes size;
+vir_bytes size;
 {
 /* Fill in the size fields (base, limit and granularity) of a descriptor. */
 
   segdp->base_low = base;
   segdp->base_middle = base >> BASE_MIDDLE_SHIFT;
+  segdp->base_high = base >> BASE_HIGH_SHIFT;
 
 #if _WORD_SIZE == 4
-  segdp->base_high = base >> BASE_HIGH_SHIFT;
   --size;			/* convert to a limit, 0 size means 4G */
   if (size > BYTE_GRAN_MAX) {
 	segdp->limit_low = size >> PAGE_GRAN_SHIFT;
@@ -279,20 +272,48 @@ U16_t seg;
 	base = hclick_to_physb(seg);
   } else {
 	segdp = &gdt[seg >> 3];
-	base = segdp->base_low | ((u32_t) segdp->base_middle << 16);
-#if _WORD_SIZE == 4
-	base |= ((u32_t) segdp->base_high << 24);
-#endif
+	base =    ((u32_t) segdp->base_low << 0)
+		| ((u32_t) segdp->base_middle << 16)
+		| ((u32_t) segdp->base_high << 24);
   }
   return base;
+}
+
+
+/*=========================================================================*
+ *				phys2seg				   *
+ *=========================================================================*/
+PUBLIC void phys2seg(seg, off, phys)
+u16_t *seg;
+vir_bytes *off;
+phys_bytes phys;
+{
+/* Return a segment selector and offset that can be used to reach a physical
+ * address, for use by a driver doing memory I/O in the A0000 - DFFFF range.
+ */
+#if _WORD_SIZE == 2
+  if (!protected_mode) {
+	*seg = phys / HCLICK_SIZE;
+	*off = phys % HCLICK_SIZE;
+  } else {
+	unsigned bank = phys >> 16;
+	unsigned index = bank - 0xA + A_INDEX;
+	init_dataseg(&gdt[index], (phys_bytes) bank << 16, 0, TASK_PRIVILEGE);
+	*seg = (index * 0x08) | TASK_PRIVILEGE;
+	*off = phys & 0xFFFF;
+  }
+#else
+  *seg = FLAT_DS_SELECTOR;
+  *off = phys;
+#endif
 }
 
 /*=========================================================================*
  *				int_gate				   *
  *=========================================================================*/
-PRIVATE void int_gate(vec_nr, base, dpl_type)
+PRIVATE void int_gate(vec_nr, offset, dpl_type)
 unsigned vec_nr;
-phys_bytes base;
+vir_bytes offset;
 unsigned dpl_type;
 {
 /* Build descriptor for an interrupt gate. */
@@ -300,11 +321,11 @@ unsigned dpl_type;
   register struct gatedesc_s *idp;
 
   idp = &idt[vec_nr];
-  idp->offset_low = base;
+  idp->offset_low = offset;
   idp->selector = CS_SELECTOR;
   idp->p_dpl_type = dpl_type;
 #if _WORD_SIZE == 4
-  idp->offset_high = base >> OFFSET_HIGH_SHIFT;
+  idp->offset_high = offset >> OFFSET_HIGH_SHIFT;
 #endif
 }
 

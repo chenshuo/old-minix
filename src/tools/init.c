@@ -16,6 +16,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#include <sys/svrctl.h>
 #include <ttyent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -101,16 +102,18 @@ int main(void)
 		if (gotabrt) reboot(RBT_HALT);
 	}
   } else {
-	static char *rc_command[] = { "sh", "/etc/rc", NULL, NULL };
+	struct sysgetenv sysgetenv;
+	char bootopts[16];
+	static char *rc_command[] = { "sh", "/etc/rc", NULL, NULL, NULL };
+	char **rcp = rc_command + 2;
 
-#if __minix_vmd
-	/* Minix-vmd: Get the boot options from the boot environment. */
-	rc_command[2] = getenv("bootopts");
-#else
-	/* Minix: Input from the console. */
-	close(0);
-	(void) open("/dev/console", O_RDONLY);
-#endif
+	/* Get the boot options from the boot environment. */
+	sysgetenv.key = "bootopts";
+	sysgetenv.keylen = 8+1;
+	sysgetenv.val = bootopts;
+	sysgetenv.vallen = sizeof(bootopts);
+	if (svrctl(SYSGETENV, &sysgetenv) == 0) *rcp++ = bootopts;
+	*rcp = "start";
 
 	execute(rc_command);
 	report(2, "sh /etc/rc");

@@ -10,6 +10,10 @@
 #ifndef _FCNTL_H
 #define _FCNTL_H
 
+#ifndef _TYPES_H
+#include <sys/types.h>
+#endif
+
 /* These values are used for cmd in fcntl().  POSIX Table 6-1.  */
 #define F_DUPFD            0	/* duplicate file descriptor */
 #define F_GETFD	           1	/* get file descriptor flags */
@@ -57,10 +61,6 @@ struct flock {
 
 
 /* Function Prototypes. */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( int creat, (const char *_path, Mode_t _mode)		);
 _PROTOTYPE( int fcntl, (int _filedes, int _cmd, ...)	  		);
 _PROTOTYPE( int open,  (const char *_path, int _oflag, ...) 		);

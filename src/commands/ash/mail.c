@@ -91,23 +91,17 @@ chkmail(silent) {
 		if (q[-1] != '/')
 			abort();
 		q[-1] = '\0';			/* delete trailing '/' */
-#ifdef notdef /* this is what the System V shell claims to do (it lies) */
 		if (stat(p, &statb) < 0)
 			statb.st_mtime = 0;
-		if (statb.st_mtime > mailtime[i] && ! silent) {
-			out2str(pathopt? pathopt : "you have mail");
+		if (!silent
+			&& statb.st_size > 0
+			&& statb.st_mtime > mailtime[i]
+			&& statb.st_mtime > statb.st_atime
+		) {
+			out2str(pathopt? pathopt : "You have mail");
 			out2c('\n');
 		}
 		mailtime[i] = statb.st_mtime;
-#else /* this is what it should do */
-		if (stat(p, &statb) < 0)
-			statb.st_size = 0;
-		if (statb.st_size > mailtime[i] && ! silent) {
-			out2str(pathopt? pathopt : "you have mail");
-			out2c('\n');
-		}
-		mailtime[i] = statb.st_size;
-#endif
 	}
 	nmboxes = i;
 	popstackmark(&smark);

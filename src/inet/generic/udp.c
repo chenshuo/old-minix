@@ -18,7 +18,7 @@ Copyright 1995 Philip Homburg
 
 THIS_FILE
 
-#define UDP_FD_NR		32
+#define UDP_FD_NR		(4*IP_PORT_MAX)
 #define UDP_PORT_HASH_NR	16		/* Must be a power of 2 */
 
 typedef struct udp_port
@@ -26,7 +26,6 @@ typedef struct udp_port
 	int up_flags;
 	int up_state;
 	int up_ipfd;
-	int up_minor;
 	int up_ipdev;
 	acc_t *up_wr_pack;
 	ipaddr_t up_ipaddr;
@@ -101,14 +100,20 @@ FORWARD void udp_rd_enqueue ARGS(( udp_fd_t *udp_fd, acc_t *pack,
 FORWARD void hash_fd ARGS(( udp_fd_t *udp_fd ));
 FORWARD void unhash_fd ARGS(( udp_fd_t *udp_fd ));
 
-PRIVATE udp_port_t udp_port_table[UDP_PORT_NR];
+PRIVATE udp_port_t *udp_port_table;
 PRIVATE udp_fd_t udp_fd_table[UDP_FD_NR];
+
+PUBLIC void udp_prep()
+{
+	udp_port_table= alloc(ip_conf_nr * sizeof(udp_port_table[0]));
+}
 
 PUBLIC void udp_init()
 {
 	udp_fd_t *udp_fd;
 	udp_port_t *udp_port;
-	int i, j, result;
+	struct ip_conf *icp;
+	int i, j;
 
 	assert (BUF_S >= sizeof(struct nwio_ipopt));
 	assert (BUF_S >= sizeof(struct nwio_ipconf));
@@ -131,10 +136,10 @@ PUBLIC void udp_init()
 	bf_logon(udp_buffree, udp_bufcheck);
 #endif
 
-	for (i= 0, udp_port= udp_port_table; i<UDP_PORT_NR; i++, udp_port++)
+	for (i= 0, udp_port= udp_port_table, icp= ip_conf;
+		i<ip_conf_nr; i++, udp_port++, icp++)
 	{
-		udp_port->up_minor= udp_conf[i].uc_minor;
-		udp_port->up_ipdev= udp_conf[i].uc_port;
+		udp_port->up_ipdev= i;
 
 #if ZERO
 		udp_port->up_flags= UPF_EMPTY;
@@ -148,10 +153,9 @@ PUBLIC void udp_init()
 			udp_port->up_port_hash[j]= NULL;
 #endif
 
-		result= sr_add_minor (udp_port->up_minor,
-			udp_port-udp_port_table, udp_open, udp_close, udp_read,
+		sr_add_minor(if2minor(icp->ic_ifno, UDP_DEV_OFF),
+			i, udp_open, udp_close, udp_read,
 			udp_write, udp_ioctl, udp_cancel);
-		assert (result >= 0);
 
 		udp_main(udp_port);
 	}
@@ -169,7 +173,7 @@ udp_port_t *udp_port;
 		udp_port->up_state= UPS_SETPROTO;
 
 		udp_port->up_ipfd= ip_open(udp_port->up_ipdev, 
-			udp_port-udp_port_table, udp_get_data, udp_put_data,
+			udp_port->up_ipdev, udp_get_data, udp_put_data,
 			udp_ip_arrived);
 		if (udp_port->up_ipfd < 0)
 		{
@@ -216,11 +220,12 @@ udp_port_t *udp_port;
 		}
 		read_ip_packets(udp_port);
 		return;
+#if !CRAMPED
 	default:
 		DBLOCK(1, printf("udp_port_table[%d].up_state= %d\n",
-			udp_port-udp_port_table, udp_port->up_state));
+			udp_port->up_ipdev, udp_port->up_state));
 		ip_panic(( "unknown state" ));
-		break;
+#endif
 	}
 }
 
@@ -240,7 +245,7 @@ put_pkt_t put_pkt;
 	if (i>= UDP_FD_NR)
 	{
 		DBLOCK(1, printf("out of fds\n"));
-		return EOUTOFBUFS;
+		return EAGAIN;
 	}
 
 	udp_fd= &udp_fd_table[i];
@@ -407,10 +412,12 @@ assert (!offset);	/* This isn't a valid assertion but ip sends only
 			udp_ip_arrived(fd, data, bf_bufsize(data));
 		}
 		break;
+#if !CRAMPED
 	default:
 		ip_panic((
 		"udp_put_data(%d, 0x%x, 0x%x) called but up_state= 0x%x\n",
 					fd, offset, data, udp_port->up_state ));
+#endif
 	}
 	return NW_OK;
 }
@@ -668,20 +675,20 @@ int fd;
 {
 	udpport_t port, nw_port;
 
-	for (port= 0x8000; port < 0xffff-UDP_FD_NR; port+= UDP_FD_NR)
+	nw_port= htons(0xC000+fd);
+	if (is_unused_port(nw_port))
+		return nw_port;
+
+	for (port= 0xC000+UDP_FD_NR; port < 0xFFFF; port++)
 	{
 		nw_port= htons(port);
 		if (is_unused_port(nw_port))
 			return nw_port;
 	}
-	for (port= 0x8000; port < 0xffff; port++)
-	{
-		nw_port= htons(port);
-		if (is_unused_port(nw_port))
-			return nw_port;
-	}
+#if !CRAMPED
 	ip_panic(( "unable to find unused port (shouldn't occur)" ));
 	return 0;
+#endif
 }
 
 /*
@@ -1440,8 +1447,10 @@ assert (udp_fd->uf_flags & UFF_IOCTL_IP);
 		udp_fd->uf_flags &= ~UFF_IOCTL_IP;
 		reply_thr_get(udp_fd, EINTR, TRUE);
 		break;
+#if !CRAMPED
 	default:
 		ip_panic(( "got unknown cancel request" ));
+#endif
 	}
 	return NW_OK;
 }
@@ -1572,7 +1581,7 @@ PRIVATE void udp_bufcheck()
 	udp_fd_t *udp_fd;
 	acc_t *tmp_acc;
 
-	for (i= 0, udp_port= udp_port_table; i<UDP_PORT_NR; i++, udp_port++)
+	for (i= 0, udp_port= udp_port_table; i<ip_conf_nr; i++, udp_port++)
 	{
 		if (udp_port->up_wr_pack)
 			bf_check_acc(udp_port->up_wr_pack);

@@ -13,8 +13,10 @@
  * |------------+---------+---------+---------+---------+---------|
  * |  DEV_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
  * |------------+---------+---------+---------+---------+---------|
- * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
- * ----------------------------------------------------------------
+ * | DEV_GATHER | device  | proc nr | iov len |  offset | iov ptr |
+ * |------------+---------+---------+---------+---------+---------|
+ * | DEV_SCATTER| device  | proc nr | iov len |  offset | iov ptr |
+ * |------------+---------+---------+---------+---------+---------|
  * |  DEV_IOCTL | device  | proc nr |func code|         | buf ptr |
  * ----------------------------------------------------------------
  *
@@ -52,6 +54,8 @@ phys_bytes tmp_phys;		/* phys address of DMA buffer */
 #endif /* CHIP != INTEL */
 
 FORWARD _PROTOTYPE( void init_buffer, (void) );
+FORWARD _PROTOTYPE( int do_rdwt, (struct driver *dr, message *mp) );
+FORWARD _PROTOTYPE( int do_vrdwt, (struct driver *dr, message *mp) );
 
 
 /*===========================================================================*
@@ -87,18 +91,20 @@ struct driver *dp;	/* Device dependent entry points. */
 
 	/* Now carry out the work. */
 	switch(mess.m_type) {
-	    case DEV_OPEN:	r = (*dp->dr_open)(dp, &mess);	break;
-	    case DEV_CLOSE:	r = (*dp->dr_close)(dp, &mess);	break;
-	    case DEV_IOCTL:	r = (*dp->dr_ioctl)(dp, &mess);	break;
+	case DEV_OPEN:		r = (*dp->dr_open)(dp, &mess);	break;
+	case DEV_CLOSE:		r = (*dp->dr_close)(dp, &mess);	break;
+	case DEV_IOCTL:		r = (*dp->dr_ioctl)(dp, &mess);	break;
 
-	    case DEV_READ:
-	    case DEV_WRITE:	r = do_rdwt(dp, &mess);		break;
+	case DEV_READ:
+	case DEV_WRITE:		r = do_rdwt(dp, &mess);		break;
 
-	    case SCATTERED_IO:	r = do_vrdwt(dp, &mess);	break;
+	case DEV_GATHER:
+	case DEV_SCATTER:	r = do_vrdwt(dp, &mess);	break;
 
-	    case HARD_INT:	/* Leftover interrupt. */	continue;
+	case HARD_INT:		/* Leftover interrupt or expired timer. */
+				continue;
 
-	    default:		r = EINVAL;			break;
+	default:		r = EINVAL;			break;
 	}
 
 	/* Clean up leftover state. */
@@ -125,15 +131,15 @@ PRIVATE void init_buffer()
  */
 
 #if (CHIP == INTEL)
+  unsigned left;
+
   tmp_buf = buffer;
   tmp_phys = vir2phys(buffer);
 
-  if (tmp_phys == 0) panic("no DMA buffer", NO_NUM);
-
-  if (dma_bytes_left(tmp_phys) < DMA_BUF_SIZE) {
+  if ((left = dma_bytes_left(tmp_phys)) < DMA_BUF_SIZE) {
 	/* First half of buffer crosses a 64K boundary, can't DMA into that */
-	tmp_buf += DMA_BUF_SIZE;
-	tmp_phys += DMA_BUF_SIZE;
+	tmp_buf += left;
+	tmp_phys += left;
   }
 #else /* CHIP != INTEL */
   tmp_phys = vir2phys(tmp_buf);
@@ -144,82 +150,85 @@ PRIVATE void init_buffer()
 /*===========================================================================*
  *				do_rdwt					     *
  *===========================================================================*/
-PUBLIC int do_rdwt(dp, m_ptr)
+PRIVATE int do_rdwt(dp, mp)
 struct driver *dp;		/* device dependent entry points */
-message *m_ptr;			/* pointer to read or write message */
+message *mp;			/* pointer to read or write message */
 {
 /* Carry out a single read or write request. */
-  struct iorequest_s ioreq;
-  int r;
+  iovec_t iovec1;
+  int r, opcode;
+  phys_bytes phys_addr;
 
-  if (m_ptr->COUNT <= 0) return(EINVAL);
+  /* Disk address?  Address and length of the user buffer? */
+  if (mp->COUNT < 0) return(EINVAL);
 
-  if ((*dp->dr_prepare)(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  /* Check the user buffer. */
+  phys_addr = numap(mp->PROC_NR, (vir_bytes) mp->ADDRESS, mp->COUNT);
+  if (phys_addr == 0) return(EFAULT);
 
-  ioreq.io_request = m_ptr->m_type;
-  ioreq.io_buf = m_ptr->ADDRESS;
-  ioreq.io_position = m_ptr->POSITION;
-  ioreq.io_nbytes = m_ptr->COUNT;
+  /* Prepare for I/O. */
+  if ((*dp->dr_prepare)(mp->DEVICE) == NIL_DEV) return(ENXIO);
 
-  r = (*dp->dr_schedule)(m_ptr->PROC_NR, &ioreq);
+  /* Create a one element scatter/gather vector for the buffer. */
+  opcode = mp->m_type == DEV_READ ? DEV_GATHER : DEV_SCATTER;
+  iovec1.iov_addr = (vir_bytes) mp->ADDRESS;
+  iovec1.iov_size = mp->COUNT;
 
-  if (r == OK) (void) (*dp->dr_finish)();
+  /* Transfer bytes from/to the device. */
+  r = (*dp->dr_transfer)(mp->PROC_NR, opcode, mp->POSITION, &iovec1, 1);
 
-  r = ioreq.io_nbytes;
-  return(r < 0 ? r : m_ptr->COUNT - r);
+  /* Return the number of bytes transferred or an error code. */
+  return(r == OK ? (mp->COUNT - iovec1.iov_size) : r);
 }
 
 
 /*==========================================================================*
  *				do_vrdwt				    *
  *==========================================================================*/
-PUBLIC int do_vrdwt(dp, m_ptr)
+PRIVATE int do_vrdwt(dp, mp)
 struct driver *dp;	/* device dependent entry points */
-message *m_ptr;		/* pointer to read or write message */
+message *mp;		/* pointer to read or write message */
 {
-/* Fetch a vector of i/o requests.  Handle requests one at a time.  Return
- * status in the vector.
+/* Carry out an device read or write to/from a vector of user addresses.
+ * The "user addresses" are assumed to be safe, i.e. FS transferring to/from
+ * its own buffers, so they are not checked.
  */
-
-  struct iorequest_s *iop;
-  static struct iorequest_s iovec[NR_IOREQS];
+  static iovec_t iovec[NR_IOREQS];
+  iovec_t *iov;
   phys_bytes iovec_phys, user_iovec_phys;
   size_t iovec_size;
-  unsigned nr_requests;
-  int request;
+  unsigned nr_req;
   int r;
 
-  nr_requests = m_ptr->COUNT;
+  nr_req = mp->COUNT;	/* Length of I/O vector */
 
-  if (m_ptr->m_source < 0) {
+  if (mp->m_source < 0) {
 	/* Called by a task, no need to copy vector. */
-	iop = (struct iorequest_s *) m_ptr->ADDRESS;
+	iov = (iovec_t *) mp->ADDRESS;
   } else {
-	if (nr_requests > NR_IOREQS)
-		panic("too big I/O vector by", m_ptr->m_source);
-	iovec_size = nr_requests * sizeof(iovec[0]);
-	user_iovec_phys = umap(proc_addr(m_ptr->m_source), D,
-				(vir_bytes) m_ptr->ADDRESS, iovec_size);
-	if (user_iovec_phys == 0) panic("bad I/O vector by", m_ptr->m_source);
+	/* Copy the vector from the caller to kernel space. */
+	if (nr_req > NR_IOREQS) nr_req = NR_IOREQS;
+	iovec_size = nr_req * sizeof(iovec[0]);
+	user_iovec_phys = numap(mp->m_source,
+				(vir_bytes) mp->ADDRESS, iovec_size);
+	if (user_iovec_phys == 0) panic("bad I/O vector by", mp->m_source);
 
 	iovec_phys = vir2phys(iovec);
 	phys_copy(user_iovec_phys, iovec_phys, (phys_bytes) iovec_size);
-	iop = iovec;
+	iov = iovec;
   }
 
-  if ((*dp->dr_prepare)(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  /* Prepare for I/O. */
+  if ((*dp->dr_prepare)(mp->DEVICE) == NIL_DEV) return(ENXIO);
 
-  for (request = 0; request < nr_requests; request++, iop++) {
-	if ((r = (*dp->dr_schedule)(m_ptr->PROC_NR, iop)) != OK) break;
-  }
-
-  if (r == OK) (void) (*dp->dr_finish)();
+  /* Transfer bytes from/to the device. */
+  r = (*dp->dr_transfer)(mp->PROC_NR, mp->m_type, mp->POSITION, iov, nr_req);
 
   /* Copy the I/O vector back to the caller. */
-  if (m_ptr->m_source >= 0) {
-	phys_copy(iovec_phys, user_iovec_phys, (phys_bytes) iovec_size);
+  if (mp->m_source >= 0) {
+	  phys_copy(iovec_phys, user_iovec_phys, (phys_bytes) iovec_size);
   }
-  return(OK);
+  return(r);
 }
 
 
@@ -237,13 +246,13 @@ PUBLIC char *no_name()
 /*============================================================================*
  *				do_nop					      *
  *============================================================================*/
-PUBLIC int do_nop(dp, m_ptr)
+PUBLIC int do_nop(dp, mp)
 struct driver *dp;
-message *m_ptr;
+message *mp;
 {
 /* Nothing there, or nothing to do. */
 
-  switch (m_ptr->m_type) {
+  switch (mp->m_type) {
   case DEV_OPEN:	return(ENODEV);
   case DEV_CLOSE:	return(OK);
   case DEV_IOCTL:	return(ENOTTY);
@@ -253,13 +262,14 @@ message *m_ptr;
 
 
 /*===========================================================================*
- *				nop_finish				     *
+ *				nop_prepare				     *
  *===========================================================================*/
-PUBLIC int nop_finish()
+PUBLIC struct device *nop_prepare(device)
 {
-/* Nothing to finish, all the work has been done by dp->dr_schedule. */
-  return(OK);
+/* Nothing to prepare for. */
+  return(NIL_DEV);
 }
+
 
 
 /*===========================================================================*
@@ -268,6 +278,27 @@ PUBLIC int nop_finish()
 PUBLIC void nop_cleanup()
 {
 /* Nothing to clean up. */
+}
+
+
+
+/*===========================================================================*
+ *				nop_task				     *
+ *===========================================================================*/
+PUBLIC void nop_task()
+{
+/* Unused controllers are "serviced" by this task. */
+  struct driver nop_tab = {
+	no_name,
+	do_nop,
+	do_nop,
+	do_nop,
+	nop_prepare,
+	NULL,
+	nop_cleanup,
+	NULL,
+  };
+  driver_task(&nop_tab);
 }
 
 
@@ -293,26 +324,26 @@ watchdog_t func;		/* function to call upon time out */
 /*============================================================================*
  *				do_diocntl				      *
  *============================================================================*/
-PUBLIC int do_diocntl(dp, m_ptr)
+PUBLIC int do_diocntl(dp, mp)
 struct driver *dp;
-message *m_ptr;			/* pointer to ioctl request */
+message *mp;			/* pointer to ioctl request */
 {
 /* Carry out a partition setting/getting request. */
   struct device *dv;
   phys_bytes user_phys, entry_phys;
   struct partition entry;
 
-  if (m_ptr->REQUEST != DIOCSETP && m_ptr->REQUEST != DIOCGETP) return(ENOTTY);
+  if (mp->REQUEST != DIOCSETP && mp->REQUEST != DIOCGETP) return(ENOTTY);
 
   /* Decode the message parameters. */
-  if ((dv = (*dp->dr_prepare)(m_ptr->DEVICE)) == NIL_DEV) return(ENXIO);
+  if ((dv = (*dp->dr_prepare)(mp->DEVICE)) == NIL_DEV) return(ENXIO);
 
-  user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, sizeof(entry));
+  user_phys = numap(mp->PROC_NR, (vir_bytes) mp->ADDRESS, sizeof(entry));
   if (user_phys == 0) return(EFAULT);
 
   entry_phys = vir2phys(&entry);
 
-  if (m_ptr->REQUEST == DIOCSETP) {
+  if (mp->REQUEST == DIOCSETP) {
 	/* Copy just this one partition table entry. */
 	phys_copy(user_phys, entry_phys, (phys_bytes) sizeof(entry));
 	dv->dv_base = entry.base;

@@ -1,171 +1,393 @@
-/* df - disk free block printout	Author: Andy Tanenbaum */
+/* df - disk free block printout	Author: Andy Tanenbaum
+ *
+ * 91/04/30 Kees J. Bot (kjb@cs.vu.nl)
+ *	Map filename arguments to the devices they live on.
+ *	Changed output to show percentages.
+ *
+ * 92/12/12 Kees J. Bot
+ *	Posixized.  (Almost, the normal output is in kilobytes, it should
+ *	be 512-byte units.  'df -P' and 'df -kP' are as it should be.)
+ */
 
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <limits.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <unistd.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <dirent.h>
+#if __minix_vmd
+#include <sys/mnttab.h>
+#else
 #include <minix/minlib.h>
+#endif
+
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/type.h>
-#include "../../fs/const.h"
-#include "../../fs/type.h"
-#include "../../fs/super.h"
+#include <fs/const.h>
+#include <fs/type.h>
+#include <fs/super.h>
+#undef printf
 
-#include <stdio.h>
+#if !__minix_vmd
+/* Map Minix-vmd names to Minix names. */
+#define v12_super_block		super_block
+#define SUPER_V1		SUPER_MAGIC
 
-#define REPORT 0
-#define SILENT 1
-#define NL    12		/* name length */
+/* Only setuid() and setgid(). */
+#define seteuid(uid)	setuid(uid)
+#define setegid(gid)	setgid(gid)
+#endif
 
-_PROTOTYPE(int main, (int argc, char *argv []));
-_PROTOTYPE(int df, (char *name, char *mnton, char *version, char *rw_flag, int silent ));
-_PROTOTYPE(bit_t bit_count, (int blocks, bit_t bits, int fd ));
-_PROTOTYPE(void defaults, (void ));
+#define ISDISK(mode)	S_ISBLK(mode)	/* || S_ISCHR for raw device??? */
 
-int main(argc, argv)
-int argc;
-char *argv[];
+extern int errno;
+char MTAB[] = "/etc/mtab";
+
+struct mtab {	/* List of mounted devices from /etc/mtab. */
+	struct mtab	*next;
+	dev_t		device;
+	char		*devname;
+	char		*mountpoint;
+} *mtab= NULL;
+
+struct mtab *searchtab(char *name);
+void readmtab(char *type);
+int df(const struct mtab *mt);
+bit_t bit_count(unsigned blocks, bit_t bits, int fd);
+
+int iflag= 0;	/* Focus on inodes instead of blocks. */
+int Pflag= 0;	/* Posix standard output. */
+int kflag= 0;	/* Output in kilobytes instead of 512 byte units for -P. */
+int istty;	/* isatty(1) */
+uid_t ruid, euid;	/* To sometimes change identities. */
+gid_t rgid, egid;
+
+void usage(void)
 {
-  register int i;
-  int ex= 0;
-
-  sync();			/* have to make sure disk is up-to-date */
-  fprintf(stdout, "\nDevice     Inodes  Inodes  Inodes     Blocks  Blocks  Blocks");
-  if (argc == 1)
-	fprintf(stdout, "  Mounted      V Pr\n");
-  else
-	fprintf(stdout, "\n");
-
-  fprintf(stdout, "           total   used    free       total   used    free");
-
-  if (argc == 1)
-	fprintf(stdout, "      on\n");
-  else
-	fprintf(stdout, "\n");
-
-  fprintf(stdout, "           -----   -----   -----      -----   -----   -----");
-
-  if (argc == 1)
-	fprintf(stdout, "   -------      - --\n");
-  else
-	fprintf(stdout, "\n");
-
-  if (argc == 1) defaults();
-
-  for (i = 1; i < argc; i++) ex |= df(argv[i], "", "", "", SILENT);
-  return(ex);
+	fprintf(stderr, "Usage: df [-ikP] [-t type] [device]...\n");
+	exit(1);
 }
 
+int main(int argc, char *argv[])
+{
+  int i;
+  struct mtab *mt;
+  char *type= "dev";
+  int ex= 0;
 
+  while (argc > 1 && argv[1][0] == '-') {
+  	char *opt= argv[1]+1;
+
+  	while (*opt != 0) {
+  		switch (*opt++) {
+  		case 'i':	iflag= 1;	break;
+  		case 'k':	kflag= 1;	break;
+  		case 'P':	Pflag= 1;	break;
+  		case 't':
+			if (argc < 3) usage();
+			type= argv[2];
+			argv++;
+			argc--;
+			break;
+		default:
+			usage();
+		}
+	}
+	argc--;
+	argv++;
+  }
+
+  istty= isatty(1);
+  ruid= getuid(); euid= geteuid();
+  rgid= getgid(); egid= getegid();
+
+  readmtab(type);
+
+  if (Pflag) {
+	printf(!iflag ? "\
+Filesystem    %4d-blocks    Used  Available  Capacity  Mounted on\n" : "\
+Filesystem       Inodes     IUsed    IFree    %%IUsed    Mounted on\n",
+		kflag ? 1024 : 512);
+  } else {
+	printf("%s\n", !iflag ? "\
+Filesystem    1k-Blocks     free     used    %  FUsed%  Mounted on" : "\
+Filesystem        Files     free     used    %  BUsed%  Mounted on"
+	);
+  }
+
+  if (argc == 1) {
+	for (mt= mtab; mt != NULL; mt= mt->next) ex |= df(mt);
+  } else {
+	for (i = 1; i < argc; i++) ex |= df(searchtab(argv[i]));
+  }
+  exit(ex);
+}
+
+void readmtab(char *type)
+/* Turn the mounted file table into a list. */
+{
+  struct mtab **amt= &mtab, *new;
+  struct stat st;
+
+#if __minix_vmd
+  char *devname, *mountpoint;
+  FILE *mtf;
+  struct mnttab mte, look;
+
+  if ((mtf= fopen(MTAB, "r")) == NULL) {
+	fprintf(stderr, "df: can't open %s\n", MTAB);
+	return;
+  }
+
+  look.mnt_special= NULL;
+  look.mnt_mountp= NULL;
+  look.mnt_fstype= type;
+  look.mnt_mntopts= NULL;
+
+  while (getmntany(mtf, &mte, &look) >= 0) {
+  	devname= mte.mnt_special;
+  	mountpoint= mte.mnt_mountp;
+
+		/* Skip bad entries, can't complain about everything. */
+	if (stat(devname, &st) < 0 || !ISDISK(st.st_mode)) continue;
+
+		/* Make new list cell. */
+	if ((new= (struct mtab *) malloc(sizeof(*new))) == NULL
+	  || (new->devname= (char *) malloc(strlen(devname) + 1)) == NULL
+	  || (new->mountpoint= (char *) malloc(strlen(mountpoint) + 1)) == NULL
+	) break;
+
+	new->device= st.st_rdev;
+	strcpy(new->devname, devname);
+	strcpy(new->mountpoint, mountpoint);
+
+	*amt= new;		/* Add the cell to the end. */
+	amt= &new->next;
+	*amt= NULL;
+  }
+  fclose(mtf);
+
+#else /* __minix */
+  char devname[128], mountpoint[128], version[10], rw_flag[10];
+
+  if (load_mtab("df") < 0) exit(1);
+
+  while (get_mtab_entry(devname, mountpoint, version, rw_flag),
+							  devname[0] != 0) {
+	if (strcmp(type, "dev") == 0) {
+		if (strcmp(version, "1") != 0 && strcmp(version, "2") != 0)
+			continue;
+	} else {
+		if (strcmp(type, version) != 0) continue;
+	}
+
+		/* Skip bad entries, can't complain about everything. */
+	if (stat(devname, &st) < 0 || !ISDISK(st.st_mode)) continue;
+
+		/* Make new list cell. */
+	if ((new= (struct mtab *) malloc(sizeof(*new))) == NULL
+	  || (new->devname= (char *) malloc(strlen(devname) + 1)) == NULL
+	  || (new->mountpoint= (char *) malloc(strlen(mountpoint) + 1)) == NULL
+	) break;
+
+	new->device= st.st_rdev;
+	strcpy(new->devname, devname);
+	strcpy(new->mountpoint, mountpoint);
+
+	*amt= new;		/* Add the cell to the end. */
+	amt= &new->next;
+	*amt= NULL;
+  }
+#endif
+}
+
+struct mtab *searchtab(char *name)
+/* See what we can do with a user supplied name, there are five possibilities:
+ * 1. It's a device and it is in the mtab: Return mtab entry.
+ * 2. It's a device and it is not in the mtab: Return device mounted on "".
+ * 3. It's a file and lives on a device in the mtab: Return mtab entry.
+ * 4. It's a file and it's not on an mtab device: Search /dev for the device
+ *    and return this device as mounted on "???".
+ * 5. It's junk: Return something df() will choke on.
+ */
+{
+  static struct mtab unknown;
+  static char devname[5 + NAME_MAX + 1]= "/dev/";
+  struct mtab *mt;
+  struct stat st;
+  DIR *dp;
+  struct dirent *ent;
+
+  unknown.devname= name;
+  unknown.mountpoint= "";
+
+  if (stat(name, &st) < 0) return &unknown;	/* Case 5. */
+
+  unknown.device= ISDISK(st.st_mode) ? st.st_rdev : st.st_dev;
+
+  for (mt= mtab; mt != NULL; mt= mt->next) {
+	if (unknown.device == mt->device)
+		return mt;			/* Case 1 & 3. */
+  }
+
+  if (ISDISK(st.st_mode)) {
+	return &unknown;			/* Case 2. */
+  }
+
+  if ((dp= opendir("/dev")) == NULL) return &unknown;	/* Disaster. */
+
+  while ((ent= readdir(dp)) != NULL) {
+	if (ent->d_name[0] == '.') continue;
+	strcpy(devname + 5, ent->d_name);
+	if (stat(devname, &st) >= 0 && ISDISK(st.st_mode)
+		&& unknown.device == st.st_rdev
+	) {
+		unknown.devname= devname;
+		unknown.mountpoint= "???";
+		break;
+	}
+  }
+  closedir(dp);
+  return &unknown;				/* Case 4. */
+}
+
+/* (num / tot) in percentages rounded up. */
 #define percent(num, tot)  ((int) ((100L * (num) + ((tot) - 1)) / (tot)))
 
-int df(name, mnton, version, rw_flag, silent)
-char *name, *mnton, *version, *rw_flag;
-int silent;
+/* One must be careful printing all these _t types. */
+#define L(n)	((long) (n))
+
+int df(const struct mtab *mt)
 {
-  register int j, fd;
-  char devname[32];
-  bit_t i_count, z_count, b;
+  int fd;
+  bit_t i_count, z_count;
   block_t totblocks, busyblocks;
-  struct super_block super, *sp;
+  int n;
+  struct v12_super_block super, *sp;
 
-  if ((fd = open(name, O_RDONLY)) < 0) {
-	if (!silent) {
-		int e = errno;
+  /* Don't allow Joe User to df just any device. */
+  seteuid(*mt->mountpoint == 0 ? ruid : euid);
+  setegid(*mt->mountpoint == 0 ? rgid : egid);
 
-		fprintf(stderr, "df: ");
-		errno = e;
-		perror(name);
-	}
+  if ((fd = open(mt->devname, O_RDONLY)) < 0) {
+	fprintf(stderr, "df: %s: %s\n", mt->devname, strerror(errno));
 	return(1);
   }
   lseek(fd, (off_t) BLOCK_SIZE, SEEK_SET);	/* skip boot block */
-  if (read(fd, (char *) &super, (unsigned) SUPER_SIZE) != SUPER_SIZE) {
-	fprintf(stderr, "df: Can't read super block of %s\n", name);
+
+  if (read(fd, (char *) &super, sizeof(super)) != (int) sizeof(super)) {
+	fprintf(stderr, "df: Can't read super block of %s\n", mt->devname);
 	close(fd);
 	return(1);
   }
+
   lseek(fd, (off_t) BLOCK_SIZE * 2L, SEEK_SET);	/* skip rest of super block */
   sp = &super;
-  if (sp->s_magic == SUPER_MAGIC)
-	sp->s_zones = sp->s_nzones;
-  else if (sp->s_magic != SUPER_V2) {
+  if (sp->s_magic != SUPER_V1 && sp->s_magic != SUPER_V2) {
+	fprintf(stderr, "df: %s: Not a valid file system\n", mt->devname);
 	close(fd);
-	if (sp->s_magic == SUPER_REV || sp->s_magic == SUPER_V2_REV) 
-		fprintf(stderr, "df: %s: Foreign (byte-swapped) file system\n", name);
-	else
-		fprintf(stderr, "df: %s: Not a valid file system\n", name);
 	return(1);
   }
-  i_count = bit_count(sp->s_imap_blocks, (bit_t) sp->s_ninodes + 1, fd);
+  if (sp->s_magic == SUPER_V1) sp->s_zones= sp->s_nzones;
+
+  i_count = bit_count(sp->s_imap_blocks, (bit_t) (sp->s_ninodes+1), fd);
+
   if (i_count == -1) {
-	fprintf(stderr, "df: Can't find bit maps of %s\n", name);
+	fprintf(stderr, "df: Can't find bit maps of %s\n", mt->devname);
 	close(fd);
 	return(1);
   }
-  i_count--;			/* There is no inode 0. */
+  i_count--;	/* There is no inode 0. */
 
-  b = (bit_t) sp->s_zones - (sp->s_firstdatazone - 1);
-  z_count = bit_count(sp->s_zmap_blocks, b, fd);
+  /* The first bit in the zone map corresponds with zone s_firstdatazone - 1
+   * This means that there are s_zones - (s_firstdatazone - 1) bits in the map
+   */
+  z_count = bit_count(sp->s_zmap_blocks,
+	(bit_t) (sp->s_zones - (sp->s_firstdatazone - 1)), fd);
+
   if (z_count == -1) {
-	fprintf(stderr, "df: Can't find bit maps of %s\n", name);
+	fprintf(stderr, "df: Can't find bit maps of %s\n", mt->devname);
 	close(fd);
 	return(1);
   }
-  totblocks = (block_t) sp->s_zones << sp->s_log_zone_size;
+  /* Don't forget those zones before sp->s_firstdatazone - 1 */
   z_count += sp->s_firstdatazone - 1;
-  busyblocks = (block_t) z_count << sp->s_log_zone_size;
 
-  /* Truncate device name to NL chars. */
-  for (j = 0; j < NL; j++) devname[j] = ' ';
-  strncpy(devname, mnton, (size_t)NL);
-  for (j = 0; j < NL; j++) if(devname[j] == '\0') devname[j] = ' ';
-  devname[NL] = '\0';
+#ifdef __minix_vmd
+  totblocks = sp->s_zones;
+  busyblocks = z_count;
+#else
+  totblocks = (block_t) sp->s_zones << sp->s_log_zone_size;
+  busyblocks = (block_t) z_count << sp->s_log_zone_size;
+#endif
 
   /* Print results. */
-  fprintf(stdout, "%s", name);
-  j = 10 - strlen(name);
-  while (j > 0) {
-	fprintf(stdout, " ");
-	j--;
-  }
+  printf("%s", mt->devname);
+  n= strlen(mt->devname);
+  if (n > 15 && istty) { putchar('\n'); n= 0; }
+  while (n < 15) { putchar(' '); n++; }
 
- 
-  fprintf(stdout, " %5u   %5ld   %5ld    %7ld %7ld %7ld   %s %s %s\n",
-	sp->s_ninodes,		/* total inodes */
-	i_count,		/* inodes used */
-	sp->s_ninodes - i_count,/* inodes free */
-
-	totblocks,		/* total blocks */
-	busyblocks,		/* blocks used */
-	totblocks - busyblocks,	/* blocks free */
-
-	devname,		/* mounted on */
-	version,		/* 1 or 2 */
-	rw_flag			/* rw or ro */
+  if (!Pflag && !iflag) {
+	printf(" %7ld  %7ld  %7ld %3d%%   %3d%%   %s\n",
+		L(totblocks),				/* Blocks */
+		L(totblocks - busyblocks),		/* free */
+		L(busyblocks),				/* used */
+		percent(busyblocks, totblocks),		/* % */
+		percent(i_count, sp->s_ninodes),	/* FUsed% */
+		mt->mountpoint				/* Mounted on */
 	);
+  }
+  if (!Pflag && iflag) {
+	printf(" %7ld  %7ld  %7ld %3d%%   %3d%%   %s\n",
+		L(sp->s_ninodes),			/* Files */
+		L(sp->s_ninodes - i_count),		/* free */
+		L(i_count),				/* used */
+		percent(i_count, sp->s_ninodes),	/* % */
+		percent(busyblocks, totblocks),		/* BUsed% */
+		mt->mountpoint				/* Mounted on */
+	);
+  }
+  if (Pflag && !iflag) {
+  	if (!kflag) {
+  		/* 512-byte units please. */
+  		totblocks *= 2;
+  		busyblocks *= 2;
+	}
+	printf(" %7ld   %7ld  %7ld     %4d%%    %s\n",
+		L(totblocks),				/* Blocks */
+		L(busyblocks),				/* Used */
+		totblocks - busyblocks,			/* Available */
+		percent(busyblocks, totblocks),		/* Capacity */
+		mt->mountpoint				/* Mounted on */
+	);
+  }
+  if (Pflag && iflag) {
+	printf(" %7ld   %7ld  %7ld     %4d%%    %s\n",
+		L(sp->s_ninodes),			/* Inodes */
+		L(i_count),				/* IUsed */
+		L(sp->s_ninodes - i_count),		/* IAvail */
+		percent(i_count, sp->s_ninodes),	/* Capacity */
+		mt->mountpoint				/* Mounted on */
+	);
+  }
   close(fd);
   return(0);
 }
 
-bit_t bit_count(blocks, bits, fd)
-int blocks;
-bit_t bits;
-int fd;
+bit_t bit_count(unsigned blocks, bit_t bits, int fd)
 {
-  register char *wptr;
-  register int i;
-  register int b;
-  register bit_t busy;
-  register char *wlim;
+  char *wptr;
+  int i, b;
+  bit_t busy;
+  char *wlim;
   static char buf[BLOCK_SIZE];
-  static unsigned bits_in_char[1 << CHAR_BIT];
+  static char bits_in_char[1 << CHAR_BIT];
 
   /* Precalculate bitcount for each char. */
   if (bits_in_char[1] != 1) {
@@ -177,14 +399,14 @@ int fd;
   /* Loop on blocks, reading one at a time and counting bits. */
   busy = 0;
   for (i = 0; i < blocks && bits != 0; i++) {
-	if (read(fd, buf, (unsigned) BLOCK_SIZE) != BLOCK_SIZE) return(-1);
+	if (read(fd, buf, BLOCK_SIZE) != BLOCK_SIZE) return(-1);
 
 	wptr = &buf[0];
 	if (bits >= CHAR_BIT * BLOCK_SIZE) {
 		wlim = &buf[BLOCK_SIZE];
 		bits -= CHAR_BIT * BLOCK_SIZE;
 	} else {
-		b = (int) bits / CHAR_BIT;	/* whole chars in map */
+		b = bits / CHAR_BIT;	/* whole chars in map */
 		wlim = &buf[b];
 		bits -= b * CHAR_BIT;	/* bits in last char, if any */
 		b = *wlim & ((1 << bits) - 1);	/* bit pattern from last ch */
@@ -199,23 +421,6 @@ int fd;
   return(busy);
 }
 
-
-
-void defaults()
-{
-/* Use the root file system and all mounted file systems. */
-
-  char special[PATH_MAX+1], mounted_on[PATH_MAX+1], version[10], rw_flag[10];
-  int ex= 0;
-
-  /* Read in /etc/mtab. */
-  if (load_mtab("df") < 0) exit(1);
-
-  /* Read /etc/mtab and iterate on the lines. */
-  while (1) {
-	get_mtab_entry(special, mounted_on, version, rw_flag);
-	if (special[0] == '\0') exit(0);
-	ex |= df(special, mounted_on, version, rw_flag, REPORT);
-  }
-  exit(ex);
-}
+/*
+ * $PchId: df.c,v 1.7 1998/07/27 18:42:17 philip Exp $
+ */

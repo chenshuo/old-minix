@@ -1,3 +1,4 @@
+#!/bin/sh
 : List all system directories containing the argument
 : Author: Terrence W. Holm
 if test $# -ne 1; then

@@ -237,7 +237,7 @@ struct proc *pt;
 #if 0
   printf("Next in chain of held-up processes:	0x%04.4x\n", pt->p_nextheld);	/* struct proc * */
 #endif
-  printf("P_SLOT_FREE SENDING, RECEIVING, etc.:	0x%04.4x\n", pt->p_flags);	/* int */
+  printf("SENDING, RECEIVING, etc.:		0x%04.4x\n", pt->p_flags);	/* int */
 #if 0
   printf("Memory map:				0x%04.4x\n", pt->p_map[NR_SEGS]);	/* struct mem_map */
 #endif

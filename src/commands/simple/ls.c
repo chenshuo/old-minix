@@ -1,4 +1,4 @@
-/*	ls 5.0 - List files.				Author: Kees J. Bot
+/*	ls 5.2 - List files.				Author: Kees J. Bot
  *								25 Apr 1989
  *
  * About the amount of bytes for heap + stack under Minix:
@@ -101,7 +101,7 @@ void *reallocate(void *a, size_t n)
 	return a;
 }
 
-char allowed[] = "acdfgilnqrstu1ACDFLMRTX";
+char allowed[] = "acdfgilnpqrstu1ACDFLMRTX";
 char flags[sizeof(allowed)];
 
 char arg0flag[] = "cdfmrtx";	/* These in argv[0] go to upper case. */
@@ -240,9 +240,10 @@ int field = 0;	/* (used to be) Fields that must be printed. */
 #define L_ATIME		0x0080	/* -u */
 #define L_CTIME		0x0100	/* -c */
 #define L_MARK		0x0200	/* -F */
-#define L_TYPE		0x0400	/* -D */
-#define L_LONGTIME	0x0800	/* -T */
-#define L_DIR		0x1000	/* -d */
+#define L_MARKDIR	0x0400	/* -p */
+#define L_TYPE		0x0800	/* -D */
+#define L_LONGTIME	0x1000	/* -T */
+#define L_DIR		0x2000	/* -d */
 
 struct file {		/* A file plus stat(2) information. */
 	struct file	*next;	/* Lists are made of them. */
@@ -651,27 +652,29 @@ int mark(struct file *f, int doit)
 {
 	int c;
 
-	if (!(field & L_MARK)) return 0;
+	c= 0;
 
-	switch (f->mode & S_IFMT) {
-	case S_IFDIR:	c= '/'; break;
+	if (field & L_MARK) {
+		switch (f->mode & S_IFMT) {
+		case S_IFDIR:	c= '/'; break;
 #ifdef S_IFIFO
-	case S_IFIFO:	c= '|'; break;
+		case S_IFIFO:	c= '|'; break;
 #endif
 #ifdef S_IFLNK
-	case S_IFLNK:	c= '@'; break;
+		case S_IFLNK:	c= '@'; break;
 #endif
 #ifdef S_IFSOCK
-	case S_IFSOCK:	c= '='; break;
+		case S_IFSOCK:	c= '='; break;
 #endif
-	case S_IFREG:
-		if (f->mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
-			c= '*';
+		case S_IFREG:
+			if (f->mode & (S_IXUSR | S_IXGRP | S_IXOTH)) c= '*';
 			break;
 		}
-	default:
-		c= 0;
+	} else
+	if (field & L_MARKDIR) {
+		if (S_ISDIR(f->mode)) c= '/';
 	}
+
 	if (doit && c != 0) putchar(c);
 	return c;
 }
@@ -698,6 +701,17 @@ int numwidth(unsigned long n)
 	do { width++; } while ((n /= 10) > 0);
 	return width;
 }
+
+#if !__minix
+int numxwidth(unsigned long n)
+/* Compute width of 'n' when printed in hex. */
+{
+	int width= 0;
+
+	do { width++; } while ((n /= 16) > 0);
+	return width;
+}
+#endif
 
 static int nsp= 0;	/* This many spaces have not been printed yet. */
 #define spaces(n)	(nsp= (n))
@@ -783,6 +797,7 @@ void print1(struct file *f, int col, int doit)
 #ifdef S_IFMPC
 		case S_IFMPC:
 #endif
+#if __minix
 			if (doit) {
 				printf("%*d, %3d ", f1width[W_SIZE] - 5,
 					major(f->rdev), minor(f->rdev));
@@ -791,6 +806,15 @@ void print1(struct file *f, int col, int doit)
 						numwidth(major(f->rdev)) + 5);
 				width++;
 			}
+#else /* !__minix */
+			if (doit) {
+				printf("%*lX ", f1width[W_SIZE],
+					(unsigned long) f->rdev);
+			} else {
+				maxise(&f1width[W_SIZE], numwidth(f->rdev));
+				width++;
+			}
+#endif /* !__minix */
 			break;
 		default:
 			if (doit) {
@@ -858,7 +882,7 @@ int countfiles(struct file *flist)
 struct file *filecol[MAXCOLS];	/* filecol[i] is list of files for column i. */
 int nfiles, nlines;	/* # files to print, # of lines needed. */
 
-int columnise(struct file *flist, int nplin)
+void columnise(struct file *flist, int nplin)
 /* Chop list of files up in columns.  Note that 3 columns are used for 5 files
  * even though nplin may be 4, filecol[3] will simply be nil.
  */
@@ -1072,6 +1096,7 @@ int main(int argc, char **argv)
 	if (present('l')) field|= L_MODE | L_LONG;
 	if (present('g')) field|= L_MODE | L_LONG | L_GROUP;
 	if (present('F')) field|= L_MARK;
+	if (present('p')) field|= L_MARKDIR;
 	if (present('D')) field|= L_TYPE;
 	if (present('T')) field|= L_MODE | L_LONG | L_LONGTIME;
 	if (present('d')) field|= L_DIR;
@@ -1105,5 +1130,5 @@ int main(int argc, char **argv)
 	}
 	listfiles(flist, depth,
 		(field & L_DIR) ? BOTTOM : present('R') ? FLOATING : SINKING);
-	exit(ex);
+	return ex;
 }

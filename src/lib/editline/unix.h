@@ -20,3 +20,7 @@ typedef struct direct	DIRENTRY;
 #if	!defined(S_ISDIR)
 #define S_ISDIR(m)		(((m) & S_IFMT) == S_IFDIR)
 #endif	/* !defined(S_ISDIR) */
+
+/*
+ * $PchId: unix.h,v 1.3 1996/02/22 21:18:51 philip Exp $
+ */

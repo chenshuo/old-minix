@@ -486,6 +486,12 @@ static	struct here *inhere;		/* list of hear docs while parsing */
 static	struct here *acthere;		/* list of active here documents */
 
 void
+inithere()
+{
+	inhere=acthere=(struct here*)0;
+}
+
+void
 markhere(s, iop)
 register char *s;
 struct ioword *iop;
@@ -562,9 +568,7 @@ int ec;
 			if (talking && e.iop <= iostack)
 				prs(cprompt->value);
 			next = line;
-			while ((c = getc(ec)) != '\n' && c) {
-				if (ec == '\'')
-					c &= ~ QUOTE;
+			while ((c = readc()) != '\n' && c) {
 				if (next >= &line[LINELIM]) {
 					c = 0;
 					break;
@@ -613,8 +617,11 @@ int xdoll;
 			PUSHIO(afile, hf, herechar);
 			setbase(e.iop);
 			while ((c = subgetc(0, 0)) != 0) {
-				c &= ~ QUOTE;
-				write(tf, &c, sizeof c);
+				char c1 = c&~QUOTE;
+
+				if (c&QUOTE && !any(c1,"`$\\"))
+					write(tf,"\\",1);
+				write(tf, &c1, 1);
 			}
 			quitenv();
 		} else

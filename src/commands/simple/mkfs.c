@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/dir.h>
 #include <sys/stat.h>
+#include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -25,6 +26,7 @@
 #include "../../fs/const.h"
 #if (MACHINE == IBM_PC)
 #include <minix/partition.h>
+#include <minix/u64.h>
 #include <sys/ioctl.h>
 #endif
 
@@ -36,12 +38,9 @@
 
 #ifndef DOS
 #ifndef UNIX
-#undef printf			/* printf is a macro for printk */
 #define UNIX
 #endif
 #endif
-
-#include <stdio.h>
 
 #define INODE_MAP            2
 #define MAX_TOKENS          10
@@ -334,9 +333,9 @@ char *device;
   struct partition entry;
 
   if ((fd = open(device, O_RDONLY)) == -1) return 0;
-  if (ioctl(fd, DIOCGETP, &entry) == -1) entry.size = 0;
+  if (ioctl(fd, DIOCGETP, &entry) == -1) entry.size = cvu64(0);
   close(fd);
-  return entry.size / BLOCK_SIZE;
+  return div64u(entry.size, BLOCK_SIZE);
 }
 
 

@@ -12,7 +12,7 @@ l = $u/lib
 CC =	exec cc
 CPP =	$l/cpp
 LD =	$(CC) -.o
-CFLAGS = -m -I$i
+CFLAGS = -I$i
 LDFLAGS = -i
 
 HEAD =	mpx.o
@@ -22,12 +22,12 @@ OBJS =	start.o protect.o klib.o table.o main.o proc.o \
 	console.o i8259.o rs232.o dmp.o misc.o driver.o \
 	drvlib.o floppy.o at_wini.o bios_wini.o esdi_wini.o \
 	xt_wini.o printer.o aha1540.o dp8390.o pty.o \
-	wdeth.o ne2000.o 3c503.o mcd.o sb16_dsp.o sb16_mixer.o \
-	dosfat.o dosfile.o
+	wdeth.o ne2000.o 3c503.o sb16_dsp.o sb16_mixer.o \
+	fatfile.o dosfile.o
 
 # What to make.
 kernel: $(HEAD) $(OBJS)
-	$(LD) $(LDFLAGS) -o $@ $(HEAD) $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(HEAD) $(OBJS) -lsys
 	install -S 0 $@
 
 all install:
@@ -41,7 +41,7 @@ clean:
 a =	kernel.h $h/config.h $h/const.h $h/type.h $h/syslib.h \
 	$s/types.h $i/string.h $i/limits.h $i/errno.h \
 	const.h type.h proto.h glo.h
-d =	driver.h $h/callnr.h $h/com.h $h/partition.h proc.h
+d =	driver.h $h/callnr.h $h/com.h $h/partition.h $h/u64.h proc.h
 dl =	drvlib.h $b/partition.h
 
 klib.o: $h/config.h $h/const.h const.h sconst.h protect.h
@@ -65,7 +65,6 @@ console.o:	proc.h
 
 start.o:	$a
 start.o:	$i/stdlib.h
-start.o:	$h/boot.h
 start.o:	protect.h
 
 dmp.o:		$a
@@ -106,6 +105,8 @@ main.o:	proc.h
 
 memory.o:	$a $d
 memory.o:	$s/ioctl.h
+memory.o:	protect.h
+memory.o:	$b/int86.h
 
 misc.o:	$a
 misc.o:	$i/stdlib.h
@@ -141,21 +142,25 @@ rs232.o:	tty.h
 rs232.o:	proc.h
 
 system.o:	$a
+system.o:	$i/stdlib.h
 system.o:	$i/signal.h
 system.o:	$i/unistd.h
 system.o:	$s/sigcontext.h
 system.o:	$s/ptrace.h
-system.o:	$h/boot.h
+system.o:	$s/svrctl.h
 system.o:	$h/callnr.h
 system.o:	$h/com.h
 system.o:	proc.h
 system.o:	protect.h
+system.o:	assert.h
 
 table.o:	$a
+table.o:	$i/stdlib.h
 table.o:	$i/termios.h
 table.o:	$h/com.h
 table.o:	proc.h
 table.o:	tty.h
+table.o:	$b/int86.h
 
 tty.o:		$a
 tty.o:		$i/termios.h
@@ -176,20 +181,19 @@ aha1540.o:	$s/ioctl.h
 at_wini.o:	$a $d $(dl)
 
 bios_wini.o:	$a $d $(dl)
+bios_wini.o:	$b/int86.h
 
 esdi_wini.o:	$a $d $(dl)
 
 xt_wini.o:	$a $d $(dl)
 
-mcd.o:	$a $d $(dl)
-mcd.o:	$h/cdrom.h
-mcd.o:	$s/ioctl.h
-
-dosfat.o:	$a $d $(dl)
-dosfat.o:	$i/stdlib.h
-dosfat.o:	assert.h
+fatfile.o:	$a $d $(dl)
+fatfile.o:	$i/stdlib.h
+fatfile.o:	assert.h
 
 dosfile.o:	$a $d $(dl)
+dosfile.o:	$i/stdlib.h
+dosfile.o:	$b/int86.h
 
 dp8390.o:	$a
 dp8390.o:	$i/stdlib.h

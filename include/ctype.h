@@ -7,6 +7,10 @@
 #ifndef _CTYPE_H
 #define _CTYPE_H
 
+#ifndef _ANSI_H
+#include <ansi.h>
+#endif
+
 extern char	__ctype[];	/* property array defined in chartab.c */
 
 #define _U		0x01	/* this bit is for upper-case letters [A-Z] */
@@ -18,10 +22,6 @@ extern char	__ctype[];	/* property array defined in chartab.c */
 #define _X		0x40	/* this bit is for hex digits [a-f] and [A-F]*/
 
 /* Function Prototypes (have to go before the macros). */
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
 _PROTOTYPE( int isalnum, (int  _c)  );	/* alphanumeric [a-z], [A-Z], [0-9] */
 _PROTOTYPE( int isalpha, (int  _c)  );	/* alphabetic */
 _PROTOTYPE( int iscntrl, (int  _c)  );	/* control characters */

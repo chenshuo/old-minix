@@ -94,7 +94,7 @@ const struct varinit varinit[] = {
 	 * vps1 depends on uid
 	 */
 	{&vps2,	VSTRFIXED|VTEXTFIXED,		"PS2=> "},
-	{&vpse,	VSTRFIXED|VTEXTFIXED|VUNSET,	"PSE="},
+	{&vpse,	VSTRFIXED|VTEXTFIXED,		"PSE=* "},
 #if ATTY
 	{&vterm,	VSTRFIXED|VTEXTFIXED|VUNSET,	"TERM="},
 #endif

@@ -19,7 +19,7 @@ char *argv[];
 {
 /* Mknod name b/c major minor makes a node. */
 
-  int mode, major, minor, dev, e;
+  int mode, major, minor, dev;
 
   if (argc < 3) badcomm();
   if (*argv[2] != 'b' && *argv[2] != 'c' && *argv[2] != 'p') badcomm();
@@ -36,10 +36,7 @@ char *argv[];
 	if (major - 1 > 0xFE || minor > 0xFF) badcomm();
 	dev = (major << 8) | minor;
   }
-  e = mknod(argv[1], mode, dev);
-  if (e < 0 && *argv[2] != 'p' && errno == EPERM)
-	std_err("mknod: Inode not made. Only the superuser can make inodes\n");
-  else if (e < 0) {
+  if (mknod(argv[1], mode, dev) < 0) {
 	int err = errno;
 	std_err("mknod: ");
 	errno = err;

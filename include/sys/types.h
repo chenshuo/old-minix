@@ -7,10 +7,7 @@
 #ifndef _TYPES_H
 #define _TYPES_H
 
-/* _ANSI is somehow used to determine whether or not the compiler is a
- * 16 bit compiler
- */
-#ifndef _ANSI
+#ifndef _ANSI_H
 #include <ansi.h>
 #endif
 
@@ -69,6 +66,8 @@ typedef char            i8_t;      /* 8 bit signed type */
 typedef short          i16_t;      /* 16 bit signed type */
 typedef long           i32_t;      /* 32 bit signed type */
 
+typedef struct { u32_t _[2]; } u64_t;
+
 /* The following types are needed because MINIX uses K&R style function
  * definitions (for maximum portability).  When a short, such as dev_t, is
  * passed to a function with a K&R definition, the compiler automatically
@@ -86,7 +85,7 @@ typedef int             U8_t;
 typedef unsigned long  U32_t;
 typedef int             I8_t;
 typedef int            I16_t;
-typedef long            I32_t;
+typedef long           I32_t;
 
 /* ANSI C makes writing down the promotion of unsigned types very messy.  When
  * sizeof(short) == sizeof(int), there is no promotion, so the type stays
@@ -96,18 +95,14 @@ typedef long            I32_t;
  * (which are not promoted) while providing information to the reader.
  */
 
-#ifndef _ANSI_H
-#include <ansi.h>
-#endif
-
-#if _EM_WSIZE == 2 || !defined(_ANSI)
+#if _EM_WSIZE == 2
 typedef unsigned int      Ino_t;
 typedef unsigned int    Zone1_t;
 typedef unsigned int Bitchunk_t;
 typedef unsigned int      U16_t;
 typedef unsigned int  Mode_t;
 
-#else /* _EM_WSIZE == 4, or _EM_WSIZE undefined, or _ANSI defined */
+#else /* _EM_WSIZE == 4, or _EM_WSIZE undefined */
 typedef int	          Ino_t;
 typedef int 	        Zone1_t;
 typedef int	     Bitchunk_t;
@@ -117,10 +112,6 @@ typedef int           Mode_t;
 #endif /* _EM_WSIZE == 2, etc */
  
 /* Signal handler type, e.g. SIG_IGN */
-#if defined(_ANSI)
-typedef void (*sighandler_t) (int);
-#else
-typedef void (*sighandler_t)();
-#endif
+typedef void _PROTOTYPE( (*sighandler_t), (int) );
 
 #endif /* _TYPES_H */

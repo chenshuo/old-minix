@@ -30,7 +30,8 @@
 #define WST_INPUT      0x002	/* Set if controller is writing to cpu */
 #define WST_BUS	       0x004	/* Command/status bit */
 #define WST_BUSY       0x008	/* Busy */
-#define WST_INTERRUPT  0x020	/* Interrupt generated ?? */
+#define WST_DRQ        0x010	/* DMA request */
+#define WST_IRQ        0x020	/* Interrupt request */
 #define WIN_SELECT     0x322	/* winchester disk controller select port */
 #define WIN_DMA	       0x323	/* winchester disk controller dma register */
 #define DMA_ADDR       0x006	/* port for low 16 bits of DMA address */
@@ -48,7 +49,7 @@
 #define WIN_SPECIFY	0x0C	/* command for the controller to accept params	*/
 #define WIN_ECC_READ	0x0D	/* command for the controller to read ecc length */
 
-#define DMA_INT		   3 /* Command with dma and interrupt */
+#define DMA_INT		   3	/* Command with dma and interrupt */
 #define INT		   2	/* Command with interrupt, no dma */
 #define NO_DMA_INT	   0	/* Command without dma and interrupt */
 
@@ -545,13 +546,13 @@ PRIVATE int w_reset()
   /* Strobe reset bit low. */
   out_byte(WIN_STATUS, 0);
 
-  milli_delay(1);	/* Wait for a while */
+  milli_delay(5);	/* Wait for a while */
 
   out_byte(WIN_SELECT, 0);	/* Issue select pulse */
   for (i = 0; i < MAX_WIN_RETRY; i++) {
 	r = in_byte(WIN_STATUS);
-	if (r & 0x30)		/* What is 10? 20 = INTERRUPT */
-		return (ERR);
+	if (r & (WST_DRQ | WST_IRQ))
+		return(ERR);
 
 	if ((r & (WST_BUSY | WST_BUS | WST_REQ)) ==
 		(WST_BUSY | WST_BUS | WST_REQ))
@@ -602,7 +603,7 @@ int irq;
 
   for (i = 0; i < MAX_WIN_RETRY; ++i) {
 	r = in_byte(WIN_STATUS);
-	if (r & WST_INTERRUPT)
+	if (r & WST_IRQ)
 		break;		/* Exit if end of int */
   }
 
@@ -919,6 +920,7 @@ PRIVATE void w_init()
   /* Set the size of each disk. */
   for (drive = 0; drive < nr_drives; drive++) {
 	(void) w_prepare(drive * DEV_PER_DRIVE);
+	wn = w_wn;
 	wn->wn_part[0].dv_size = ((unsigned long) wn->wn_cylinders *
 				wn->wn_heads * NR_SECTORS) << SECTOR_SHIFT;
 	printf("%s: %d cylinders, %d heads, %d sectors per track\n",

@@ -16,7 +16,6 @@
 #include <pwd.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <minix/minlib.h>
 #include <net/gen/in.h>
 #include <net/gen/tcp.h>
 
@@ -41,9 +40,6 @@ int ChkLoggedIn()
 int doUSER(buff)
 char *buff;
 {
-char *name;
-struct passwd *pwd;
-
    loggedin = 0;
    gotuser = 0;
    strncpy(username, buff, sizeof(username));
@@ -54,14 +50,6 @@ struct passwd *pwd;
    }
 
    gotuser = 1;
-   name = username;
-
-   if(!strcmp(name, "anonymous"))
-	name = "ftp";
-
-   if(((pwd = getpwnam(name)) != (struct passwd *)0))
-	if(!strcmp(name, "ftp"))
-		return(AreWeIn(name, pwd));
 
    printf("331 Password required for %s.\r\n", username);
 
@@ -89,9 +77,13 @@ int bad=0;
 			bad = 1;
 		if(strcmp(pwd->pw_passwd, crypt(buff, pwd->pw_passwd)))
 			bad = 1;
+	} else {
+		strncpy(anonpass, buff, sizeof(anonpass));
+		anonpass[sizeof(anonpass)-1] = '\0';
 	}
 
    if(bad) {
+	logit("LOGIN", "FAIL");
 	printf(msg530);
 	return(GOOD);
    }
@@ -105,7 +97,7 @@ char *buff;
 {
    printf("221 Service closing, don't be a stranger.\r\n");
 
-   exit(0);
+   return(BAD);
 }
 
 /* see if this user is okay */
@@ -115,17 +107,21 @@ struct passwd *pwd;
 {
    if(!strcmp(name, "ftp")) {
 	if(chroot(pwd->pw_dir)) {
+		logit("LOGIN", "FAIL");
 		printf("530 Not logged in, could not chroot.\r\n");
 		return(GOOD);
 	}
+	strncpy(newroot, pwd->pw_dir, sizeof(newroot));
 	anonymous = 1;
 	strcpy(pwd->pw_dir, "/");
    }
 
    if(setgid(pwd->pw_gid) || setuid(pwd->pw_uid) || chdir(pwd->pw_dir)) {
+	logit("LOGIN", "FAIL");
 	printf(msg530);
 	anonymous = 0;
    } else {
+	logit("LOGIN", "PASS");
 	printf("230 User %s logged in, directory %s.\r\n",
 		username, pwd->pw_dir);
 	loggedin = 1;

@@ -46,9 +46,6 @@
 #define NIL_PTR   (char *) 0	/* generally useful expression */
 #define HAVE_SCATTERED_IO  1	/* scattered I/O is now standard */
 
-/* How many bytes are pushed by a signal. */
-#define SIG_PUSH_BYTES (sizeof(int)+sizeof(u16_t)+sizeof(u32_t)) 
-
 /* Macros. */
 #define MAX(a, b)   ((a) > (b) ? (a) : (b))
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))

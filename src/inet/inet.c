@@ -96,7 +96,6 @@ PUBLIC void main()
 #if DEBUG & 256
  { where(); printf("calling eth_rec\n"); }
 #endif
-compare(mq->mq_mess.m_type, ==, DL_INT_TASK);
 			eth_rec(&mq->mq_mess);
 			mq_free(mq);
 			break;

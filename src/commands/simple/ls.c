@@ -1,17 +1,11 @@
-/*	ls 3.2 - List files.				Author: Kees J. Bot
+/*	ls 4.1 - List files.				Author: Kees J. Bot
+ *								25 Apr 1989
  *
  * About the amount of bytes for heap + stack under Minix:
  * Ls needs a average amount of 42 bytes per unserviced directory entry, so
  * scanning 10 directory levels deep in an ls -R with 100 entries per directory
  * takes 42000 bytes of heap.  So giving ls 10000 bytes is tight, 20000 is
  * usually enough, 40000 is pessimistic.
- */
-
-/* Compile with the proper -D flag for your system:
- *
- *	_MINIX		Minix (1.5 or later)
- *	BSD		BSD derived (has st_blocks)
- *	AMOEBA		Amoeba's emulation of UNIX
  */
 
 /* The array _ifmt[] is used in an 'ls -l' to map the type of a file to a
@@ -30,28 +24,21 @@ char _ifmt[] = "0pcCd?bB-?l?s???";
 #include <stddef.h>
 #include <stdlib.h>
 #include <unistd.h>
-#ifdef AMOEBA
-#undef S_IFLNK	/* Liars */
-#endif
 #include <dirent.h>
 #include <time.h>
 #include <pwd.h>
 #include <grp.h>
 #include <errno.h>
 #include <fcntl.h>
-#if BSD || __minix_vmd
 #include <termios.h>
-#endif
-#if __minix_vmd
 #include <sys/ioctl.h>
-#endif
 
 #ifndef major
 #define major(dev)	((int) (((dev) >> 8) & 0xFF))
 #define minor(dev)	((int) (((dev) >> 0) & 0xFF))
 #endif
 
-#if !_MINIX
+#if !__minix
 #define SUPER_ID	uid	/* Let -A flag be default for SUPER_ID == 0. */
 #else
 #define SUPER_ID	gid
@@ -64,29 +51,26 @@ int (*status)(const char *file, struct stat *stp);
 #endif
 
 /* Basic disk block size is 512 except for one niche O.S. */
-#if _MINIX
+#if __minix
 #define BLOCK	1024
 #else
 #define BLOCK	 512
+#endif
+
+/* Assume other systems have st_blocks. */
+#if !__minix
+#define ST_BLOCKS 1
 #endif
 
 /* Some terminals ignore more than 80 characters on a line.  Dumb ones wrap
  * when the cursor hits the side.  Nice terminals don't wrap until they have
  * to print the 81st character.  Wether we like it or not, no column 80.
  */
-#ifdef TIOCGWINSZ
 int ncols= 79;
-#else
-#define ncols	79
-#endif
 
 #define NSEP	2	/* # spaces between columns. */
 
-#ifdef TIOCGWINSZ
-#define MAXCOLS	150
-#else
-#define MAXCOLS	(1 + (ncols / (1+NSEP)))	/* Max # of files per line. */
-#endif
+#define MAXCOLS	150	/* Max # of files per line. */
 
 char *arg0;	/* Last component of argv[0]. */
 int uid, gid;	/* callers id. */
@@ -133,8 +117,9 @@ void setflags(char *flgs)
 				arg0, allowed);
 			exit(1);
 		} else
-		if (strchr(flags, c) == nil)
+		if (strchr(flags, c) == nil) {
 			flags[strlen(flags)] = c;
+		}
 	}
 }
 
@@ -228,9 +213,10 @@ void addpath(int *didx, char *name)
 
 	do {
 		if (*name != '/' || pidx == 0 || path[pidx-1] != '/') {
-			if (pidx == plen)
+			if (pidx == plen) {
 				path= (char *) reallocate((void *) path,
 						(plen*= 2) * sizeof(path[0]));
+			}
 			path[pidx++]= *name;
 		}
 	} while (*name++ != 0);
@@ -271,7 +257,7 @@ struct file {		/* A file plus stat(2) information. */
 	time_t		mtime;
 	time_t		atime;
 	time_t		ctime;
-#if BSD
+#if ST_BLOCKS
 	long		blocks;
 #endif
 };
@@ -288,7 +274,7 @@ void setstat(struct file *f, struct stat *stp)
 	f->mtime=	stp->st_mtime;
 	f->atime=	stp->st_atime;
 	f->ctime=	stp->st_ctime;
-#if BSD
+#if ST_BLOCKS
 	f->blocks=	stp->st_blocks;
 #endif
 }
@@ -342,16 +328,16 @@ char *permissions(struct file *f)
 	if (field & F_EXTRA) {		/* Short style */
 		int mode = f->mode, ucase= 0;
 
-		if (uid == f->uid)	/* What group of bits to use. */
+		if (uid == f->uid) {	/* What group of bits to use. */
 			/* mode<<= 0, */
 			ucase= (mode<<3) | (mode<<6);
 			/* Remember if group or others have permissions. */
-		else
-		if (gid == f->gid)
+		} else
+		if (gid == f->gid) {
 			mode<<= 3;
-		else
+		} else {
 			mode<<= 6;
-
+		}
 		rwx[1]= mode&S_IRUSR ? (ucase&S_IRUSR ? 'R' : 'r') : '-';
 		rwx[2]= mode&S_IWUSR ? (ucase&S_IWUSR ? 'W' : 'w') : '-';
 
@@ -360,8 +346,9 @@ char *permissions(struct file *f)
 
 			rwx[3]= sbit[(f->mode&(S_ISUID|S_ISGID))>>10];
 			if (ucase&S_IXUSR) rwx[3] += 'A'-'a';
-		} else
+		} else {
 			rwx[3]= f->mode&(S_ISUID|S_ISGID) ? '=' : '-';
+		}
 		rwx[4]= 0;
 	} else {		/* Long form. */
 		char *p= rwx+1;
@@ -435,7 +422,7 @@ char *cxsize(struct file *f)
 /* Transform size of file to number of blocks.  This was once a function that
  * guessed the number of indirect blocks, but that nonsense has been removed.
  */
-#if BSD
+#if ST_BLOCKS
 #define nblocks(f)	((f)->blocks)
 #else
 #define nblocks(f)	(((f)->size + BLOCK-1) / BLOCK)
@@ -529,13 +516,14 @@ static void sort(struct file **al)
 			/* Sort on name first, then sort on time. */
 
 			mergesort(al);
-			if (field & F_CTIME)
+			if (field & F_CTIME) {
 				CMP= ctimecmp;
-			else
-			if (field & F_ATIME)
+			} else
+			if (field & F_ATIME) {
 				CMP= atimecmp;
-			else
+			} else {
 				CMP= mtimecmp;
+			}
 
 			if (present('r')) { rCMP= CMP; CMP= revcmp; }
 			mergesort(al);
@@ -646,7 +634,7 @@ void printname(char *name)
 {
 	int c, q= present('q');
 
-	while ((c= *name++) != 0) {
+	while ((c= (unsigned char) *name++) != 0) {
 		if (q && (c <= ' ' || c == 0177)) c= '?';
 		putchar(c);
 	}
@@ -713,10 +701,11 @@ void print1(struct file *f, int col, int doit)
 		if (doit) printf("%4ld ", nblk2k(nblocks(f))); else width+= 5;
 	}
 	if (field & F_MODE) {
-		if (doit)
+		if (doit) {
 			printf("%s ", permissions(f));
-		else
+		} else {
 			width+= (field & F_EXTRA) ? 5 : 11;
+		}
 	}
 	if (field & F_EXTRA) {
 		p= cxsize(f);
@@ -726,13 +715,17 @@ void print1(struct file *f, int col, int doit)
 			n= sizwidth[col] - n;
 			while (n > 0) { putchar(' '); --n; }
 			printf("%s ", p);
-		} else
+		} else {
 			width+= maxise(&sizwidth[col], n);
+		}
 	}
 	if (field & F_LONG) {
 		if (doit) {
-			printf("%2d %-8s ", f->nlink, uidname(f->uid));
-			if (field & F_GROUP) printf("%-8s ", gidname(f->gid));
+			printf("%2u ", (unsigned) f->nlink);
+			if (!(field & F_GROUP)) {
+				printf("%-8s ", uidname(f->uid));
+			}
+			printf("%-8s ", gidname(f->gid));
 
 			switch (f->mode & S_IFMT) {
 			case S_IFBLK:
@@ -750,8 +743,9 @@ void print1(struct file *f, int col, int doit)
 				printf("%8ld ", (long) f->size);
 			}
 			printf("%s ", timestamp(f));
-		} else
-			width += (field & F_GROUP) ? 43 : 34;
+		} else {
+			width += (field & F_GROUP) ? 34 : 43;
+		}
 	}
 	n= strlen(f->name);
 	if (doit) {
@@ -832,8 +826,9 @@ int print(struct file *flist, int nplin, int doit)
 		if (nplin==1 && !(field & F_EXTRA))
 			return 1;	/* No need to try 1 column. */
 
-		for (i=0; i<nplin; i++)
+		for (i=0; i<nplin; i++) {
 			colwidth[i]= sizwidth[i]= namwidth[i]= 0;
+		}
 	}
 	while (--nlines >= 0) {
 		totlen=0;
@@ -896,8 +891,9 @@ void listfiles(struct file *flist, enum depth depth, enum state state)
 	}
 	sort(&flist);
 
-	if (depth == SUBMERGED && (field & (F_BLOCKS | F_LONG)))
+	if (depth == SUBMERGED && (field & (F_BLOCKS | F_LONG))) {
 		printf("total %ld\n", nblk2k(countblocks(flist)));
+	}
 
 	if (state == SINKING || depth == SURFACE1) {
 	/* Don't list directories themselves, list their contents later. */
@@ -906,8 +902,9 @@ void listfiles(struct file *flist, enum depth depth, enum state state)
 			if (((*afl)->mode & S_IFMT) == S_IFDIR) {
 				pushfile(adl, popfile(afl));
 				adl= &(*adl)->next;
-			} else
+			} else {
 				afl= &(*afl)->next;
+			}
 		}
 	}
 
@@ -926,8 +923,9 @@ void listfiles(struct file *flist, enum depth depth, enum state state)
 			/* But keep these directories for ls -R. */
 			pushfile(adl, popfile(&flist));
 			adl= &(*adl)->next;
-		} else
+		} else {
 			delfile(popfile(&flist));
+		}
 	}
 
 	while (dlist != nil) {	/* List directories */
@@ -957,9 +955,7 @@ int main(int argc, char **argv)
 	struct file *flist= nil, **aflist= &flist;
 	enum depth depth;
 	char *lsflags;
-#ifdef TIOCGWINSZ
 	struct winsize ws;
-#endif
 
 	uid= geteuid();
 	gid= getegid();
@@ -1006,10 +1002,8 @@ int main(int argc, char **argv)
 	if (present('t')) field|= F_BYTIME;
 	if (present('u')) field|= F_ATIME;
 	if (present('c')) field|= F_CTIME;
-	if (present('l')) {
-		field= (field | F_MODE | F_LONG) & ~F_EXTRA;
-		if (present('g')) field|= F_GROUP;
-	}
+	if (present('l')) field= (field | F_MODE | F_LONG) & ~F_EXTRA;
+	if (present('g')) field= (field | F_MODE | F_LONG | F_GROUP) & ~F_EXTRA;
 	if (present('F')) field|= F_MARK;
 	if (present('T')) field|= F_TYPE;
 	if (present('d')) field|= F_DIR;
@@ -1018,16 +1012,14 @@ int main(int argc, char **argv)
 	status= present('L') ? stat : lstat;
 #endif
 
-#ifdef TIOCGWINSZ
 	if (present('C')) {
 		int t= istty ? 1 : open("/dev/tty", O_WRONLY);
 
 		if (t >= 0 && ioctl(t, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
 			ncols= ws.ws_col - 1;
 
-		if (t != 1) close(t);
+		if (t != 1 && t != -1) close(t);
 	}
-#endif
 
 	depth= SURFACE;
 
@@ -1046,4 +1038,3 @@ int main(int argc, char **argv)
 		(field & F_DIR) ? BOTTOM : present('R') ? FLOATING : SINKING);
 	exit(ex);
 }
-/* Kees J. Bot  25-4-89. */

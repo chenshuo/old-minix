@@ -25,7 +25,7 @@ clean:
 
 # Dependencies
 a =	mm.h $h/config.h $s/types.h $h/const.h $h/type.h \
-	$i/ansi.h $i/tiny-fcntl.h $i/tiny-unistd.h $h/syslib.h \
+	$i/ansi.h $i/fcntl.h $i/unistd.h $h/syslib.h \
 	$i/limits.h $i/errno.h const.h type.h proto.h glo.h
 
 alloc.o:	$a
@@ -76,7 +76,6 @@ signal.o:	$h/callnr.h
 signal.o:	$h/com.h
 signal.o:	$i/signal.h
 signal.o:	$s/sigcontext.h
-signal.o:	$i/unistd.h
 signal.o:	$i/string.h
 signal.o:	mproc.h
 signal.o:	param.h
@@ -99,5 +98,4 @@ utility.o:	$h/callnr.h
 utility.o:	$h/com.h
 utility.o:	$i/fcntl.h
 utility.o:	$i/signal.h
-utility.o:	$i/unistd.h
 utility.o:	mproc.h

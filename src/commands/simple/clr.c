@@ -6,7 +6,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sgtty.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +21,6 @@
 
 #define  TC_BUFFER  1024	/* Size of termcap(3) buffer	 */
 
-struct sgttyb ttymode;		/* and the terminal modes */
 char *SO, *SE, *CD;
 char buffer[TC_BUFFER];
 char *term;

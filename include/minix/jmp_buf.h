@@ -6,8 +6,8 @@
 #ifndef _JMP_BUF_H
 #define _JMP_BUF_H
 
-#if !defined(CHIP) || !defined(INTEL)
-#include "error, configuration is not known"	/* XXX */
+#if !defined(CHIP)
+#include "error, configuration is not known"
 #endif
 
 #if (CHIP == INTEL)
@@ -75,7 +75,7 @@
 #define JB_PC		70
 #define JB_PSW		74
 #else /* !(CHIP == INTEL) && !(CHIP == M68000) */
-#include "error, CHIP is not supported"	/* XXX */
+#include "error, CHIP is not supported"
 #endif /* (CHIP == INTEL) */
 
 /* Defines from C headers needed in assembly code.  The headers have too

@@ -41,7 +41,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sgtty.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -204,7 +203,6 @@ char *nm;
 int mode;
 {
   struct stat s;
-  struct sgttyb t;
 
   switch (mode) {
       case FILRD:
@@ -218,7 +216,7 @@ int mode;
       case FILGZ:
 	return(stat(nm, &s) == 0 && (s.st_size > 0L));
       case FILTT:
-	return(ioctl((int) num(nm), TIOCGETP, &t) == 0);
+	return(isatty((int) num(nm)));
       case FILXQ:
 	return(access(nm, 1) == 0);
   }

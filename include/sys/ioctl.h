@@ -48,22 +48,10 @@
 #define	TIOCSPGRP	_IOW('T', 19, int)
 #define TIOCSFON	_IOW('T', 20, u8_t [8192])
 
-#if _SYSTEM
 #define TIOCGETP	_IOR('t',  1, struct sgttyb)
 #define TIOCSETP	_IOW('t',  2, struct sgttyb)
 #define TIOCGETC	_IOR('t',  3, struct tchars)
 #define TIOCSETC	_IOW('t',  4, struct tchars)
-#else
-/* The next Minix version will use the above TIOC* calls that now only the
- * kernel uses.  Until then these old definitions below are used.  The net
- * effect is that executables compiled under this Minix will still run under
- * older Minix versions.  Let's take one step at the time.
- */
-#define TIOCGETP (('t'<<8) | 8)
-#define TIOCSETP (('t'<<8) | 9)
-#define TIOCGETC (('t'<<8) | 18)
-#define TIOCSETC (('t'<<8) | 17)
-#endif
 
 
 /* Network ioctls. */

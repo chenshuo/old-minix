@@ -12,8 +12,8 @@
 #include <minix/const.h>
 #include <minix/type.h>
 
-#include <tiny-fcntl.h>
-#include <tiny-unistd.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <minix/syslib.h>
 
 #include <limits.h>

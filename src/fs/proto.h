@@ -17,6 +17,14 @@ _PROTOTYPE( void rw_block, (struct buf *bp, int rw_flag)		);
 _PROTOTYPE( void rw_scattered, (Dev_t dev,
 			struct buf **bufq, int bufqsize, int rw_flag)	);
 
+#if ENABLE_CACHE2
+/* cache2.c */
+_PROTOTYPE( void init_cache2, (unsigned long size)			);
+_PROTOTYPE( int get_block2, (struct buf *bp, int only_search)		);
+_PROTOTYPE( void put_block2, (struct buf *bp)				);
+_PROTOTYPE( void invalidate2, (Dev_t device)				);
+#endif
+
 /* device.c */
 _PROTOTYPE( void call_task, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void dev_opcl, (int task_nr, message *mess_ptr)		);
@@ -43,7 +51,7 @@ _PROTOTYPE( struct filp *get_filp, (int fild)				);
 /* inode.c */
 _PROTOTYPE( struct inode *alloc_inode, (Dev_t dev, Mode_t bits)		);
 _PROTOTYPE( void dup_inode, (struct inode *ip)				);
-_PROTOTYPE( void free_inode, (Dev_t dev, int numb)			);
+_PROTOTYPE( void free_inode, (Dev_t dev, Ino_t numb)			);
 _PROTOTYPE( struct inode *get_inode, (Dev_t dev, int numb)		);
 _PROTOTYPE( void put_inode, (struct inode *rip)				);
 _PROTOTYPE( void update_times, (struct inode *rip)			);
@@ -107,8 +115,7 @@ _PROTOTYPE( int do_access, (void)					);
 _PROTOTYPE( int do_chmod, (void)					);
 _PROTOTYPE( int do_chown, (void)					);
 _PROTOTYPE( int do_umask, (void)					);
-_PROTOTYPE( int forbidden, (struct inode *rip,
-			Mode_t access_desired, int real_uid)		);
+_PROTOTYPE( int forbidden, (struct inode *rip, Mode_t access_desired)	);
 _PROTOTYPE( int read_only, (struct inode *ip)				);
 
 /* putk.c */
@@ -130,14 +137,12 @@ _PROTOTYPE( int do_fstat, (void)					);
 _PROTOTYPE( int do_stat, (void)						);
 
 /* super.c */
-_PROTOTYPE( bit_t alloc_bit, (struct buf *map_ptr [], bit_t map_bits,
-				int bit_blocks, bit_t origin)		);
-_PROTOTYPE( void free_bit, (struct buf *map_ptr [], bit_t bit_returned));
+_PROTOTYPE( bit_t alloc_bit, (struct super_block *sp, int map, bit_t origin));
+_PROTOTYPE( void free_bit, (struct super_block *sp, int map,
+						bit_t bit_returned)	);
 _PROTOTYPE( struct super_block *get_super, (Dev_t dev)			);
-_PROTOTYPE( int load_bit_maps, (Dev_t dev)				);
 _PROTOTYPE( int mounted, (struct inode *rip)				);
 _PROTOTYPE( int read_super, (struct super_block *sp)			);
-_PROTOTYPE( int unload_bit_maps, (Dev_t dev)				);
 
 /* time.c */
 _PROTOTYPE( int do_stime, (void)					);

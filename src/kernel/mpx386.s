@@ -13,16 +13,16 @@
 
 ! Transitions to the kernel may be nested.  The initial entry may be with a
 ! system call, exception or hardware interrupt; reentries may only be made
-! by hardware interrupts.  The count of reentries is kept in `k_reenter`.
+! by hardware interrupts.  The count of reentries is kept in "k_reenter".
 ! It is important for deciding whether to switch to the kernel stack and
 ! for protecting the message passing code in "proc.c".
 
 ! For the message passing trap, most of the machine state is saved in the
 ! proc table.  (Some of the registers need not be saved.)  Then the stack is
-! switched to `k_stack`, and interrupts are reenabled.  Finally, the system
+! switched to "k_stack", and interrupts are reenabled.  Finally, the system
 ! call handler (in C) is called.  When it returns, interrupts are disabled
 ! again and the code falls into the restart routine, to finish off held-up
-! interrupts and run the process or task whose pointer is in `proc_ptr`.
+! interrupts and run the process or task whose pointer is in "proc_ptr".
 
 ! Hardware interrupt handlers do the same, except  (1) The entire state must
 ! be saved.  (2) There are too many handlers to do this inline, so the save
@@ -34,6 +34,14 @@
 ! interrupts, and unmasks it after servicing the interrupt.  This limits the
 ! nest level to the number of lines and protects the handler from itself.
 
+! For communication with the boot monitor at startup time some constant
+! data are compiled into the beginning of the text segment. This facilitates 
+! reading the data at the start of the boot process, since only the first
+! sector of the file needs to be read.
+
+! Some data storage is also allocated at the end of this file. This data 
+! will be at the start of the data segment of the kernel and will be read
+! and modified by the boot monitor before the kernel starts.
 
 ! sections
 
@@ -57,8 +65,11 @@ begbss:
 #define TSS3_S_SP0	4
 
 ! Exported functions
+! Note: in assembly language the .define statement applied to a function name 
+! is loosely equivalent to a prototype in C code -- it makes it possible to
+! link to an entity declared in the assembly code but does not create
+! the entity.
 
-.sect .text
 .define	_idle_task
 .define	_restart
 .define	save
@@ -111,15 +122,15 @@ begbss:
 .extern	_unhold
 
 ! Exported variables.
+! Note: when used with a variable the .define does not reserve storage,
+! it makes the name externally visible so it may be linked to. 
 
-.sect .bss
 .define	begbss
 .define	begdata
 .define	_sizes
 
 ! Imported variables.
 
-.sect .bss
 .extern	_gdt
 .extern	_code_base
 .extern	_data_base
@@ -160,7 +171,7 @@ over_flags:
 	inc	(_mon_return)
 noret:	mov	(_mon_sp), esp	! save stack pointer for later return
 
-! Copy the monitor global descriptor table to the kernel`s address space and
+! Copy the monitor global descriptor table to the address space of kernel and
 ! switch over to it.  Prot_init() can then update it with immediate effect.
 
 	sgdt	(_gdt+GDT_SELECTOR)		! get the monitor gdtr
@@ -222,11 +233,218 @@ csinit:
 
 
 !*===========================================================================*
+!*				interrupt handlers			     *
 !*		interrupt handlers for 386 32-bit protected mode	     *
 !*===========================================================================*
 
+!*===========================================================================*
+!*				hwint00 - 07				     *
+!*===========================================================================*
+! Note this is a macro, it looks like a subroutine.
+#define hwint_master(irq)	\
+	call	save			/* save interrupted process state */;\
+	inb	INT_CTLMASK						    ;\
+	orb	al, [1<<irq]						    ;\
+	outb	INT_CTLMASK		/* disable the irq		  */;\
+	movb	al, ENABLE						    ;\
+	outb	INT_CTL			/* reenable master 8259		  */;\
+	sti				/* enable interrupts		  */;\
+	push	irq			/* irq				  */;\
+	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
+	pop	ecx							    ;\
+	cli				/* disable interrupts		  */;\
+	test	eax, eax		/* need to reenable irq?	  */;\
+	jz	0f							    ;\
+	inb	INT_CTLMASK						    ;\
+	andb	al, ~[1<<irq]						    ;\
+	outb	INT_CTLMASK		/* enable the irq		  */;\
+0:	ret				/* restart (another) process      */
 
-.sect .text
+! Each of these entry points is an expansion of the hwint_master macro
+	.align	16
+_hwint00:		! Interrupt routine for irq 0 (the clock).
+	hwint_master(0)
+
+	.align	16
+_hwint01:		! Interrupt routine for irq 1 (keyboard)
+	hwint_master(1)
+
+	.align	16
+_hwint02:		! Interrupt routine for irq 2 (cascade!)
+	hwint_master(2)
+
+	.align	16
+_hwint03:		! Interrupt routine for irq 3 (second serial)
+	hwint_master(3)
+
+	.align	16
+_hwint04:		! Interrupt routine for irq 4 (first serial)
+	hwint_master(4)
+
+	.align	16
+_hwint05:		! Interrupt routine for irq 5 (XT winchester)
+	hwint_master(5)
+
+	.align	16
+_hwint06:		! Interrupt routine for irq 6 (floppy)
+	hwint_master(6)
+
+	.align	16
+_hwint07:		! Interrupt routine for irq 7 (printer)
+	hwint_master(7)
+
+!*===========================================================================*
+!*				hwint08 - 15				     *
+!*===========================================================================*
+! Note this is a macro, it looks like a subroutine.
+#define hwint_slave(irq)	\
+	call	save			/* save interrupted process state */;\
+	inb	INT2_CTLMASK						    ;\
+	orb	al, [1<<[irq-8]]					    ;\
+	outb	INT2_CTLMASK		/* disable the irq		  */;\
+	movb	al, ENABLE						    ;\
+	outb	INT_CTL			/* reenable master 8259		  */;\
+	jmp	.+2			/* delay			  */;\
+	outb	INT2_CTL		/* reenable slave 8259		  */;\
+	sti				/* enable interrupts		  */;\
+	push	irq			/* irq				  */;\
+	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
+	pop	ecx							    ;\
+	cli				/* disable interrupts		  */;\
+	test	eax, eax		/* need to reenable irq?	  */;\
+	jz	0f							    ;\
+	inb	INT2_CTLMASK						    ;\
+	andb	al, ~[1<<[irq-8]]					    ;\
+	outb	INT2_CTLMASK		/* enable the irq		  */;\
+0:	ret				/* restart (another) process      */
+
+! Each of these entry points is an expansion of the hwint_slave macro
+	.align	16
+_hwint08:		! Interrupt routine for irq 8 (realtime clock)
+	hwint_slave(8)
+
+	.align	16
+_hwint09:		! Interrupt routine for irq 9 (irq 2 redirected)
+	hwint_slave(9)
+
+	.align	16
+_hwint10:		! Interrupt routine for irq 10
+	hwint_slave(10)
+
+	.align	16
+_hwint11:		! Interrupt routine for irq 11
+	hwint_slave(11)
+
+	.align	16
+_hwint12:		! Interrupt routine for irq 12
+	hwint_slave(12)
+
+	.align	16
+_hwint13:		! Interrupt routine for irq 13 (FPU exception)
+	hwint_slave(13)
+
+	.align	16
+_hwint14:		! Interrupt routine for irq 14 (AT winchester)
+	hwint_slave(14)
+
+	.align	16
+_hwint15:		! Interrupt routine for irq 15
+	hwint_slave(15)
+
+!*===========================================================================*
+!*				save					     *
+!*===========================================================================*
+! Save for protected mode.
+! This is much simpler than for 8086 mode, because the stack already points
+! into the process table, or has already been switched to the kernel stack.
+
+	.align	16
+save:
+	cld			! set direction flag to a known value
+	pushad			! save "general" registers
+    o16	push	ds		! save ds
+    o16	push	es		! save es
+    o16	push	fs		! save fs
+    o16	push	gs		! save gs
+	mov	dx, ss		! ss is kernel data segment
+	mov	ds, dx		! load rest of kernel segments
+	mov	es, dx		! kernel does not use fs, gs
+	mov	eax, esp	! prepare to return
+	incb	(_k_reenter)	! from -1 if not reentering
+	jnz	set_restart1	! stack is already kernel stack
+	mov	esp, k_stktop
+	push	_restart	! build return address for int handler
+	xor	ebp, ebp	! for stacktrace
+	jmp	RETADR-P_STACKBASE(eax)
+
+	.align	4
+set_restart1:
+	push	restart1
+	jmp	RETADR-P_STACKBASE(eax)
+
+!*===========================================================================*
+!*				_s_call					     *
+!*===========================================================================*
+	.align	16
+_s_call:
+_p_s_call:
+	cld			! set direction flag to a known value
+	sub	esp, 6*4	! skip RETADR, eax, ecx, edx, ebx, est
+	push	ebp		! stack already points into proc table
+	push	esi
+	push	edi
+    o16	push	ds
+    o16	push	es
+    o16	push	fs
+    o16	push	gs
+	mov	dx, ss
+	mov	ds, dx
+	mov	es, dx
+	incb	(_k_reenter)
+	mov	esi, esp	! assumes P_STACKBASE == 0
+	mov	esp, k_stktop
+	xor	ebp, ebp	! for stacktrace
+				! end of inline save
+	sti			! allow SWITCHER to be interrupted
+				! now set up parameters for sys_call()
+	push	ebx		! pointer to user message
+	push	eax		! src/dest
+	push	ecx		! SEND/RECEIVE/BOTH
+	call	_sys_call	! sys_call(function, src_dest, m_ptr)
+				! caller is now explicitly in proc_ptr
+	mov	AXREG(esi), eax	! sys_call MUST PRESERVE si
+	cli			! disable interrupts 
+
+! Fall into code to restart proc/task running.
+
+!*===========================================================================*
+!*				restart					     *
+!*===========================================================================*
+_restart:
+
+! Flush any held-up interrupts.
+! This reenables interrupts, so the current interrupt handler may reenter.
+! This does not matter, because the current handler is about to exit and no
+! other handlers can reenter since flushing is only done when k_reenter == 0.
+
+	cmp	(_held_head), 0	! do fast test to usually avoid function call
+	jz	over_call_unhold
+	call	_unhold		! this is rare so overhead acceptable
+over_call_unhold:
+	mov	esp, (_proc_ptr)	! will assume P_STACKBASE == 0
+	lldt	P_LDT_SEL(esp)		! enable segment descriptors for task
+	lea	eax, P_STACKTOP(esp)	! arrange for next interrupt
+	mov	(_tss+TSS3_S_SP0), eax	! to save state in process table
+restart1:
+	decb	(_k_reenter)
+    o16	pop	gs
+    o16	pop	fs
+    o16	pop	es
+    o16	pop	ds
+	popad
+	add	esp, 4		! skip return adr
+	iretd			! continue process
+
 !*===========================================================================*
 !*				exception handlers			     *
 !*===========================================================================*
@@ -294,18 +512,16 @@ _copr_error:
 	push	COPROC_ERR_VECTOR
 	jmp	exception
 
-
 !*===========================================================================*
 !*				exception				     *
 !*===========================================================================*
-! This is called for all exceptions which don`t push an error code.
+! This is called for all exceptions which do not push an error code.
 
 	.align	16
 exception:
  sseg	mov	(trap_errno), 0		! clear trap_errno
  sseg	pop	(ex_number)
 	jmp	exception1
-
 
 !*===========================================================================*
 !*				errexception				     *
@@ -317,7 +533,6 @@ errexception:
  sseg	pop	(ex_number)
  sseg	pop	(trap_errno)
 exception1:				! Common for all exceptions.
-
 	push	eax			! eax is scratch register
 	mov	eax, 0+4(esp)		! old eip
  sseg	mov	(old_eip), eax
@@ -326,7 +541,6 @@ exception1:				! Common for all exceptions.
 	mov	eax, 8+4(esp)		! old eflags
  sseg	mov	(old_eflags), eax
 	pop	eax
-
 	call	save
 	push	(old_eflags)
 	push	(old_cs)
@@ -339,233 +553,6 @@ exception1:				! Common for all exceptions.
 	cli
 	ret
 
-
-!*===========================================================================*
-!*				interrupt handlers			     *
-!*===========================================================================*
-
-
-!*===========================================================================*
-!*				hwint00 - 07				     *
-!*===========================================================================*
-#define hwint_master(irq)	\
-	call	save			/* save interrupted process state */;\
-	inb	INT_CTLMASK						    ;\
-	orb	al, [1<<irq]						    ;\
-	outb	INT_CTLMASK		/* disable the irq		  */;\
-	movb	al, ENABLE						    ;\
-	outb	INT_CTL			/* reenable master 8259		  */;\
-	sti				/* enable interrupts		  */;\
-	push	irq			/* irq				  */;\
-	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
-	pop	ecx							    ;\
-	cli				/* disable interrupts		  */;\
-	test	eax, eax		/* need to reenable irq?	  */;\
-	jz	0f							    ;\
-	inb	INT_CTLMASK						    ;\
-	andb	al, ~[1<<irq]						    ;\
-	outb	INT_CTLMASK		/* enable the irq		  */;\
-0:	ret				/* restart (another) process      */
-
-
-	.align	16
-_hwint00:		! Interrupt routine for irq 0 (the clock).
-	hwint_master(0)
-
-
-	.align	16
-_hwint01:		! Interrupt routine for irq 1 (keyboard)
-	hwint_master(1)
-
-
-	.align	16
-_hwint02:		! Interrupt routine for irq 2 (cascade!)
-	hwint_master(2)
-
-
-	.align	16
-_hwint03:		! Interrupt routine for irq 3 (second serial)
-	hwint_master(3)
-
-
-	.align	16
-_hwint04:		! Interrupt routine for irq 4 (first serial)
-	hwint_master(4)
-
-
-	.align	16
-_hwint05:		! Interrupt routine for irq 5 (XT winchester)
-	hwint_master(5)
-
-
-	.align	16
-_hwint06:		! Interrupt routine for irq 6 (floppy)
-	hwint_master(6)
-
-
-	.align	16
-_hwint07:		! Interrupt routine for irq 7 (printer)
-	hwint_master(7)
-
-
-!*===========================================================================*
-!*				hwint08 - 15				     *
-!*===========================================================================*
-#define hwint_slave(irq)	\
-	call	save			/* save interrupted process state */;\
-	inb	INT2_CTLMASK						    ;\
-	orb	al, [1<<[irq-8]]					    ;\
-	outb	INT2_CTLMASK		/* disable the irq		  */;\
-	movb	al, ENABLE						    ;\
-	outb	INT_CTL			/* reenable master 8259		  */;\
-	jmp	.+2			/* delay			  */;\
-	outb	INT2_CTL		/* reenable slave 8259		  */;\
-	sti				/* enable interrupts		  */;\
-	push	irq			/* irq				  */;\
-	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
-	pop	ecx							    ;\
-	cli				/* disable interrupts		  */;\
-	test	eax, eax		/* need to reenable irq?	  */;\
-	jz	0f							    ;\
-	inb	INT2_CTLMASK						    ;\
-	andb	al, ~[1<<[irq-8]]					    ;\
-	outb	INT2_CTLMASK		/* enable the irq		  */;\
-0:	ret				/* restart (another) process      */
-
-
-	.align	16
-_hwint08:		! Interrupt routine for irq 8 (realtime clock)
-	hwint_slave(8)
-
-
-	.align	16
-_hwint09:		! Interrupt routine for irq 9 (irq 2 redirected)
-	hwint_slave(9)
-
-
-	.align	16
-_hwint10:		! Interrupt routine for irq 10
-	hwint_slave(10)
-
-
-	.align	16
-_hwint11:		! Interrupt routine for irq 11
-	hwint_slave(11)
-
-
-	.align	16
-_hwint12:		! Interrupt routine for irq 12
-	hwint_slave(12)
-
-
-	.align	16
-_hwint13:		! Interrupt routine for irq 13 (FPU exception)
-	hwint_slave(13)
-
-
-	.align	16
-_hwint14:		! Interrupt routine for irq 14 (AT winchester)
-	hwint_slave(14)
-
-
-	.align	16
-_hwint15:		! Interrupt routine for irq 15
-	hwint_slave(15)
-
-
-!*===========================================================================*
-!*				save					     *
-!*===========================================================================*
-! Save for protected mode.
-! This is much simpler than for 8086 mode, because the stack already points
-! into the process table, or has already been switched to the kernel stack.
-
-	.align	16
-save:
-	cld			! set direction flag to a known value
-	pushad			! save "general" registers
-    o16	push	ds		! save ds
-    o16	push	es		! save es
-    o16	push	fs		! save fs
-    o16	push	gs		! save gs
-	mov	dx, ss		! ss is kernel data segment
-	mov	ds, dx		! load rest of kernel segments
-	mov	es, dx		! kernel doesn`t use fs, gs
-	mov	eax, esp	! prepare to return
-	incb	(_k_reenter)	! from -1 if not reentering
-	jnz	set_restart1	! stack is already kernel`s
-	mov	esp, k_stktop
-	push	_restart	! build return address for int handler
-	xor	ebp, ebp	! for stacktrace
-	jmp	RETADR-P_STACKBASE(eax)
-
-	.align	4
-set_restart1:
-	push	restart1
-	jmp	RETADR-P_STACKBASE(eax)
-
-
-!*===========================================================================*
-!*				_s_call					     *
-!*===========================================================================*
-	.align	16
-_s_call:
-_p_s_call:
-	cld			! set direction flag to a known value
-	sub	esp, 6*4	! skip RETADR, eax, ecx, edx, ebx, est
-	push	ebp		! stack already points into proc table
-	push	esi
-	push	edi
-    o16	push	ds
-    o16	push	es
-    o16	push	fs
-    o16	push	gs
-	mov	dx, ss
-	mov	ds, dx
-	mov	es, dx
-	incb	(_k_reenter)
-	mov	esi, esp	! assumes P_STACKBASE == 0
-	mov	esp, k_stktop
-	xor	ebp, ebp	! for stacktrace
-				! end of inline save
-	sti			! allow SWITCHER to be interrupted
-				! now set up parameters for sys_call()
-	push	ebx		! pointer to user message
-	push	eax		! src/dest
-	push	ecx		! SEND/RECEIVE/BOTH
-	call	_sys_call	! sys_call(function, src_dest, m_ptr)
-				! caller is now explicitly in proc_ptr
-	mov	AXREG(esi), eax	! sys_call MUST PRESERVE si
-	cli
-
-! Fall into code to restart proc/task running.
-
-_restart:
-
-! Flush any held-up interrupts.
-! This reenables interrupts, so the current interrupt handler may reenter.
-! This doesn`t matter, because the current handler is about to exit and no
-! other handlers can reenter since flushing is only done when k_reenter == 0.
-
-	cmp	(_held_head), 0	! do fast test to usually avoid function call
-	jz	over_call_unhold
-	call	_unhold		! this is rare so overhead acceptable
-over_call_unhold:
-	mov	esp, (_proc_ptr)	! will assume P_STACKBASE == 0
-	lldt	P_LDT_SEL(esp)		! enable task`s segment descriptors
-	lea	eax, P_STACKTOP(esp)	! arrange for next interrupt
-	mov	(_tss+TSS3_S_SP0), eax	! to save state in process table
-restart1:
-	decb	(_k_reenter)
-    o16	pop	gs
-    o16	pop	fs
-    o16	pop	es
-    o16	pop	ds
-	popad
-	add	esp, 4		! skip return adr
-	iretd			! continue process
-
-
 !*===========================================================================*
 !*				level0_call				     *
 !*===========================================================================*
@@ -573,29 +560,31 @@ _level0_call:
 	call	save
 	jmp	(_level0_func)
 
-
 !*===========================================================================*
 !*				idle_task				     *
 !*===========================================================================*
 _idle_task:			! executed when there is no work
 	jmp	_idle_task	! a "hlt" before this fails in protected mode
 
-
 !*===========================================================================*
 !*				data					     *
 !*===========================================================================*
+! These declarations assure that storage will be allocated at the very 
+! beginning of the kernel data section, so the boot monitor can be easily 
+! told how to patch these locations. Note that the magic number is put
+! here by the compiler, but will be read by, and then overwritten by,
+! the boot monitor. When the kernel starts the sizes array will be
+! found here, as if it had been initialized by the compiler.
 
 .sect .rom	! Before the string table please
-_sizes:				! sizes of kernel, mm, fs filled in by build
+_sizes:				! sizes of kernel, mm, fs filled in by boot
 	.data2	0x526F		! this must be the first data entry (magic #)
-	.data2	CLICK_SHIFT	! consistency check for build
-	.space	16*2*4-4	! monitor uses prevous 2 words and this space
-
+	.space	16*2*2-2	! monitor uses previous word and this space
+				! extra space allows for additional servers
 .sect .bss
 k_stack:
 	.space	K_STACK_BYTES	! kernel stack
 k_stktop:			! top of kernel stack
-
 	.comm	ex_number, 4
 	.comm	trap_errno, 4
 	.comm	old_eip, 4

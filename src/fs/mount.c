@@ -33,7 +33,7 @@ PUBLIC int do_mount()
   dev_t dev;
   mode_t bits;
   int rdir, mdir;		/* TRUE iff {root|mount} file is dir */
-  int r, found, loaded, major, task;
+  int r, found, major, task;
 
   /* Only the super-user may do MOUNT. */
   if (!super_user) return(EPERM);
@@ -106,13 +106,6 @@ PUBLIC int do_mount()
   }
   if (root_ip != NIL_INODE && root_ip->i_mode == 0) r = EINVAL;
 
-  /* Load the i-node and zone bit maps from the new device. */
-  loaded = FALSE;
-  if (r == OK) {
-	if (load_bit_maps(dev) != OK) r = ENFILE;	/* load bit maps */
-	if (r == OK) loaded = TRUE;
-  }
-
   /* File types of 'rip' and 'root_ip' may not conflict. */
   if (r == OK) {
 	mdir = ((rip->i_mode & I_TYPE) == I_DIRECTORY);  /* TRUE iff dir */
@@ -124,7 +117,6 @@ PUBLIC int do_mount()
   if (r != OK) {
 	put_inode(rip);
 	put_inode(root_ip);
-	if (loaded) (void) unload_bit_maps(dev);
 	(void) do_sync();
 	invalidate(dev);
 
@@ -181,9 +173,7 @@ PUBLIC int do_umount()
 	}
   }
 
-  /* Release the bit maps, sync the disk, and invalidate cache. */
-  if (sp != NIL_SUPER)
-	if (unload_bit_maps(dev) != OK) panic("do_umount", NO_NUM);
+  /* Sync the disk, and invalidate cache. */
   (void) do_sync();		/* force any cached blocks out of memory */
   invalidate(dev);		/* invalidate cache entries for this dev */
   if (sp == NIL_SUPER) return(EINVAL);

@@ -276,7 +276,7 @@ void test34a()
 	if ((st2.st_mode & ALL_BITS) != ALL_RWXB) e(70);
 
   (void) system("chmod 777 ../DIR_34/* > /dev/null 2> /dev/null");
-  System("/bin/rm -rf ../DIR_34/*");
+  System("rm -rf ../DIR_34/*");
 }
 
 void test34b()
@@ -390,7 +390,7 @@ void test34b()
   if (chmod(MaxPath, 0777) != 0) e(52);
 
   (void) system("chmod 777 ../DIR_34/* > /dev/null 2> /dev/null");
-  System("/bin/rm -rf ../DIR_34/*");
+  System("rm -rf ../DIR_34/*");
 }
 
 void test34c()
@@ -538,7 +538,7 @@ void test34c()
   if (errno != ENAMETOOLONG) e(62);
 
   (void) system("chmod 777 ../DIR_34/* > /dev/null 2> /dev/null");
-  System("/bin/rm -rf ../DIR_34/*");
+  System("rm -rf ../DIR_34/*");
 }
 
 void makelongnames()

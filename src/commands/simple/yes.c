@@ -1,4 +1,4 @@
-/*	yes 1.3 - print 'y' or argv[1] continuously.	Author: Kees J. Bot
+/*	yes 1.4 - print 'y' or argv[1] continuously.	Author: Kees J. Bot
  *								15 Apr 1989
  */
 #include <sys/types.h>
@@ -9,9 +9,10 @@
 int main(int argc, char **argv)
 {
 	char *yes;
+	static char y[] = "y";
 	int n;
 
-	yes= argc == 1 ? "y" : argv[1];
+	yes= argc == 1 ? y : argv[1];
 
 	n= strlen(yes);
 		

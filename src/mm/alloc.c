@@ -13,7 +13,6 @@
  *   free_mem:	release a previously allocated chunk of memory
  *   mem_init:	initialize the tables when MM start up
  *   max_hole:	returns the largest hole currently available
- *   mem_left:	returns the sum of the sizes of all current holes
  */
 
 #include "mm.h"
@@ -244,22 +243,4 @@ phys_clicks *total, *free;		/* memory size summaries */
 	*total = mess.m1_i3;
 	*free += size;
   }
-}
-
-
-/*===========================================================================*
- *				mem_left				     *
- *===========================================================================*/
-PUBLIC phys_clicks mem_left()
-{
-/* Determine how much memory is left.  This procedure is called just after
- * initialization to find the original amount.
- */
-
-  register struct hole *hp;
-  phys_clicks tot;
-
-  for (hp = hole_head, tot = 0; hp != NIL_HOLE; hp = hp->h_next)
-	tot += hp->h_len;
-  return(tot);
 }

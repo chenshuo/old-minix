@@ -72,7 +72,7 @@ static struct hostent host;
 static char *host_aliases[MAXALIASES];
 static char hostbuf[BUFSIZ+1];
 static FILE *hostf = NULL;
-static char hostaddr[MAXADDRS];
+static u_long hostaddr[(MAXADDRS+sizeof(u_long)-1)/sizeof(u_long)];
 static char *host_addrs[2];
 static int stayopen = 0;
 
@@ -125,7 +125,7 @@ again:
 #if BSD >= 43 || defined(h_addr)	/* new-style hostent structure */
 	host.h_addr_list = host_addrs;
 #endif
-	host.h_addr = hostaddr;
+	host.h_addr = (char *) hostaddr;
 	*((u_long *)host.h_addr) = inet_addr(p);
 	host.h_length = sizeof (u_long);
 	host.h_addrtype = AF_INET;

@@ -7,9 +7,13 @@
  * 06/14/92 Tnet Release	Michael Temari, <temari@ix.netcom.com>
  * 01/15/96 0.30		Michael Temari, <temari@ix.netcom.com>
  * 01/25/96 0.90		Michael Temari, <temari@ix.netcom.com>
+ * 03/17/96 0.91		Michael Temari, <temari@ix.netcom.com>
+ * 06/27/96 0.92		Michael Temari, <temari@ix.netcom.com>
+ * 07/02/96 0.93		Michael Temari, <temari@ix.netcom.com>
+ * 07/15/96 0.94		Michael Temari, <temari@ix.netcom.com>
  */
 
-char *FtpdVersion = "0.90";
+char *FtpdVersion = "0.94";
 
 #include <sys/types.h>
 #include <signal.h>
@@ -45,11 +49,19 @@ int type, format, mode, structure;
 int ftpdata_fd = -1;
 int loggedin, gotuser, anonymous;
 char username[80];
+char anonpass[128];
+char newroot[128];
 
 ipaddr_t myipaddr, rmtipaddr, dataaddr;
 tcpport_t myport, rmtport, dataport;
 
 char myhostname[256], rmthostname[256];
+
+#define	FTPD_LOG	"/usr/adm/ftpd.log"
+
+FILE *logfile;
+
+int timeout = 0;
 
 _PROTOTYPE(static int doHELP, (char *buff));
 _PROTOTYPE(int readline, (char **args));
@@ -110,11 +122,14 @@ static void init()
    loggedin = 0;
    gotuser = 0;
    anonymous = 0;
+   newroot[0] = '\0';
    type = TYPE_A;
    format = 0;
    mode = 0;
    structure = 0;
    ftpdata_fd = -1;
+   username[0] = '\0';
+   anonpass[0] = '\0';
 }
 
 /* nothing, nada, zilch... */
@@ -163,7 +178,7 @@ char *space = "    ";
 static int doUNIMP(buff)
 char *buff;
 {
-   printf("502 Commands \"%s\" not implemented!\r\n", line);
+   printf("502 Command \"%s\" not implemented!\r\n", line);
 
    return(GOOD);
 }
@@ -213,9 +228,32 @@ char **args;
 void Timeout(sig)
 int sig;
 {
-   printf("421 Inactivity timer expired.\r\n");
+   timeout = 1;
 
-   exit(1);
+   printf("421 Inactivity timer expired.\r\n");
+}
+
+/* logit */
+void logit(type, parm)
+char *type;
+char *parm;
+{
+time_t now;
+struct tm *tm;
+
+   if(logfile == (FILE *)NULL)
+	return;
+
+   time(&now);
+   tm = localtime(&now);
+   fprintf(logfile, "%4d%02d%02d%02d%02d%02d ",
+	1900+tm->tm_year,
+	tm->tm_mon + 1,
+	tm->tm_mday,
+	tm->tm_hour, tm->tm_min, tm->tm_sec);
+   fprintf(logfile, "%s %s %s %s %s\n",
+	rmthostname, username, anonymous ? anonpass : username, type, parm);
+   fflush(logfile);
 }
 
 int main(argc, argv)
@@ -231,14 +269,23 @@ int s;
 
    GetNetInfo();
 
+   /* open transfer log file if it exists */
+   if((logfile = fopen(FTPD_LOG, "r")) != (FILE *)NULL) {
+	fclose(logfile);
+	logfile = fopen(FTPD_LOG, "a");
+   }
+
    /* Let's initialize some stuff */
    init();
+
+   /* Log the connection */
+   logit("CONNECT", "");
 
    /* Tell 'em we are ready */
    time(&now);
    tm = localtime(&now);
    printf("220 FTP service ready on %s at ", myhostname);
-   printf("%s, %d %s %d %02d:%02d:%02d %s\r\n", days[tm->tm_wday],
+   printf("%s, %02d %s %d %02d:%02d:%02d %s\r\n", days[tm->tm_wday],
 	tm->tm_mday, months[tm->tm_mon], 1900+tm->tm_year,
 	tm->tm_hour, tm->tm_min, tm->tm_sec,
 	tzname[tm->tm_isdst]);
@@ -249,8 +296,9 @@ int s;
 	signal(SIGALRM, Timeout);
 	alarm(INACTIVITY_TIMEOUT);
 	if(readline(&args) != GOOD) {
-		printf("221 Control connection closing (EOF).\r\n");
-		exit(1);
+		if(!timeout)
+			printf("221 Control connection closing (EOF).\r\n");
+		break;
 	}
 	alarm(0);
 	for(cmd = commands; *cmd->name != '\0'; cmd++)
@@ -264,6 +312,8 @@ int s;
 	}
 	fflush(stdout);
 	if(status != GOOD)
-		exit(1);
+		break;
    }
+
+   exit(1);
 }

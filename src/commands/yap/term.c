@@ -318,10 +318,10 @@ ini_terminal() {
 		}
 	}
 	if (UG > 0 || uflag) {
-		*US = 0;
-		*UE = 0;
+		US = "";
+		UE = "";
 	}
-	if (*US || uflag) *UC = 0;
+	if (*US || uflag) UC = "";
 	COLS = tgetnum("co");		/* columns on page */
 	i = tgetnum("li");		/* Lines on page */
 	AM = tgetflag("am");		/* terminal wraps automatically? */

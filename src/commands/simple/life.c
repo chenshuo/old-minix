@@ -1,4 +1,3 @@
-
 /* life - Conway's game of life		Author: Jim King */
 
 /* clife.c - curses life simulator.  Translated from Pascal to C implementing
@@ -12,12 +11,15 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <time.h>
-#include <stdlib.h>
-#include <sgtty.h>
-#include <unistd.h>
-#include <stdarg.h>
 #include <curses.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
+
+#if __minix_vmd		/* Use a more random rand(). */
+#define srand(seed)	srandom(seed)
+#define rand()		random()
+#endif
 
 /* A value of -1 will make it go forever */
 /* A value of 0 will make it exit immediately */
@@ -42,8 +44,6 @@ int live;			/* number of births this cycle */
 WINDOW *mns;			/* Main Screen */
 WINDOW *info;			/* Bottom line */
 
-struct sgttyb old_tty, new_tty;
-
 _PROTOTYPE(void cleanup, (int s));
 _PROTOTYPE(void initialize, (void));
 _PROTOTYPE(void makscr, (void));
@@ -59,7 +59,6 @@ int s;
   refresh();			/* update cursor */
 
   endwin();			/* shutdown curses */
-  ioctl(0, TIOCSETP, &old_tty);	/* restore terminal parameters */
   exit(1);			/* exit */
 }
 
@@ -67,16 +66,6 @@ int s;
 
 void initialize()
 {
-
-  /* Save old terminal parameters. */
-  ioctl(0, TIOCGETP, &old_tty);
-
-  /* Set tty to CBREAK mode */
-  ioctl(0, TIOCGETP, &new_tty);
-  new_tty.sg_flags |= CBREAK;
-  new_tty.sg_flags &= ~ECHO;
-  ioctl(0, TIOCSETP, &new_tty);
-
   srand(getpid());		/* init random seed */
   initscr();			/* init curses */
   noecho();

@@ -1,51 +1,75 @@
-/*
- * getpass - ask for a password
+/*	getpass() - read a password		Author: Kees J. Bot
+ *							Feb 16 1993
  */
-/* $Header: getpass.c,v 1.2 90/01/22 11:43:26 eck Exp $ */
+#define open _open
+#define sigaction _sigaction
+#define sigemptyset _sigemptyset
+#define tcgetattr _tcgetattr
+#define tcsetattr _tcsetattr
+#define write _write
+#define read _read
+#define close _close
+#include <sys/types.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <signal.h>
+#include <termios.h>
+#include <string.h>
 
-#include	<sys/types.h>
-#include	<signal.h>
-#include	<string.h>
-#include	<sgtty.h>
-#include	<fcntl.h>
+static int intr;
 
-_PROTOTYPE(char *getpass, (_CONST char *prompt ));
-
-#ifdef _ANSI
-int _open(const char *path, int flags);
-ssize_t _write(int d, const char *buf, size_t nbytes);
-ssize_t _read(int d, char *buf, size_t nbytes);
-int _close(int d);
-int _stty(int, struct sgttyb *);
-int _gtty(int, struct sgttyb *);
-void (*savesig)(int);
-#else
-void (*savesig)();
-#endif
-
-char *
-getpass(prompt)
-_CONST char *prompt;
+static void catch(int sig)
 {
-	int i = 0;
-	struct sgttyb tty, ttysave;
-	static char pwdbuf[9];
-	int fd;
+	intr= 1;
+}
 
-	if ((fd = _open("/dev/tty", O_RDONLY)) < 0) fd = 0;
-	savesig = signal(SIGINT, SIG_IGN);
-	_write(2, prompt, strlen(prompt));
-	_gtty(fd, &tty);
-	ttysave = tty;
-	tty.sg_flags &= ~ECHO;
-	_stty(fd, &tty);
-	i = _read(fd, pwdbuf, 9);
-	while (pwdbuf[i - 1] != '\n')
-		_read(fd, &pwdbuf[i - 1], 1);
-	pwdbuf[i - 1] = '\0';
-	_stty(fd, &ttysave);
-	_write(2, "\n", 1);
-	if (fd != 0) _close(fd);
-	signal(SIGINT, savesig);
-	return(pwdbuf);
+char *getpass(const char *prompt)
+{
+	struct sigaction osa, sa;
+	struct termios cooked, raw;
+	static char password[32+1];
+	int fd, n= 0;
+
+	/* Try to open the controlling terminal. */
+	if ((fd= open("/dev/tty", O_RDONLY)) < 0) return NULL;
+
+	/* Trap interrupts unless ignored. */
+	intr= 0;
+	sigaction(SIGINT, NULL, &osa);
+	if (osa.sa_handler != SIG_IGN) {
+		sigemptyset(&sa.sa_mask);
+		sa.sa_flags= 0;
+		sa.sa_handler= catch;
+		sigaction(SIGINT, &sa, &osa);
+	}
+
+	/* Set the terminal to non-echo mode. */
+	tcgetattr(fd, &cooked);
+	raw= cooked;
+	raw.c_iflag|= ICRNL;
+	raw.c_lflag&= ~ECHO;
+	raw.c_lflag|= ECHONL;
+	raw.c_oflag|= OPOST | ONLCR;
+	tcsetattr(fd, TCSANOW, &raw);
+
+	/* Print the prompt.  (After setting non-echo!) */
+	write(2, prompt, strlen(prompt));
+
+	/* Read the password, 32 characters max. */
+	while (read(fd, password+n, 1) > 0) {
+		if (password[n] == '\n') break;
+		if (n < 32) n++;
+	}
+	password[n]= 0;
+
+	/* Terminal back to cooked mode. */
+	tcsetattr(fd, TCSANOW, &cooked);
+
+	close(fd);
+
+	/* Interrupt? */
+	sigaction(SIGINT, &osa, NULL);
+	if (intr) raise(SIGINT);
+
+	return password;
 }

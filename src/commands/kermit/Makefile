@@ -8,7 +8,7 @@
 #
 CC=exec cc
 LNKFLAGS=-i
-CFLAGS=-DV7 -DMINIX -O -wa
+CFLAGS=-DV7 -DMINIX -D_MINIX -D_POSIX_SOURCE -O -wa
 #
 ###########################################################################
 #

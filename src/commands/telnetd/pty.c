@@ -71,6 +71,7 @@ char **tty_namep;
 
   sprintf(tty_name, "%s/tty%c%c", DEV_DIR,
   					i, (j < 10) ? j + '0' : j + 'a' - 10);
+
   *pty_fdp = pty_fd;
   *tty_namep = tty_name;
   return(0);

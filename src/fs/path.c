@@ -271,7 +271,7 @@ int flag;			/* LOOK_UP, ENTER, DELETE or IS_EMPTY */
 		if (flag != LOOK_UP) r = read_only(ldir_ptr);
 				     /* only a writable device is required. */
         }
-	else r = forbidden(ldir_ptr, bits, 0); /* check access permissions */
+	else r = forbidden(ldir_ptr, bits); /* check access permissions */
   }
   if (r != OK) return(r);
   

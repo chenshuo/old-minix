@@ -14,18 +14,18 @@ all:	$(PROG)
 
 $(PROG):	$(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)
-	install -S 8kw $@
-
-anonymous:
-	@setup.anonftp
+	install -S 4kw $@
 
 clean:
 	rm -f $(PROG) $(OBJS)
 
-install:	$(BINDIR)/$(PROG)
+install:	$(BINDIR)/$(PROG) $(BINDIR)/setup.anonftp
 
 $(BINDIR)/$(PROG):	$(PROG)
 	install -cs -o bin $? $@
+
+$(BINDIR)/setup.anonftp:	setup.anonftp
+	install -c -o bin $? $@
 
 ftpd.o:		ftpd.c   ftpd.h access.h file.h net.h
 access.o:	access.c ftpd.h access.h

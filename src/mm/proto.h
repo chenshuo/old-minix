@@ -17,7 +17,6 @@ _PROTOTYPE( int adjust, (struct mproc *rmp,
 _PROTOTYPE( int do_brk, (void)						);
 _PROTOTYPE( int size_ok, (int file_type, vir_clicks tc, vir_clicks dc,
 			vir_clicks sc, vir_clicks dvir, vir_clicks s_vir) );
-_PROTOTYPE( void stack_fault, (int proc_nr)				);
 
 /* exec.c */
 _PROTOTYPE( int do_exec, (void)						);
@@ -50,9 +49,6 @@ _PROTOTYPE( int do_alarm, (void)					);
 _PROTOTYPE( int do_kill, (void)						);
 _PROTOTYPE( int do_ksig, (void)						);
 _PROTOTYPE( int do_pause, (void)					);
-#if ENABLE_COMPAT
-_PROTOTYPE( int do_signal, (void)					);
-#endif
 _PROTOTYPE( int set_alarm, (int proc_nr, int sec)			);
 _PROTOTYPE( int check_sig, (pid_t proc_id, int signo)			);
 _PROTOTYPE( void sig_proc, (struct mproc *rmp, int sig_nr)		);
@@ -69,7 +65,6 @@ _PROTOTYPE( void stop_proc, (struct mproc *rmp, int sig_nr)		);
 
 /* utility.c */
 _PROTOTYPE( int allowed, (char *name_buf, struct stat *s_buf, int mask)	);
-_PROTOTYPE( struct mproc * find_proc, (int pid)				);
 _PROTOTYPE( int no_sys, (void)						);
 _PROTOTYPE( void panic, (char *format, int num)				);
 _PROTOTYPE( void tell_fs, (int what, int p1, int p2, int p3)		);

@@ -758,8 +758,10 @@ register char *expbuf;
 	cp++;			/* go to next source character */
 	return(expbuf);	/* we're done */
   }
-  if (*cp == '/')		/* start of regular-expression match */
+  if (*cp == '/' || *cp == '\\') { /* start of regular-expression match */
+	if (*cp == '\\') cp++;
 	return(recomp(expbuf, *cp++));	/* compile the RE */
+  }
 
   rcp = cp;
   lno = 0;			/* now handle a numeric address */
@@ -1207,6 +1209,7 @@ register char *ep;		/* regular expression element ptr */
 
 	    default:
 		fprintf(stderr, "sed: RE error, %o\n", *--ep);
+		quit(2);
 	}
 }
 
@@ -1214,17 +1217,23 @@ static int substitute(ipc)
 /* Perform s command */
 sedcmd *ipc;			/* ptr to s command struct */
 {
-  if (match(ipc->u.lhs, 0))	/* if no match */
+  int nullmatch;
+
+  if (match(ipc->u.lhs, 0)) {	/* if no match */
+	nullmatch = (loc1 == loc2);
 	dosub(ipc->rhs);	/* perform it once */
-  else
+  } else
 	return(FALSE);		/* command fails */
 
   if (ipc->flags.global)	/* if global flag enabled */
-	while (*loc2)		/* cycle through possibles */
-		if (match(ipc->u.lhs, 1))	/* found another */
+	while (*loc2) {		/* cycle through possibles */
+		if (nullmatch) loc2++;
+		if (match(ipc->u.lhs, 1)) {	/* found another */
+			nullmatch = (loc1 == loc2);
 			dosub(ipc->rhs);	/* so substitute */
-		else		/* otherwise, */
+		} else		/* otherwise, */
 			break;	/* we're done */
+	}
   return(TRUE);			/* we succeeded */
 }
 

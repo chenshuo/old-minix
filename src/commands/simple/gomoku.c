@@ -7,13 +7,10 @@
 */
 
 #include <sys/types.h>
+#include <curses.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <sgtty.h>
-#include <stdarg.h>
-#include <curses.h>
-#include <stdio.h>
 
 /* Size of the board */
 #define SIZE 19
@@ -51,8 +48,6 @@ int X, Y;			/* Move coordinates */
 char Command;			/* Command from keyboard */
 int AutoPlay = FALSE;		/* The program plays against itself */
 
-struct sgttyb old_tty, new_tty;
-
 _PROTOTYPE(void Initialize, (void));
 _PROTOTYPE(int Abort, (char *s));
 _PROTOTYPE(void WriteLetters, (void));
@@ -82,18 +77,9 @@ _PROTOTYPE(void PlayerMove, (void));
 _PROTOTYPE(void ProgramMove, (void));
 _PROTOTYPE(int main, (void));
 
-/* Get the termcap entry and set terminal to raw mode. */
+/* Set terminal to raw mode. */
 void Initialize()
 {
-  /* Save old terminal parameters. */
-  ioctl(0, TIOCGETP, &old_tty);
-
-  /* Set tty to CBREAK mode */
-  ioctl(0, TIOCGETP, &new_tty);
-  new_tty.sg_flags |= CBREAK;
-  new_tty.sg_flags &= ~ECHO;
-  ioctl(0, TIOCSETP, &new_tty);
-
   srand(getpid() + 13);		/* Initialize the random seed with our pid */
   initscr();
   raw();
@@ -108,7 +94,6 @@ char *s;
   move(LINES - 1, 0);
   refresh();
   endwin();
-  ioctl(0, TIOCSETP, &old_tty);	/* restore terminal parameters */
   exit(0);
 }
 
@@ -587,7 +572,8 @@ char *Command;
 	refresh();
 	*Command = GetChar();	/* Read from keyboard */
 	switch (*Command) {
-	    case '\r':		/* '\r' or space means place a */
+	    case '\n':		/* '\n', '\r' or space means place a */
+	    case '\r':
 	    case ' ':
 		*Command = 'E';
 		break;		/* stone at the cursor position  */

@@ -7,7 +7,7 @@
  * cannot be recovered after its directory slot has been reused.
  *
  * Usage:
- *	recovery file ...
+ *	recover file ...
  *
  * Note: the file names must be fully explicit; wild cards are not allowed.
  * It is not possible, for example, to say recover *.c.  All the files must
@@ -17,11 +17,18 @@
  * last two characters, in fact, play no role in locating the file.
  */
 
+#include <sys/types.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
+#include <signal.h>
+#include <unistd.h>
+#include <sys/wait.h>
 #include <minix/minlib.h>
 
 _PROTOTYPE(int main, (int argc, char **argv));
+_PROTOTYPE(void recover, (char *file));
+_PROTOTYPE(void fatal, (char *file));
 _PROTOTYPE(void usage, (void));
 
 int main(argc, argv)
@@ -29,18 +36,50 @@ int argc;
 char *argv[];
 {
   int i;
-  char buf[1024];
 
   if (argc == 1) usage();
 
-  for (i = 1; i < argc; i++) {
-	strcpy(buf, "de -r ");
-	strcat(buf, argv[i]);
-	system(buf);
-  }
+  for (i = 1; i < argc; i++) recover(argv[i]);
   return(0);
 }
 
+void recover(file)
+char *file;
+{
+  pid_t pid;
+  int r, status;
+
+  switch ((pid = fork())) {
+  case -1:
+	fatal("fork()");
+  case 0:
+	signal(SIGHUP, SIG_IGN);
+	signal(SIGINT, SIG_IGN);
+	signal(SIGQUIT, SIG_IGN);
+	signal(SIGTERM, SIG_IGN);
+
+	execl("/usr/bin/de", "de", "-r", file, (char *) NULL);
+	fatal("/usr/bin/de");
+  default:
+	while (waitpid(pid, &status, 0) < 0) {
+		if (errno != EINTR) fatal("waitpid()");
+	}
+	if (status != 0) exit(1);
+  }
+}
+
+void fatal(label)
+char *label;
+{
+  int err= errno;
+
+  std_err("recover: ");
+  std_err(label);
+  std_err(": ");
+  std_err(strerror(err));
+  std_err("\n");
+  exit(1);
+}
 
 void usage()
 {

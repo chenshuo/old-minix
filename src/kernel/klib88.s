@@ -11,7 +11,6 @@
 .define	_monitor	! exit Minix and return to the monitor
 .define real2prot	! switch from real to protected mode
 .define prot2real	! switch from protected to real mode
-.define	_build_sig	! build 4 word structure pushed onto stack for signals
 .define	_check_mem	! check a block of memory, return the valid size
 .define	_cp_mess	! copies messages from source to destination
 .define	_exit		! dummy for library routines
@@ -38,7 +37,7 @@
 .define	_level0		! call a function at level 0
 .define	klib_init_prot	! initialize klib functions for protected mode
 
-! The routines only guarantee to preserve the registers the 'C' compiler
+! The routines only guarantee to preserve the registers the C compiler
 ! expects to be preserved (si, di, bp, sp, segment registers, and direction
 ! bit in the flags), though some of the older ones preserve bx, cx and dx.
 
@@ -124,9 +123,9 @@ p_bios13:
 	movb	ah, al
 	inb	INT_CTLMASK
 	push	ax			! save interrupt masks
-	mov	ax, _irq_use		! map of in-use IRQ`s
+	mov	ax, _irq_use		! map of in-use IRQs
 	and	ax, #~[1<<CLOCK_IRQ]	! there is a special clock handler
-	outb	INT_CTLMASK		! enable all unused IRQ`s and vv.
+	outb	INT_CTLMASK		! enable all unused IRQs and vv.
 	movb	al, ah
 	outb	INT2_CTLMASK
 
@@ -265,48 +264,17 @@ gate_A20:
 	call	kb_wait
 	movb	al, ah		! Enable or disable code
 	outb	0x60
-	!call	kb_wait
-	!ret
+	call	kb_wait
+	mov	ax, #25		! 25 microsec delay for slow keyboard chip
+0:	out	0xED		! Write to an unused port (1us)
+	dec	ax
+	jne	0b
+	ret
 kb_wait:
 	inb	0x64
 	testb	al, #0x02	! Keyboard input buffer full?
 	jnz	kb_wait		! If so, wait
 	ret
-
-
-!*===========================================================================*
-!*				build_sig				     *
-!*===========================================================================*
-! PUBLIC void build_sig(char *sig_stuff, struct proc *rp, int sig)
-! Build a structure that is pushed onto the stack for signals.  It contains
-! pc, psw, etc., and is machine dependent. The format is the same as generated
-! by hardware interrupts, except that after the "interrupt", the signal number
-! is also pushed.  The signal processing routine within the user space first
-! pops the signal number, to see which function to call.  Then it calls the
-! function.  Finally, when the function returns to the low-level signal
-! handling routine, control is passed back to where it was prior to the signal
-! by executing a return-from-interrupt instruction, hence the need for using
-! the hardware generated interrupt format on the stack.
-
-_build_sig:
-	push bp			! save bp
-	mov bp,sp		! set bp to sp for accessing params
-	push bx			! save bx
-	push si			! save si
-	mov bx,4(bp)		! bx points to sig_stuff
-	mov si,6(bp)		! si points to proc table entry
-	mov ax,8(bp)		! ax = signal number
-	mov (bx),ax		! put signal number in sig_stuff
-	mov ax,PCREG(si)	! ax = signalled process' PC
-	mov 2(bx),ax		! put pc in sig_stuff
-	mov ax,CSREG(si)	! ax = signalled process' cs
-	mov 4(bx),ax		! put cs in sig_stuff
-	mov ax,PSWREG(si)	! ax = signalled process' PSW
-	mov 6(bx),ax		! put psw in sig_stuff
-	pop si			! restore si
-	pop bx			! restore bx
-	pop bp			! restore bp
-	ret			! return to caller
 
 
 !*===========================================================================*
@@ -337,7 +305,7 @@ _check_mem:
 
 	sub	ax,ax		! prepare for early exit
 	test	dx,#0xFF00
-	jnz	cm_1exit	! can't handle bases above 16M
+	jnz	cm_1exit	! cannot handle bases above 16M
 	movb	cl,ch		! divide size by 256 and discard high byte
 	movb	ch,dl
 	push	cx		! save divided size
@@ -382,7 +350,7 @@ cm_1exit:
 ! space to anywhere else.  It also copies the source address provided as a
 ! parameter to the call into the first word of the destination message.
 !
-! Note that the message size, 'Msize' is in WORDS (not bytes) and must be set
+! Note that the message size, "Msize" is in WORDS (not bytes) and must be set
 ! correctly.  Changing the definition of message in the type file and not
 ! changing it here will lead to total disaster.
 
@@ -390,7 +358,7 @@ _cp_mess:
 	cld
 	push es			! save es
 	push ds			! save ds
-	mov bx,sp		! index off bx because machine can't use sp
+	mov bx,sp		! index off bx because machine cannot use sp
 	push si			! save si
 	push di			! save di
 
@@ -405,8 +373,8 @@ _cp_mess:
 	mov	es,ax
 	mov	di,14(bx)	! offset of destination message
 
-! Be careful not to destroy ds before we're finished with the bx pointer.
-! We're using bx and not the more natural bp to save pushing bp.
+! Be careful not to destroy ds before we are finished with the bx pointer.
+! We are using bx and not the more natural bp to save pushing bp.
 
 	mov	ax,6(bx)	! process number of sender
 	mov	si,10(bx)	! offset of source message
@@ -416,16 +384,16 @@ _cp_mess:
 #endif
 	mov	ds,bx
 
-	stos			! copy sender's process number to dest message
-	add si,*2		! don't copy first word
-	mov cx,*Msize-1		! remember, first word doesn't count
+	stos			! copy process number of sender to dest message
+	add si,*2		! do not copy first word
+	mov cx,*Msize-1		! remember, first word does not count
 	rep			! iterate cx times to copy 11 words
 	movs			! copy the message
 	pop di			! restore di
 	pop si			! restore si
 	pop ds			! restore ds
 	pop es			! restore es
-	ret			! that's all folks!
+	ret			! that is all folks!
 
 
 !*===========================================================================*
@@ -763,7 +731,7 @@ _phys_copy:
 	mov	ax,COUNTLO(bp)	! dx:ax = remaining count
 	mov	dx,COUNTHI(bp)
 
-! copy upwards (can't handle overlapped copy)
+! copy upwards (cannot handle overlapped copy)
 
 pc_loop:
 	mov	cx,ax		! provisional count for this iteration
@@ -775,7 +743,7 @@ pc_bigcount:
 	mov	cx,#0x8000	! use maximum count per iteration
 pc_upcount:
 	sub	ax,cx		! update count
-	sbb	dx,#0		! can't underflow, so carry clear now for rcr
+	sbb	dx,#0		! cannot underflow, so carry clear now for rcr
 	rcr	cx,#1		! count in words, carry remembers if byte
 	jnb	pc_even		! no odd byte
 	movb			! copy odd byte
@@ -795,7 +763,7 @@ pc_even:
 	ret			! return to caller
 
 pc_more:
-	sub	si,#0x8000	! adjust pointers so the offset doesn't
+	sub	si,#0x8000	! adjust pointers so the offset does not
 	mov	cx,ds		! overflow in the next 0x8000 bytes
 	add	cx,#0x800	! pointers end up same physical location
 	mov	ds,cx		! the current offsets are known >= 0x8000
@@ -990,7 +958,7 @@ _level0:
 ! PUBLIC void klib_init_prot();
 ! Initialize klib for protected mode by patching some real mode functions
 ! at their starts to jump to their protected mode equivalents, according to
-! the patch table.  Saves a lot of tests on the 'protected_mode' variable.
+! the patch table.  Saves a lot of tests on the "protected_mode" variable.
 ! Note that this function must be run in real mode, for it writes the code
 ! segment.  (One otherwise has to set up a descriptor, etc, etc.)
 
@@ -1054,7 +1022,7 @@ p_cp_mess:
 	mov	ax,#ES_286_SELECTOR
 	mov	es,ax
 
-  eseg	mov	0,bx		! sender's proc no. from arg, not msg
+  eseg	mov	0,bx		! proc no. of sender from arg, not msg
 	mov	ax,si
 	mov	bx,di
 	mov	si,#2		! src offset is now 2 relative to start of seg
@@ -1145,7 +1113,6 @@ ppc_next:
 	pop	di
 	jmp	(dx)
 
-
 !*===========================================================================*
 !*				p_reset					     *
 !*===========================================================================*
@@ -1153,7 +1120,7 @@ ppc_next:
 
 p_reset:
 	lidt	idt_zero
-	int	3			! anything goes, the 286 won`t like it
+	int	3		! anything goes, the 286 will not like it
 
 
 !*===========================================================================*

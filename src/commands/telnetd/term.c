@@ -45,7 +45,7 @@ static int io_done = 0;
 void term_inout(pty_fd)
 int pty_fd;
 {
-register int i, l;
+register int i;
 pid_t pid;
 struct sigaction sa;
 

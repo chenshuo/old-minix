@@ -82,19 +82,19 @@ char *argv[];
 void test39a()
 {				/* Test normal operation. */
   subtest = 1;
-  System("/bin/rm -rf ../DIR_39/*");
+  System("rm -rf ../DIR_39/*");
 }
 
 void test39b()
 {
   subtest = 2;
-  System("/bin/rm -rf ../DIR_39/*");
+  System("rm -rf ../DIR_39/*");
 }
 
 void test39c()
 {
   subtest = 3;
-  System("/bin/rm -rf ../DIR_39/*");
+  System("rm -rf ../DIR_39/*");
 }
 
 /* Open fds 3, 4, 5 and 6. Set FD_CLOEXEC on 5 and 6. Exclusively lock the

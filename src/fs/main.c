@@ -272,6 +272,11 @@ PRIVATE void load_ram()
   if (sendrec(MM_PROC_NR, &m1) != OK)
 	panic("FS can't sync up with MM", NO_NUM);
 
+#if ENABLE_CACHE2
+  /* The RAM disk is a second level block cache while not otherwise used. */
+  init_cache2(ram_size);
+#endif
+
   /* If the root device is not the RAM disk, it doesn't need loading. */
   if (ROOT_DEV != DEV_RAM) return;
 
@@ -288,8 +293,8 @@ PRIVATE void load_ram()
 	bp1 = get_block(ROOT_DEV, b, NO_READ);
 	memcpy(bp1->b_data, bp->b_data, (size_t) BLOCK_SIZE);
 	bp1->b_dirt = DIRTY;
-	put_block(bp, I_MAP_BLOCK);
-	put_block(bp1, I_MAP_BLOCK);
+	put_block(bp, FULL_DATA_BLOCK);
+	put_block(bp1, FULL_DATA_BLOCK);
 	k_loaded = ( (long) b * BLOCK_SIZE)/1024L;	/* K loaded so far */
 	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b\b%5ldK ", k_loaded);
   }
@@ -343,8 +348,6 @@ dev_t super_dev;			/* place to get superblock from */
   dup_inode(rip);
   sp->s_isup = rip;
   sp->s_rd_only = 0;
-  if (load_bit_maps(super_dev) != OK)
-	panic("init: can't load root bit maps", NO_NUM);
   return;
 }
 

@@ -1,58 +1,76 @@
 #include <curses.h>
 #include "curspriv.h"
 
+_PROTOTYPE( static void ttysetflags, (void) );
+
+static void ttysetflags()
+{
+  _tty.c_iflag |= ICRNL | IXON;
+  _tty.c_oflag |= OPOST | ONLCR;
+  _tty.c_lflag |= ECHO | ICANON | IEXTEN | ISIG;
+
+  if (_cursvar.rawmode) {
+	_tty.c_iflag &= ~(ICRNL | IXON);
+	_tty.c_oflag &= ~(OPOST);
+	_tty.c_lflag &= ~(ICANON | IEXTEN | ISIG);
+  }
+  if (_cursvar.cbrkmode) {
+	_tty.c_lflag &= ~(ICANON);
+  }
+  if (!_cursvar.echoit) {
+	_tty.c_lflag &= ~(ECHO | ECHONL);
+  }
+  if (NONL) {
+	_tty.c_iflag &= ~(ICRNL);
+	_tty.c_oflag &= ~(ONLCR);
+  }
+  tcsetattr(0, TCSANOW, &_tty);
+}				/* ttysetflags */
+
 void raw()
 {
   _cursvar.rawmode = TRUE;
-  _tty.sg_flags |= RAW;
-  stty(0, &_tty);
+  ttysetflags();
 }				/* raw */
 
 void noraw()
 {
   _cursvar.rawmode = FALSE;
-  _tty.sg_flags &= ~RAW;
-  stty(0, &_tty);
+  ttysetflags();
 }				/* noraw */
 
 void echo()
 {
   _cursvar.echoit = TRUE;
-  _tty.sg_flags |= ECHO;
-  stty(0, &_tty);
+  ttysetflags();
 }
 
 void noecho()
 {
   _cursvar.echoit = FALSE;
-  _tty.sg_flags &= ~ECHO;
-  stty(0, &_tty);
+  ttysetflags();
 }
 
 void nl()
 {
-  _tty.sg_flags |= CRMOD;
   NONL = FALSE;
-  stty(0, &_tty);
+  ttysetflags();
 }				/* nl */
 
 void nonl()
 {
-  _tty.sg_flags &= ~CRMOD;
   NONL = TRUE;
-  stty(0, &_tty);
+  ttysetflags();
 }				/* nonl */
 
 void cbreak()
 {
-  _tty.sg_flags |= CBREAK;
-  _cursvar.rawmode = TRUE;
-  stty(0, &_tty);
+  _cursvar.cbrkmode = TRUE;
+  ttysetflags();
 }				/* cbreak */
 
 void nocbreak()
 {
-  _tty.sg_flags &= ~CBREAK;
-  _cursvar.rawmode = FALSE;
-  stty(0, &_tty);
+  _cursvar.cbrkmode = FALSE;
+  ttysetflags();
 }				/* nocbreak */

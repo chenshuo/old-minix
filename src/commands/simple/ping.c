@@ -76,7 +76,7 @@ char *argv[];
 		length= strtol (argv[2], (char **)0, 0);
 		if (length< sizeof(icmp_hdr_t) + IP_MIN_HDR_SIZE)
 		{
-			fprintf(stderr, "%s: lenght too small (%s)\n",
+			fprintf(stderr, "%s: length too small (%s)\n",
 				argv[0], argv[2]);
 			exit(1);
 		}
@@ -133,7 +133,7 @@ char *argv[];
 	}
 	if (i >= 20)
 	{
-		printf("no anwer from %s\n", argv[1]);
+		printf("no answer from %s\n", argv[1]);
 		exit(1);
 	}
 	if (result<0)

@@ -90,8 +90,8 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 	hp->dh_flag2= 0;
 	hp->dh_flag1 |= (op << 3) & DHF_OPCODE;
 	hp->dh_flag2 |= ((_res.options & RES_PRIMARY) != 0 ? 1 : 0) << 6;
-	hp->dh_flag1 = (_res.options & RES_RECURSE) != 0 ? 1 : 0;
-	hp->dh_flag2 = NOERROR & DHF_RCODE;
+	hp->dh_flag1 |= (_res.options & RES_RECURSE) != 0 ? 1 : 0;
+	hp->dh_flag2 |= NOERROR & DHF_RCODE;
 	cp = buf + sizeof(dns_hdr_t);
 	buflen -= sizeof(dns_hdr_t);
 	dpp = dnptrs;

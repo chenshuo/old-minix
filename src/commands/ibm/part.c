@@ -1,4 +1,4 @@
-/*	part 1.41 - Partition table editor		Author: Kees J. Bot
+/*	part 1.43 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 20k heap+stack.
  */
@@ -23,11 +23,7 @@
 #include <minix/const.h>
 #include <minix/partition.h>
 #include <ibm/partition.h>
-#if __minix_vmd
 #include <termios.h>
-#else
-#include <sgtty.h>
-#endif
 
 #if !__minix_vmd
 #define div64u(i, j)	((i) / (j))
@@ -63,49 +59,29 @@ void fatal(const char *label)
 	exit(1);
 }
 
-#if __minix_vmd
 struct termios termios;
-#else
-struct sgttyb ttyb;
-#endif
 
 void save_ttyflags(void)
 /* Save tty attributes for later restoration. */
 {
-#if __minix_vmd
 	if (tcgetattr(0, &termios) < 0) fatal("");
-#else
-	if (ioctl(0, TIOCGETP, &ttyb) < 0) fatal("");
-#endif
 }
 
 void restore_ttyflags(void)
 /* Reset the tty flags to how we got 'em. */
 {
-#if __minix_vmd
 	if (tcsetattr(0, TCSANOW, &termios) < 0) fatal("");
-#else
-	if (ioctl(0, TIOCSETP, &ttyb) < 0) fatal("");
-#endif
 }
 
 void tty_raw(void)
 /* Set the terminal to raw mode, no signals, no echoing. */
 {
-#if __minix_vmd
 	struct termios rawterm;
 
 	rawterm= termios;
 	rawterm.c_lflag &= ~(ICANON|ISIG|ECHO);
 	rawterm.c_iflag &= ~(ICRNL);
 	if (tcsetattr(0, TCSANOW, &rawterm) < 0) fatal("");
-#else
-	struct sgttyb rawttyb;
-
-	rawttyb= ttyb;
-	rawttyb.sg_flags= (rawttyb.sg_flags | RAW) & ~ECHO;
-	if (ioctl(0, TIOCSETP, &rawttyb) < 0) fatal("");
-#endif
 }
 
 #define ctrl(c)		((c) == '?' ? '\177' : ((c) & '\37'))
@@ -326,7 +302,7 @@ void getdevices(void)
 }
 
 /* One featureful master bootstrap. */
-char bootstrap[] = {
+unsigned char bootstrap[] = {
 0353,0001,0000,0061,0300,0216,0330,0216,0300,0372,0216,0320,0274,0000,0174,0373,
 0275,0276,0007,0211,0346,0126,0277,0000,0006,0271,0000,0001,0374,0363,0245,0352,
 0044,0006,0000,0000,0264,0002,0315,0026,0250,0010,0164,0033,0350,0071,0001,0174,
@@ -365,6 +341,7 @@ unsigned long offset= 0, extbase= 0, extsize;
 int submerged= 0;
 char sort_index[1 + NR_PARTITIONS];
 unsigned cylinders= 1, heads= 1, sectors= 1, secpcyl= 1;
+unsigned alt_cyls= 1, alt_heads= 1, alt_secs= 1;
 int precise= 0;
 int device= -1;
 
@@ -394,15 +371,15 @@ void sort(void)
 	for (i= 1; i <= NR_PARTITIONS; i++) sort_index[idx[i]]= i;
 }
 
-void dos2chs(unsigned char *dos, unsigned *ac, unsigned *ah, unsigned *as)
+void dos2chs(unsigned char *dos, unsigned *chs)
 /* Extract cylinder, head and sector from the three bytes DOS uses to address
  * a sector.  Note that bits 8 & 9 of the cylinder number come from bit 6 & 7
- * of the sector byte.  The caller must know that sector numbers start at 1.
+ * of the sector byte.  The sector number is rebased to count from 0.
  */
 {
-	*ac= ((dos[1] & 0xC0) << 2) | dos[2];
-	*ah= dos[0];
-	*as= dos[1] & 0x3F;
+	chs[0]= ((dos[1] & 0xC0) << 2) | dos[2];
+	chs[1]= dos[0];
+	chs[2]= (dos[1] & 0x3F) - 1;
 }
 
 void abs2dos(unsigned char *dos, unsigned long pos)
@@ -434,18 +411,62 @@ void recompute0(void)
 	secpcyl= heads * sectors;
 }
 
-void geometry(void)
-/* Find out the geometry of the device.  This is no problem for the non-auto
- * floppy drives, except that you need a patch to kernel/floppy.c to use the
- * partitions.  The hard disk geometry may be obtained from the driver if
- * you've installed a patch so that it reports its geometry.  If all fails
- * then the number of cylinders, heads, and sectors per track is guessed by
- * using the maxima found in the partition table.
+void guess_geometry(void)
+/* With a bit of work one can deduce the disk geometry from the partition
+ * table.  This may be necessary if the driver gets it wrong.  (If partition
+ * tables didn't have C/H/S numbers we would not care at all...)
  */
 {
-				/* pc  at  qd  ps pat  qh  PS */
-	static char fl_cyls[]=   { 40, 80, 40, 80, 40, 80, 80 };
-	static char fl_secs[]=   {  9, 15,  9,  9,  9,  9, 18 };
+	int n;
+	struct part_entry *pe;
+	unsigned chs[3];
+	unsigned long sec;
+	unsigned CHS[3], h, s, t;
+
+	alt_cyls= alt_heads= alt_secs= 0;
+
+	for (pe= table+1; pe <= table+NR_PARTITIONS; pe++) {
+		if (pe->sysind == NO_PART) continue;
+
+		/* Use the "end sector" numbers. */
+		dos2chs(&pe->last_head, chs);
+		sec= pe->lowsec + pe->size - 1;
+
+		if (chs[0] >= alt_cyls) alt_cyls= chs[0]+1;
+
+		if (chs[0] == 0 && chs[1] == 0) continue;
+		if (chs[2] > sec) continue;
+		sec -= chs[2];
+
+		/* See if there is one CHS geometry that matches. */
+		n = 0;
+		for (s= 1; s <= 63; s++) {
+			if (sec % s != 0) continue;
+			t= sec / s;
+			if (t < chs[1]) continue;
+			t= t - chs[1];
+			if (t % chs[0] != 0) continue;
+			h= t / chs[0];
+			if (h < 1 || h > 255) continue;
+			n++;
+			CHS[1]= h; CHS[2]= s;
+		}
+		if (n == 1) {
+			/* Got a good geometry! */
+			alt_heads= CHS[1];
+			alt_secs= CHS[2];
+		}
+	}
+}
+
+void geometry(void)
+/* Find out the geometry of the device by querying the driver, or by looking
+ * at the partition table.  These numbers are crosschecked to make sure that
+ * the geometry is correct.  Master bootstraps other than the Minix one use
+ * the CHS numbers in the partition table to load the bootstrap of the active
+ * partition.
+ */
+{
 	struct stat dst;
 	int err= 0;
 	struct partition geometry;
@@ -460,19 +481,12 @@ void geometry(void)
 	recompute0();
 	if (device < 0) return;
 
+	/* Try to guess the geometry from the partition table. */
+	guess_geometry();
+
+	/* Try to get the geometry from the driver. */
 	(void) fstat(device, &dst);
 
-	if (S_ISBLK(dst.st_mode)
-		&& DEV_FD0 + 4 <= dst.st_rdev
-		&& dst.st_rdev <= DEV_FD0 + 4 + (7<<2)
-	) {
-		/* Non-auto floppy device, geometry is well known. */
-		int density= (minor(dst.st_rdev) >> 2) - 1;
-
-		cylinders= fl_cyls[density];
-		heads= 2;
-		sectors= fl_secs[density];
-	} else
 	if (S_ISBLK(dst.st_mode) || S_ISCHR(dst.st_mode)) {
 		/* Try to get the drive's geometry from the driver. */
 
@@ -486,27 +500,24 @@ void geometry(void)
 			sectors= geometry.sectors;
 			precise= 1;
 		}
-	} else
+	} else {
 		err= ENODEV;
+	}
 
 	if (err != 0) {
-		/* Use the maximum cylinder, head and sector numbers in the
-		 * partition table as the geometry of the device.
+		/* Getting the geometry from the driver failed, so use the
+		 * alternate geometry.
 		 */
-		unsigned c, h, s;
-		int i;
-
-		cylinders= 1;
-
-		for (i= 1; i <= NR_PARTITIONS; i++) {
-			if (table[i].sysind == NO_PART) continue;
-			dos2chs(&table[i].last_head, &c, &h, &s);
-			c++; h++;
-
-			if (c > cylinders) cylinders= c;
-			if (h > heads) heads= h;
-			if (s > sectors) sectors= s;
+		if (alt_heads == 0) {
+			alt_cyls= table[0].size / (64 * 32);
+			alt_heads= 64;
+			alt_secs= 32;
 		}
+
+		cylinders= alt_cyls;
+		heads= alt_heads;
+		sectors= alt_secs;
+
 		stat_start(1);
 		printf("Failure to get the geometry of %s: %s", curdev->name,
 			errno == ENOTTY ? "No driver support" : strerror(err));
@@ -515,6 +526,36 @@ void geometry(void)
 		printf("The geometry has been guessed as %ux%ux%u",
 						cylinders, heads, sectors);
 		stat_end(5);
+	} else {
+		if (alt_heads == 0) {
+			alt_cyls= cylinders;
+			alt_heads= heads;
+			alt_secs= sectors;
+		}
+
+		if (heads != alt_heads || sectors != alt_secs) {
+			stat_start(1);
+			printf("WARNING:");
+			stat_end(10);
+			stat_start(0);
+			printf(
+"The %ux%ux%u geometry obtained from the device driver does not match",
+				cylinders, heads, sectors);
+			stat_end(10);
+			stat_start(0);
+			printf(
+"the %ux%ux%u geometry implied by the partition table.  Hit 'X' to switch",
+				alt_cyls, alt_heads, alt_secs);
+			stat_end(10);
+			stat_start(0);
+			printf(
+"between the two geometries to see what is best.  Note that the geometry");
+			stat_end(10);
+			stat_start(0);
+			printf(
+"must be correct when the table is written or the system may not boot!");
+			stat_end(10);
+		}
 	}
 
 	/* Show the base and size of the device instead of the whole drive.
@@ -543,7 +584,7 @@ indicators_t ind_table[]= {
 	{ 0x04,		"DOS-16"	},
 	{ 0x05,		"DOS-EXT"	},
 	{ 0x06,		"DOS-BIG"	},
-	{ 0x07,		"HPFS"		},
+	{ 0x07,		"HPFS/NTFS"	},
 	{ 0x08,		"AIX"		},
 	{ 0x09,		"COHERENT"	},
 	{ 0x0A,		"OS/2"		},
@@ -933,6 +974,19 @@ void m_redraw(int ev, object_t *op)
 	for (op2= world; op2 != nil; op2= op2->next) op2->value[0]= 0;
 }
 
+void m_toggle(int ev, object_t *op)
+/* Toggle between the driver and alternate geometry. */
+{
+	unsigned t;
+
+	if (ev != 'X') return;
+
+	t= cylinders; cylinders= alt_cyls; alt_cyls= t;
+	t= heads; heads= alt_heads; alt_heads= t;
+	t= sectors; sectors= alt_secs; alt_secs= t;
+	recompute0();
+}
+
 char size_last[]= "Size";
 
 void m_orientation(int ev, object_t *op)
@@ -1007,7 +1061,6 @@ void m_updown(int ev, object_t *op)
 	int i, j;
 	struct part_entry tmp;
 	int tmpx;
-	object_t *op2;
 
 	if (ev != ctrl('K') && ev != ctrl('J')) return;
 	if (op->entry == nil) return;
@@ -1031,7 +1084,8 @@ void m_updown(int ev, object_t *op)
 void m_enter(int ev, object_t *op)
 /* We've moved onto this object. */
 {
-	if (ev != E_ENTER && ev != ' ' && ev != '<' && ev != '>') return;
+	if (ev != E_ENTER && ev != ' ' && ev != '<' && ev != '>' && ev != 'X')
+		return;
 	curobj= op;
 	typing= 0;
 	magic= 0;
@@ -1719,7 +1773,7 @@ void m_dump(int ev, object_t *op)
 {
 	struct part_entry table[NR_PARTITIONS], *pe;
 	int i;
-	unsigned c, h, s;
+	unsigned chs[3];
 
 	if (ev != 'p' || device < 0) return;
 
@@ -1728,15 +1782,15 @@ void m_dump(int ev, object_t *op)
 	for (i= 0; i < NR_PARTITIONS; i++) {
 		pe= &table[i];
 		stat_start(0);
-		dos2chs(&pe->start_head, &c, &h, &s);
-		printf("%2d%c      %02X%15u%5u%4u",
+		dos2chs(&pe->start_head, chs);
+		printf("%2d%c      %02X%15d%5d%4d",
 			i+1,
 			pe->bootind & ACTIVE_FLAG ? '*' : ' ',
 			pe->sysind,
-			c, h, s);
-		dos2chs(&pe->last_head, &c, &h, &s);
-		printf("%6u%5u%4u%10lu%10ld%9lu",
-			c, h, s,
+			chs[0], chs[1], chs[2]);
+		dos2chs(&pe->last_head, chs);
+		printf("%6d%5d%4d%10lu%10ld%9lu",
+			chs[0], chs[1], chs[2],
 			pe->lowsec,
 			howend == SIZE ? pe->size : pe->size + pe->lowsec - 1,
 			pe->size / 2);
@@ -1831,6 +1885,7 @@ void event(int ev, object_t *op)
 {
 	m_help(ev, op);
 	m_redraw(ev, op);
+	m_toggle(ev, op);
 	m_orientation(ev, op);
 	m_move(ev, op);
 	m_updown(ev, op);

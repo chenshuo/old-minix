@@ -196,6 +196,12 @@ typedef  unsigned int Word_t;		/*  What it should always be */
 typedef  int Word_t;			/*  Unsigned promotion under ANSI C */
 #endif
 
+#ifndef I_MAP_SLOTS
+/* Max number of inode and zone map blocks we can handle. */
+#define I_MAP_SLOTS	8
+#define Z_MAP_SLOTS	(sizeof(char *) == 2 ? 16 : 128)
+#endif
+
 typedef  struct  de_state		/*  State of disk ed.	*/
   {
   /*  Information from super block  */

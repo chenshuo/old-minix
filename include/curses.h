@@ -1,17 +1,26 @@
 /* curses.h - defines macros and prototypes for curses */
 
-#ifndef CURSES_H
+#ifndef _CURSES_H
+#define _CURSES_H
 
-#include <sgtty.h>
+#include <termios.h>
 #include <stdarg.h>
 #include <stdio.h>
 
 typedef int bool;
 
+#ifndef TRUE
 #define TRUE 1
+#endif
+#ifndef FALSE
 #define FALSE 0
-#define ERR 1		/* general error flag */
+#endif
+#ifndef ERR
+#define ERR (-1)	/* general error flag */
+#endif
+#ifndef OK
 #define OK 0		/* general OK flag */
+#endif
 
 /* Macros. */
 #define box(win,vc,hc) wbox(win,0,0,0,0,vc,hc)
@@ -51,16 +60,16 @@ typedef int bool;
 #define mvdelch(y,x) (wmove(stdscr,y,x)==ERR?ERR:wdelch(stdscr))
 #define mvwdelch(win,y,x) (wmove(win,y,x)==ERR?ERR:wdelch(win))
 #define standout() wstandout(stdscr)
-#define wstandout(win) (win)->_attrs |= A_STANDOUT
+#define wstandout(win) ((win)->_attrs |= A_STANDOUT)
 #define standend() wstandend(stdscr)
-#define wstandend(win) (win)->_attrs &= ~A_STANDOUT
+#define wstandend(win) ((win)->_attrs &= ~A_STANDOUT)
 #define attrset(attrs) wattrset(stdscr, attrs)
-#define wattrset(win, attrs) (win)->_attrs = (attrs)
+#define wattrset(win, attrs) ((win)->_attrs = (attrs))
 #define attron(attrs) wattron(stdscr, attrs)
-#define wattron(win, attrs) (win)->_attrs |= (attrs)
+#define wattron(win, attrs) ((win)->_attrs |= (attrs))
 #define attroff(attrs) wattroff(stdscr,attrs)
-#define wattroff(win, attrs) (win)->_attrs &= ~(attrs)
-#define resetty() stty(1, &_orig_tty)
+#define wattroff(win, attrs) ((win)->_attrs &= ~(attrs))
+#define resetty() tcsetattr(1, TCSANOW, &_orig_tty)
 #define getyx(win,y,x) (y = (win)->_cury, x = (win)->_curx)
 
 /* Video attribute definitions. */
@@ -103,7 +112,7 @@ extern int COLS;			/* terminal width */
 extern bool NONL;			/* \n causes CR too ? */
 extern WINDOW *curscr;			/* the current screen image */
 extern WINDOW *stdscr;			/* the default screen window */
-extern struct sgttyb _orig_tty, _tty;
+extern struct termios _orig_tty, _tty;
 
 extern unsigned int ACS_ULCORNER;	/* terminal dependent block grafic */
 extern unsigned int ACS_LLCORNER;	/* charcters.  Forget IBM, we are */
@@ -146,7 +155,7 @@ _PROTOTYPE( int erasechar, (void));
 _PROTOTYPE( void fatal, (char *_s) );
 _PROTOTYPE( int fixterm, (void));
 _PROTOTYPE( void flash, (void));
-_PROTOTYPE( int gettmode, (void));
+_PROTOTYPE( void gettmode, (void));
 _PROTOTYPE( void idlok, (WINDOW *_win, bool _flag) );
 _PROTOTYPE( WINDOW *initscr, (void));
 _PROTOTYPE( void keypad, (WINDOW *_win, bool _flag) );
@@ -156,14 +165,14 @@ _PROTOTYPE( char *longname, (void));
 _PROTOTYPE( void meta, (WINDOW *_win, bool _flag) );
 _PROTOTYPE( int mvcur, (int _oldy, int _oldx, int _newy, int _newx) );
 _PROTOTYPE( int mvinch, (int _y, int _x) );
-_PROTOTYPE( int mvprintw, (int _y, int _x, char *_fmt, ...) );
-_PROTOTYPE( int mvscanw, (int _y, int _x, char *_fmt, char *_A1, int _A2,
-						int _A3, int _A4, int _A5) );
+_PROTOTYPE( int mvprintw, (int _y, int _x, const char *_fmt, ...) );
+_PROTOTYPE( int mvscanw, (int _y, int _x, const char *_fmt, ...) );
 _PROTOTYPE( int mvwin, (WINDOW *_win, int _begy, int _begx) );
 _PROTOTYPE( int mvwinch, (WINDOW *_win, int _y, int _x) );
-_PROTOTYPE( int mvwprintw, (WINDOW *_win, int _y, int _x, char *_fmt, ...) );
-_PROTOTYPE( int mvwscanw, (WINDOW *_win, int _y, int _x, char *_fmt, char *_A1,
-					int _A2, int _A3, int _A4, int _A5) );
+_PROTOTYPE( int mvwprintw, (WINDOW *_win, int _y, int _x, const char *_fmt,
+									...) );
+_PROTOTYPE( int mvwscanw, (WINDOW *_win, int _y, int _x, const char *_fmt,
+									...) );
 _PROTOTYPE( WINDOW *newwin, (int _num_lines, int _num_cols, int _y, int _x));
 _PROTOTYPE( void nl, (void));
 _PROTOTYPE( void nocbreak, (void));
@@ -172,17 +181,16 @@ _PROTOTYPE( void noecho, (void));
 _PROTOTYPE( void nonl, (void));
 _PROTOTYPE( void noraw, (void));
 _PROTOTYPE( void outc, (int _c) );
-_PROTOTYPE( void overlay, (WINDOW *_win1, WINDOW *_win2) );
-_PROTOTYPE( void overwrite, (WINDOW *_win1, WINDOW *_win2) );
+_PROTOTYPE( void  overlay, (WINDOW *_win1, WINDOW *_win2) );
+_PROTOTYPE( void  overwrite, (WINDOW *_win1, WINDOW *_win2) );
 _PROTOTYPE( void poscur, (int _r, int _c) );
-_PROTOTYPE( int printw, (char *_fmt, ...) );
+_PROTOTYPE( int printw, (const char *_fmt, ...) );
 _PROTOTYPE( void raw, (void));
 _PROTOTYPE( int resetterm, (void));
 _PROTOTYPE( int saveoldterm, (void));
 _PROTOTYPE( int saveterm, (void));
 _PROTOTYPE( int savetty, (void));
-_PROTOTYPE( int scanw, (char *_fmt, char *_A1, int _A2, int _A3, int _A4,
-					int _A5) );
+_PROTOTYPE( int scanw, (const char *_fmt, ...) );
 _PROTOTYPE( void scroll, (WINDOW *_win) );
 _PROTOTYPE( void scrollok, (WINDOW *_win, bool _flag) );
 _PROTOTYPE( int setscrreg, (int _top, int _bottom) );
@@ -209,13 +217,10 @@ _PROTOTYPE( int winsch, (WINDOW *_win, int _c) );
 _PROTOTYPE( int winsertln, (WINDOW *_win) );
 _PROTOTYPE( int wmove, (WINDOW *_win, int _y, int _x) );
 _PROTOTYPE( void wnoutrefresh, (WINDOW *_win) );
-_PROTOTYPE( int wprintw, (WINDOW *_win, char *_fmt, va_list _args, ...));
+_PROTOTYPE( int wprintw, (WINDOW *_win, const char *_fmt, ...));
 _PROTOTYPE( void wrefresh, (WINDOW *_win) );
-_PROTOTYPE( int wscanw, (WINDOW *_win, char *_fmt, char *_A1, int _A2, int _A3, 
-							int _A4, int _A5) );
+_PROTOTYPE( int wscanw, (WINDOW *_win, const char *_fmt, ...));
 _PROTOTYPE( int wsetscrreg, (WINDOW *_win, int _top, int _bottom) );
 _PROTOTYPE( int wtabsize, (WINDOW *_win, int _ts) );
 
-#define CURSES_H
-
-#endif
+#endif /* _CURSES_H */

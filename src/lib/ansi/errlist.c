@@ -9,73 +9,73 @@
 static const char unknown[] = "Unknown error";
 
 const char *_sys_errlist[] = {
-        "Error 0",
-        "Not owner",
-        "No such file or directory",
-        "No such process",
-        "Interrupted system call",
-        "I/O error",
-        "No such device or address",
-        "Arg list too long",
-        "Exec format error",
-        "Bad file number",
-        "No children",
-        "No more processes",
-        "Not enough core",
-        "Permission denied",
-        "Bad address",
-        "Block device required",
-        "Resource busy",
-        "File exists",
-        "Cross-device link",
-        "No such device",
-        "Not a directory",
-        "Is a directory",
-        "Invalid argument",
-        "File table overflow",
-        "Too many open files",
-        "Not a typewriter",
-        "Text file busy",
-        "File too large",
-        "No space left on device",
-        "Illegal seek",
-        "Read-only file system",
-        "Too many links",
-        "Broken pipe",
-        "Math argument",
-        "Result too large",
-	"Resource deadlock avoided",
-	"File name too long",
-	"No locks available",
-	"Function not implemented",
-	"Directory not empty",
-	/*40*/unknown,
-	/*41*/unknown,
-	/*42*/unknown,
-	/*43*/unknown,
-	/*44*/unknown,
-	/*45*/unknown,
-	/*46*/unknown,
-	/*47*/unknown,
-	/*48*/unknown,
-	/*49*/unknown,
-	"Invalid packet size",
-	"Not enough buffers left",
-	"Illegal ioctl for device",
-	"Badmode for ioctl",
-	"Would block",
-	"Bad destination address",
-	"Destination not reachable",
-	"All ready connected",
-	"Address in use",
-	"Connection refused",
-	"Connection reset",
-	"Connection timed out",
-	"Urgent data present",
-	"No urgent data present",
-	"No connection",
-	"Allready shutdown",
-	"No such connection",
+        "Error 0",			/* EGENERIC */
+        "Not owner",			/* EPERM */
+        "No such file or directory",	/* ENOENT */
+        "No such process",		/* ESRCH */
+        "Interrupted system call",	/* EINTR */
+        "I/O error",			/* EIO */
+        "No such device or address",	/* ENXIO */
+        "Arg list too long",		/* E2BIG */
+        "Exec format error",		/* ENOEXEC */
+        "Bad file number",		/* EBADF */
+        "No children",			/* ECHILD */
+        "No more processes",		/* EAGAIN */
+        "Not enough core",		/* ENOMEM */
+        "Permission denied",		/* EACCES */
+        "Bad address",			/* EFAULT */
+        "Block device required",	/* ENOTBLK */
+        "Resource busy",		/* EBUSY */
+        "File exists",			/* EEXIST */
+        "Cross-device link",		/* EXDEV */
+        "No such device",		/* ENODEV */
+        "Not a directory",		/* ENOTDIR */
+        "Is a directory",		/* EISDIR */
+        "Invalid argument",		/* EINVAL */
+        "File table overflow",		/* ENFILE */
+        "Too many open files",		/* EMFILE */
+        "Not a typewriter",		/* ENOTTY */
+        "Text file busy",		/* ETXTBSY */
+        "File too large",		/* EFBIG */
+        "No space left on device",	/* ENOSPC */
+        "Illegal seek",			/* ESPIPE */
+        "Read-only file system",	/* EROFS */
+        "Too many links",		/* EMLINK */
+        "Broken pipe",			/* EPIPE */
+        "Math argument",		/* EDOM */
+        "Result too large",		/* ERANGE */
+	"Resource deadlock avoided",	/* EDEADLK */
+	"File name too long",		/* ENAMETOOLONG */
+	"No locks available",		/* ENOLCK */
+	"Function not implemented",	/* ENOSYS */
+	"Directory not empty",		/* ENOTEMPTY */
+	unknown,			/* 40 */
+	unknown,			/* 41 */
+	unknown,			/* 42 */
+	unknown,			/* 43 */
+	unknown,			/* 44 */
+	unknown,			/* 45 */
+	unknown,			/* 46 */
+	unknown,			/* 47 */
+	unknown,			/* 48 */
+	unknown,			/* 49 */
+	"Invalid packet size",		/* EPACKSIZE */
+	"Not enough buffers left",	/* EOUTOFBUFS */
+	"Illegal ioctl for device",	/* EBADIOCTL */
+	"Bad mode for ioctl",		/* EBADMODE */
+	"Would block",			/* EWOULDBLOCK */
+	"Bad destination address",	/* EBADDEST */
+	"Destination not reachable",	/* EDSTNOTRCH */
+	"Already connected",		/* EISCONN */
+	"Address in use",		/* EADDRINUSE */
+	"Connection refused",		/* ECONNREFUSED */
+	"Connection reset",		/* ECONNRESET */
+	"Connection timed out",		/* ETIMEDOUT */
+	"Urgent data present",		/* EURG */
+	"No urgent data present",	/* ENOURG */
+	"No connection",		/* ENOTCONN */
+	"Already shutdown",		/* ESHUTDOWN */
+	"No such connection",		/* ENOCONN */
 };
 
 const int _sys_nerr = sizeof(_sys_errlist) / sizeof(_sys_errlist[0]);

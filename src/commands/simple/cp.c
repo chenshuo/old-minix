@@ -1,4 +1,4 @@
-/*	cp 1.8 - copy files				Author: Kees J. Bot
+/*	cp 1.9 - copy files				Author: Kees J. Bot
  *	mv     - move files					20 Jul 1993
  *	rm     - remove files
  *	ln     - make a link
@@ -395,7 +395,12 @@ int copy(const char *src, const char *dst, struct stat *srcst,
 			n -= r;
 		}
 		if (r <= 0) {
-			if (r == 0) break;	/* EOF on write? */
+			if (r == 0) {
+				fprintf(stderr,
+					"%s: Warning: EOF writing to %s\n",
+					prog_name, dst);
+				break;
+			}
 			fatal(dst);
 		}
 	}

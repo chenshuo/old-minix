@@ -49,7 +49,9 @@
 
 #include "kernel.h"
 #include <termios.h>
+#if ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT
 #include <sgtty.h>
+#endif
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <minix/callnr.h>
@@ -105,14 +107,16 @@ FORWARD _PROTOTYPE( void setattr, (tty_t *tp)				);
 FORWARD _PROTOTYPE( void tty_icancel, (tty_t *tp)			);
 FORWARD _PROTOTYPE( void tty_init, (tty_t *tp)				);
 FORWARD _PROTOTYPE( void settimer, (tty_t *tp, int on)			);
+#if ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT
 FORWARD _PROTOTYPE( int compat_getp, (tty_t *tp, struct sgttyb *sg)	);
 FORWARD _PROTOTYPE( int compat_getc, (tty_t *tp, struct tchars *sg)	);
 FORWARD _PROTOTYPE( int compat_setp, (tty_t *tp, struct sgttyb *sg)	);
 FORWARD _PROTOTYPE( int compat_setc, (tty_t *tp, struct tchars *sg)	);
 FORWARD _PROTOTYPE( int tspd2sgspd, (speed_t tspd)			);
 FORWARD _PROTOTYPE( speed_t sgspd2tspd, (int sgspd)			);
-#if ENABLE_COMPAT
+#if ENABLE_BINCOMPAT
 FORWARD _PROTOTYPE( void do_ioctl_compat, (tty_t *tp, message *m_ptr)	);
+#endif
 #endif
 
 
@@ -147,11 +151,12 @@ PUBLIC void tty_task()
 						OS_RELEASE, OS_VERSION);
 
 #if (CHIP == INTEL)
-  /* Real mode, protected mode, or 386 mode? */
+  /* Real mode, or 16/32-bit protected mode? */
 #if _WORD_SIZE == 4
-  printf("Executing in 386 mode\n\n");
+  printf("Executing in 32-bit protected mode\n\n");
 #else
-  printf("Executing in %s mode\n\n", protected_mode ? "protected" : "real");
+  printf("Executing in %s mode\n\n",
+	protected_mode ? "16-bit protected" : "real");
 #endif
 #endif
 
@@ -848,9 +853,11 @@ message *m_ptr;			/* pointer to message sent to task */
 
   int r;
   union {
+	int i;
+#if ENABLE_SRCCOMPAT
 	struct sgttyb sg;
 	struct tchars tc;
-	int i;
+#endif
   } param;
   phys_bytes user_phys;
   size_t size;
@@ -868,10 +875,12 @@ message *m_ptr;			/* pointer to message sent to task */
     case TIOCSPGRP:	size = sizeof(int);		break;
     case TIOCGWINSZ:
     case TIOCSWINSZ:	size = sizeof(struct winsize);	break;
+#if ENABLE_SRCCOMPAT
     case TIOCGETP:
     case TIOCSETP:	size = sizeof(struct sgttyb);	break;
     case TIOCGETC:
     case TIOCSETC:	size = sizeof(struct tchars);	break;
+#endif
 #if (MACHINE == IBM_PC)
     case KIOCSMAP:	size = sizeof(keymap_t);	break;
     case TIOCSFON:	size = sizeof(u8_t [8192]);	break;
@@ -957,6 +966,7 @@ message *m_ptr;			/* pointer to message sent to task */
 	/* SIGWINCH... */
 	break;
 
+#if ENABLE_SRCCOMPAT
     case TIOCGETP:
 	compat_getp(tp, &param.sg);
 	phys_copy(vir2phys(&param.sg), user_phys, (phys_bytes) size);
@@ -976,6 +986,7 @@ message *m_ptr;			/* pointer to message sent to task */
 	phys_copy(user_phys, vir2phys(&param.tc), (phys_bytes) size);
 	compat_setc(tp, &param.tc);
 	break;
+#endif
 
 #if (MACHINE == IBM_PC)
     case KIOCSMAP:
@@ -996,7 +1007,7 @@ message *m_ptr;			/* pointer to message sent to task */
 #endif
 
     default:
-#if ENABLE_COMPAT
+#if ENABLE_BINCOMPAT
 	do_ioctl_compat(tp, m_ptr);
 	return;
 #else
@@ -1334,6 +1345,7 @@ int on;				/* set timer if true, otherwise unset */
 }
 
 
+#if ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT
 /*===========================================================================*
  *				compat_getp				     *
  *===========================================================================*/
@@ -1601,7 +1613,7 @@ int sgspd;
 }
 
 
-#if ENABLE_COMPAT
+#if ENABLE_BINCOMPAT
 /*===========================================================================*
  *				do_ioctl_compat				     *
  *===========================================================================*/
@@ -1674,4 +1686,5 @@ message *m_ptr;
   reply_mess.m2_l2 = flags;
   send(m_ptr->m_source, &reply_mess);
 }
-#endif /* ENABLE_COMPAT */
+#endif /* ENABLE_BINCOMPAT */
+#endif /* ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT */

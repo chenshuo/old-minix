@@ -54,7 +54,9 @@ OBJECTS	= \
 	$(LIBRARY)(ungetc.o) \
 	$(LIBRARY)(vfprintf.o) \
 	$(LIBRARY)(vprintf.o) \
+	$(LIBRARY)(vscanf.o) \
 	$(LIBRARY)(vsprintf.o) \
+	$(LIBRARY)(vsscanf.o) \
 
 $(LIBRARY):	$(OBJECTS)
 	aal cr $@ *.o
@@ -201,5 +203,11 @@ $(LIBRARY)(vfprintf.o):	vfprintf.c
 $(LIBRARY)(vprintf.o):	vprintf.c
 	$(CC1) vprintf.c
 
+$(LIBRARY)(vscanf.o):	vscanf.c
+	$(CC1) vscanf.c
+
 $(LIBRARY)(vsprintf.o):	vsprintf.c
 	$(CC1) vsprintf.c
+
+$(LIBRARY)(vsscanf.o):	vsscanf.c
+	$(CC1) vsscanf.c

@@ -158,7 +158,6 @@ PUBLIC int do_exec()
 		sigdelset(&rmp->mp_catch, sn);
 		rmp->mp_sigact[sn].sa_handler = SIG_DFL;
 		sigemptyset(&rmp->mp_sigact[sn].sa_mask);
-		/* XXX - check what to do for sa_flags. */
 	}
   }
 
@@ -168,6 +167,7 @@ PUBLIC int do_exec()
 
   tell_fs(EXEC, who, 0, 0);	/* allow FS to handle FD_CLOEXEC files */
 
+  /* System will save command line for debugging, ps(1) output, etc. */
   basename = strrchr(name_buf, '/');
   if (basename == NULL) basename = name_buf; else basename++;
   sys_exec(who, new_sp, rmp->mp_flags & TRACED, basename, pc);
@@ -200,10 +200,11 @@ vir_bytes *pc;			/* program entry point (initial PC) */
   /* Read the header and check the magic number.  The standard MINIX header 
    * is defined in <a.out.h>.  It consists of 8 chars followed by 6 longs.
    * Then come 4 more longs that are not used here.
-   *    Byte 0: magic number 0x01
+   *	Byte 0: magic number 0x01
    *	Byte 1: magic number 0x03
-   *	Byte 2: normal = 0x10; separate I/D = 0x20
-   *	Byte 3: CPU type, Intel = 0x04, Motorola = 0x0B
+   *	Byte 2: normal = 0x10 (not checked, 0 is OK), separate I/D = 0x20
+   *	Byte 3: CPU type, Intel 16 bit = 0x04, Intel 32 bit = 0x10, 
+   *            Motorola = 0x0B, Sun SPARC = 0x17
    *	Byte 4: Header length = 0x20
    *	Bytes 5-7 are not used.
    *
@@ -216,8 +217,11 @@ vir_bytes *pc;			/* program entry point (initial PC) */
    *	Bytes 28-31: size of symbol table in bytes
    * The longs are represented in a machine dependent order,
    * little-endian on the 8088, big-endian on the 68000.
-   * The header is followed directly by the text and data segments, whose sizes
-   * are given in the header.
+   * The header is followed directly by the text and data segments, and the 
+   * symbol table (if any). The sizes are given in the header. Only the 
+   * text and data segments are copied into memory by exec. The header is 
+   * used here only. The symbol table is for the benefit of a debugger and 
+   * is ignored here.
    */
 
   if (read(fd, (char *) &hdr, A_MINHDR) != A_MINHDR) return(ENOEXEC);
@@ -453,8 +457,10 @@ vir_bytes seg_bytes;		/* how big is the segment */
  * one at a time.  This is too slow, so we do something dirty here, namely
  * send the user space and virtual address to the file system in the upper
  * 10 bits of the file descriptor, and pass it the user virtual address
- * instead of a MM address.  The file system copies the whole segment
- * directly to user space, bypassing MM completely.
+ * instead of a MM address.  The file system extracts these parameters when 
+ * gets a read call from the memory manager, which is the only process that
+ * is permitted to use this trick.  The file system then copies the whole 
+ * segment directly to user space, bypassing MM completely.
  */
 
   int new_fd, bytes;

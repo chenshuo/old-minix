@@ -148,7 +148,7 @@ void test35a()
   if (st.st_ctime < time1) e(15);
   if (st.st_ctime > time2) e(16);
 
-  System("/bin/rm -rf ../DIR_35/*");
+  System("rm -rf ../DIR_35/*");
 }
 
 void test35b()
@@ -172,7 +172,7 @@ void test35b()
 
 
 
-  System("/bin/rm -rf ../DIR_35/*");
+  System("rm -rf ../DIR_35/*");
 }
 
 void test35c()
@@ -288,7 +288,7 @@ void test35c()
   if (utime("", NULL) != -1) e(25);
   if (errno != ENOENT) e(26);
 
-  System("/bin/rm -rf ../DIR_35/*");
+  System("rm -rf ../DIR_35/*");
 }
 
 

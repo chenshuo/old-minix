@@ -17,7 +17,7 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,7 +80,7 @@ char *request[] = {
 	   "tr", "ul", 0};
 char *mfilnam = "/tmp/rtmXXXXXX";
 int c;				/* LAST CHAR READ */
-struct sgttyb tty;
+struct termios tty;
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void mesg, (int f));
@@ -153,7 +153,7 @@ char **argv;
 		goto endargs;
 	}
 endargs:
-  if (sflag) ioctl(0, TIOCGETP, &tty);
+  if (sflag) tcgetattr(0, &tty);
   mesg(0);			/* BLOCK OUT MESSAGES */
   assylen = 0;
   assyline[0] = '\0';
@@ -997,17 +997,17 @@ void blankpage()
 
 void waitawhile()
 {
-  int oldflags; 
+  tcflag_t oldflags; 
   if (isatty(0)) {
-	oldflags = tty.sg_flags;
-	tty.sg_flags &= ~ECHO;	/* DON'T ECHO THE RUBOUT */
-	ioctl(0, TIOCSETP, &tty);
+	oldflags = tty.c_lflag;
+	tty.c_lflag &= ~ECHO;	/* DON'T ECHO THE RUBOUT */
+	tcsetattr(0, TCSANOW, &tty);
   }
   signal(SIGINT, nix);
   pause();
   if (isatty(0)) {
-	tty.sg_flags = oldflags;
-	ioctl(0, TIOCSETP, &tty);
+	tty.c_lflag = oldflags;
+	tcsetattr(0, TCSANOW, &tty);
   }
 }
 

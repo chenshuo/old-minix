@@ -213,7 +213,6 @@ assert((mess1.DL_STAT >> 16) == OK);
 	{
 assert(mess2.DL_STAT == DL_PACK_RECV);
 assert(!(mess1.DL_STAT & DL_PACK_RECV));
-compare (mess2.m_type, ==, DL_INT_TASK);
 compare(mess2.DL_PORT, ==, eth_port->etp_osdep.etp_port);
 compare(mess2.DL_PROC, ==, THIS_PROC);
 		read_int(eth_port, mess2.DL_COUNT);
@@ -231,7 +230,6 @@ message *m;
 	eth_port_t *loc_port;
 	int stat;
 
-compare(m->m_type, ==, DL_INT_TASK);
 assert (m->m_source == DL_ETH);
 
 	set_time (m->DL_CLCK);
@@ -285,7 +283,6 @@ assert(result == OK);
 #if DEBUG
  { where(); printf("calling eth_rec()\n"); }
 #endif
-compare(mlocked.m_type, ==, DL_INT_TASK);
 		eth_rec(&mlocked);
 	}
 assert(result == OK);
@@ -299,9 +296,6 @@ assert (result == 0);
 
 	if (mess.DL_STAT)
 	{
-#if XXX
-		mess.m_type= DL_INT_TASK;
-#endif
 #if DEBUG
  { where(); printf("calling eth_rec()\n"); }
 #endif
@@ -348,7 +342,6 @@ assert (eth_port->etp_osdep.etp_task != MM_PROC_NR);
 #if DEBUG
  { where(); printf("calling eth_rec\n"); }
 #endif
-compare(repl_mess.m_type, ==, DL_INT_TASK);
 			eth_rec(&repl_mess);
 		}
 	} while (result == ELOCKED);
@@ -384,11 +377,6 @@ assert (tofrom != MM_PROC_NR);
 
 		if (result < 0)
 			ip_panic(("unable to receive"));
-#if DEBUG
- if (mptr2->m_type != DL_INT_TASK)
- { where(); printf("got a %d from %d\n", mptr2->m_type, mptr2->m_source); }
-#endif
-assert (mptr2->m_type == DL_INT_TASK);
 		extra= 1;
 assert (tofrom != MM_PROC_NR);
 		result= send (tofrom, mptr1);
@@ -524,7 +512,7 @@ assert(!(eth_port->etp_flags & EPF_READ_IP));
 		{
 assert(mess2.DL_STAT == DL_PACK_SEND);
 assert(!(mess1.DL_STAT & DL_PACK_SEND));
-assert (mess2.m_type == DL_INT_TASK && mess2.DL_PORT == mess2.DL_PORT &&
+assert (mess2.DL_PORT == mess2.DL_PORT &&
 	mess2.DL_PROC == THIS_PROC);
 			write_int(eth_port);
 		}

@@ -1,9 +1,11 @@
 #include <stdlib.h>
 #include <termcap.h>
+#include <sys/types.h>
+#include <sys/ioctl.h>
 #include <curses.h>
 #include "curspriv.h"
 
-struct sgttyb _orig_tty, _tty;
+struct termios _orig_tty, _tty;
 cursv _cursvar;
 
 WINDOW *stdscr, *curscr;
@@ -134,10 +136,23 @@ char *type;
 {
   unsigned char *ac;
   int i;
+#ifdef TIOCGWINSZ
+  struct winsize wsize;
+#endif
 
   if (tgetent(termcap, type) != 1) return ERR;
-  LINES = tgetnum("li");
-  COLS = tgetnum("co");
+
+#ifdef TIOCGWINSZ
+  if (ioctl(0, TIOCGWINSZ, &wsize) == 0) {
+	LINES = wsize.ws_row != 0 ? wsize.ws_row : tgetnum("li");
+	COLS = wsize.ws_col != 0 ? wsize.ws_col : tgetnum("co");
+  } else {
+#endif
+	LINES = tgetnum("li");
+	COLS = tgetnum("co");
+#ifdef TIOCGWINSZ
+  }
+#endif
   arp = tc;
   cl = tgetstr("cl", &arp);
   so = tgetstr("so", &arp);
@@ -197,11 +212,12 @@ char *type;
   return OK;
 }
 
-gettmode()
+void gettmode()
 {
-  gtty(0, &_orig_tty);
-  gtty(0, &_tty);
-  _cursvar.echoit = (_tty.sg_flags & ECHO) != 0;
-  _cursvar.rawmode = (_tty.sg_flags & RAW) != 0;
-  NONL = (_tty.sg_flags & CRMOD) != 0;
+  tcgetattr(0, &_orig_tty);
+  tcgetattr(0, &_tty);
+  _cursvar.echoit = (_tty.c_lflag & ECHO) != 0;
+  _cursvar.rawmode = (_tty.c_lflag & (ICANON|ISIG)) == 0;
+  _cursvar.cbrkmode = (_tty.c_lflag & (ICANON|ISIG)) == ISIG;
+  NONL = (_tty.c_iflag & ICRNL) != 0;
 }

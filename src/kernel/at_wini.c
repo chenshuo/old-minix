@@ -186,8 +186,6 @@ PRIVATE struct driver w_dtab = {
 
 #if ENABLE_ATAPI
 #include "atapi.c"	/* extra code for ATAPI CD-ROM */
-#else
-#define atapi_identify()	FALSE
 #endif
 
 
@@ -379,8 +377,7 @@ PRIVATE int w_identify()
 			wn->lcylinders /= 2;
 		}
 	}
-  } else
-  if (!atapi_identify()) {
+  } else {
 	/* Not an ATA device; no translations, no special features.  Don't
 	 * touch it unless the BIOS knows about it.
 	 */

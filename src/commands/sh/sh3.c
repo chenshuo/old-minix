@@ -978,7 +978,7 @@ struct op *t;
 
 	execflg = 0;
 	if ((cp = t->words[1]) != NULL)
-		exstat = getn(cp);
+		setstatus(getn(cp));
 	leave();
 	/* NOTREACHED */
 }

@@ -14,7 +14,7 @@ all install clean:
 	cd advent && $(MAKE) $@
 	cd ash && $(MAKE) $@
 	cd autil && $(MAKE) $@
-	cd bawk && $(MAKE) $@
+	cd awk && $(MAKE) $@
 	cd bc && $(MAKE) $@
 	cd byacc && $(MAKE) $@
 	cd cawf && $(MAKE) $@
@@ -23,6 +23,7 @@ all install clean:
 	cd elle && $(MAKE) $@
 	cd elvis && $(MAKE) $@
 	cd flex-2.3.7 && $(MAKE) $@
+	cd ftp && $(MAKE) $@
 	cd ftpd && $(MAKE) $@
 	cd ibm && $(MAKE) $@
 	cd ic && $(MAKE) $@

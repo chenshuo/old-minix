@@ -1,6 +1,6 @@
 # Makefile for indent
 
-CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE -wo
+CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE -wo -m
 
 all:	indent
 

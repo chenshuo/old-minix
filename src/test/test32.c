@@ -69,7 +69,7 @@ void test32a()
   char buf[BUF_SIZE];
 
   subtest = 1;
-  System("/bin/rm -rf ../DIR_32/*");
+  System("rm -rf ../DIR_32/*");
 
   /* Test normal file renamal. */
   System("echo haha > old");
@@ -170,7 +170,7 @@ void test32b()
   struct stat st;
 
   subtest = 2;
-  System("/bin/rm -rf ../DIR_32/*");
+  System("rm -rf ../DIR_32/*");
 
   /* Test maximal file name length. */
   if ((fd = creat(MaxName, 0777)) != 3) e(1);
@@ -234,7 +234,7 @@ void test32c()
   int stat_loc;
 
   subtest = 3;
-  System("/bin/rm -rf ../DIR_32/*");
+  System("rm -rf ../DIR_32/*");
 
   /* Test if we have access. */
   system("chmod 777 noacc nowrite > /dev/null 2>/dev/null");

@@ -1,4 +1,4 @@
-/*	repartition 1.13 - Load a partition table	Author: Kees J. Bot
+/*	repartition 1.15 - Load a partition table	Author: Kees J. Bot
  *								30 Nov 1991
  */
 #define nil 0
@@ -10,7 +10,6 @@
 #include <fcntl.h>
 #include <minix/config.h>
 #include <minix/const.h>
-#include <minix/boot.h>
 #include <minix/partition.h>
 #include <ibm/partition.h>
 #include <sys/stat.h>
@@ -21,6 +20,8 @@
 #define div64u(i, j)	((i) / (j))
 #define mul64u(i, j)	((i) * (j))
 #endif
+
+#define DEV_FD0		0x200
 
 #define SECTOR_SIZE	512
 
@@ -135,7 +136,7 @@ void print_chs(unsigned long sector)
 
 	if (sector == -1) { sector= 0; delta= -1; }
 
-	printf("  %4d/%02d/%02d",
+	printf("  %4d/%03d/%02d",
 		(int) (sector / secspcyl),
 		(int) (sector % secspcyl) / geometry.sectors,
 		(int) (sector % geometry.sectors) + delta);
@@ -151,7 +152,7 @@ void show_part(char *name, unsigned long base, unsigned long size)
 		printf("device");
 		for (i = 6; i < len; i++) fputc(' ', stdout);
 		printf(
-		    "     first        last        base      size       kb\n");
+		"      first         last        base      size       kb\n");
 	}
 
 	printf("%s", name);

@@ -1,6 +1,7 @@
 /* MM must occasionally print some message.  It uses the standard library
- * routine prink().  (The name "printf" is really a macro defined as "printk").
- * Printing is done by calling the TTY task directly, not going through FS.
+ * routine printk().  (The name "printf" is really a macro defined as 
+ * "printk"). Printing is done by calling the TTY task directly, not going 
+ * through FS.
  */
 
 #include "mm.h"

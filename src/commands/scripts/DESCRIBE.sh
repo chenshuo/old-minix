@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 1.15 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 1.16 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -20,7 +20,7 @@ ex=0	# exit code
 while read major minor path
 do
 	case $path in
-	/*)	name=`expr $path : '.*/\(.*\)$'`
+	/*)	name=`expr $path : '.*/\\(.*\\)$'`
 		;;
 	*)	name=$path
 	esac
@@ -33,8 +33,6 @@ do
 	1,2)	des="kernel memory" dev=kmem
 		;;
 	1,3)	des="null device, data sink" dev=null
-		;;
-	1,4)	des="I/O ports (obsolete)" dev=port
 		;;
 	2,*)	drive=`expr $minor % 4`
 		case `expr $minor - $drive` in
@@ -89,6 +87,8 @@ do
 		esac
 		;;
 	4,0)	des="console device" dev=console
+		;;
+	4,[1-3])des="virtual console $minor" dev=ttyc$minor
 		;;
 	4,15)	des="diagnostics device" dev=log
 		;;

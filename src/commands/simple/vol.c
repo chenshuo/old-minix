@@ -26,6 +26,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/mtio.h>
+#include <minix/partition.h>
 
 /* Preferred block size to variable block length tapes, block devices or files.
  */
@@ -62,9 +63,10 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
-  int volume = 1, fd, tty, i, init;
+  int volume = 1, fd, tty, i, init, autovolsize;
   char *p, *name;
   struct stat stb;
+  struct partition part;
   char key;
 
   /* Fetch and verify the arguments. */
@@ -114,8 +116,10 @@ char *argv[];
   if (i < argc - 1) {
 	str_vol_size = argv[i++];
 	volume_size = str2size("volume", str_vol_size, 1L, LONG_MAX, 1);
+	autovolsize = 0;
   } else {
-	volume_size = 0;	/* unlimited */
+	volume_size = 0;	/* unlimited (long tape) or use DIOCGETP */
+	autovolsize = 1;
   }
 
   if (i >= argc) usage();
@@ -183,6 +187,19 @@ char *argv[];
 		if (S_ISCHR(stb.st_mode)) tape_inquire(name, fd);
 		allocate_buffer();
 		init = 1;
+	}
+
+	if (autovolsize) {
+		/* Ask the driver how big the volume is. */
+		if (ioctl(fd, DIOCGETP, &part) < 0) {
+			autovolsize = 0;
+		} else {
+#if __minix_vmd
+			volume_size = cv64ul(part.size);
+#else
+			volume_size = part.size;
+#endif
+		}
 	}
 
 	/* Read or write the requisite number of blocks. */

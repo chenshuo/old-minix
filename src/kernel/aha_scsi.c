@@ -605,6 +605,7 @@ message *m_ptr;
   case SCSI_DEVDISK:
   case SCSI_DEVWORM:
   case SCSI_DEVCDROM:
+  case SCSI_DEVOPTICAL:
 	/* Read partition tables on first open. */
 	if (sp->open_ct == 0) {
 		partition(&s_dtab, (int) (sp-scsi) * DEV_PER_DRIVE, P_PRIMARY);
@@ -728,6 +729,7 @@ PRIVATE int scsi_probe()
 	case SCSI_DEVDISK:
 	case SCSI_DEVWORM:
 	case SCSI_DEVCDROM:
+	case SCSI_DEVOPTICAL:
 		if (scsi_ndisk() != OK) return(EIO);
 		break;
 	case SCSI_DEVTAPE:
@@ -966,6 +968,7 @@ struct iorequest_s *iop;	/* pointer to read or write request */
   case SCSI_DEVCDROM:
   case SCSI_DEVWORM:
   case SCSI_DEVDISK:
+  case SCSI_DEVOPTICAL:
 	/* Which block on disk and how close to EOF? */
 	if (pos >= s_dv->dv_size) return(OK);		/* At EOF */
 	if (pos + nbytes > s_dv->dv_size) nbytes = s_dv->dv_size - pos;
@@ -1090,6 +1093,7 @@ retry:
   case SCSI_DEVCDROM:
   case SCSI_DEVWORM:
   case SCSI_DEVDISK:
+  case SCSI_DEVOPTICAL:
 	/* A read or write SCSI command for a random access device. */
 	block = rq->pos / sp->block_size;
 
@@ -1340,6 +1344,7 @@ message *m_ptr;
   case SCSI_DEVDISK:
   case SCSI_DEVWORM:
   case SCSI_DEVCDROM:
+  case SCSI_DEVOPTICAL:
 	if (m_ptr->REQUEST == DIOCEJECT) {
 		/* Eject disk. */
 		if (sp->open_ct > 1) return(EBUSY);

@@ -37,14 +37,21 @@ PUBLIC int do_trace()
 {
   register struct mproc *child;
 
-  if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
-	return(ESRCH);
-  }
-  switch (request) {
-  case T_OK:		/* enable tracing by parent for this process */
+  /* the T_OK call is made by the child fork of the debugger before it execs  
+   * the process to be traced
+   */
+  if (request == T_OK) {/* enable tracing by parent for this process */
 	mp->mp_flags |= TRACED;
 	mm_out.m2_l2 = 0;
 	return(OK);
+  }
+  if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
+	return(ESRCH);
+  }
+  /* all the other calls are made by the parent fork of the debugger to 
+   * control execution of the child
+   */
+  switch (request) {
   case T_EXIT:		/* exit */
 	mm_exit(child, (int)data);
 	mm_out.m2_l2 = 0;

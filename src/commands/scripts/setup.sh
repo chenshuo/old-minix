@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	instdist 1.6 - install a Minix distribution	Author: Kees J. Bot
+#	setup 3.0 - install a Minix distribution	Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra actions.  It needs to use a sed script to change
@@ -9,16 +9,16 @@
 PATH=/bin:/usr/bin
 export PATH
 
-# Move out of /usr.
+# Must be in / or we can't mount or umount.
 case "`pwd`" in
-/usr*)	echo "Please type 'cd /', you are locking up /usr" >&2	
+/?*)	echo "Please type 'cd /', you are locking up `pwd`" >&2	
 	exit 1
 esac
 case "$0" in
 /tmp/*)	rm -f "$0"
 	;;
-*)	cp -p "$0" /tmp/instdist
-	exec /tmp/instdist
+*)	cp -p "$0" /tmp/setup
+	exec /tmp/setup
 esac
 
 # Find out what we are running from.
@@ -33,9 +33,54 @@ case $thisroot:$fdusr in
 			;;
 /dev/ram:/dev/fd1c)	fdroot=/dev/fd1		# Combined ROOT+USR in drive 1
 			;;
-/dev/ram:*)		fdroot=unknown		# ROOT is some other floppy
+/dev/ram:/dev/fd*)	fdroot=unknown		# ROOT is some other floppy
 			;;
-*)			fdroot=$thisroot	# ROOT is mounted directly
+/dev/fd*:/dev/fd*)	fdroot=$thisroot	# ROOT is mounted directly
+			;;
+*)			fdroot=$thisroot	# ?
+	echo -n "\
+It looks like Minix has been installed on disk.  Do you want to install
+a floppy set for the rest of /usr or the sources? [y] "
+	read yn
+	case "$yn" in
+	''|[yY]*|sure)	;;
+	*)	exit
+	esac
+
+	size=bad
+	while [ "$size" = bad ]
+	do
+		echo -n "\
+What is the size of the images on the diskettes? [all] "; read size
+
+		case $size in
+		''|360|720|1200|1440)
+			;;
+		*)	echo "Sorry, I don't believe \"$size\", try again." >&2
+			size=bad
+		esac
+	done
+
+	drive=
+	while [ -z "$drive" ]
+	do
+		echo -n "What floppy drive to use? [0] "; read drive
+
+		case $drive in
+		'')	drive=0
+			;;
+		[01])
+			;;
+		*)	echo "It must be 0 or 1, not \"$drive\"."
+			drive=
+		esac
+	done
+
+	echo
+	cd /usr && vol -r $size /dev/fd$drive | uncompress | tar xvfp -
+
+	echo Done.
+	exit
 esac
 
 echo -n "\
@@ -92,39 +137,81 @@ Please finish the name of the primary partition you have created:
 done
 
 root=${primary}a
-tmp=${primary}b
 usr=${primary}c
 
-echo -n "
+upgrade=
+if df /dev/$usr 2>/dev/null
+then
+	echo -n "
+There is already a Minix system present in /dev/$primary.  Do you want
+to upgrade it to this version?  If yes then the current contents of
+/usr (/dev/$usr) will be moved into /usr/.old/.  You can restore the
+files you want to keep from that directory.  Note that you need enough
+space in /dev/$usr for the old and the new files.  Upgrade? [y] "
+	read yn
+	case "$yn" in
+	[nN]*)	echo;echo "No?  Then we will reinstall"
+		;;
+	*)	upgrade=t
+	esac
+fi
+
+if [ ! "$upgrade" ]
+then
+	echo -n "
 You have created a partition named:	/dev/$primary
 The following subpartitions are about to be created on /dev/$primary:
 
 	Root subpartition:	/dev/$root	1440 kb
-	Scratch subpartition:	/dev/$tmp	1440 kb
 	/usr subpartition:	/dev/$usr	rest of $primary
 
 Hit return if everything looks fine, or hit DEL to bail out if you want to
 think it over.  The next step will destroy /dev/$primary.
 :"
-read ret
+	read ret
 					# Secondary master bootstrap.
-installboot -m /dev/$primary /usr/mdec/masterboot >/dev/null || exit
+	installboot -m /dev/$primary /usr/mdec/masterboot >/dev/null || exit
 
 					# Partition the primary.
-partition /dev/$primary 1 81:2880* 81:2880 81:0+ >/dev/null || exit
+	partition /dev/$primary 1 81:2880* 0:0 81:0+ >/dev/null || exit
 
-echo "
-Migrating to disk...
+	echo "
+Migrating from floppy to disk...
 "
 
-mkfs /dev/$usr
-echo "Scanning /dev/$usr for bad blocks.  (Hit DEL if there are no bad blocks)"
-trap ': nothing' 2
-readall -b /dev/$usr | sh
-echo "Scan done"
-sleep 2
-trap 2
+	mkfs /dev/$usr
+	echo "\
+Scanning /dev/$usr for bad blocks.  (Hit DEL if there are no bad blocks)"
+	trap ': nothing' 2
+	readall -b /dev/$usr | sh
+	echo "Scan done"
+	sleep 2
+	trap 2
+fi
 mount /dev/$usr /mnt || exit		# Mount the intended /usr.
+
+if [ "$upgrade" ]
+then
+	echo "
+Saving /usr/* into /usr/.old and migrating from floppy to disk...
+"
+	if [ -d /mnt/.old ]
+	then
+		echo -n "\
+There is already a '.old' directory there.  Did you break off and restart
+the installation?  Shall I clean up the half-way installed mess? [y] "
+		read yn
+		case "$yn" in
+		[nN])	echo "\
+No?  Then please inspect /dev/$usr yourself, it is still mounted on /mnt/.
+When done type 'cd /; umount /dev/$usr' and restart the installation."
+			exit 1
+		esac
+	else
+		mkdir /mnt/.old || exit
+		mv /mnt/* /mnt/.old || exit
+	fi
+fi
 
 cpdir -v /usr /mnt || exit		# Copy the usr floppy.
 
@@ -137,8 +224,8 @@ mount /dev/$usr /usr || exit		# A new /usr
 if [ $fdroot = unknown ]
 then
 	echo "
-By now the floppy /usr has been copied to /dev/$usr, and it is now in use as
-/usr.  Please insert the installation root floppy in a floppy drive."
+By now the floppy USR has been copied to /dev/$usr, and it is now in use as
+/usr.  Please insert the installation ROOT floppy in a floppy drive."
 
 	drive=
 	while [ -z "$drive" ]
@@ -161,8 +248,7 @@ echo "
 Copying $fdroot to /dev/$root
 "
 
-if [ `arch` = i86 ]; then size=720; else size=1024; fi
-mkfs -i 512 /dev/$root $size || exit
+mkfs /dev/$root || exit
 mount /dev/$root /mnt || exit
 if [ $thisroot = /dev/ram ]
 then
@@ -170,17 +256,18 @@ then
 	mount /dev/fd0 /fd0 || exit
 	cpdir -v /fd0 /mnt || exit
 	umount /dev/fd0 || exit
+	cpdir -f /dev /mnt/dev		# Copy any extra MAKEDEV'd devices
 else
 	# Running from the floppy itself.
 	cpdir -vx / /mnt || exit
 	chmod 555 /mnt/usr
 fi
+
 					# Change /etc/fstab.
 echo >/mnt/etc/fstab "\
 # Poor man's File System Table.
 
 root=/dev/$root
-tmp=/dev/$tmp
 usr=/dev/$usr"
 
 					# National keyboard map.
@@ -191,69 +278,30 @@ esac
 eval "$X_ROOT1"
 umount /dev/$root || exit		# Unmount the new root.
 
+# Compute size of the second level file block cache.
+ram=
+echo -n "
+What is the memory size of this system in kilobytes? [plenty] "
+read ram
+case "$ram" in '') ram=9999;; esac
+case `arch` in
+i86)	cache=`expr "0$ram" - 1024`
+	test $cache -lt 32 && cache=0
+	test $cache -gt 512 && cache=512
+	;;
+*)	cache=`expr "0$ram" - 2560`
+	test $cache -lt 64 && cache=0
+	test $cache -gt 1024 && cache=1024
+esac
+echo "Second level file system block cache set to $cache kb."
+if [ $cache -eq 0 ]; then cache=; else cache="ramsize=$cache"; fi
 
 					# Make bootable.
 installboot -d /dev/$root /usr/mdec/bootblock /boot >/dev/null || exit
-edparams /dev/$root "ramimagedev=$root; save" || exit
+edparams /dev/$root "rootdev=$root; ramimagedev=$root; $cache; save" || exit
 eval "$X_ROOT2"
 
-if [ $thisroot != /dev/ram ]
-then
-	echo "
-The root file system has been installed on /dev/$root.  The rest of /usr should
-be installed now, but $thisroot is busy.  Please reboot Minix as described in
-\"Testing\" and fill /usr as described at the end of \"Manual installation.\""
-	exit
-fi
-
 echo "
-The root file system has been installed on /dev/$root.  Please remove the
-installation diskette, so that the rest of /usr may be installed.
-"
-size=
-while [ -z "$size" ]
-do
-	case $fdusr in /dev/fd?c) defsize=1440;; *) defsize=720;; esac
-
-	echo -n "What is the size of the diskettes? [$defsize] "; read size
-
-	case $size in
-	'')	size=$defsize
-		;;
-	360|720|1200|1440)
-		;;
-	*)	echo "Sorry, I don't believe \"$size\", try again." >&2
-		size=
-	esac
-done
-
-drive=
-while [ -z "$drive" ]
-do
-	echo -n "What floppy drive to use? [0] "; read drive
-
-	case $drive in
-	'')	drive=0
-		;;
-	[01])
-		;;
-	*)	echo "It must be 0 or 1, not \"$drive\"."
-		drive=
-	esac
-done
-
-echo "
-The command that is run now is:
-
-	cd /usr; vol $size /dev/fd$drive | uncompress | tar xvfp -
-
-You may want to make a note of this, you can reboot and then run it again if
-it fails.  (It may run out of memory on a small machine.)
-"
-
-cd /usr && vol -r $size /dev/fd$drive | uncompress | tar xvfp -
-
-echo "
-Please insert the installation root floppy and type 'halt' to exit Minix.
+Please insert the installation ROOT floppy and type 'halt' to exit Minix.
 You can type 'boot $root' to try the newly installed Minix system.  See
 \"Testing\" in the usage manual."

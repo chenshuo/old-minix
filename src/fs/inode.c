@@ -84,8 +84,6 @@ register struct inode *rip;	/* pointer to inode to be released */
  * return it to the pool of available inodes.
  */
 
-  int inum;
-
   if (rip == NIL_INODE) return;	/* checking here is easier than in caller */
   if (--rip->i_count == 0) {	/* i_count == 0 means no one is using it now */
 	if ((rip->i_nlinks & BYTE) == 0) {
@@ -93,8 +91,7 @@ register struct inode *rip;	/* pointer to inode to be released */
 		truncate(rip);	/* return all the disk blocks */
 		rip->i_mode = I_NOT_ALLOC;	/* clear I_TYPE field */
 		rip->i_dirt = DIRTY;
-		inum = (int) rip->i_num;	/* do not pass an unshort */
-		free_inode(rip->i_dev, inum);
+		free_inode(rip->i_dev, rip->i_num);
 	} else {
 		if (rip->i_pipe == I_PIPE) truncate(rip);
 	}
@@ -115,7 +112,7 @@ mode_t bits;			/* mode of the inode */
   register struct inode *rip;
   register struct super_block *sp;
   int major, minor, inumb;
-  bit_t b, bit;
+  bit_t b;
 
   sp = get_super(dev);	/* get pointer to super_block */
   if (sp->s_rd_only) {	/* can't allocate an inode on a read only device. */
@@ -124,8 +121,7 @@ mode_t bits;			/* mode of the inode */
   }
 
   /* Acquire an inode from the bit map. */
-  bit = sp->s_isearch;		/* start at first unused inode */
-  b = alloc_bit(sp->s_imap, (bit_t)sp->s_ninodes+1, sp->s_imap_blocks, bit);
+  b = alloc_bit(sp, IMAP, sp->s_isearch);
   if (b == NO_BIT) {
 	err_code = ENFILE;
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
@@ -138,9 +134,9 @@ mode_t bits;			/* mode of the inode */
   inumb = (int) b;		/* be careful not to pass unshort as param */
 
   /* Try to acquire a slot in the inode table. */
-  if ( (rip = get_inode(NO_DEV, inumb)) == NIL_INODE) {
+  if ((rip = get_inode(NO_DEV, inumb)) == NIL_INODE) {
 	/* No inode table slots available.  Free the inode just allocated. */
-	free_bit(sp->s_imap, b);
+	free_bit(sp, IMAP, b);
   } else {
 	/* An inode slot is available. Put the inode just allocated into it. */
 	rip->i_mode = bits;		/* set up RWX bits */
@@ -188,7 +184,7 @@ register struct inode *rip;	/* the inode to be erased */
  *===========================================================================*/
 PUBLIC void free_inode(dev, inumb)
 dev_t dev;			/* on which device is the inode */
-int inumb;			/* number of inode to be freed */
+ino_t inumb;			/* number of inode to be freed */
 {
 /* Return an inode to the pool of unallocated inodes. */
 
@@ -197,10 +193,10 @@ int inumb;			/* number of inode to be freed */
 
   /* Locate the appropriate super_block. */
   sp = get_super(dev);
-  b = (bit_t) ((ino_t) inumb);	/* needed to avoid sign extension */
-  if (b <= 0 || b > sp->s_ninodes) return;
-  free_bit(sp->s_imap, b);
-  if (inumb < sp->s_isearch) sp->s_isearch = (bit_t) ((ino_t) inumb);
+  if (inumb <= 0 || inumb > sp->s_ninodes) return;
+  b = inumb;
+  free_bit(sp, IMAP, b);
+  if (b < sp->s_isearch) sp->s_isearch = b;
 }
 
 /*===========================================================================*

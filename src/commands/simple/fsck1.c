@@ -1479,7 +1479,7 @@ char **argv;
 		devgiven = 1;
 	}
   if (!devgiven) {
-	printf("Usage: fsck [-acilrsz] file\n");
+	printf("Usage: fsck1 [-acilrsz] file\n");
 	exit(1);
   }
   return(0);

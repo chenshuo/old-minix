@@ -79,27 +79,6 @@ FORWARD _PROTOTYPE( void sdesc, (struct segdesc_s *segdp, phys_bytes base,
 		phys_bytes size) );
 
 /*=========================================================================*
- *				int_gate				   *
- *=========================================================================*/
-PRIVATE void int_gate(vec_nr, base, dpl_type)
-unsigned vec_nr;
-phys_bytes base;
-unsigned dpl_type;
-{
-/* Build descriptor for an interrupt gate. */
-
-  register struct gatedesc_s *idp;
-
-  idp = &idt[vec_nr];
-  idp->offset_low = base;
-  idp->selector = CS_SELECTOR;
-  idp->p_dpl_type = dpl_type;
-#if _WORD_SIZE == 4
-  idp->offset_high = base >> OFFSET_HIGH_SHIFT;
-#endif
-}
-
-/*=========================================================================*
  *				prot_init				   *
  *=========================================================================*/
 PUBLIC void prot_init()
@@ -292,9 +271,8 @@ phys_bytes size;
 #endif
 }
 
-
 /*=========================================================================*
- *				seg2phys					   *
+ *				seg2phys				   *
  *=========================================================================*/
 PUBLIC phys_bytes seg2phys(seg)
 U16_t seg;
@@ -317,6 +295,26 @@ U16_t seg;
   return base;
 }
 
+/*=========================================================================*
+ *				int_gate				   *
+ *=========================================================================*/
+PRIVATE void int_gate(vec_nr, base, dpl_type)
+unsigned vec_nr;
+phys_bytes base;
+unsigned dpl_type;
+{
+/* Build descriptor for an interrupt gate. */
+
+  register struct gatedesc_s *idp;
+
+  idp = &idt[vec_nr];
+  idp->offset_low = base;
+  idp->selector = CS_SELECTOR;
+  idp->p_dpl_type = dpl_type;
+#if _WORD_SIZE == 4
+  idp->offset_high = base >> OFFSET_HIGH_SHIFT;
+#endif
+}
 
 /*=========================================================================*
  *				enable_iop				   *
@@ -325,6 +323,5 @@ PUBLIC void enable_iop(pp)
 struct proc *pp;
 {
 /* Allow a user process to use I/O instructions. */
-
   pp->p_reg.psw |= 0x3000;
 }

@@ -27,10 +27,13 @@ aal: $(OFILES)
 	$(CC) $(LDFLAGS) -o aal $(OFILES)
 	install -S 64k $@
 
-install:	/usr/bin/aal
+install:	/usr/bin/aal /usr/bin/ar
 
 /usr/bin/aal:	aal
 	install -cs -o bin aal $@
+
+/usr/bin/ar:	/usr/bin/aal
+	install -l $? $@
 
 archiver.o:
 print.o:

@@ -1,8 +1,9 @@
 /* This file contains a collection of miscellaneous procedures:
  *	mem_init:	initialize memory tables.  Some memory is reported
  *			by the BIOS, some is guesstimated and checked later
- *	do_vrdwt:	unpack an i/o vector for those block device drivers
- *			which do not do it for themself
+ *	env_parse	parse environment variable.
+ *	bad_assertion	for debugging
+ *	bad_compare	for debugging
  */
 
 #include "kernel.h"
@@ -61,7 +62,6 @@ PUBLIC void mem_init()
   tot_mem_size = mem[0].size + mem[1].size + mem[2].size;
 }
 #endif /* (CHIP == INTEL) */
-
 
 /*=========================================================================*
  *				env_parse				   *
@@ -144,7 +144,6 @@ char *what;
   printf("panic at %s(%d): assertion \"%s\" failed\n", file, line, what);
   panic(NULL, NO_NUM);
 }
-
 
 /*=========================================================================*
  *				bad_compare				   *

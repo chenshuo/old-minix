@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	checkhier 1.0 - check the directory hierarchy	Author: Kees J. Bot
+#	checkhier 2.2 - check the directory hierarchy	Author: Kees J. Bot
 #								7 May 1995
 
 case "`id`" in
@@ -26,6 +26,7 @@ drwxr-xr-x	root	operator	/etc
 -rw-r--r--	root	operator	/etc/mtab
 -rw-r--r--	root	operator	/etc/passwd
 -rw-r--r--	root	operator	/etc/profile
+-rw-r--r--	root	operator	/etc/protocols
 -rw-r--r--	root	operator	/etc/rc
 -rw-r--r--	root	operator	/etc/services
 -rw-------	root	operator	/etc/shadow
@@ -60,8 +61,30 @@ drwx------	root	operator	/usr/preserve
 drwxr-xr-x	root	operator	/usr/spool
 drwx--x--x	root	operator	/usr/spool/at
 drwx--x--x	root	operator	/usr/spool/at/past
+drwxrwxr-x	root	uucp		/usr/spool/locks
 drwxr-xr-x	bin	operator	/usr/src
 drwxrwxrwx	root	operator	/usr/tmp
+-rwsr-xr-x	root	?		/usr/bin/at
+-rwsr-xr-x	root	?		/usr/bin/chfn
+-rwsr-xr-x	root	?		/usr/bin/chsh
+-rwsr-xr-x	root	?		/usr/bin/df
+-rwsr-xr-x	root	?		/usr/bin/elvprsv
+-rwsr-xr-x	root	?		/usr/bin/elvrec
+-rwsr-xr-x	root	?		/usr/bin/format
+-rwsr-xr-x	root	?		/usr/bin/hostaddr
+-rwsr-xr-x	root	?		/usr/bin/install
+-rwsr-xr-x	daemon	?		/usr/bin/lpr
+-rwsr-xr-x	root	?		/usr/bin/mail
+-rwsr-xr-x	root	?		/usr/bin/mount
+-rwsr-xr-x	root	?		/usr/bin/passwd
+-rwsr-xr-x	root	?		/usr/bin/ping
+-rwxr-sr-x	?	kmem		/usr/bin/ps
+-rwsr-xr-x	root	?		/usr/bin/recover
+-rwsr-xr--	root	?		/usr/bin/shutdown
+-rwsr-xr-x	root	?		/usr/bin/su
+-rwxr-sr-x	?	uucp		/usr/bin/term
+-rwsr-xr-x	root	?		/usr/bin/umount
+-rwxr-sr-x	?	tty		/usr/bin/write
 EOF
 
 } | {
@@ -74,8 +97,10 @@ EOF
 
 	while read mode owner group file
 	do
-		set -$- `ls -ldg $file 2>/dev/null` '' '' '' ''
+		set -$- `ls -ld $file 2>/dev/null` '' '' '' ''
 		curmode=$1 curowner=$3 curgroup=$4
+		test $owner = '?' && curowner=$owner
+		test $group = '?' && curgroup=$group
 
 		# File types?
 		if [ x`expr "$mode" : '\\(.\\)'` != \

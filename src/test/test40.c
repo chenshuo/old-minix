@@ -63,7 +63,7 @@ void test40a()
   struct stat st;
 
   subtest = 1;
-  System("/bin/rm -rf ../DIR_40/*");
+  System("rm -rf ../DIR_40/*");
 
 
   System("echo -n hihaho > hihaho");
@@ -134,7 +134,7 @@ void test40b()
   int stat_loc;
 
   subtest = 2;
-  System("/bin/rm -rf ../DIR_40/*");
+  System("rm -rf ../DIR_40/*");
 
   /* See if childs lseek() is effecting the parent. * See also if
    * lseeking() on same file messes things up. */
@@ -186,7 +186,7 @@ void test40c()
   int i, stat_loc;
 
   subtest = 3;
-  System("/bin/rm -rf ../DIR_40/*");
+  System("rm -rf ../DIR_40/*");
 
   /* Fifo's can't be lseeked(). */
   Mkfifo("fifo");

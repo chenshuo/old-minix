@@ -1,10 +1,12 @@
 /* cmp - compare two files		Author: Kees J. Bot.  */
 
-#include "sys/types.h"
-#include "fcntl.h"
-#include "stdlib.h"
-#include "unistd.h"
-#include "stdio.h"
+#include <sys/types.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
 
 _PROTOTYPE(void fatal, (char *label));
 _PROTOTYPE(int cmp, (int fd1, int fd2));
@@ -116,11 +118,7 @@ int fd1, fd2;
 void fatal(label)
 char *label;
 {
-  if (!silent) {
-	fprintf(stderr, "cmp: ");
-	fflush(stderr);
-	perror(label);
-  }
+  if (!silent) fprintf(stderr, "cmp: %s: %s\n", label, strerror(errno));
   exit(2);
 }
 

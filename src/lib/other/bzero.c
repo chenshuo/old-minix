@@ -4,7 +4,7 @@
 #include <string.h>
 
 void bzero(dst, length)
-char *dst;
+void *dst;
 int length;
 {
   (void) memset((_VOIDSTAR) dst, 0, (_SIZET) length);

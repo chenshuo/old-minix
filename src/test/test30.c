@@ -81,7 +81,7 @@ void test30a()
 
   subtest = 1;
 
-  System("/bin/rm -rf ../DIR_30/*");
+  System("rm -rf ../DIR_30/*");
 
   /* Check if processes have independent new fds */
   switch (fork()) {
@@ -221,7 +221,7 @@ void test30b()
 
   subtest = 2;
 
-  System("/bin/rm -rf ../DIR_30/*");
+  System("rm -rf ../DIR_30/*");
 
   /* Test maximal file name length. */
   if ((fd = creat(MaxName, 0777)) != 3) e(1);
@@ -240,7 +240,7 @@ void test30c()
 
   subtest = 3;
 
-  System("/bin/rm -rf ../DIR_30/*");
+  System("rm -rf ../DIR_30/*");
 
   if (!superuser) {
 	/* Test if creat is not usable to open files with the wrong mode */
@@ -268,7 +268,7 @@ void test30c()
   }
 
   /* Clean up bar. */
-  System("/bin/rm -rf bar");
+  System("rm -rf bar");
 
   /* Test ToLongName and ToLongPath */
 #ifdef _POSIX_NO_TRUNC

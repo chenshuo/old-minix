@@ -166,6 +166,7 @@ char *file, *user;
 				  (ofp = popen(command, "w")) == (FILE *) NULL)
 				error("cannot popen %s", mail);
 			fputs(buf, ofp);
+			break;
 		}
 	}
   }

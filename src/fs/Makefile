@@ -13,7 +13,7 @@ LDFLAGS = -i
 
 OBJ =	main.o open.o read.o write.o pipe.o \
 	device.o path.o mount.o link.o super.o inode.o \
-	cache.o filedes.o stadir.o protect.o time.o \
+	cache.o cache2.o filedes.o stadir.o protect.o time.o \
 	lock.c misc.o utility.o table.o putk.o
 
 fs:	$(OBJ)
@@ -37,6 +37,11 @@ cache.o:	buf.h
 cache.o:	file.h
 cache.o:	fproc.h
 cache.o:	super.h
+
+cache2.o:	$a
+cache2.o:	$h/com.h
+cache2.o:	$h/boot.h
+cache2.o:	buf.h
 
 device.o:	$a
 device.o:	$i/fcntl.h
@@ -74,7 +79,7 @@ link.o:	super.h
 
 lock.o:	$a
 lock.o:	$i/fcntl.h
-lock.o:	$i/tiny-unistd.h
+lock.o:	$i/unistd.h
 lock.o:	file.h
 lock.o:	fproc.h
 lock.o:	inode.h
@@ -98,7 +103,7 @@ main.o:	super.h
 
 misc.o:	$a
 misc.o:	$i/fcntl.h
-misc.o:	$i/tiny-unistd.h
+misc.o:	$i/unistd.h
 misc.o:	$h/callnr.h
 misc.o:	$h/com.h
 misc.o:	$h/boot.h

@@ -38,7 +38,6 @@ OBJECTS	= \
 	$(LIBRARY)(_getpid.o) \
 	$(LIBRARY)(_getppid.o) \
 	$(LIBRARY)(_getuid.o) \
-	$(LIBRARY)(_gtty.o) \
 	$(LIBRARY)(_ioctl.o) \
 	$(LIBRARY)(_isatty.o) \
 	$(LIBRARY)(_kill.o) \
@@ -73,7 +72,6 @@ OBJECTS	= \
 	$(LIBRARY)(_sleep.o) \
 	$(LIBRARY)(_stat.o) \
 	$(LIBRARY)(_stime.o) \
-	$(LIBRARY)(_stty.o) \
 	$(LIBRARY)(_sync.o) \
 	$(LIBRARY)(_tcdrain.o) \
 	$(LIBRARY)(_tcflow.o) \
@@ -189,9 +187,6 @@ $(LIBRARY)(_getppid.o):	_getppid.c
 $(LIBRARY)(_getuid.o):	_getuid.c
 	$(CC1) _getuid.c
 
-$(LIBRARY)(_gtty.o):	_gtty.c
-	$(CC1) _gtty.c
-
 $(LIBRARY)(_ioctl.o):	_ioctl.c
 	$(CC1) _ioctl.c
 
@@ -293,9 +288,6 @@ $(LIBRARY)(_stat.o):	_stat.c
 
 $(LIBRARY)(_stime.o):	_stime.c
 	$(CC1) _stime.c
-
-$(LIBRARY)(_stty.o):	_stty.c
-	$(CC1) _stty.c
 
 $(LIBRARY)(_sync.o):	_sync.c
 	$(CC1) _sync.c

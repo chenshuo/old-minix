@@ -324,6 +324,7 @@ assert (fd>=0 && fd<=IP_FD_NR);
 				ip_fd->if_port-ip_port_table, (time_t)0, 
 				route_ent->nwr_dist, !!(route_ent->nwr_flags &
 					NWRF_FIXED), route_ent->nwr_pref);
+			bf_afree(data);
 			if (route)
 				result= NW_OK;
 			else

@@ -1,5 +1,5 @@
 #!/bin/sh
-# setup.anonftp
+# setup.anonftp - Anonymous FTP setup and maintenance.
 #
 # 01/22/96 Initial Release	Al Woodhul, <asw@hampshire.edu>
 # 01/25/96			Michael Temari, <temari@ix.netcom.com>
@@ -27,7 +27,7 @@ else
 fi
 
 # ftp directory
-FTPDIR=`sed '/^ftp:/!d; s/^.*:\([^:]*\):[^:]*/\1/' /etc/passwd`
+FTPDIR="`sed '/^ftp:/!d; s/^.*:\\([^:]*\\):[^:]*/\\1/' /etc/passwd`"
 
 if [ `whoami` != root ]
 then
@@ -43,7 +43,18 @@ install -d -m 751 -o root -g operator $FTPDIR/bin
 install -d -m 751 -o root -g operator $FTPDIR/dev
 install -d -m 751 -o root -g operator $FTPDIR/etc
 install -d -m 755 -o root -g operator $FTPDIR/pub
-install -d -m 777 -o root -g operator $FTPDIR/pub/incoming
+incoming=
+if [ -d $FTPDIR/pub/incoming ]
+then
+	incoming=t
+elif [ -t 0 ]
+then
+	echo -n "Create \"incoming\" directory? [n] "; read yn
+	case "$yn" in
+	[yY]*|ok|sure)	incoming=t
+	esac
+fi
+test "$incoming" && install -d -m 777 -o root -g operator $FTPDIR/pub/incoming
 
 echo Copying files
 for PROG in $PROGS

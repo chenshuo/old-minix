@@ -74,7 +74,7 @@ void test31a()
 
   subtest = 1;
 
-  System("/bin/rm -rf ../DIR_31/*");
+  System("rm -rf ../DIR_31/*");
 
   /* Check if the file status information is updated correctly */
   System("rm -rf fifo");
@@ -141,7 +141,7 @@ void test31b()
 {
   subtest = 2;
 
-  System("/bin/rm -rf ../DIR_31/*");
+  System("rm -rf ../DIR_31/*");
 
   /* Test maximal file name length. */
   if (mkfifo(MaxName, 0777) != 0) e(1);
@@ -158,7 +158,7 @@ void test31c()
 {
   subtest = 3;
 
-  System("/bin/rm -rf ../DIR_31/*");
+  System("rm -rf ../DIR_31/*");
 
   /* Check if mkfifo() removes, files, fifos, dirs. */
   if (mkfifo("fifo", 0777) != 0) e(1);
@@ -200,7 +200,7 @@ void test31c()
   if (unlink("nono") != -1) e(18);
 
   /* Clean up bar. */
-  System("/bin/rm -rf bar");
+  System("rm -rf bar");
 
   /* Test ToLongName and ToLongPath */
 #ifdef _POSIX_NO_TRUNC

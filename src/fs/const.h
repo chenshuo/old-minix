@@ -38,6 +38,7 @@
 #define XPOPEN (-NR_TASKS-4)	/* used in fp_task when susp'd on pipe open */
 
 #define NO_BIT   ((bit_t) 0)	/* returned by alloc_bit() to signal failure */
+
 #define DUP_MASK        0100	/* mask to distinguish dup2 from dup */
 
 #define LOOK_UP            0	/* tells search_dir to lookup string */

@@ -19,5 +19,5 @@ all::
 
 all install clean::
 	cd boot && $(MAKE) $@
-	cd commands && $(MAKE) $@
+	test ! -d commands || { cd commands && $(MAKE) $@; }
 	cd tools && $(MAKE) $@

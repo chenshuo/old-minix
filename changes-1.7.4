@@ -1,0 +1,539 @@
+Short list of differences between 1.7.2 and 1.7.4:
+
+  - Second level file system cache.  Makes 286 based AT's happy and
+    does away with the RAM disk for normal use.  The "scratch" partition
+    is also obsoleted.
+
+  - All the commands using <sgtty.h> have been changed to use <termios.h>.
+    The this means that the entire system is now supposed to be as POSIX
+    compliant as can be achieved given Minix limitations as a simple
+    educational system.
+
+  - File system limit upped to the somewhat arbitrary maximum of 1 Gb
+    thanks to doing away with preloaded bitmap blocks in FS.  16-bit
+    fsck is still limited to 128 Mb.
+
+  * Virtual Consoles are now standard.  The default kernel has two defined.
+
+  (Things marked with a '*' were changes from the deadborn 1.7.3 to 1.7.4.)
+
+Contributions:
+
+  Richard Henderson <rth@tamu.edu>
+	Bitmap block code changed to no longer preload bit map blocks.
+
+  Kouichi Hirabayashi <kh@mogami-wire.co.jp>
+  Saeko Hirabauashi
+	New AWK program and fix to calendar.
+
+  Paul Ashton <paul@cosc.canterbury.ac.nz>
+	Many alignment problems, null pointer dereferences, string constant
+	writes and network code bug reports and fixes.  (Does SunOS-Minix).
+
+  Albert S. Woodhull <awoodhull@hampshire.edu>
+	Speling error fixes, extra code comments, code rearrangements.
+	General pain in the neck.  (Does the new Minix book in co-op
+	with Andy.)
+
+  Michael Temari <temari@ix.netcom.com>
+	Updates to his network programs.  Mktime() fix.
+
+  Christophe Lizzi <lizzi@ecoledoc.ibp.fr>
+	French keyboard map checked and fixed.
+
+  Osamu Ishibashi <NCD02424@niftyserve.or.jp>
+	Change to let the Adaptec driver know Magneto Optical disks.
+	Repaired long standing bug in XT wini.
+
+  Chr <root@pc1.fa1.cie.uva.es>
+	Security bug report on the recover command.
+
+Long list of differences between 1.7.2 and 1.7.4:
+
+  (Warning: This list is riddled with lame jokes and other silly things that
+  happen to sneak in when doing something as boring as compiling this list.)
+
+  include/curses.h
+	<sgtty.h> -> <termios.h> by porting it back from Minix-vmd.
+
+  include/limits.h
+	UINT_MAX and ULONG_MAX changed to hex constants like 0xFFFFFFFF to
+	make gcc stop complaining.
+
+  include/minix/config.h
+	[IZ]_MAP_SLOTS made obsolete and thus removed.
+	ENABLE_CACHE2 added to enable or disable the second level cache.
+	ENABLE_COMPAT removed
+	ENABLE_BINCOMPAT added to enable or disable support for old binaries
+	using obsolete system calls.
+	ENABLE_SRCCOMPAT added to enable or disable support for old sources
+	using obsolete system calls.
+*	NR_CONS can now be 1 to 8 to enable virtual consoles.
+
+  include/minix/const.h
+	SIG_PUSH_BYTES removed, because the old V7 signal code support is
+	removed.  (Software emulation of signal() still present.)
+
+  include/signal.h
+	SIGSTKFLT removed (unused).
+	SA_COMPAT removed (old signal).
+
+  include/stdio.h
+	Definitions for vfscanf(), vscanf(), and vsscanf() added.
+
+  include/string.h
+	char * -> void * for bcopy(), bcmp(), and bzero().
+
+  include/sys/ioctl.h
+	Final touch to the <sgtty.h> -> <termios.h> changeover, TIOCGETP
+	etc. now defined to use higher level emulation calls (SRCCOMPAT)
+	instead of the old "pack it into a message" calls (still emulated
+	under BINCOMPAT.)
+
+  include/sys/sigcontext.h
+	struct sigframe moved into here from kernel/system.c.
+
+  include/sys/types.h
+	zone_t, block_t, and bit_t changed to unsigned types to avoid type
+	bug problems (and possible invite new bugs).
+
+  include/tiny-fcntl.h
+  include/tiny-unistd.h
+	Removed in favour of the normal include files.
+
+  man/cat2/fcntl.2
+	Removed in favour of a new man2/fcntl.2.
+
+  man/man0/as
+  man/man0/awk
+	New manual pages derived from the Reference Manual.
+
+  man/man0/fsck
+	Mention fsck1 as the V1 file system checker.
+
+  man/man0/kermit
+	Removed some nonsense about "set the line speed before starting
+	kermit".  POSIX termios ttys always reset on close, so a terminal
+	program must set the line itself.
+
+  man/man0/ls
+	Adapted to tell that -l now lists the group by default.
+
+  man/man0/mkfs
+	The maximum file system size is 1 Gb.
+
+  man/man0/sh
+*	Made it look good on a screen thanks to lots of '.ti' nroff things.
+
+  man/man0/users
+*	Removed
+
+  man/man1/synctree.1
+	Spellchecked by an American, who, unlike most Americans, can spell
+	better then me.  :-)
+
+  man/man1/vol.1
+	Explain that vol can now do without the volume size argument if
+	the volume size equals the floppy size.  Also allows mixing of
+	floppy types within one vol run.
+
+  man/man2/fcntl.2
+	A new manual page for fcntl() listing all the gory details.
+
+  man/man4/console.4
+  man/man4/dev.4
+	New manual pages describing the console in particular and all devices
+	in general.
+*	Added info about Virtual Consoles.
+
+  man/man8/add_route.8
+  man/man8/pr_routes.8
+	Describes the command to specify fixed network routes, and a command
+	that lists the TCP/IP driver's routing table.
+
+  man/man8/usage.8
+	Explains the new situation with the 2nd level disk cache.
+*	'Setup' (formerly instdist) can now run after migrating to disk
+	to install floppy sets.
+*	A few words on Virtual Consoles added.
+
+  src/boot/
+	As usual things changed, but its mostly Minix-vmd related.
+
+  src/commands/aal
+	/usr/bin/aal is linked to /usr/bin/ar on installation.  Same
+	situation as on 68000 based machines.
+*	Added proper <stdarg.h>/<varargs.h> code.
+
+  src/commands/advent/verb.c
+	There was some confusion over what should happen if you meet the
+	bird carrying a rod.  (Or maybe there wasn't any confusion except
+	with me.)  Anyway, I unchanged the change made between 1.7.1 and
+	1.7.2.  I demand a screen dump of a PDP-11 adventure game in action
+	before I change it again.
+
+  src/commands/awk
+	This is a replacement of bawk.  Not tested much, but compared to
+	bawk it must be infinitely better.
+
+  src/commands/awk/m.c
+*	Null pointer dereference bug fixed.
+
+  src/commands/bawk
+	"Dead.  All of them.  And good riddance."  -- Londo Mollari.
+
+  src/commands/de/
+	[IZ]_MAP_SLOTS, <sgtty.h> out, <termios.h> in.
+
+  src/commands/elle/
+  src/commands/elvis/
+	<sgtty.h> out, <termios.h> in.
+
+  src/commands/ftp/
+*	New and improved ftp command.
+
+  src/commands/ftpd/
+	Our network application Guru is making this more useful by the day.
+
+  src/commands/ibm/cdplay.c
+  src/commands/ibm/mixer.c
+  src/commands/ibm/part.c
+  src/commands/ibm/recwave.c
+	<sgtty.h> out, <termios.h> in.
+	Geometry guessing code added to 'part' to crosscheck with what the
+	device driver claims.
+
+  src/commands/ibm/term.c
+	Nothing IBM dependend here, so moved to ../simple/.
+
+  src/commands/ic/ic_input.c
+  src/commands/kermit/
+  src/commands/mined/
+	<sgtty.h> out, <termios.h> in.
+*	Mined: fixed varargs bugs by using <stdarg.h>/<varargs.h>.
+
+  src/commands/m4/main.c
+*	Write to a string constant bug fixed.
+
+  src/commands/patch/patch.c
+*	Null pointer dereference bug fixed.
+
+  src/commands/scripts/DESCRIBE.sh
+	Describe "virtual console" devices.
+
+  src/commands/scripts/checkhier.sh
+	Also check setuid or setgid binaries.
+
+  src/commands/scripts/instdist.sh
+	Added support for an "upgrade", i.e. move contents of /usr into
+	/usr/.old and extract new stuff on the old file system.
+	No longer make a scratch subpartition.
+	Install using a second level file system cache.
+*	Renamed to `setup'.
+
+  src/commands/scripts/mkdist.sh
+	Adapted to the new situation where /minix is a directory.
+
+  src/commands/scripts/setup.sh
+*	New name for instdist.sh.  When setup is run when Minix is already
+	on disk it now offers to unpack a floppy set.  /usr is now filled
+	this way, not at the early installation phase.
+
+  src/commands/sh/sh3.c
+	Fixed an exit status bug.  (Can't remember the details.)
+
+  src/commands/simple/animals.c
+	<sgtty.h> out, <termios.h> in.  (This is getting boring.)
+
+  src/commands/simple/calendar.c
+	Bug fix by the author.
+
+  src/commands/simple/chmod.c
+	Don't stop on the first error, try all files.
+
+  src/commands/simple/chown.c
+	Simplified a bit assuming that chown is never setuid-root.
+
+  src/commands/simple/cmp.c
+*	Wrong use of perror() changed to right use of strerror().
+
+  src/commands/simple/comic.c
+	Removed before anyone thinks it is useful.  (Good compression
+	program that is no longer so good compared to things like gzip.)
+
+  src/commands/simple/df.c
+	Return a useful exit code.
+
+  src/commands/simple/diskusage.c
+*	Changed 'struct stat *this_stat' to 'struct stat this_stat'.  It
+	helps if an object actually exists.
+
+  src/commands/simple/ftp.c
+*	Replaced by src/commands/ftp/.
+
+  src/commands/simple/getty.c
+	Better protection against user abuse.
+
+  src/commands/simple/gomoku.c
+	<sgtty.h> out, <termios.h> in.
+
+  src/commands/simple/in.rshd.c
+	New version from Minix-vmd containing various fixes.
+
+  src/commands/simple/join.c
+*	Various null pointer dereference bugs fixed.
+
+  src/commands/simple/leave.c:
+*	Some kind of DST problem fixed.
+
+  src/commands/simple/life.c
+	<sgtty.h> out, <termios.h> in.
+
+  src/commands/simple/login.c
+	Better protection against user abuse.
+
+  src/commands/simple/ls.c
+	Default of 'ls -l' is now to also list the file group.  Cleanup.
+
+  src/commands/simple/men.c
+	<sgtty.h> out, <termios.h> in.
+	Calls to the obsolete 'getlf' changed to 'echo;read'.
+
+  src/commands/simple/mkfs.c
+	Z_MAP_SLOTS things removed.  Max file system size set to 1 Gb.
+
+  src/commands/simple/modem.c
+	Copied from Minix-vmd.  From useless to possibly useful?
+
+  src/commands/simple/recover.c
+*	Glaring security bug fixed.
+
+  src/commands/simple/rlogin.c
+	<sgtty.h> out, <termios.h> in.  Non-Minix code deleted.
+
+  src/commands/simple/roff.c
+	<sgtty.h> out, <termios.h> in.  Why does a text formatter need
+	terminal parameters?
+
+  src/commands/simple/sed.c
+	Added \:xxx: that is equivalent to /xxx/, but allows you to choose
+	the delimiter, ':' in this example.  Null match loop and exit code
+	bug fixed.
+
+  src/commands/simple/tcpd.c
+	Added -DPARANOID for the truely paranoid that demand heavy logging.
+
+  src/commands/simple/term.c
+	Moved in here from ../ibm/.
+	Revamped interface.  Type `CTRL-] h' to see how.  Very useful in
+	combination with ZMODEM (rz/sz).  I ditched kermit in favour of
+	this new term.
+
+  src/commands/simple/test.c
+	<sgtty.h> out, <termios.h> in.  (For 'test -t')
+
+  src/commands/simple/time.c
+	return((status & 0377) ? -1 : (status >> 8));   What else?
+
+  src/commands/simple/users.c
+*	Removed because it is both broken and useless.
+
+  src/commands/simple/vol.c
+	Allow one to omit the volume size for floppies.  Vol will ask the
+	floppy driver how large the floppy is and act accordingly.
+	My apologies to Andy for making one of his programs Big & Ugly.
+
+  src/commands/simple/write.c
+	<sgtty.h> out, <termios.h> in.
+	Setgid 'tty' to allow writing to terminals that are now mode
+	620, group tty by default.  Prevents misuse.
+
+  src/commands/telnet/ttn.c
+	<sgtty.h> out, <termios.h> in.
+	Used to always used local port 1234 preventing two simultaneous
+	telnets.
+
+  src/commands/simple/yes.c
+*	String constant write fixed.  (In one of my programs.  *deep shame*).
+
+  src/commands/telnetd/
+	Fixes by our network program wizard.
+
+  src/commands/yap/
+	<sgtty.h> out, <termios.h> in.
+	Yap should not write to string constants, as one SunOS-Minix
+	found out after he made text and string constants read-only.
+
+  src/commands/zmodem/
+	You know the drill: <sgtty.h> out, <termios.h> in.
+
+  src/etc/fstab
+	tmp=/dev/TMP line removed.
+
+  src/etc/protocols
+*	Initial /etc/protocols file; list of tcp, udp, etc protocol numbers.
+
+  src/etc/ttytab
+*	Added Virtual Console devices.
+
+  src/fs/buf.h
+	I_MAP_BLOCK and ZMAP_BLOCK definitions replaced by MAP_BLOCK using
+	a lax writing policy.  (Map blocks can be restored easily by fsck.)
+
+  src/fs/cache.c
+	Calls to transfer blocks to/from the second level cache added to
+	normal cache routines.  #if ENABLE_CACHE2 armour to allow it to be
+	configed out.  (And out of the book listings.)
+	Calls to alloc_bit() and free_bit() changed to use a new interface.
+
+  src/fs/cache2.c
+	The second level block cache.  The code in this file writes any
+	block expelled from the normal block cache somewhere into the
+	RAM disk.  A small list is kept that records where blocks went.
+	Note that this is a read-only cache, so writes are still slow.
+	This cache mainly helps by caching executables.  This helps
+	compilations and shell scripts a lot.  Useless on the 386 where
+	you can simply use a very big normal cache.
+
+  src/fs/inode.c
+	Changed alloc_bit() and free_bit() calls.
+
+  src/fs/mount.c
+	Do not load or unload bit map blocks anymore.
+
+  src/fs/protect.c
+	Third argument of forbidden() done away.
+
+  src/fs/super.c
+	Load_bit_maps() and unload_bit_maps() removed.  Alloc_bit() and
+	free_bit() rewritten to get or put bit map blocks as needed.  This
+	means that bit map blocks no longer claim a large portion of the
+	block cache.  Unused file systems can be kept mounted without cost.
+	More file systems can be mounted.
+
+  src/fs/super.h
+	*s_imap[I_MAP_SLOTS] and *s_zmap[Z_MAP_SLOTS] memory eaters removed.
+
+  src/inet/
+	Various uninteresting changes.  Can be compiled with -DDEBUG now.
+
+  src/kernel/
+	Several little changes and code rearrangements.
+
+  src/kernel/aha_scsi.c
+	Magneto-Optical disks superficially recognized as some kind of disk.  
+	Prevent/allow medium removal left on the TODO list.
+
+  src/kernel/console.c
+*	Virtual Consoles.
+
+  src/kernel/keyboard.c
+*	A few changes to allow one to select a Virtual Console.
+
+  src/kernel/keymaps/french.src
+	Checked and fixed by someone whose feet are rooted in solid French
+	soil instead of sticky Dutch clay.
+
+  src/kernel/klib*.s
+	Old signal() needed build_sig(), so it is gone.
+	25 microsec delay added to the 16-bit A20 line toggling code.
+
+  src/kernel/system.c
+	Support for old signal() (SYS_OLDSIG) removed.
+	Struct sigframe moved to <sys/sigcontext.h> so it can be used in
+	the library.
+
+  src/kernel/tty.c
+	ENABLE_SRCCOMPAT or ENABLE_BINCOMPAT placed around various bits
+	of <sgtty.h> emulation code.
+*	Speaks of "16-bit", or "32-bit" mode now, instead of "protected"
+	or "386" mode.  Using "386" sounds to retarded to people running
+	this on their super fast Pentium.  Does not help to sell books.
+	Bloody Politics.
+
+  src/kernel/xt_wini.c
+	Living in the country where the Sun rises first apparantly allows
+	one to see better.  XT wini now works.
+
+  src/lib/ansi/errlist.c
+	Spelchecked so that eror messsages dont look stoopid anymore.
+
+  src/lib/ansi/memcmp.c
+	Characters are unsigned to memcmp() says ANSI.
+
+  src/lib/ansi/mktime.c
+	Bug computing across the start of a month fixed.
+
+  src/lib/ansi/strcmp.c
+  src/lib/ansi/strncmp.c
+	Unsigned characters.
+
+  src/lib/curses/
+  src/lib/editline/
+	<sgtty.h> out, <termios.h> in.
+
+  src/lib/ip/gethostent.c
+	Alignment problem fixed, you can't write a long into a char array.
+
+  src/lib/ip/rcmd.c
+	rcmd() expects needs a network byte order port number, not host
+	byte order!  Sleep(1) added as a hack so that we do not listen
+	too soon, or something.
+
+  src/lib/ip/res_mkquery.c
+*	Assignments to dh_flags[12] changed to '|=' where there was '='
+	by mistake.  Caused overwrite of earlier assignments.
+
+  src/lib/other/bcmp.c
+  src/lib/other/bcopy.c
+  src/lib/other/bzero.c
+*	`char *' changed to `void *'.
+
+  src/lib/other/getpass.c
+	Replaced by the Minix-vmd version that uses <termios.h> and is
+	more disaster-proof.
+
+  src/lib/posix/_gtty.c
+  src/lib/posix/_stty.c
+	Very old <sgtty.h> calls removed.
+
+  src/lib/posix/_ioctl.c
+	Old <sgtty.h> "pack it in a message" code removed.
+
+  src/lib/posix/_isatty.c
+	<sgtty.h> out, <termios.h> in.
+
+  src/lib/posix/_readdir.c
+	(char) -1 need not be negative.
+
+  src/lib/stdio/perror.c
+	Fixed to get the error string before destroying to with fprintf()!
+
+  src/lib/stdio/vscanf.c
+  src/lib/stdio/vsscanf.c
+	New functions.
+
+  src/mm/alloc.c
+	Mem_left() obsolete and removed.
+
+  src/mm/break.c
+	Stack_fault() obsolete and removed.
+
+  src/mm/forkexit.c
+*	Let fork() return ENOMEM if out of memory instead of EAGAIN.  (This
+	is debatable, some systems returns EAGAIN if memory could come
+	available in the future, and ENOMEM if there is certainly not
+	enough memory ever.  But ENOMEM leads to a better error message.)
+
+  src/mm/signal.c
+	Old signal() removed.
+
+  src/mm/utility.c
+	Find_proc() obsolete and removed.
+
+  src/test/
+	Why do test programs have more bugs themselves than they help fix?
+
+  src/tools/mkboot
+	Manage a /minix directory for kernel images instead of the scratch
+	test boot partition.

@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: ext_comp.c,v 1.7 91/04/22 11:29:48 ceriel Exp $ */
+/* $Id: ext_comp.c,v 1.10 1994/06/24 11:53:36 ceriel Exp $ */
 
 /* extended precision arithmetic for the strtod() and cvt() routines */
 
@@ -577,7 +577,11 @@ _ext_str_cvt(struct EXTEND *e, int ndigit, int *decpt, int *sign, int ecvtflag)
 	if (e->m1 != 0) {
 		register struct EXTEND *pp = &big_ten_powers[1];
 
-		while(cmp_ext(e,pp) >= 0) pp++;
+		while(cmp_ext(e,pp) >= 0) {
+			pp++;
+			findex = pp - big_ten_powers;
+			if (findex >= BTP) break;
+		}
 		pp--;
 		findex = pp - big_ten_powers;
 		mul_ext(e,&r_big_ten_powers[findex],e);
@@ -697,7 +701,6 @@ _dbl_ext_cvt(double value, struct EXTEND *e)
 	/*	Convert double to extended
 	*/
 	int exponent;
-	register int i;
 
 	value = frexp(value, &exponent);
 	e->sign = value < 0.0;

@@ -62,18 +62,14 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	no_sys,		/* 45 = unused	*/
 	do_getset,	/* 46 = setgid	*/
 	do_getset,	/* 47 = getgid	*/
-#if ENABLE_COMPAT
-	do_signal,	/* 48 = signal	*/
-#else
 	no_sys,		/* 48 = (signal)*/
-#endif
 	no_sys,		/* 49 = unused	*/
 	no_sys,		/* 50 = unused	*/
 	no_sys,		/* 51 = (acct)	*/
 	no_sys,		/* 52 = (phys)	*/
 	no_sys,		/* 53 = (lock)	*/
 	no_sys,		/* 54 = ioctl	*/
-	no_sys,		/* 55 = unused	*/
+	no_sys,		/* 55 = fcntl	*/
 	no_sys,		/* 56 = (mpx)	*/
 	no_sys,		/* 57 = unused	*/
 	no_sys,		/* 58 = unused	*/

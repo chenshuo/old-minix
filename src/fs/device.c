@@ -237,7 +237,7 @@ PUBLIC int do_ioctl()
 		suspend(task);		/* User must be suspended. */
 	}
   }
-#if ENABLE_COMPAT
+#if ENABLE_BINCOMPAT
   m1.TTY_SPEK = dev_mess.TTY_SPEK;	/* erase and kill */
   m1.TTY_FLAGS = dev_mess.TTY_FLAGS;	/* flags */
 #endif

@@ -406,11 +406,16 @@
 
 #include "mined.h"
 #include <signal.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <limits.h>
 #include <errno.h>
 #include <sys/wait.h>
 #include <sys/ioctl.h>
+#if __STDC__
+#include <stdarg.h>
+#else
+#include <varargs.h>
+#endif
 
 extern int errno;
 int ymax = YMAX;
@@ -1096,7 +1101,7 @@ void abort_mined()
 #endif /* UNIX */
 }
 
-#define UNDEF	-1
+#define UNDEF	_POSIX_VDISABLE
 
 /*
  * Set and reset tty into CBREAK or old mode according to argument `state'. It
@@ -1105,42 +1110,28 @@ void abort_mined()
 void raw_mode(state)
 FLAG state;
 {
-  static struct sgttyb old_tty;
-  static struct sgttyb new_tty;
-  static struct tchars old_tchars;
-  static struct tchars new_tchars = {UNDEF, '\034', UNDEF, UNDEF, UNDEF, UNDEF};
-#ifdef NTTYDISC
-  int ldisc;
-#endif /* NTTYDISC */
+  static struct termios old_tty;
+  static struct termios new_tty;
 
   if (state == OFF) {
-  	ioctl(input_fd, TIOCSETP, &old_tty);
-  	ioctl(input_fd, TIOCSETC, (struct sgttyb *) &old_tchars);
-#ifdef NTTYDISC
-  	ldisc = NTTYDISC;
-  	ioctl(input_fd, TIOCSETD, &ldisc);
-#endif /* NTTYDISC */
+  	tcsetattr(input_fd, TCSANOW, &old_tty);
   	return;
   }
 
 /* Save old tty settings */
-  ioctl(input_fd, TIOCGETC, (struct sgttyb *) &old_tchars);
-  ioctl(input_fd, TIOCGETP, &old_tty);
-
-#ifdef NTTYDISC
-  ldisc = OTTYDISC;
-  ioctl(input_fd, TIOCSETD, &ldisc);
-#endif /* NTTYDISC */
+  tcgetattr(input_fd, &old_tty);
 
 /* Set tty to CBREAK mode */
-  ioctl(input_fd, TIOCGETP, &new_tty);
-  new_tty.sg_flags |= CBREAK;
-  new_tty.sg_flags &= ~ECHO;
-  ioctl(input_fd, TIOCSETP, &new_tty);
+  tcgetattr(input_fd, &new_tty);
+  new_tty.c_lflag &= ~(ICANON|ECHO|ECHONL);
+  new_tty.c_iflag &= ~(IXON|IXOFF);
 
-/* Unset signal chars, leav only ^\ */
-  ioctl(input_fd, TIOCSETC, (struct sgttyb *) &new_tchars);
+/* Unset signal chars, leave only SIGQUIT set to ^\ */
+  new_tty.c_cc[VINTR] = new_tty.c_cc[VSUSP] = UNDEF;
+  new_tty.c_cc[VQUIT] = '\\' & 037;
   signal(SIGQUIT, catch);		/* Which is caught */
+
+  tcsetattr(input_fd, TCSANOW, &new_tty);
 }
 
 /*
@@ -1180,7 +1171,7 @@ int bytes;
 {
   char *p;
 
-  p = (char *)malloc((unsigned) bytes);
+  p = malloc((unsigned) bytes);
   if (p == NIL_PTR) {
 	if (loading == TRUE)
 		panic("File too big.");
@@ -1751,29 +1742,36 @@ FLAG writefl, changed;
  * Build_string() prints the arguments as described in fmt, into the buffer.
  * %s indicates an argument string, %d indicated an argument number.
  */
-/* VARARGS */
-void build_string(buf, fmt, args)
-register char *buf, *fmt;
-int args;
+#if __STDC__
+void build_string(char *buf, char *fmt, ...)
 {
-  char *argptr = (char *) &args;
+#else
+void build_string(buf, fmt, va_alist)
+char *buf, *fmt;
+va_dcl
+{
+#endif
+  va_list argptr;
   char *scanp;
+
+#if __STDC__
+  va_start(argptr, fmt);
+#else
+  va_start(argptr);
+#endif
 
   while (*fmt) {
   	if (*fmt == '%') {
   		fmt++;
   		switch (*fmt++) {
   		case 's' :
-  			scanp = (char *) *((char **)argptr);
-			argptr += sizeof(char *);
+  			scanp = va_arg(argptr, char *);
   			break;
   		case 'd' :
-  			scanp = num_out((long) *((int *)argptr));
-			argptr += sizeof(int);
+  			scanp = num_out((long) va_arg(argptr, int));
   			break;
   		case 'D' :
-  			scanp = num_out((long) *((long *) argptr));
-			argptr += sizeof(long);
+  			scanp = num_out((long) va_arg(argptr, long));
   			break;
   		default :
   			scanp = "";
@@ -1785,6 +1783,7 @@ int args;
   	else
   		*buf++ = *fmt++;
   }
+  va_end(argptr);
   *buf = '\0';
 }
 

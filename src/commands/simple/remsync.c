@@ -1,4 +1,4 @@
-/*	remsync 1.3 - remotely synchronize file trees	Author: Kees J. Bot
+/*	remsync 1.5 - remotely synchronize file trees	Author: Kees J. Bot
  *								10 Jun 1994
  */
 #define nil 0
@@ -189,7 +189,7 @@ char *rdlink(const char *link, off_t size)
 	if (len <= size) {
 		path= allocate(path, (len= size * 2) * sizeof(path[0]));
 	}
-	if ((n= readlink(link, path, len)) < 0) return nil;
+	if ((n= readlink(link, path, len)) == -1) return nil;
 	path[n]= 0;
 	return path;
 }
@@ -457,7 +457,8 @@ recurse:
 		entry.type= F_DIR;
 
 		/* Gather directory entries for the next traverse. */
-		if ((newentries= collect(path_name(&path))) == nil && errno != 0) {
+		if ((newentries= collect(path_name(&path))) == nil
+							&& errno != 0) {
 			entry.ignore= errno;
 			report(path_name(&path));
 		}
@@ -656,7 +657,6 @@ void splitline(char *line, char ***pargv, size_t *pargc)
 	static size_t *lenv;
 	static size_t len;
 	size_t idx;
-	int c;
 
 	idx= 0;
 	for (;;) {
@@ -949,7 +949,7 @@ void delete(entry_t *old)
 	if (vflag) fprintf(stderr, "rm %s\n", old->path);
 }
 
-void change_modes(entry_t *new)
+void change_modes(entry_t *old, entry_t *new)
 /* Emit an instruction to change the attributes of an entry. */
 {
 	if (new->ignore) return;
@@ -961,7 +961,7 @@ void change_modes(entry_t *new)
 		(unsigned) new->mode,
 		(unsigned) new->uid, (unsigned) new->gid);
 	checkdiff();
-	if (vflag) {
+	if (vflag && old->mode != new->mode) {
 		fprintf(stderr, "chmod %s %03o %u %u\n",
 			new->path,
 			(unsigned) new->mode,
@@ -1136,7 +1136,7 @@ void mkdifferences(void)
 			goto skip2;
 		case SIMILAR:
 			/* About the same, but the attributes need changing. */
-			change_modes(local);
+			change_modes(remote, local);
 			goto skip2;
 		case EQUAL:
 		skip2:

@@ -88,6 +88,8 @@ char *getcwd(char *path, size_t size)
 		cycle= above.st_dev == current.st_dev ? 0 : 1;
 
 		do {
+			char name[3 + NAME_MAX + 1];
+
 			tmp.st_ino= 0;
 			if ((entry= readdir(d)) == nil) {
 				switch (++cycle) {
@@ -107,16 +109,15 @@ char *getcwd(char *path, size_t size)
 			switch (cycle) {
 			case 0:
 				/* Simple test on inode nr. */
-				tmp.st_dev= current.st_dev;
-				tmp.st_ino= entry->d_ino;
-				break;
-			case 1: {
+				if (entry->d_ino != current.st_ino) continue;
+				/*FALL THROUGH*/
+
+			case 1:
 				/* Current is mounted. */
-				char name[3 + NAME_MAX + 1];
 				strcpy(name, "../");
 				strcpy(name+3, entry->d_name);
 				if (stat(name, &tmp) < 0) continue;
-				} break;
+				break;
 			}
 		} while (tmp.st_ino != current.st_ino
 					|| tmp.st_dev != current.st_dev);

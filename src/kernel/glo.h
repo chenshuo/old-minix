@@ -26,11 +26,12 @@ EXTERN struct memory mem[NR_MEMS];	/* base and size of chunks of memory */
 EXTERN phys_clicks tot_mem_size;	/* total system memory size */
 
 /* Miscellaneous. */
-extern u16_t sizes[8];		/* table filled in by build */
+extern u16_t sizes[];		/* table filled in by boot monitor */
 extern struct tasktab tasktab[];/* initialized in table.c, so extern here */
 extern char *t_stack[];		/* initialized in table.c, so extern here */
 EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */
 EXTERN clock_t tty_timeout;	/* time to wake up the TTY task */
+EXTERN int current;		/* currently visible console */
 
 #if (CHIP == INTEL)
 

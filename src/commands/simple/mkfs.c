@@ -49,8 +49,16 @@
 #define BIN                  2
 #define BINGRP               2
 #define BIT_MAP_SHIFT       13
-#define N_BLOCKS        (8L * Z_MAP_SLOTS * BLOCK_SIZE)
+#define N_BLOCKS         (1024L * 1024)
+#define N_BLOCKS16	  (128L * 1024)
 #define INODE_MAX       ((unsigned) 65535)
+
+/* You can make a really large file system on a 16-bit system, but the array
+ * of bits that get_block()/putblock() needs gets a bit big, so we can only
+ * prefill MAX_INIT blocks.  (16-bit fsck can't check a file system larger
+ * than N_BLOCKS16 anyway.)
+ */
+#define MAX_INIT	 (sizeof(char *) == 2 ? N_BLOCKS16 : N_BLOCKS)
 
 
 #ifdef DOS
@@ -75,7 +83,7 @@ char *progname;
 
 long current_time, bin_time;
 char zero[BLOCK_SIZE], *lastp;
-char umap[(N_BLOCKS + 8) / 8];	/* bit map tells if block read yet */
+char umap[MAX_INIT / 8];	/* bit map tells if block read yet */
 block_t zone_map;		/* where is zone map? (depends on # inodes) */
 int inodes_per_block;
 int fs_version;
@@ -195,6 +203,11 @@ char *argv[];
 	getline(line, token);
 	blocks = atol(token[0]);
 	if (blocks > max_nrblocks) pexit("Block count too large");
+	if (sizeof(char *) == 2 && blocks > N_BLOCKS16) {
+		fprintf(stderr,
+		"%s: warning: FS is larger than the %dM that fsck can check!\n",
+			progname, (int) (N_BLOCKS16 / (1024L * 1024)));
+	}
 	inodes = atoi(token[1]);
 
 	/* Process mode line for root directory. */
@@ -934,7 +947,7 @@ void print_fs()
   d1_inode inode1[V1_INODES_PER_BLOCK];
   d2_inode inode2[V2_INODES_PER_BLOCK];
   unsigned short usbuf[BLOCK_SIZE / sizeof(unsigned short)];
-  block_t b;
+  block_t b, inode_limit;
   struct direct dir[NR_DIR_ENTRIES];
 
   get_block((block_t) 1, (char *) usbuf);
@@ -948,7 +961,8 @@ void print_fs()
   for (i = 0; i < 9; i++) printf("%06o ", usbuf[i]);
   printf("...\n");
 
-  for (b = inode_offset; b < inode_offset + I_MAP_SLOTS; b++) {
+  k = 0;
+  for (b = inode_offset; k < nrinodes; b++) {
 	if (fs_version == 1) {
 		get_block(b, (char *) inode1);
 	} else {
@@ -1007,9 +1021,9 @@ block_t n;
 
   int w, s, mask, r;
 
-  w = n / 8;			/* lint, not quite OK, but checked soon */
-  s = n % 8;			/* lint but OK */
-  if (8 * (block_t) w + s != n) pexit("N_BLOCKS too large");
+  if (sizeof(char *) == 2 && n >= MAX_INIT) pexit("can't initialize past 128M");
+  w = n / 8;
+  s = n % 8;
   mask = 1 << s;
   r = (umap[w] & mask ? 1 : 0);
   umap[w] |= mask;

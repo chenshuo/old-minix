@@ -61,10 +61,9 @@ EXTERN int bufs_in_use;		/* # bufs currently in use (not on free list)*/
 #define INODE_BLOCK       (0 + MAYBE_WRITE_IMMED)	 /* inode block */
 #define DIRECTORY_BLOCK   (1 + MAYBE_WRITE_IMMED)	 /* directory block */
 #define INDIRECT_BLOCK    (2 + MAYBE_WRITE_IMMED)	 /* pointer block */
-#define I_MAP_BLOCK       (3 + WRITE_IMMED + ONE_SHOT)	 /* inode bit map */
-#define ZMAP_BLOCK        (4 + WRITE_IMMED + ONE_SHOT)	 /* free zone map */
-#define ZUPER_BLOCK       (5 + WRITE_IMMED + ONE_SHOT)	 /* super block */
-#define FULL_DATA_BLOCK    6		 	 	 /* data, fully used */
-#define PARTIAL_DATA_BLOCK 7 				 /* data, partly used*/
+#define MAP_BLOCK         (3 + MAYBE_WRITE_IMMED)	 /* bit map */
+#define ZUPER_BLOCK       (4 + WRITE_IMMED + ONE_SHOT)	 /* super block */
+#define FULL_DATA_BLOCK    5		 	 	 /* data, fully used */
+#define PARTIAL_DATA_BLOCK 6 				 /* data, partly used*/
 
 #define HASH_MASK (NR_BUF_HASH - 1)	/* mask for hashing block numbers */

@@ -201,13 +201,13 @@ mode_t omode;
   /* Only do the normal open code if we didn't just create the file. */
   if (exist) {
   	/* Check protections. */
-  	if ((r = forbidden(rip, bits, 0)) == OK) {
+  	if ((r = forbidden(rip, bits)) == OK) {
   		/* Opening reg. files directories and special files differ. */
 	  	switch (rip->i_mode & I_TYPE) {
     		   case I_REGULAR: 
 			/* Truncate regular file if O_TRUNC. */
 			if (oflags & O_TRUNC) {
-				if ((r = forbidden(rip, W_BIT, 0)) !=OK) break;
+				if ((r = forbidden(rip, W_BIT)) !=OK) break;
 				truncate(rip);
 				wipe_inode(rip);
 				/* Send the inode from the inode cache to the

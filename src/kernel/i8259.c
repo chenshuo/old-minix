@@ -32,48 +32,6 @@ PRIVATE vecaddr_t irq_vec[] = {
 #endif
 
 
-/*=========================================================================*
-*				put_irq_handler				   *
-*=========================================================================*/
-PUBLIC void put_irq_handler(irq, handler)
-int irq;
-irq_handler_t handler;
-{
-/* Register an interrupt handler. */
-
-  if (irq < 0 || irq >= NR_IRQ_VECTORS)
-	panic("invalid call to put_irq_handler", irq);
-
-  if (irq_table[irq] == handler)
-	return;		/* extra initialization */
-
-  if (irq_table[irq] != spurious_irq)
-	panic("attempt to register second irq handler for irq", irq);
-
-  disable_irq(irq);
-  if (!protected_mode) set_vec(BIOS_VECTOR(irq), irq_vec[irq]);
-  irq_table[irq]= handler;
-  irq_use |= 1 << irq;
-}
-
-
-/*=========================================================================*
-*				spurious_irq				   *
-*=========================================================================*/
-PRIVATE int spurious_irq(irq)
-int irq;
-{
-/* Default interrupt handler.  It complains a lot. */
-
-  if (irq < 0 || irq >= NR_IRQ_VECTORS)
-	panic("invalid call to spurious_irq", irq);
-
-  printf("spurious irq %d\n", irq);
-
-  return 1;	/* Reenable interrupt */
-}
-
-
 /*==========================================================================*
  *				intr_init				    *
  *==========================================================================*/
@@ -118,6 +76,47 @@ int mine;
   /* Initialize the table of interrupt handlers. */
   for (i = 0; i < NR_IRQ_VECTORS; i++) irq_table[i] = spurious_irq;
 }
+
+/*=========================================================================*
+ *				spurious_irq				   *
+ *=========================================================================*/
+PRIVATE int spurious_irq(irq)
+int irq;
+{
+/* Default interrupt handler.  It complains a lot. */
+
+  if (irq < 0 || irq >= NR_IRQ_VECTORS)
+	panic("invalid call to spurious_irq", irq);
+
+  printf("spurious irq %d\n", irq);
+
+  return 1;	/* Reenable interrupt */
+}
+
+/*=========================================================================*
+ *				put_irq_handler				   *
+ *=========================================================================*/
+PUBLIC void put_irq_handler(irq, handler)
+int irq;
+irq_handler_t handler;
+{
+/* Register an interrupt handler. */
+
+  if (irq < 0 || irq >= NR_IRQ_VECTORS)
+	panic("invalid call to put_irq_handler", irq);
+
+  if (irq_table[irq] == handler)
+	return;		/* extra initialization */
+
+  if (irq_table[irq] != spurious_irq)
+	panic("attempt to register second irq handler for irq", irq);
+
+  disable_irq(irq);
+  if (!protected_mode) set_vec(BIOS_VECTOR(irq), irq_vec[irq]);
+  irq_table[irq]= handler;
+  irq_use |= 1 << irq;
+}
+
 
 #if _WORD_SIZE == 2
 /*===========================================================================*

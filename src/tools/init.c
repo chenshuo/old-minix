@@ -82,11 +82,16 @@ int main(void)
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = 0;
 
-  sa.sa_handler = SIG_IGN;
-  sigaction(SIGHUP, &sa, NULL);		/* ignore for now */
+  /* Hangup: Reexamine /etc/ttytab for newly enabled terminal lines. */
+  sa.sa_handler = onhup;
+  sigaction(SIGHUP, &sa, NULL);
+
+  /* Terminate: Stop spawning login processes, shutdown is near. */
+  sa.sa_handler = onterm;
   sigaction(SIGTERM, &sa, NULL);
 
-  sa.sa_handler = onabrt;		/* called when CTRL-ALT-DEL typed */
+  /* Abort: Sent by the kernel on CTRL-ALT-DEL; shut the system down. */
+  sa.sa_handler = onabrt;
   sigaction(SIGABRT, &sa, NULL);
 
   /* Execute the /etc/rc file. */
@@ -125,11 +130,6 @@ int main(void)
    * sent then stop spawning processes, shutdown time is near.
    */
 
-  sa.sa_handler = onhup;
-  sigaction(SIGHUP, &sa, NULL);
-  sa.sa_handler = onterm;
-  sigaction(SIGTERM, &sa, NULL);
-
   check = 1;
   while (1) {
 	while ((pid = waitpid(-1, NULL, check ? WNOHANG : 0)) > 0) {
@@ -154,7 +154,7 @@ int main(void)
 		check = 1;
 	}
 
-	/* Reboot on signal 6 (SIGABRT). */
+	/* Shut down on signal 6 (SIGABRT). */
 	if (gotabrt) {
 		gotabrt = 0;
 		startup(0, &TT_REBOOT);

@@ -117,7 +117,7 @@ int *fd2p;
 		tcpconf.nwtc_flags= NWTC_LP_SET | NWTC_SET_RA | NWTC_SET_RP |
 			NWTC_EXCL;
 		tcpconf.nwtc_locport= htons(lport);
-		tcpconf.nwtc_remport= htons(rport);
+		tcpconf.nwtc_remport= rport;
 		tcpconf.nwtc_remaddr= *(ipaddr_t *)hp->h_addr;
 
 		result= ioctl(fd, NWIOSTCPCONF, &tcpconf);
@@ -229,6 +229,17 @@ int *fd2p;
 			else
 				exit(1);
 		}
+		/*
+		 * This sleep is a HACK.  The command that we are starting
+		 * will try to connect to the fd2 port.  It seems that for
+		 * this to succeed the child process must have already made
+		 * the call to ioctl above (the NWIOTCPLISTEN) call.
+		 * The sleep gives the child a chance to make the call
+		 * before the parent sends the port number to the
+		 * command being started.
+		 */
+		sleep(1);
+
 		sprintf(num, "%d", lport);
 		if (write(fd, num, strlen(num)+1) != strlen(num)+1)
 		{

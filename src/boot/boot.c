@@ -1,14 +1,14 @@
-/*	boot 2.3.1 - Load and start Minix.		Author: Kees J. Bot
+/*	boot 2.4.1 - Load and start Minix.		Author: Kees J. Bot
  *								27 Dec 1991
  *
- * Copyright 1994 Kees J. Bot, All rights reserved.
+ * Copyright 1996 Kees J. Bot, All rights reserved.
  * This package may be freely used and modified except that changes that
  * do not increase the functionality or that are incompatible with the
  * original may not be released to the public without permission from the
  * author.  Use of so called "C beautifiers" is explicitly prohibited.
  */
 
-char version[]=		"2.3";
+char version[]=		"2.4";
 
 #define nil 0
 #define _POSIX_SOURCE	1
@@ -368,11 +368,11 @@ void migrate(void)
  * put the data area cleanly inside a 64K chunk (no DMA problems).
  */
 {
-#if !DOS
 	u32_t oldaddr= caddr;
 	u32_t memsize= get_memsize() * 1024L;
-	u32_t dma64k= (memsize - 1) & ~0xFFFFL;
 	u32_t newaddr= memsize - runsize;
+#if !DOS
+	u32_t dma64k= (memsize - 1) & ~0xFFFFL;
 	vector dskbase;
 
 	/* Check if data segment crosses a 64k boundary. */
@@ -390,6 +390,7 @@ void migrate(void)
 		raw_copy(mon2abs(&boot_part), vec2abs(&rem_part),
 							sizeof(boot_part));
 	}
+#endif /* !DOS */
 
 	/* Set the new caddr for relocate. */
 	caddr= newaddr;
@@ -399,6 +400,7 @@ void migrate(void)
 
 	relocate();	/* Make the copy running. */
 
+#if !DOS
 	/* Set the parameters for the boot device using global variables
 	 * device and dskpars.  (This particular call should not fail.)
 	 */
@@ -531,17 +533,15 @@ void initialize(void)
 	}
 
 	strcpy(bootdev.name, "dosd0");
+	bootdev.primary= -1;
 	for (p= 0; p < NR_PARTITIONS; p++) {
-		if (table[p]->bootind != 0
-				&& table[p]->sysind == MINIX_PART) {
+		if (table[p]->bootind != 0 && table[p]->sysind == MINIX_PART) {
 			bootdev.primary= p;
-			bootdev.name[4]= '0' + 1+p;
+			bootdev.name[4]= '1' + p;
 			lowsec= table[p]->lowsec;
-			return;
+			break;
 		}
 	}
-	printf("\nNo active Minix partition on %s\n", vdisk);
-	exit(1);
 #endif /* DOS */
 }
 
@@ -740,7 +740,7 @@ void get_parameters(void)
 	b_setvar(E_SPECIAL|E_VAR, "processor", u2a(getprocessor()));
 	b_setvar(E_SPECIAL|E_VAR, "bus", bus_type[get_bus()]);
 	b_setvar(E_SPECIAL|E_VAR, "memsize", u2a(get_memsize()));
-	b_setvar(E_SPECIAL|E_VAR, "emssize", u2a(get_ext_memsize()));
+	b_setvar(E_SPECIAL|E_VAR, "emssize", ul2a(get_ext_memsize()));
 	b_setvar(E_SPECIAL|E_VAR, "video", vid_type[get_video()]);
 	b_setvar(E_SPECIAL|E_VAR, "chrome", vid_chrome[get_video() & 1]);
 
@@ -1378,6 +1378,16 @@ void execute(void)
 		if (cmd == 'e') putchar('\n');
 		return;
 	} else
+		/* boot -opts? */
+	if (n == 2 && strcmp(name, "boot") == 0 && second->token[0] == '-') {
+		static char optsvar[]= "bootopts";
+		(void) b_setvar(E_VAR, optsvar, second->token);
+		bootminix();
+		b_unset(optsvar);
+		voidtoken();
+		voidtoken();
+		return;
+	} else
 		/* boot device, ls dir, delay msec? */
 	if (n == 2 && (
 		strcmp(name, "boot") == 0
@@ -1468,11 +1478,14 @@ void boot(void)
 	printf("\nMinix boot monitor %s\n", version);
 	printf("\nPress ESC to enter the monitor\n");
 
+	/* Initialize tables under DOS. */
+	if (DOS) initialize();
+
 	/* Relocate program to the end of memory. */
 	migrate();
 
-	/* Initialize tables. */
-	initialize();
+	/* Initialize tables under the BIOS. */
+	if (!DOS) initialize();
 
 	/* Block cache. */
 	init_cache();

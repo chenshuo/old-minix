@@ -1,4 +1,3 @@
-
 /* This file contains some utility routines for MM.
  *
  * The entry points are:
@@ -14,7 +13,6 @@
 #include <minix/com.h>
 #include <fcntl.h>
 #include <signal.h>		/* needed only because mproc.h needs it */
-#include <unistd.h>
 #include "mproc.h"
 
 /*===========================================================================*
@@ -55,20 +53,6 @@ int mask;			/* R_BIT, W_BIT, or X_BIT */
 	return(EACCES);
   }
   return(fd);
-}
-
-
-/*===========================================================================*
- *				find_proc  				     *
- *===========================================================================*/
-PUBLIC struct mproc *find_proc(pid)
-pid_t pid;
-{
-  register struct mproc *rmp;
-
-  for (rmp = &mproc[INIT_PROC_NR + 1]; rmp < &mproc[NR_PROCS]; rmp++)
-	if (rmp->mp_flags & IN_USE && rmp->mp_pid == pid) return(rmp);
-  return(NIL_MPROC);
 }
 
 

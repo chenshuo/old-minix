@@ -32,8 +32,6 @@ EXTERN struct super_block {
   zone_t s_zones;		/* number of zones (replaces s_nzones in V2) */
 
   /* The following items are only used when the super_block is in memory. */
-  struct buf *s_imap[I_MAP_SLOTS]; /* pointers to the in-core inode bit map */
-  struct buf *s_zmap[Z_MAP_SLOTS]; /* pointers to the in-core zone bit map */
   struct inode *s_isup;		/* inode for root dir of mounted file sys */
   struct inode *s_imount;	/* inode mounted on */
   unsigned s_inodes_per_block;	/* precalculated from magic number */
@@ -48,3 +46,5 @@ EXTERN struct super_block {
 } super_block[NR_SUPERS];
 
 #define NIL_SUPER (struct super_block *) 0
+#define IMAP		0	/* operating on the inode bit map */
+#define ZMAP		1	/* operating on the zone bit map */

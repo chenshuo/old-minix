@@ -24,6 +24,13 @@ long Locbit = LLITOUT;	/* Bit SUPPOSED to disable output translations */
 #endif
 #endif
 
+#ifdef POSIX
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <termios.h>
+#define OS "POSIX"
+#endif
+
 #ifndef OS
 #ifndef USG
 #define USG
@@ -144,11 +151,15 @@ int code;
 
 
 
+#ifdef POSIX
+struct termios oldtty, tty;
+#else
 #ifdef ICANON
 struct termio oldtty, tty;
 #else
 struct sgttyb oldtty, tty;
 struct tchars oldtch, tch;
+#endif
 #endif
 
 int iofd = 0;		/* File descriptor for ioctls & reads */
@@ -167,6 +178,55 @@ int n;
 
 	vfile("mode:%d", n);
 	switch(n) {
+#ifdef POSIX
+	case 2:		/* Un-raw mode used by sz, sb when -g detected */
+		if(!did0)
+			(void) tcgetattr(iofd, &oldtty);
+		tty = oldtty;
+
+		tty.c_iflag = BRKINT|IXON;
+
+		tty.c_oflag = 0;	/* Transparent output */
+
+		tty.c_cflag &= ~PARENB;	/* Disable parity */
+		tty.c_cflag |= CS8;	/* Set character size = 8 */
+		if (Twostop)
+			tty.c_cflag |= CSTOPB;	/* Set two stop bits */
+
+
+		tty.c_lflag = ISIG;
+		tty.c_cc[VINTR] = Zmodem ? 03:030;	/* Interrupt char */
+		tty.c_cc[VQUIT] = -1;			/* Quit char */
+		tty.c_cc[VMIN] = 3;	 /* This many chars satisfies reads */
+		tty.c_cc[VTIME] = 1;	/* or in this many tenths of seconds */
+
+		(void) tcsetattr(iofd, TCSANOW, &tty);
+		did0 = TRUE;
+		return OK;
+	case 1:
+	case 3:
+		if(!did0)
+			(void) tcgetattr(iofd, &oldtty);
+		tty = oldtty;
+
+		tty.c_iflag = n==3 ? (IGNBRK|IXOFF) : IGNBRK;
+
+		 /* No echo, crlf mapping, INTR, QUIT, delays, no erase/kill */
+		tty.c_lflag &= ~(ECHO | ICANON | ISIG);
+
+		tty.c_oflag = 0;	/* Transparent output */
+
+		tty.c_cflag &= ~PARENB;	/* Same baud rate, disable parity */
+		tty.c_cflag |= CS8;	/* Set character size = 8 */
+		if (Twostop)
+			tty.c_cflag |= CSTOPB;	/* Set two stop bits */
+		tty.c_cc[VMIN] = HOWMANY; /* This many chars satisfies reads */
+		tty.c_cc[VTIME] = 1;	/* or in this many tenths of seconds */
+		(void) tcsetattr(iofd, TCSANOW, &tty);
+		did0 = TRUE;
+		Baudrate = cfgetospeed(&tty);
+		return OK;
+#endif
 #ifdef USG
 	case 2:		/* Un-raw mode used by sz, sb when -g detected */
 		if(!did0)
@@ -308,6 +368,13 @@ int n;
 	case 0:
 		if(!did0)
 			return ERROR;
+#ifdef POSIX
+		/* Wait for output to drain, flush input queue, restore
+		 * modes and restart output.
+		 */
+		(void) tcsetattr(iofd, TCSAFLUSH, &oldtty);
+		(void) tcflow(iofd, TCOON);
+#endif
 #ifdef USG
 		(void) ioctl(iofd, TCSBRK, 1);	/* Wait for output to drain */
 		(void) ioctl(iofd, TCFLSH, 1);	/* Flush input queue */
@@ -333,6 +400,9 @@ int n;
 
 void sendbrk()
 {
+#ifdef POSIX
+	tcsendbreak(iofd, 1);
+#endif
 #ifdef V7
 #ifdef TIOCSBRK
 #define CANBREAK

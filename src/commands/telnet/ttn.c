@@ -11,11 +11,7 @@ ttn.c
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
-#if _POSIX_TTY_CODE
 #include <termios.h>
-#else
-#include <sgtty.h>
-#endif
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,11 +65,7 @@ char *argv[];
 	int result, count;
 	nwio_tcpcl_t tcpconnopt;
 	char buffer[1024];
-#if _POSIX_TTY_CODE
 	struct termios termios;
-#else
-	struct sgttyb sgttyb;
-#endif
 	char *tcp_device;
 
 	prog_name= argv[0];
@@ -123,26 +115,23 @@ char *argv[];
 	tcp_fd= open (tcp_device, O_RDWR);
 	if (tcp_fd<0)
 	{
-		perror ("unable to open /dev/tcp:");
-		fprintf(stderr, "error is %d\r\n", errno);
+		perror ("unable to open /dev/tcp");
 		exit(1);
 	}
-	tcpconf.nwtc_flags= NWTC_LP_SET | NWTC_SET_RA | NWTC_SET_RP;
+	tcpconf.nwtc_flags= NWTC_LP_SEL | NWTC_SET_RA | NWTC_SET_RP;
 	tcpconf.nwtc_remaddr= host;
 	tcpconf.nwtc_remport= port;
-	tcpconf.nwtc_locport= htons(1234);
 
 	result= ioctl (tcp_fd, NWIOSTCPCONF, &tcpconf);
 	if (result<0)
 	{
-		fprintf(stderr, "got error %d\r\n", errno);
 		perror ("unable to NWIOSTCPCONF");
 		exit(1);
 	}
 
 	tcpconnopt.nwtcl_flags= 0;
 
-	do
+	while(1)
 	{
 		result= ioctl (tcp_fd, NWIOTCPCONN, &tcpconnopt);
 		if (result < 0 && errno == EAGAIN)
@@ -150,11 +139,11 @@ char *argv[];
 			fprintf(stderr,"%s: got EAGAIN, sleeping(1s)\r\n",
 				prog_name);
 			sleep(1);
-		}
-	} while (result <0 && errno == EAGAIN);
+		} else
+			break;
+	}
 	if (result<0)
 	{
-		fprintf(stderr, "got error %d\r\n", errno);
 		perror ("unable to NWIOTCPCONN");
 		exit(1);
 	}
@@ -176,28 +165,13 @@ fprintf(stderr, "killing %d with %d\r\n", ppid, SIGKILL);
 		exit(1);
 		break;
 	default:
+		tcgetattr(0, &termios);
 		screen();
 #if DEBUG
 fprintf(stderr, "killing %d with %d\r\n", pid, SIGKILL);
 #endif
 		kill(pid, SIGKILL);
-#if _POSIX_TTY_CODE
-		tcgetattr(0, &termios);
-		termios.c_lflag |= ECHO|ICANON|ISIG;
 		tcsetattr(0, TCSANOW, &termios);
-		tcgetattr(1, &termios);
-		termios.c_lflag |= ECHO|ICANON|ISIG;
-		tcsetattr(1, TCSANOW, &termios);
-#else
-		ioctl(1, TIOCGETP, &sgttyb);
-		sgttyb.sg_flags |= ECHO|CRMOD;
-		sgttyb.sg_flags &= ~RAW;
-		ioctl(1, TIOCSETP, &sgttyb);
-		ioctl(0, TIOCGETP, &sgttyb);
-		sgttyb.sg_flags |= ECHO|CRMOD;
-		sgttyb.sg_flags &= ~RAW;
-		ioctl(0, TIOCSETP, &sgttyb);
-#endif
 		break;
 	}
 }
@@ -295,20 +269,13 @@ static void keyboard()
 	nwio_tcpatt_t nwio_tcpatt;
 	char buffer[1024];
 	int result;
-#if 0
-#if _POSIX_TTY_CODE
-	struct termios termios;
-#else
-	struct sgttyb sgttyb;
-#endif
-#endif
-	
 	int count;
+
 	nwio_tcpatt.nwta_flags= 0;
 
 	for (;;)
 	{
-		count= read (0, buffer, 1 /* sizeof(buffer) */);
+		count= read (0, buffer, sizeof(buffer));
 		if (count<0)
 		{
 			fprintf(stderr, "%s: read: %s\r\n", prog_name,
@@ -321,12 +288,13 @@ static void keyboard()
  { where(); fprintf(stderr, "writing %d bytes\r\n", count); }
 #endif
 		count= write(tcp_fd, buffer, count);
+#if 0
 		if (buffer[0] == '\r')
 			write(tcp_fd, "\n", 1);
+#endif
 		if (count<0)
 		{
 			perror("write");
-			fprintf(stderr, "errno= %d\r\n", errno);
 			return;
 		}
 		if (!count)
@@ -497,18 +465,12 @@ static void will_option (int optsrt)
 		}
 		else
 		{
-#if _POSIX_TTY_CODE
 			struct termios termios;
-			tcgetattr(1, &termios);
-			termios.c_lflag &= ~(ECHO|ICANON|ISIG);
-			tcsetattr(1, TCSANOW, &termios);
-#else
-			struct sgttyb sgttyb;
-			ioctl(1, TIOCGETP, &sgttyb);
-			sgttyb.sg_flags &= ~(ECHO|CRMOD);
-			sgttyb.sg_flags |= RAW;
-			ioctl(1, TIOCSETP, &sgttyb);
-#endif
+			tcgetattr(0, &termios);
+			termios.c_iflag &= ~(ICRNL|IGNCR|INLCR|IXON|IXOFF);
+			termios.c_oflag &= ~(OPOST);
+			termios.c_lflag &= ~(ECHO|ECHONL|ICANON|ISIG);
+			tcsetattr(0, TCSANOW, &termios);
 			DO_echo= TRUE;
 			reply[0]= IAC;
 			reply[1]= IAC_DO;

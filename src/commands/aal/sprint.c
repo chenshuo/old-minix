@@ -4,7 +4,11 @@
  */
 /* $Header: sprint.c,v 1.6 91/03/11 14:33:13 ceriel Exp $ */
 
+#if __STDC__
+#include <stdarg.h>
+#else
 #include <varargs.h>
+#endif
 #include <system.h>
 #include "param.h"
 
@@ -17,15 +21,21 @@
 	%d = int
 $ */
 char *
-sprint(va_alist)
-	va_dcl
-{
+#if __STDC__
+sprint(char *buf, char *fmt, ...)
+#else
+sprint(buf, fmt, va_alist)
 	char *buf, *fmt;
+	va_dcl
+#endif
+{
 	va_list args;
 
+#if __STDC__
+	va_start(args, fmt);
+#else
 	va_start(args);
-	buf = va_arg(args, char *);
-	fmt = va_arg(args, char *);
+#endif
 	buf[_format(buf, fmt, args)] = '\0';
 	va_end(args);
 	return buf;

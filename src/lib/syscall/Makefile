@@ -40,7 +40,6 @@ OBJECTS	= \
 	$(LIBRARY)(getpid.o) \
 	$(LIBRARY)(getppid.o) \
 	$(LIBRARY)(getuid.o) \
-	$(LIBRARY)(gtty.o) \
 	$(LIBRARY)(ioctl.o) \
 	$(LIBRARY)(isatty.o) \
 	$(LIBRARY)(kill.o) \
@@ -81,7 +80,6 @@ OBJECTS	= \
 	$(LIBRARY)(sleep.o) \
 	$(LIBRARY)(stat.o) \
 	$(LIBRARY)(stime.o) \
-	$(LIBRARY)(stty.o) \
 	$(LIBRARY)(sync.o) \
 	$(LIBRARY)(tcdrain.o) \
 	$(LIBRARY)(tcflow.o) \
@@ -206,9 +204,6 @@ $(LIBRARY)(getppid.o):	getppid.s
 $(LIBRARY)(getuid.o):	getuid.s
 	$(CC1) getuid.s
 
-$(LIBRARY)(gtty.o):	gtty.s
-	$(CC1) gtty.s
-
 $(LIBRARY)(ioctl.o):	ioctl.s
 	$(CC1) ioctl.s
 
@@ -328,9 +323,6 @@ $(LIBRARY)(stat.o):	stat.s
 
 $(LIBRARY)(stime.o):	stime.s
 	$(CC1) stime.s
-
-$(LIBRARY)(stty.o):	stty.s
-	$(CC1) stty.s
 
 $(LIBRARY)(sync.o):	sync.s
 	$(CC1) sync.s

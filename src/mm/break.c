@@ -13,7 +13,6 @@
  *   do_brk:	  BRK/SBRK system calls to grow or shrink the data segment
  *   adjust:	  see if a proposed segment adjustment is allowed
  *   size_ok:	  see if the segment sizes are feasible
- *   stack_fault: grow the stack segment
  */
 
 #include "mm.h"
@@ -167,34 +166,4 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
   if (dvir + dc > s_vir) return(ENOMEM);
 
   return(OK);
-}
-
-
-/*===========================================================================*
- *				stack_fault  				     *
- *===========================================================================*/
-PUBLIC void stack_fault(proc_nr)
-int proc_nr;			/* tells who got the stack fault */
-{
-/* Handle a stack fault by growing the stack segment until sp is inside of it. 
- * If this is impossible because data segment is in the way, kill the process.
- */
-
-  register struct mproc *rmp;
-  int r;
-  vir_bytes new_sp;
-
-  rmp = &mproc[proc_nr];
-  sys_getsp(proc_nr, &new_sp);
-
-#if (CHIP == M68000)
-  new_sp -= CLICK_SIZE;		/* one click margin between D and S */
-#endif
-
-  r = adjust(rmp, rmp->mp_seg[D].mem_len, new_sp);
-  if (r == OK) return;
-
-  /* Stack has bumped into data segment.  Kill the process. */
-  sigdelset(&rmp->mp_catch, SIGSEGV);	/* don't catch this signal */
-  sig_proc(rmp, SIGSEGV);	/* terminate process */
 }

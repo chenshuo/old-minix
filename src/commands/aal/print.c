@@ -4,7 +4,11 @@
  */
 /* $Header: print.c,v 1.6 91/03/11 14:33:01 ceriel Exp $ */
 
+#if __STDC__
+#include <stdarg.h>
+#else
 #include <varargs.h>
+#endif
 #include <system.h>
 #include "param.h"
 
@@ -16,15 +20,23 @@
 	%[uxbo] = unsigned int
 	%d = int
 $ */
-print(va_alist)
-	va_dcl
-{
+int
+#if __STDC__
+print(char *fmt, ...)
+#else
+print(fmt, va_alist)
 	char *fmt;
+	va_dcl
+#endif
+{
 	va_list args;
 	char buf[SSIZE];
 
+#if __STDC__
+	va_start(args, fmt);
+#else
 	va_start(args);
-	fmt = va_arg(args, char *);
+#endif
 	sys_write(STDOUT, buf, _format(buf, fmt, args));
 	va_end(args);
 }

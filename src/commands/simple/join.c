@@ -11,7 +11,6 @@
 
 #define MAXFLD	200		/* maximum # of fields to accept */
 
-_PROTOTYPE(long ftell, (FILE * fp));
 _PROTOTYPE(void main, (int argc, char **argv));
 _PROTOTYPE(void error, (char *s, char *t));
 _PROTOTYPE(void usage, (void));
@@ -278,13 +277,16 @@ int get1()
   int r;
   static char oldkey1[BUFSIZ];
 
-  strcpy(oldkey, fld[0][kpos[0]]);	/* save previous key for control */
+  if (fld[0][kpos[0]]) {
+        strcpy(oldkey, fld[0][kpos[0]]);  /* save previous key for control */
+  }
   r = getrec(0);
 
-  if (r && strcmp(oldkey1, fld[0][kpos[0]]) > 0)
-	error("file1 is not sorted", (char *) 0);
-  strcpy(oldkey1, fld[0][kpos[0]]);	/* save previous key for sort check */
-
+  if (r) {
+        if (strcmp(oldkey1, fld[0][kpos[0]]) > 0)
+	      error("file1 is not sorted", (char *) 0);
+        strcpy(oldkey1, fld[0][kpos[0]]);  /* save prev key for sort check */
+  }
   return r;
 }
 
@@ -295,10 +297,11 @@ int get2(back)
 
   r = getrec(1);
 
-  if (!back && r && strcmp(oldkey2, fld[1][kpos[1]]) > 0)
-	error("file2 is not sorted", (char *) 0);
-  strcpy(oldkey2, fld[1][kpos[1]]);	/* save previous key for sort check */
-
+  if (r) {
+        if (!back && strcmp(oldkey2, fld[1][kpos[1]]) > 0)
+	      error("file2 is not sorted", (char *) 0);
+        strcpy(oldkey2, fld[1][kpos[1]]);  /* save prev key for sort check */
+  }
   return r;
 }
 

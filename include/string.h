@@ -44,9 +44,9 @@ _PROTOTYPE( size_t strxfrm, (char *_s1, const char *_s2, size_t _n)	);
 /* For backward compatibility. */
 _PROTOTYPE( char *index, (const char *_s, int _charwanted)		);
 _PROTOTYPE( char *rindex, (const char *_s, int _charwanted)		);
-_PROTOTYPE( void bcopy, (const char *_src, char *_dst, int _length)	);
-_PROTOTYPE( int bcmp, (const char *_s1, const char *_s2, int _length)	);
-_PROTOTYPE( void bzero, (char *_dst, int _length)			);
+_PROTOTYPE( void bcopy, (const void *_src, void *_dst, size_t _length)	);
+_PROTOTYPE( int bcmp, (const void *_s1, const void *_s2, size_t _length));
+_PROTOTYPE( void bzero, (void *_dst, size_t _length)			);
 _PROTOTYPE( void *memccpy, (char *_dst, const char *_src, int _ucharstop,
 						    size_t _size)	);
 /* BSD functions */

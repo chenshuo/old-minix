@@ -211,10 +211,13 @@ char *argv[];
   int authorized, preserv_env;
   struct ttyent *ttyp;
   struct stat ttystat;
+  struct sigaction sa;
 
-  /* Ignore keyboard signals. */
-  signal(SIGINT, SIG_IGN);
-  signal(SIGQUIT, SIG_IGN);
+  /* Don't let QUIT dump core. */
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sa.sa_handler = exit;
+  sigaction(SIGQUIT, &sa, NULL);
 
   /* Parse options.  */
   f_flag= 0;
@@ -289,7 +292,8 @@ char *argv[];
 
 	/* Start timer running. */
 	time_out = 0;
-	signal(SIGALRM, Time_out);
+	sa.sa_handler = Time_out;
+	sigaction(SIGALRM, &sa, NULL);
 	alarm(60);
 
 
@@ -398,11 +402,6 @@ char *argv[];
 		add2env(env, term, 0);
 	}
 
-	chdir(pwd->pw_dir);
-
-	/* Reset signals to default values. */
-	for (n = 1; n <= _NSIG; ++n) signal(n, SIG_DFL);
-
 	/* Show the message-of-the-day. */
 	show_file(PATH_MOTD);
 
@@ -410,12 +409,21 @@ char *argv[];
 	chown(tty_name, pwd->pw_uid, TTY_GID);
 	chmod(tty_name, 0620);
 
-	/* Change id and exec shell. */
+	/* Change id. */
 #if __minix_vmd
 	initgroups(pwd->pw_name, pwd->pw_gid);
 #endif
 	setgid(pwd->pw_gid);
 	setuid(pwd->pw_uid);
+
+	/* cd $HOME */
+	chdir(pwd->pw_dir);
+
+	/* Reset signals to default values. */
+	sa.sa_handler = SIG_DFL;
+	for (n = 1; n <= _NSIG; ++n) sigaction(n, &sa, NULL);
+
+	/* Execute the user's shell. */
 	execve(sh, argx, env);
 
 	if (pwd->pw_gid == 0) {

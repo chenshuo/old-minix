@@ -38,7 +38,7 @@ PUBLIC int do_utime()
   /* Only the owner of a file or the super_user can change its time. */
   r = OK;
   if (rip->i_uid != fp->fp_effuid && !super_user) r = EPERM;
-  if (utime_length == 0 && r != OK) r = forbidden(rip, W_BIT, FALSE);
+  if (utime_length == 0 && r != OK) r = forbidden(rip, W_BIT);
   if (read_only(rip) != OK) r = EROFS;	/* not even su can touch if R/O */
   if (r == OK) {
 	if (utime_length == 0) {

@@ -10,7 +10,6 @@
  */
 
 #include "kernel.h"
-#include <string.h>
 #include <stdlib.h>
 #include <minix/boot.h>
 #include "protect.h"

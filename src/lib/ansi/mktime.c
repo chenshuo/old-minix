@@ -3,6 +3,9 @@
  */
 /* $Header: mktime.c,v 1.5 91/04/22 13:20:54 ceriel Exp $ */
 
+/* Michael A. Temari <temari@ix.netcom.com>   03/01/96    */
+/*   -  fixed bug is structure fixup code                 */
+
 #include	<time.h>
 #include	<limits.h>
 #include	"loc_time.h"
@@ -47,12 +50,11 @@ mktime(register struct tm *timep)
 	}
 	day += (timep->tm_mday - 1);
 	while (day < 0) {
-		day += YEARSIZE(YEAR0 + timep->tm_year - 1);
-		timep->tm_year--;
-	}
-	while (day >= YEARSIZE(YEAR0 + timep->tm_year)) {
-		day -= YEARSIZE(YEAR0 + timep->tm_year);
-		timep->tm_year++;
+		if(--timep->tm_mon < 0) {
+			timep->tm_year--;
+			timep->tm_mon = 11;
+		}
+		day += _ytab[LEAPYEAR(YEAR0 + timep->tm_year)][timep->tm_mon];
 	}
 	while (day >= _ytab[LEAPYEAR(YEAR0 + timep->tm_year)][timep->tm_mon]) {
 		day -= _ytab[LEAPYEAR(YEAR0 + timep->tm_year)][timep->tm_mon];

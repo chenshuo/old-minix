@@ -1,4 +1,4 @@
-/*	nonamed 1.5 - not a name daemon, but plays one on TV.
+/*	nonamed 1.6 - not a name daemon, but plays one on TV.
  *							Author: Kees J. Bot
  *								29 Nov 1994
  */
@@ -385,7 +385,7 @@ int old_id(u16_t id, u16_t *out_id, u16_t *out_port, ipaddr_t *out_ip)
  */
 {
 	id= ntohs(id);
-	if ((id_counter - id) >= N_IDS) {
+	if ((u16_t) (id_counter - id) > N_IDS) {
 		/* Too old. */
 		return 0;
 	} else {

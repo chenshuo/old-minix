@@ -21,7 +21,7 @@ int iteration, cumsig, subtest, errct = 0, sig1, sig2;
 
 int sigarray[SIGS] = {SIGHUP, SIGILL, SIGTRAP, SIGABRT, SIGIOT, SIGUNUSED,
 	      SIGFPE, SIGUSR1, SIGSEGV, SIGUSR2, SIGPIPE, SIGALRM,
-	      SIGTERM, SIGSTKFLT};
+	      SIGTERM};
 
 /* Prototypes produced automatically by mkptypes. */
 _PROTOTYPE(int main, (int argc, char *argv []));
@@ -134,7 +134,6 @@ void test8a()
   if (sigismember(&s, SIGPIPE) != 0) e(15);
   if (sigismember(&s, SIGALRM) != 0) e(16);
   if (sigismember(&s, SIGTERM) != 0) e(17);
-  if (sigismember(&s, SIGSTKFLT) != 0) e(18);
 
   /* Create a full set and see if any bits are off. */
   if (sigfillset(&s) != 0) e(19);
@@ -156,7 +155,6 @@ void test8a()
   if (sigismember(&s, SIGPIPE) != 1) e(35);
   if (sigismember(&s, SIGALRM) != 1) e(36);
   if (sigismember(&s, SIGTERM) != 1) e(37);
-  if (sigismember(&s, SIGSTKFLT) != 1) e(38);
 
   /* Create an empty set, then turn on bits individually. */
   if (sigemptyset(&s) != 0) e(39);
@@ -185,7 +183,6 @@ void test8a()
   if (sigismember(&s, SIGPIPE) != 0) e(58);
   if (sigismember(&s, SIGALRM) != 0) e(59);
   if (sigismember(&s, SIGTERM) != 0) e(60);
-  if (sigismember(&s, SIGSTKFLT) != 0) e(61);
 
   /* Now turn them off and see if all are off. */
   if (sigdelset(&s, SIGHUP) != 0) e(62);
@@ -210,7 +207,6 @@ void test8a()
   if (sigismember(&s, SIGPIPE) != 0) e(80);
   if (sigismember(&s, SIGALRM) != 0) e(81);
   if (sigismember(&s, SIGTERM) != 0) e(82);
-  if (sigismember(&s, SIGSTKFLT) != 0) e(83);
 }
 
 void func1(sig)
@@ -277,7 +273,7 @@ void test8b()
   /* Replace action and see if old value is read back correctly. */
   sa.sa_handler = func2;
   sa.sa_mask = s_ill_pip;
-  sa.sa_flags = SA_RESETHAND | SA_NODEFER | SA_COMPAT;
+  sa.sa_flags = SA_RESETHAND | SA_NODEFER;
   osa.sa_handler = SIG_IGN;
   osa.sa_mask = s_empty;
   osa.sa_flags = 0;
@@ -296,7 +292,7 @@ void test8b()
   if (sigaction(SIGHUP, &sa, &osa) != 0) e(17);
   if (osa.sa_handler != func2) e(18);
   if (osa.sa_mask != s_ill_pip) e(19);
-  if (osa.sa_flags != (SA_RESETHAND | SA_NODEFER | SA_COMPAT)) e(20);
+  if (osa.sa_flags != (SA_RESETHAND | SA_NODEFER)) e(20);
 
   /* Test sigprocmask(SIG_SETMASK, ...). */
   if (sigprocmask(SIG_SETMASK, &s_full, &s1) != 0) e(18);    /* block all */

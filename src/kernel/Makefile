@@ -56,7 +56,6 @@ clock.o:	proc.h
 
 console.o:	$a
 console.o:	$i/termios.h
-console.o:	$i/sgtty.h
 console.o:	$h/callnr.h
 console.o:	$h/com.h
 console.o:	protect.h
@@ -64,7 +63,6 @@ console.o:	tty.h
 console.o:	proc.h
 
 start.o:	$a
-start.o:	$i/string.h
 start.o:	$i/stdlib.h
 start.o:	$h/boot.h
 start.o:	protect.h
@@ -89,7 +87,6 @@ i8259.o:	$a
 
 keyboard.o:	$a
 keyboard.o:	$i/termios.h
-keyboard.o:	$i/sgtty.h
 keyboard.o:	$i/signal.h
 keyboard.o:	$i/unistd.h
 keyboard.o:	$h/callnr.h
@@ -129,7 +126,6 @@ protect.o:	protect.h
 
 pty.o:	$a
 pty.o:	$i/termios.h
-pty.o:	$i/sgtty.h
 pty.o:	$i/signal.h
 pty.o:	$h/callnr.h
 pty.o:	$h/com.h
@@ -138,7 +134,6 @@ pty.o:	proc.h
 
 rs232.o:	$a
 rs232.o:	$i/termios.h
-rs232.o:	$i/sgtty.h
 rs232.o:	$i/signal.h
 rs232.o:	tty.h
 rs232.o:	proc.h

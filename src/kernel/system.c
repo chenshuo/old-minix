@@ -14,9 +14,6 @@
  *   SYS_TIMES	 caller wants to get accounting times for a process
  *   SYS_ABORT	 MM or FS cannot go on; abort MINIX
  *   SYS_FRESH	 start with a fresh process image during EXEC (68000 only)
-#if ENABLE_COMPAT
- *   SYS_OLDSIG	 send a signal to a process (old style)
-#endif
  *   SYS_SENDSIG send a signal to a process (POSIX style)
  *   SYS_SIGRETURN complete POSIX-style signalling
  *   SYS_KILL	 cause a signal to be sent via MM
@@ -96,7 +93,6 @@
  *   numap:	umap D segment starting from process number instead of pointer
  *   umap:	compute the physical address for a given virtual address
  *   alloc_segments: allocate segments for 8088 or higher processor
- *   build_sig: put old-style signal info on stack (68000, Intel ver. in klib)
  */
 
 #include "kernel.h"
@@ -117,7 +113,6 @@
 #define IOPL_MASK 0x003000
 
 PRIVATE message m;
-PRIVATE char sig_stuff[SIG_PUSH_BYTES];	/* used to send signals to processes */
 
 FORWARD _PROTOTYPE( int do_abort, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_copy, (message *m_ptr) );
@@ -129,9 +124,6 @@ FORWARD _PROTOTYPE( int do_kill, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_mem, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_newmap, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_sendsig, (message *m_ptr) );
-#if ENABLE_COMPAT
-FORWARD _PROTOTYPE( int do_oldsig, (message *m_ptr) );
-#endif
 FORWARD _PROTOTYPE( int do_sigreturn, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_endsig, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_times, (message *m_ptr) );
@@ -140,10 +132,6 @@ FORWARD _PROTOTYPE( int do_umap, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_xit, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_vcopy, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_getmap, (message *m_ptr) );
-
-#if (CHIP == M68000)
-FORWARD _PROTOTYPE( void build_sig, (char *sig_stuff,struct proc *rp,int sig));
-#endif
 
 #if (SHADOWING == 1)
 FORWARD _PROTOTYPE( int do_fresh, (message *m_ptr) );
@@ -172,9 +160,6 @@ PUBLIC void sys_task()
 	    case SYS_ABORT:	r = do_abort(&m);	break;
 #if (SHADOWING == 1)
 	    case SYS_FRESH:	r = do_fresh(&m);	break;
-#endif
-#if ENABLE_COMPAT
-	    case SYS_OLDSIG:	r = do_oldsig(&m);	break;
 #endif
 	    case SYS_SENDSIG:	r = do_sendsig(&m);	break;
 	    case SYS_SIGRETURN: r = do_sigreturn(&m);	break;
@@ -538,63 +523,10 @@ message *m_ptr;			/* pointer to request message */
 }
 #endif /* (SHADOWING == 1) */
 
-#if ENABLE_COMPAT
-/*===========================================================================*
- *				do_oldsig				     *
- *===========================================================================*/
-PRIVATE int do_oldsig(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Handle sys_oldsig(). Signal a process.  The stack is known to be big enough.
- */
-
-  register struct proc *rp;
-  phys_bytes dst_phys;
-  vir_bytes new_sp;
-  int sig;			/* signal number, 1 to _NSIG */
-  sighandler_t sig_handler;	/* pointer to the signal handler */
-
-  /* Extract parameters and prepare to build the words that get pushed. */
-  if (!isokusern(m_ptr->PR)) return(E_BAD_PROC);
-  rp = proc_addr(m_ptr->PR);
-  sig = m_ptr->SIGNUM;
-  sig_handler = m_ptr->FUNC;	/* run time system addr for catching sigs */
-  new_sp = (vir_bytes) rp->p_reg.sp;
-
-  /* Actually build the block of words to push onto the stack. */
-  build_sig(sig_stuff, rp, sig);	/* build up the info to be pushed */
-
-  /* Prepare to do the push, and do it. */
-  dst_phys = umap(rp, S, new_sp, (vir_bytes) SIG_PUSH_BYTES);
-  if (dst_phys == 0) panic("do_oldsig can't signal; SP bad", NO_NUM);
-
-  /* Push pc, psw from sig_stuff. */
-  phys_copy(vir2phys(sig_stuff), dst_phys, (phys_bytes) SIG_PUSH_BYTES);
-
-  /* Change process' sp and pc to reflect the interrupt. */
-  rp->p_reg.sp = new_sp;
-  rp->p_reg.pc = (reg_t) sig_handler;	/* bad ptr type */
-  return(OK);
-}
-#endif /* ENABLE_COMPAT */
 
 /*===========================================================================*
  *			      do_sendsig				     *
  *===========================================================================*/
-struct sigframe {
-  _PROTOTYPE( void (*sf_retadr), (void) );
-  int sf_signo;
-  int sf_code;
-  struct sigcontext *sf_scp;
-#if ENABLE_COMPAT
-  struct sigcontext *sf_oldscpcopy;
-#else
-  reg_t sf_fp;
-#endif
-  _PROTOTYPE( void (*sf_retadr2), (void) );
-  struct sigcontext *sf_scpcopy;
-};
-
 PRIVATE int do_sendsig(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
@@ -635,15 +567,13 @@ message *m_ptr;			/* pointer to request message */
 
   /* Initialize the sigframe structure. */
   frp = (struct sigframe *) scp - 1;
-  fr.sf_signo = smsg.sm_signo;
-  fr.sf_code = 0;	/* XXX - should be used for type of FP exception */
-  fr.sf_scp = scp;
-#if ENABLE_COMPAT
-  fr.sf_oldscpcopy = scp;
-#else
-  fr.sf_fp = rp->p_reg.fp;
-#endif
   fr.sf_scpcopy = scp;
+  fr.sf_retadr2= (void (*)()) rp->p_reg.pc;
+  fr.sf_fp = rp->p_reg.fp;
+  rp->p_reg.fp = (reg_t) &frp->sf_fp;
+  fr.sf_scp = scp;
+  fr.sf_code = 0;	/* XXX - should be used for type of FP exception */
+  fr.sf_signo = smsg.sm_signo;
   fr.sf_retadr = (void (*)()) smsg.sm_sigreturn;
 
   /* Copy the sigframe structure to the user's stack. */
@@ -1095,15 +1025,6 @@ PUBLIC void inform()
 			panic("can't inform MM", NO_NUM);
 		sigemptyset(&rp->p_pending); /* the ball is now in MM's court */
 		rp->p_flags &= ~PENDING;/* remains inhibited by SIG_PENDING */
-#if (MACHINE == ATARI)
-		/* SIGSTKFLT is not generated in the PC version. */
-		if (sigismember((sigset_t *) &m.SIG_MAP, SIGSTKFLT)) {
-			if (rp->p_pendcount != 0 &&
-			    --rp->p_pendcount == 0 &&
-			    (rp->p_flags &= ~SIG_PENDING) == 0)
-				lock_ready(rp);
-		}
-#endif
 		lock_pick_proc();	/* avoid delay in scheduling MM */
 		return;
 	}
@@ -1235,26 +1156,3 @@ register struct proc *rp;
   }
 }
 #endif /* (CHIP == INTEL) */
-
-
-#if (CHIP == M68000)
-/*===========================================================================*
- *                              build_sig                                    *
- *===========================================================================*/
-PRIVATE void build_sig(sig_stuff, rp, sig)
-char *sig_stuff;
-register struct proc *rp;
-int sig;
-{
-  register struct frame {
-		int	f_sig;
-		u16_t	f_psw;
-		reg_t	f_pc;
-  } *fp;
-
-  fp = (struct frame *) sig_stuff;
-  fp->f_sig = sig;
-  fp->f_psw = rp->p_reg.psw;
-  fp->f_pc = rp->p_reg.pc;
-}
-#endif /* (CHIP == M68000) */

@@ -71,9 +71,9 @@ void write_log()
   if (!fd) 
     perror ("open");
   else {
-    sprintf (mes,"System %s at %.02d:%.02d %s %d 19%.02d by %s@%s\n",prog,
-	     tm->tm_hour,tm->tm_min,month[tm->tm_mon],tm->tm_mday,tm->tm_year,
-	     who,host);
+    sprintf (mes,"%s %02d %02d:%02d:%02d %s: system %s by %s@%s\n",
+	month[tm->tm_mon],tm->tm_mday,tm->tm_hour,tm->tm_min,tm->tm_sec,
+	prog,prog,who,host);
     write (fd,mes,strlen(mes));
     close(fd);
   }

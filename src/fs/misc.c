@@ -15,7 +15,7 @@
 
 #include "fs.h"
 #include <fcntl.h>
-#include <tiny-unistd.h>	/* cc runs out of memory with unistd.h :-( */
+#include <unistd.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include <minix/boot.h>

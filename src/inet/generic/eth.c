@@ -691,8 +691,7 @@ assert(pack->acc_linkC);
 
 		if (eth_fd->ef_flags & EFF_READ_IP)
 			packet2user(eth_fd);
-		if (eth_fd->ef_ethopt.nweo_flags &
-			(NWEO_SHARED | NWEO_EXCL))
+		if ((eth_fd->ef_ethopt.nweo_flags & NWEO_ACC_MASK) != NWEO_COPY)
 		{
 			bf_afree(pack);
 			pack= 0;

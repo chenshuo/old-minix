@@ -339,14 +339,14 @@ assert(!*q_head_ptr);
 	switch(m->mq_mess.m_type)
 	{
 	case NW_READ:
-#if DEBUG
+#if DEBUG&256
  { where(); printf("calling 0x%x(%d, %d)\n", sr_fd->srf_read, sr_fd->srf_fd,
 	m->mq_mess.COUNT); }
 #endif
 		result= (*sr_fd->srf_read)(sr_fd->srf_fd, m->mq_mess.COUNT);
 		break;
 	case NW_WRITE:
-#if DEBUG
+#if DEBUG&256
  { where(); printf("calling 0x%x(%d, %d)\n", sr_fd->srf_write, sr_fd->srf_fd,
 	m->mq_mess.COUNT); }
 #endif

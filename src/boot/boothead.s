@@ -236,13 +236,15 @@ smallcopy:
 	call	abs2seg
 	mov	si, ax
 	mov	ds, dx		! ds:si = srcaddr
-	mov	ax, cx		! Save copying count
 	shr	cx, #1		! Words to move
 	rep
 	movs			! Do the word copy
 	adc	cx, cx		! One more byte?
 	rep
 	movsb			! Do the byte copy
+	mov	ax, ss		! Restore ds and es from the remaining ss
+	mov	ds, ax
+	mov	es, ax
 	jmp	copyadjust
 ext_copy:
 	mov	x_dst_desc+2, ax
@@ -265,9 +267,6 @@ copyadjust:
 	sbb	14(bp), #0	! count -= copycount
 	jmp	copy		! and repeat
 copydone:
-	mov	ax, ss		! Restore ds and es from the remaining ss
-	mov	ds, ax
-	mov	es, ax
 	pop	di
 	pop	si		! Restore C variable registers
 	pop	bp
@@ -592,15 +591,19 @@ _get_tick:
 ! too by looking at the hardware, but there is a small chance on errors that
 ! the monitor allows you to correct by setting variables.
 
-.define		_get_bus	! returns type of system bus
-.define		_get_video	! returns type of display
-.define		_get_memsize	! returns amount of low memory in K
-.define		_get_ext_memsize  ! returns amount of extended memory in K
+.define _get_bus		! returns type of system bus
+.define _get_video		! returns type of display
+.define _get_memsize		! returns amount of low memory in K
+.define _get_ext_memsize	! returns amount of extended memory in K
 
 ! u16_t get_bus(void)
 !	Return type of system bus, in order: XT, AT, MCA.
 _get_bus:
+	call	_getprocessor
 	xor	dx, dx		! Assume XT
+	cmp	ax, #286	! An AT has at least a 286
+	jb	got_bus
+	inc	dx		! Assume AT
 	movb	ah, #0xC0	! Code for get configuration
 	int	0x15
 	jc	got_bus		! Carry clear and ah = 00 if supported
@@ -608,7 +611,7 @@ _get_bus:
 	jne	got_bus
 	eseg
 	movb	al, 5(bx)	! Load feature byte #1
-	movb	dl, #2		! Assume MCA
+	inc	dx		! Assume MCA
 	testb	al, #0x02	! Test bit 1 - "bus is Micro Channel"
 	jnz	got_bus
 	dec	dx		! Assume AT
@@ -672,24 +675,25 @@ _get_memsize:
 	int	0x12		! Returns the size (in K) in ax
 	ret
 
-! u16_t get_ext_memsize(void);
+! u32_t get_ext_memsize(void);
 !	Ask the BIOS how much extended memory there is.
 
 _get_ext_memsize:
-	call	_getprocessor	! Is this an old crate?
-	cmp	ax, #186
-	jbe	no_ext		! Don't try the next function, it crashed an XT
-	movb	ah, #0x88
+	call	_getprocessor
+	cmp	ax, #286	! Only 286s and above have extended memory
+	jb	no_ext
+	movb	ah, #0x88	! Code for get extended memory size
 	clc			! Carry will stay clear if call exists
 	int	0x15		! Returns size (in K) in ax for AT's
-	jnb	got_ext_memsize
-no_ext:	sub	ax, ax		! Error, probably a PC
-got_ext_memsize:
+	jnc	got_ext
+no_ext:	xor	ax, ax		! Error, no extended memory
+got_ext:
+	xor	dx, dx
 	ret
 
 ! Functions to leave the boot monitor.
-.define		_bootstrap	! Call another bootstrap
-.define		_minix		! Call Minix
+.define _bootstrap		! Call another bootstrap
+.define _minix			! Call Minix
 
 ! void _bootstrap(int device, struct part_entry *entry)
 !	Call another bootstrap routine to boot MS-DOS for instance.  (No real
@@ -723,6 +727,11 @@ _minix:
 	mov	dx, #0x03F2	! Floppy motor drive control bits
 	movb	al, #0x0C	! Bits 4-7 for floppy 0-3 are off
 	outb	dx		! Kill the motors
+	push	ds
+	mov	ax, #0x0040	! BIOS data segment
+	mov	ds, ax
+	andb	0x003F, #0xF0	! Clear diskette motor status bits of BIOS
+	pop	ds
 	cli			! No more interruptions
 
 	test	_k_flags, #K_I386 ! Switch to 386 mode?
@@ -841,6 +850,7 @@ is25:
 	xorb	bh, bh		! Page 0
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
+	mov	cur_vid_mode, #-1  ! Minix may have messed things up
 
 	mov	ax, 8(bp)
 	mov	dx, 10(bp)	! dx-ax = return value from the kernel
@@ -916,8 +926,12 @@ gate_A20:
 	call	kb_wait
 	movb	al, ah		! Enable or disable code
 	outb	0x60
-	!call	kb_wait
-	!ret
+	call	kb_wait
+	mov	ax, #25		! 25 microsec delay for slow keyboard chip
+0:	out	0xED		! Write to an unused port (1us)
+	dec	ax
+	jne	0b
+	ret
 kb_wait:
 	inb	0x64
 	testb	al, #0x02	! Keyboard input buffer full?

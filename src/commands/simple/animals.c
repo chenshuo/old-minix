@@ -3,7 +3,7 @@
 #include <sys/types.h>
 #include <string.h>
 #include <signal.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <ctype.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -35,7 +35,7 @@ struct node {
 } animals[MAX_NODES];
 
 int count = 0;
-struct sgttyb old_tty_mode;
+struct termios old_tty_mode;
 
 
 int main(argc, argv)
@@ -50,7 +50,7 @@ char *argv[];
   }
   if (argc == 2) animal_file = argv[1];
 
-  ioctl(0, TIOCGETP, &old_tty_mode);
+  tcgetattr(0, &old_tty_mode);
 
   signal(SIGINT, Abort);
   signal(SIGQUIT, Abort);
@@ -119,7 +119,7 @@ char *argv[];
   }
 
 
-  ioctl(0, TIOCSETP, &old_tty_mode);
+  tcsetattr(0, TCSANOW, &old_tty_mode);
 
   printf("\nThank you for playing \"animals\".\n");
   printf("The animal data base is now being updated.\n");
@@ -209,19 +209,19 @@ char *animal_file;
 int Ask(question)
 char *question;
 {
-  struct sgttyb new_tty_mode;
+  struct termios new_tty_mode;
   int response;
 
   new_tty_mode = old_tty_mode;
-  new_tty_mode.sg_flags |= CBREAK;
-  ioctl(0, TIOCSETP, &new_tty_mode);
+  new_tty_mode.c_lflag &= ~ICANON;
+  tcsetattr(0, TCSANOW, &new_tty_mode);
 
   printf("%s ", question);
 
   while ((response = getchar()) != 'y' && response != 'n')
 	printf("\n%s [yn]?", question);
   putchar('\n');
-  ioctl(0, TIOCSETP, &old_tty_mode);
+  tcsetattr(0, TCSANOW, &old_tty_mode);
   if (response == 'y')
 	return(1);
   else
@@ -293,7 +293,7 @@ int size;
 void Abort(dummy)
 int dummy; /* to keep the compiler happy */
 {
-  ioctl(0, TIOCSETP, &old_tty_mode);
+  tcsetattr(0, TCSANOW, &old_tty_mode);
 
   printf("\nThank you for playing \"animals\".\n");
   printf("Since you aborted, the animal data base will not be updated.\n");
@@ -306,7 +306,7 @@ int dummy; /* to keep the compiler happy */
 void Error(message)
 char *message;
 {
-  ioctl(0, TIOCSETP, &old_tty_mode);
+  tcsetattr(0, TCSANOW, &old_tty_mode);
   fprintf(stderr, "Error: %s\n", message);
   exit(1);
 }

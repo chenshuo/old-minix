@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 2.15 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 2.17 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -10,8 +10,8 @@ esac
 case $#:$1 in
 1:std)		# Standard devices.
 	set -$- mem fd0 fd1 fd0a fd1a \
-		hd0 hd1a hd5 hd6a cd0 cd1a sd0 sd1a sd5 sd6a \
-		st4 tty tty00 tty01 eth
+		hd0 hd1a hd5 hd6a cd0 cd1a sd0 sd1a sd5 sd6a st4 \
+		tty ttyc1 tty00 tty01 ttyp0 ttyp1 ttyp2 ttyp3 eth
 	;;
 0:|1:-\?)
 	cat >&2 <<EOF
@@ -26,8 +26,9 @@ Where key is one of the following:
 	st0 st1 ...		# Make SCSI tapes rst0, nrst0, rst1 ...
 	cd0 cd1a		# Make CD-ROM devices (non SCSI)
 	console lp tty log	# One of these makes all four
+	ttyc1 ... ttyc3		# Virtual consoles
 	tty00 ... tty03		# Make serial lines
-	ttyp ttyq ...		# Make tty, pty pairs
+	ttyp0 ... ttyq0 ...	# Make tty, pty pairs
 	eth ip tcp udp		# One of these makes TCP/IP devices
 	audio mixer		# Make audio devices
 	std			# All standard devices
@@ -157,6 +158,14 @@ do
 		$e chmod 200 lp
 		$e mknod log c 4 15
 		$e chmod 222 log
+		;;
+	ttyc[1-3])
+		# Virtual consoles.
+		#
+		n=`expr $dev : '....\\(.*\\)'`	# Minor device number.
+		$e mknod $dev c 4 $n
+		$e chgrp tty $dev
+		$e chmod 600 $dev
 		;;
 	tty0[0-3])
 		# Serial lines.

@@ -20,6 +20,10 @@ int tsf_pause = 0;	/* Set if ts_pause works.  Ref'd by equit in e_main */
 
 #if !(SYSV || BBN)	/* SYSV and BBN have weird tty calls */
 
+#if MINIX
+#include <termios.h>
+struct termios origterm, newterm;
+#else
 #if V6
 	/* Normal V6 declarations, must provide explicitly */
 struct sgttyb {
@@ -40,6 +44,7 @@ struct sgttyb {
 struct sgttyb nstate;	/* Both V6 and V7 */
 struct sgttyb ostate;	/* Both V6 and V7 */
 #endif /*!(SYSV || BBN)*/
+#endif /*!MINIX*/
 
 
 #if BBN		/* BBN system frobs */
@@ -122,8 +127,8 @@ ts_init()
 	signal(16,1);		/* DN peculiar - turn off ctl-A */
 #endif /*DNTTY*/
 
-#if !(SYSV || BBN)			/* Normal UNIX stuff */
-	gtty(1,&ostate);		/* Remember old state */
+#if !(MINIX || SYSV || BBN)		/* Normal UNIX stuff */
+	ioctl(1, TIOCGETP, &ostate);	/* Remember old state */
 	nstate = ostate;		/* Set up edit-mode state vars */
 	nstate.sg_flags |= RAW;			/* We'll want raw mode */
 	nstate.sg_flags &= ~(ECHO|CRMOD);	/* with no echoing */
@@ -159,6 +164,35 @@ ts_init()
 	nstate.t_pagelen = 0;			/* no paging of output */
 	trm_ospeed = ostate.t_ospeed;
 #endif /*BBN*/
+
+#if MINIX
+	tcgetattr(0, &origterm);	/* How things are now */
+	newterm = origterm;		/* Save them for restore on exit */
+
+	/* input flags */
+	newterm.c_iflag |= IGNBRK;	/* Ignore break conditions.*/
+	newterm.c_iflag &= ~INLCR;	/* Don't map NL to CR on input */
+	newterm.c_iflag &= ~ICRNL;      /* Don't map CR to NL on input */
+	newterm.c_iflag &= ~BRKINT;	/* Do not signal on break.*/
+	newterm.c_iflag &= ~IXON;	/* Disable start/stop output control.*/
+	newterm.c_iflag &= ~IXOFF;	/* Disable start/stop input control.*/
+
+	/* output flags */
+	newterm.c_oflag &= ~OPOST;	/* Disable output processing */
+
+	/* line discipline */
+	newterm.c_lflag &= ~ISIG;	/* Disable signals.*/
+	newterm.c_lflag &= ~ICANON;	/* Want to disable canonical I/O */
+	newterm.c_lflag &= ~ECHO;	/* Disable echo.*/
+	newterm.c_lflag &= ~ECHONL;	/* Disable separate NL echo.*/
+	newterm.c_lflag &= ~IEXTEN;	/* Disable input extensions.*/
+
+	newterm.c_cc[VMIN] = 1;		/* Min. chars. on input (immed) */
+	newterm.c_cc[VTIME] = 0;        /* Min. time delay on input (immed) */
+
+	/* Make it stick */
+	tcsetattr(0, TCSANOW, &newterm);
+#endif /*MINIX*/
 
 #if SYSV
 	ioctl(0, TCGETA, &origterm);	/* How things are now */
@@ -209,8 +243,8 @@ ts_init()
  */
 ts_enter()
 {
-#if !(SYSV || BBN)
-	stty(1,&nstate);
+#if !(MINIX || SYSV || BBN)
+	ioctl(1, TIOCSETP, &nstate);
 #if IMAGEN && UCB
 	ioctl(0, TIOCSETC, &ntchars);	/* Restore new tchars */
 #endif /*IMAGEN && UCB*/
@@ -219,6 +253,11 @@ ts_enter()
 #if BBN
 	modtty (1, M_SET | M_MODES, &nstate, sizeof (nstate));
 #endif /*BBN*/
+
+#if MINIX
+	/* Make it behave as previously defined in ts_init */
+	tcsetattr(0, TCSANOW, &newterm);
+#endif /*SYSV*/
 
 #if SYSV
 	/* Make it behave as previously defined in ts_init */
@@ -248,8 +287,8 @@ ts_exit()
 		tpoke(TH_CCLR,T_2FLGS2,T2_LITIN); /* Turn off 8-bit input */
 #endif /*DNTTY*/
 
-#if !(SYSV || BBN)
-	stty(1,&ostate);		/* SYSV and BBN don't use stty */
+#if !(MINIX || SYSV || BBN)
+	ioctl(1, TIOCSETP, &ostate);	/* SYSV and BBN don't use stty */
 #if IMAGEN && UCB
 	ioctl(0, TIOCSETC, &otchars);	/* Restore original tchars */
 #endif /*IMAGEN && UCB*/
@@ -258,6 +297,10 @@ ts_exit()
 #if BBN
 	modtty (1, M_SET | M_MODES, &ostate, sizeof (ostate));
 #endif /*BBN*/
+
+#if MINIX
+	tcsetattr(0, TCSANOW, &origterm);
+#endif /*MINIX*/
 
 #if SYSV
 	ioctl(0, TCSETA, &origterm);

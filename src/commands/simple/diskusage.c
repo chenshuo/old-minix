@@ -92,7 +92,7 @@ USEREC *list_head = NULL;
 int verbose = FALSE;
 int sflag = FALSE;
 char *spec_name = "\0";
-struct stat *this_stat;
+struct stat this_stat;
 dev_t real_dev;
 char *ilist = NULL;
 int iflag = FALSE;
@@ -224,37 +224,37 @@ char *cur_dir;			/* only the files really on this volume are */
 	if (strcmp(this_file->d_name, ".") &&
 	    strcmp(this_file->d_name, "..")) {
 		strcpy(&next_entry[dir_length], this_file->d_name);
-		stat(next_entry, this_stat);
-		if (real_dev != this_stat->st_dev) continue;
+		stat(next_entry, &this_stat);
+		if (real_dev != this_stat.st_dev) continue;
 		if (iflag) {
 			if (ilist_search(next_entry)) continue;
 		}
-		if (S_ISDIR(this_stat->st_mode)) {
+		if (S_ISDIR(this_stat.st_mode)) {
 			/* Is a directory need to recurse */
-			s = update_list((Uid_t) this_stat->st_uid, 
-							   this_stat->st_size);
+			s = update_list((Uid_t) this_stat.st_uid, 
+							   this_stat.st_size);
 			if (!s) {
 				if (verbose) fprintf(stderr,
 						"%s: Directory, No Owner, %s\n",
 					      progname, next_entry);
 				if (uflag) fprintf(ufd, "%s %d %d\n",
 						spec_name,
-						this_stat->st_ino,
-						this_stat->st_uid);
+						this_stat.st_ino,
+						this_stat.st_uid);
 			}
 			search_all(next_entry);	/* recursive call */
 		} else {
 			/* Is regular file or spec. file */
-			if (S_ISREG(this_stat->st_mode)) {
-				s = update_list((Uid_t) this_stat->st_uid,
-							   this_stat->st_size);
+			if (S_ISREG(this_stat.st_mode)) {
+				s = update_list((Uid_t) this_stat.st_uid,
+							   this_stat.st_size);
 				if (!s) {
 					if (verbose) fprintf(stderr,
 							"%s: File, No Owner, %s\n",
 							progname, next_entry);
 					if (uflag) fprintf(ufd, "%s %d %d\n",
-						spec_name, this_stat->st_ino,
-						this_stat->st_uid);
+						spec_name, this_stat.st_ino,
+						this_stat.st_uid);
 				}	/* endif !update */
 			}	/* end S_ISREG */
 			/* Ignores any Specials: b, c, pipe, etc. */
@@ -303,7 +303,7 @@ char *argv[];
   progname = argv[0];
   argc--;
   argv++;
-  while (argv[0][0] == '-') {
+  while (argv[0] != NULL && argv[0][0] == '-') {
 	switch (argv[0][1]) {
 	    case 'p':
 		if (argc > 1) passwd = argv[1];
@@ -402,12 +402,12 @@ char *argv[];
 		continue;	/* go on to next "while" file */
 	}			/* if sflag */
 	/* Search all the files on the special device (not option -s) */
-	stat(spec_name, this_stat);	/* will ignore "mounted on
+	stat(spec_name, &this_stat);	/* will ignore "mounted on
 					 * spec.dev" */
-	real_dev = this_stat->st_rdev;	/* using only files really on
+	real_dev = this_stat.st_rdev;	/* using only files really on
 					 * device */
 	/* See if is block special */
-	if (!S_ISBLK(this_stat->st_mode)) usage();
+	if (!S_ISBLK(this_stat.st_mode)) usage();
 
 	/* See if device is mounted already by searching mtab (old or new) */
 	if ((mtb = fopen("/etc/mtab", "r")) == NULL) {

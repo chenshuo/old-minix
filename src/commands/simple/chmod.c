@@ -17,6 +17,11 @@
 #include <minix/minlib.h>
 #include <stdio.h>
 
+#ifndef S_ISLNK
+#define S_ISLNK(mode)	0
+#define lstat		stat
+#endif
+
 #define USR_MODES (S_ISUID|S_IRWXU)
 #define GRP_MODES (S_ISGID|S_IRWXG)
 #define EXE_MODES (S_IXUSR|S_IXGRP|S_IXOTH)
@@ -32,7 +37,6 @@ char *symbolic;
 mode_t new_mode, u_mask;
 int rflag, errors;
 struct stat st;
-uid_t userid;
 char path[PATH_MAX + 1];
 
 _PROTOTYPE(int main, (int argc, char **argv));
@@ -162,6 +166,8 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
+  int ex_code = 0;
+
   argc--;
   argv++;
 
@@ -190,17 +196,13 @@ char *argv[];
   } else
 	u_mask = umask(0);
 
-  userid = getuid();
-
   while (argc--)
-	if (do_change(*argv++)) exit(1);
-  return(0);
+	if (do_change(*argv++)) ex_code = 1;
+  return(ex_code);
 }
 
 
-/* Apply a mode change to a given file system element. chmod(1) may be
- * setuid root, in which case it will enforce the protection itself.
- */
+/* Apply a mode change to a given file system element. */
 int do_change(name)
 char *name;
 {
@@ -209,10 +211,11 @@ char *name;
   struct dirent *entp;
   char *namp;
 
-  if (stat(name, &st)) {
+  if (lstat(name, &st)) {
 	perror(name);
 	return(1);
   }
+  if (S_ISLNK(st.st_mode) && rflag) return(0);	/* Note: violates POSIX. */
   if (!symbolic)
 	m = new_mode;
   else

@@ -90,7 +90,7 @@ u16_t get_video(void);
 			/* Display type, MDA to VGA. */
 u16_t get_memsize(void);
 			/* Amount of "normal" memory in K. */
-u16_t get_ext_memsize(void);
+u32_t get_ext_memsize(void);
 			/* Amount of extended memory in K. */
 u32_t get_tick(void);
 			/* Current value of the clock tick counter. */

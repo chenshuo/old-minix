@@ -27,9 +27,10 @@ LDFLAGS=-i
 ###     The rest of this Makefile contains no user-serviceable parts    ###
 ###########################################################################
 
-OBJ=blk.o cmd1.o cmd2.o ctype.o curses.o cut.o ex.o input.o main.o misc.o \
-   modify.o move1.o move2.o move3.o move4.o move5.o opts.o recycle.o \
-   redraw.o regexp.o regsub.o system.o tio.o tmp.o unix.o vars.o vcmd.o vi.o
+OBJ=blk.o cmd1.o cmd2.o ctype.o curses.o cut.o ex.o input.o \
+   main.o misc.o modify.o move1.o move2.o move3.o move4.o move5.o \
+   opts.o recycle.o redraw.o regexp.o regsub.o system.o tio.o tmp.o \
+   unix.o vars.o vcmd.o vi.o
 
 all:	$(PROGS)
 

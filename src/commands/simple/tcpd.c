@@ -10,6 +10,7 @@ tcpd.c
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 #include <minix/config.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -20,13 +21,13 @@ tcpd.c
 #include <net/gen/tcp_io.h>
 #include <net/hton.h>
 
-#if __STDC__
-#define PROTOTYPE(func,args) func args
-#else
-#define PROTOTYPE(func,args) func()
+#if PARANOID
+#include <time.h>
+#include <net/gen/socket.h>
+char LOG[] = "/usr/adm/authlog";
 #endif
 
-PROTOTYPE (int main, (int argc, char *argv[]) );
+_PROTOTYPE (int main, (int argc, char *argv[]) );
 
 int main(argc, argv)
 int argc;
@@ -36,10 +37,14 @@ char *argv[];
 	struct nwio_tcpcl tcplistenopt;
 	struct nwio_tcpconf tcpconf;
 	struct servent *servent;
-	int result, child;
+	int result, child, sig;
 	int tcp_fd, tmp, count;
 	char *arg0, *program, **args;
 	int debug= 0;
+	struct sigaction sa;
+#if PARANOID
+	int log_fd;
+#endif
 
 	arg0= argv[0];
 	if (argc > 1 && strcmp(argv[1], "-d") == 0)
@@ -105,10 +110,14 @@ char *argv[];
 
 		tcplistenopt.nwtcl_flags= 0;
 
-		do
+		while ((result= ioctl(tcp_fd, NWIOTCPLISTEN, &tcplistenopt))
+									== -1)
 		{
-			result= ioctl (tcp_fd, NWIOTCPLISTEN, &tcplistenopt);
-			if (result == -1 && errno == EAGAIN)
+			if (errno != EAGAIN)
+			{
+				perror ("unable to NWIOTCPLISTEN");
+			}
+			else
 			{
 				if (debug)
 				{
@@ -118,12 +127,6 @@ char *argv[];
 				}
 				sleep(1);
 			}
-		} while (result == -1 && errno == EAGAIN);
-
-		if (result<0)
-		{
-			perror ("unable to NWIOTCPLISTEN");
-			exit(1);
 		}
 
 		if (debug)
@@ -149,19 +152,60 @@ char *argv[];
 			perror("fork");
 			break;
 		case 0:
-			if (!(child= fork()))
-			{
-				dup2(tcp_fd, 0);
-				dup2(tcp_fd, 1);
-				close(tcp_fd);
-				execv(program, args);
-				printf("Unable to exec %s\n", program);
-				fflush(stdout);
-				_exit(1);
-			}
+			child= fork();
 			if (child<0) perror("fork");
-			exit(0);
-			break;
+			if (child!=0) exit(0);
+#if PARANOID
+			if ((log_fd= open(LOG, O_WRONLY | O_APPEND)) != -1)
+			{
+				static char line[512];
+				struct hostent *he;
+				time_t t;
+				struct tm *tm;
+				char month[][4]= {
+					"Jan", "Feb", "Mar", "Apr",
+					"May", "Jun", "Jul", "Aug",
+					"Sep", "Oct", "Nov", "Dec",
+				};
+
+				result= ioctl (tcp_fd, NWIOGTCPCONF, &tcpconf);
+				if (result<0)
+				{
+					perror ("unable to NWIOGTCPCONF");
+					exit(1);
+				}
+
+				time(&t);
+				tm= localtime(&t);
+				he= gethostbyaddr(
+					(char *) &tcpconf.nwtc_remaddr,
+					sizeof(tcpconf.nwtc_remaddr), AF_INET);
+				sprintf(line,
+			"%s %02d %02d:%02d:%02d tcpd: %s connection from %s\n",
+					month[tm->tm_mon],
+					tm->tm_mday,
+					tm->tm_hour, tm->tm_min, tm->tm_sec,
+					argv[1],
+					he != NULL ? he->h_name :
+					    inet_ntoa(tcpconf.nwtc_remaddr));
+				(void) write(log_fd, line, strlen(line));
+				close(log_fd);
+				if (debug)
+					(void) write(2, line, strlen(line));
+			}
+#endif
+			sigemptyset(&sa.sa_mask);
+			sa.sa_flags = 0;
+			sa.sa_handler = SIG_DFL;
+			for (sig = 1; sig <= _NSIG; sig++)
+				sigaction(sig, &sa, NULL);
+			dup2(tcp_fd, 0);
+			dup2(tcp_fd, 1);
+			close(tcp_fd);
+			execv(program, args);
+			printf("Unable to exec %s\n", program);
+			fflush(stdout);
+			_exit(1);
 		default:
 			close(tcp_fd);
 			wait(&child);

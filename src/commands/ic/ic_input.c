@@ -11,12 +11,11 @@
 /****************************************************************/
 #include <stdio.h>
 #include <ctype.h>
-#include <sgtty.h>
+#include <termios.h>
 
 #include "ic.h"
 
-static struct sgttyb saved_mode;
-static struct tchars saved_chars;
+static struct termios saved_tty;
 
 /****************************************************************/
 /*								*/
@@ -27,8 +26,7 @@ static struct tchars saved_chars;
 /****************************************************************/
 void Save_Term()
 {
-  ioctl(0, TIOCGETP, &saved_mode);
-  ioctl(0, TIOCGETC, (struct sgttyb *) & saved_chars);
+  tcgetattr(0, &saved_tty);
 }
 
 /****************************************************************/
@@ -40,22 +38,21 @@ void Save_Term()
 /****************************************************************/
 void Set_Term()
 {
-  struct sgttyb ic_mode;
-  struct tchars ic_chars;
+  struct termios ic_mode;
 
-  ic_mode = saved_mode;
-  ic_chars = saved_chars;
+  ic_mode = saved_tty;
 
-  /* No tab expansion, no echo, cbreak mode			 */
-  ic_mode.sg_flags = (ic_mode.sg_flags & ~XTABS & ~ECHO) | CBREAK;
+  /* No tab expansion, no echo, cbreak mode, ignore ^S & ^Q	 */
+#ifdef XTABS
+  ic_mode.c_oflag &= ~XTABS;
+#endif
+  ic_mode.c_lflag &= ~(ECHO | ICANON);
+  ic_mode.c_iflag &= ~(IXON | IXOFF);
 
-  /* Change the interrupt character to ^C, ignore ^S & ^Q 	 */
-  ic_chars.t_intrc = '\003';
-  ic_chars.t_startc = '\377';
-  ic_chars.t_stopc = '\377';
+  /* Change the interrupt character to ^C		 	 */
+  ic_mode.c_cc[VINTR] = '\003';
 
-  ioctl(0, TIOCSETP, &ic_mode);
-  ioctl(0, TIOCSETC, (struct sgttyb *) & ic_chars);
+  tcsetattr(0, TCSANOW, &ic_mode);
 }
 
 /****************************************************************/
@@ -67,8 +64,7 @@ void Set_Term()
 /****************************************************************/
 void Reset_Term()
 {
-  ioctl(0, TIOCSETP, &saved_mode);
-  ioctl(0, TIOCSETC, (struct sgttyb *) & saved_chars);
+  tcsetattr(0, TCSANOW, &saved_tty);
 }
 
 /****************************************************************/

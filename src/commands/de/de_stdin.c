@@ -9,13 +9,13 @@
 /****************************************************************/
 
 
-#include <minix/config.h>
 #include <sys/types.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <signal.h>
 #include <unistd.h>
 #include <stdio.h>
 
+#include <minix/config.h>
 #include <minix/const.h>
 #include "../../fs/const.h"
 #include "../../fs/inode.h"
@@ -23,7 +23,7 @@
 #include "de.h"
 
 FORWARD _PROTOTYPE(int Timed_Get_Char , (int time ));
-FORWARD _PROTOTYPE(void Timed_Out , (int n));
+FORWARD _PROTOTYPE(void Timed_Out , (int sig));
 
 
 
@@ -47,15 +47,13 @@ FORWARD _PROTOTYPE(void Timed_Out , (int n));
 /****************************************************************/
 
 
-static struct sgttyb saved_mode;
-static struct tchars saved_chars;
+static struct termios saved_term;
 
 
 void Save_Term()
 
   {
-  ioctl( 0, TIOCGETP, &saved_mode  );
-  ioctl( 0, TIOCGETC, (struct sgttyb *) &saved_chars );
+  tcgetattr( 0, &saved_term );
   }
 
 
@@ -64,24 +62,23 @@ void Save_Term()
 void Set_Term()
 
   {
-  struct sgttyb mode;
-  struct tchars chars;
+  struct termios term;
 
-  mode  = saved_mode;
-  chars = saved_chars;
+  term = saved_term;
 
 
   /*  No tab expansion, no echo, don't map ^M to ^J, cbreak mode  */
 
-  mode.sg_flags = (mode.sg_flags & ~XTABS & ~ECHO & ~CRMOD)  |  CBREAK;
+  term.c_iflag &= ~ICRNL;
+  term.c_oflag &= ~OPOST;
+  term.c_lflag &= ~ICANON & ~ECHO;
 
 
   /*  Change the interrupt character to ^C  */
 
-  chars.t_intrc  = '\003';
+  term.c_cc[VINTR] = '\003';
 
-  ioctl( 0, TIOCSETP, &mode  );
-  ioctl( 0, TIOCSETC, (struct sgttyb *) &chars );
+  tcsetattr( 0, TCSANOW, &term );
   }
 
 
@@ -90,8 +87,7 @@ void Set_Term()
 void Reset_Term()
 
   {
-  ioctl( 0, TIOCSETP, &saved_mode  );
-  ioctl( 0, TIOCSETC, (struct sgttyb *) &saved_chars );
+  tcsetattr( 0, TCSANOW, &saved_term );
   }
 
 
@@ -293,8 +289,10 @@ int Arrow_Esc( c )
   return( c );
   }
 
-void Timed_Out(n)
-int n;
+void Timed_Out(sig)
+int sig;
   {}
 
-
+/*
+ * $PchHeader: /mount/hd2/minix/sys/cmd/de/RCS/de_stdin.c,v 1.3 1995/02/10 08:01:30 philip Exp $
+ */

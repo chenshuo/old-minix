@@ -7,7 +7,7 @@
 
 #include "fs.h"
 #include <fcntl.h>
-#include <tiny-unistd.h>	/* cc runs out of memory with unistd.h :-( */
+#include <unistd.h>
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"

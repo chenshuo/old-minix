@@ -8,9 +8,6 @@
 #include <errno.h>
 #include <curses.h>
 #include <signal.h>
-#if XXX
-#include <sgtty.h>
-#endif
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -45,9 +42,6 @@ _PROTOTYPE ( void user_interface, (void));
 _PROTOTYPE ( void terminate, (int s));
 
 WINDOW *main_win;
-#if XXX
-struct sgttyb old_tty, new_tty;
-#endif
 int old_stdin;
 int fd;
 char name[9];
@@ -75,9 +69,6 @@ int s;
   refresh();			
   resetty();
   endwin();			
-#if XXX
-  ioctl(0, TIOCSETP, &old_tty);
-#endif
   exit(1);		
 }
 
@@ -230,14 +221,7 @@ char **argv;
     else usage();
   }
 
-  /* Set new terminal parameters and remember the old ones */
-#if XXX
-  ioctl(0, TIOCGETP, &old_tty);
-  ioctl(0, TIOCGETP, &new_tty);
-  new_tty.sg_flags |= CBREAK;
-  new_tty.sg_flags &= ~ECHO; 
-  ioctl(0, TIOCSETP, &new_tty);
-#endif
+  /* Initialize windows. */
   (void) initscr();
   signal(SIGINT, terminate);
   old_stdin = fcntl(0,F_GETFL);

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkboot - make boot floppy, make root device bootable, etc.
+#	mkboot 2.0 - make boot floppy, make root device bootable, etc.
 #							Author: Kees J. Bot
 
 trap 'e=$?; rm -f /tmp/mkb.$$; exit $e' 0 2
@@ -9,10 +9,10 @@ mdec=/usr/mdec	# bootstraps
 
 # Check arguments.
 case "$#:$1" in
-1:bootable | 1:hdinstall | 1:hdtest | [12]:fdboot)
+1:bootable | 1:hdboot | [12]:fdboot)
 	action=$1 dev=$2
 	;;
-*)	echo "Usage: $0 [bootable | hdinstall | hdtest | fdboot [device]]" >&2
+*)	echo "Usage: $0 [bootable | hdboot | fdboot [device]]" >&2
 	exit 1
 esac
 
@@ -23,7 +23,7 @@ esac
 realroot=`printroot -r`
 
 case $action in
-bootable | hdinstall)
+bootable | hdboot)
 	# We need the root device.
 	if [ $realroot = $root ]
 	then
@@ -41,34 +41,70 @@ bootable)
 	install -cs -m 644 $mdec/boot $rootdir/boot || exit
 	sync
 	installboot -device $root $mdec/bootblock /boot || exit
+	test $realroot != $root && umount $root
 	;;
-hdinstall)
+hdboot)
 	# Install a new image on the root device.
-	if [ -d $rootdir/minix ]
+	if [ ! -d $rootdir/minix ]
 	then
-		# /minix is a directory containing images.
-		target=minix/`uname -r`.`uname -v`
-	else
-		# /minix is the image.
-		target=minix
+		# /minix is not yet a directory!  Fix it.
+		su root -c \
+		    "exec mv $rootdir/minix /M"
+		install -d $rootdir/minix
+		su root -c \
+		    "exec mv $rootdir/M $rootdir/minix/`uname -r`.`uname -v`"
 	fi
-	if [ $rootdir/$target -newer image ]
+
+	./tell_config OS_RELEASE . OS_VERSION >/tmp/mkb.$$
+	version=`sed 's/[" 	]//g;/^$/d' </tmp/mkb.$$`
+
+	revision=`cat revision 2>/dev/null`
+	oldrev=$revision
+	target="${version}r${revision}"
+
+	if [ -z "$revision" ]
 	then
-		echo "$root:/$target is up to date"
-	else
-		install -c image $rootdir/$target || exit
-		echo "New $root:/$target installed."
+		revision=0
+	elif [ -f $rootdir/minix/$target ]
+	then
+		if [ $rootdir/minix/$target -newer image ]
+		then
+			echo "$root:/minix/$target is up to date"
+			test $realroot != $root && umount $root
+			exit 0
+		fi
+		revision=`expr $revision + 1`
 	fi
+	target="${version}r${revision}"
+
+	set -- `ls -t $rootdir/minix`
+
+	case $# in
+	0|1)
+		# Not much there, do not remove a thing.
+		;;
+	*)
+		# Remove the newest image in /minix.  This seems strange, but
+		# the old image is normally the "stable" image.
+
+		echo "rm $root:/minix/$1"
+		rm -f "$rootdir/minix/$1"
+	esac
+
+	# Install the new image.
+	echo "cp image $root:/minix/$target"
+	cp -p image $rootdir/minix/$target || exit
+
+	# Save the revision number.
+	test "$revision" != "$oldrev" && echo $revision >revision
+
+	test $realroot != $root && umount $root
+	echo "Done."
 	;;
-hdtest | fdboot)
-	# hdtest: Turn the hard disk scratch device into a boot disk for
-	#	  testing.
+fdboot)
 	# fdboot: Make a boot floppy.
 
-	if [ $action = hdtest ]
-	then
-		dev=$tmp
-	elif [ -z "$dev" ]
+	if [ -z "$dev" ]
 	then
 		echo -n \
 "Finish the name of the floppy device to write (by default 'fd0'): /dev/";
@@ -99,13 +135,4 @@ hdtest | fdboot)
 	edparams $dev 'main(){delay 2000;boot}; save' || exit
 	echo "Test kernel installed on $dev with boot parameters from $root"
 esac
-
-case $action in
-bootable | hdinstall)
-	# Unmount the root device.
-	if [ $realroot != $root ]
-	then
-		umount $root
-	fi
-esac
-: exit 0
+exit 0

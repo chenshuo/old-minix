@@ -176,6 +176,7 @@ char *argv[];
 	register int c;
 	register int n;
 	char *p;
+	static char divnam[] = DIVNAM;
 
 	if (signal(SIGINT, SIG_IGN) != SIG_IGN)
 		signal(SIGINT, onintr);
@@ -206,7 +207,7 @@ char *argv[];
 
 	infile[0] = stdin;		/* default input (naturally) */
 	active = stdout;		/* default active output     */
-	m4temp = mktemp(DIVNAM);	/* filename for diversions   */
+	m4temp = mktemp(divnam);	/* filename for diversions   */
 
 	sp = -1;			/* stack pointer initialized */
 	fp = 0; 			/* frame pointer initialized */

@@ -1,6 +1,7 @@
 /* This file handles the 4 system calls that get and set uids and gids.
- * It also handles getpid().  The code for each one is so tiny that it hardly
- * seemed worthwhile to make each a separate function.
+ * It also handles getpid(), setsid(), and getpgrp().  The code for each
+ * one is so tiny that it hardly seemed worthwhile to make each a separate
+ * function.
  */
 
 #include "mm.h"

@@ -140,7 +140,7 @@ void test38a()
   if (close(fd1) != 0) e(45);
   if (close(fd2) != 0) e(46);
 
-  System("/bin/rm -rf ../DIR_38/*");
+  System("rm -rf ../DIR_38/*");
 }
 
 void test38b()
@@ -180,7 +180,7 @@ void test38b()
   if (close(fd) != 0) e(22);
 
 
-  System("/bin/rm -rf ../DIR_38/*");
+  System("rm -rf ../DIR_38/*");
 }
 
 void test38c()
@@ -212,7 +212,7 @@ void test38c()
 	}
   }
 
-  System("/bin/rm -rf ../DIR_38/*");
+  System("rm -rf ../DIR_38/*");
 }
 
 

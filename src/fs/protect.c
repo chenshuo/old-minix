@@ -131,7 +131,7 @@ PUBLIC int do_access()
   if ( (rip = eat_path(user_path)) == NIL_INODE) return(err_code);
 
   /* Now check the permissions. */
-  r = forbidden(rip, (mode_t) mode, 1);
+  r = forbidden(rip, (mode_t) mode);
   put_inode(rip);
   return(r);
 }
@@ -140,10 +140,9 @@ PUBLIC int do_access()
 /*===========================================================================*
  *				forbidden				     *
  *===========================================================================*/
-PUBLIC int forbidden(rip, access_desired, real_uid)
+PUBLIC int forbidden(rip, access_desired)
 register struct inode *rip;	/* pointer to inode to be checked */
 mode_t access_desired;	/* RWX bits */
-int real_uid;			/* XXX - obsolescent (was for access()) */
 {
 /* Given a pointer to an inode, 'rip', and the access desired, determine
  * if the access is allowed, and if not why not.  The routine looks up the

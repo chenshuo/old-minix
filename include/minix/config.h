@@ -3,7 +3,7 @@
 
 /* Minix release and version numbers. */
 #define OS_RELEASE "1.7"
-#define OS_VERSION "2"
+#define OS_VERSION "4"
 
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
@@ -60,17 +60,14 @@
 #define NR_BUF_HASH	2048	/* size of buf hash table; MUST BE POWER OF 2*/
 #endif
 
-/* The number of map slots determines how big a disk partition can be.
- * Each I_MAP_SLOT allows 8K files; each Z_MAP_SLOT allows 8M of data.
- */
-#define I_MAP_SLOTS        8	/* max # of blocks in the inode bit map */
-#define Z_MAP_SLOTS       32	/* max # of blocks in the zone bit map */
-
 /* Defines for kernel configuration. */
 #define AUTO_BIOS          0	/* xt_wini.c - use Western's autoconfig BIOS */
 #define LINEWRAP           1	/* console.c - wrap lines at column 80 */
 #define ALLOW_GAP_MESSAGES 1	/* proc.c - allow messages in the gap between
 				 * the end of bss and lowest stack address */
+
+/* Enable or disable the second level file system cache on the RAM disk. */
+#define ENABLE_CACHE2      1
 
 /* Include or exclude device drivers.  Set to 1 to include, 0 to exclude. */
 #define ENABLE_NETWORKING  0	/* enable TCP/IP code */
@@ -85,8 +82,9 @@
 /* DMA_SECTORS may be increased to speed up DMA based drivers. */
 #define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
 
-/* Include or exclude backwards compatibility code for old binaries. */
-#define ENABLE_COMPAT      1	/* enable backwards compatibility code */
+/* Include or exclude backwards compatibility code. */
+#define ENABLE_BINCOMPAT   1	/* for binaries using obsolete calls */
+#define ENABLE_SRCCOMPAT   1	/* for sources using obsolete calls */
 
 /* Determine which device to use for pipes. */
 #define PIPE_DEV    ROOT_DEV	/* put pipes on root device */
@@ -94,7 +92,7 @@
 /* NR_CONS, NR_RS_LINES, and NR_PTYS determine the number of terminals the
  * system can handle.
  */
-#define NR_CONS            1	/* # system consoles (fixed at 1) */
+#define NR_CONS            2	/* # system consoles (1 to 8) */
 #define	NR_RS_LINES	   2	/* # rs232 terminals (0, 1, or 2) */
 #define	NR_PTYS		   0	/* # pseudo terminals (0 to 64) */
 

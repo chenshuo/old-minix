@@ -13,16 +13,16 @@
 
 ! Transitions to the kernel may be nested.  The initial entry may be with a
 ! system call, exception or hardware interrupt; reentries may only be made
-! by hardware interrupts.  The count of reentries is kept in 'k_reenter'.
+! by hardware interrupts.  The count of reentries is kept in "k_reenter".
 ! It is important for deciding whether to switch to the kernel stack and
 ! for protecting the message passing code in "proc.c".
 
 ! For the message passing trap, most of the machine state is saved in the
 ! proc table.  (Some of the registers need not be saved.)  Then the stack is
-! switched to 'k_stack', and interrupts are reenabled.  Finally, the system
+! switched to "k_stack", and interrupts are reenabled.  Finally, the system
 ! call handler (in C) is called.  When it returns, interrupts are disabled
 ! again and the code falls into the restart routine, to finish off held-up
-! interrupts and run the process or task whose pointer is in 'proc_ptr'.
+! interrupts and run the process or task whose pointer is in "proc_ptr".
 
 ! Hardware interrupt handlers do the same, except  (1) The entire state must
 ! be saved.  (2) There are too many handlers to do this inline, so the save
@@ -34,6 +34,14 @@
 ! interrupts, and unmasks it after servicing the interrupt.  This limits the
 ! nest level to the number of lines and protects the handler from itself.
 
+! For communication with the boot monitor at startup time some constant
+! data are compiled into the beginning of the text segment. This facilitates 
+! reading the data at the start of the boot process, since only the first
+! sector of the file needs to be read.
+
+! Some data storage is also allocated at the end of this file. This data 
+! will be at the start of the data segment of the kernel and will be read
+! and modified by the boot monitor before the kernel starts.
 
 #include <minix/config.h>
 #include <minix/const.h>
@@ -43,6 +51,10 @@
 #include "protect.h"
 
 ! The external entry points into this file are:
+! Note: in assembly language the .define statement applied to a function name 
+! is loosely equivalent to a prototype in C code -- it makes it possible to
+! link to an entity declared in the assembly code but does not create
+! the entity.
 
 .define	_idle_task	! executed when there is no work
 .define	_int00		! handlers for traps and exceptions
@@ -85,10 +97,10 @@
 .extern	real2prot
 
 ! Exported variables.
+! Note: when used with a variable the .define does not reserve storage,
+! it makes the name externally visible so it may be linked to. 
 
 .define	kernel_ds
-
-	.bss
 .define	begbss
 .define	begdata
 .define	_sizes
@@ -169,60 +181,6 @@ nosw:
 
 
 !*===========================================================================*
-!*				int00-07				     *
-!*===========================================================================*
-_int00:				! interrupt through vector 0
-	push	ax
-	movb	al,#0
-	jmp	exception
-
-_int01:				! interrupt through vector 1, etc
-	push	ax
-	movb	al,#1
-	jmp	exception
-
-_int02:
-	push	ax
-	movb	al,#2
-	jmp	exception
-
-_int03:
-	push	ax
-	movb	al,#3
-	jmp	exception
-
-_int04:
-	push	ax
-	movb	al,#4
-	jmp	exception
-
-_int05:
-	push	ax
-	movb	al,#5
-	jmp	exception
-
-_int06:
-	push	ax
-	movb	al,#6
-	jmp	exception
-
-_int07:
-	push	ax
-	movb	al,#7
-	!jmp	exception
-
-exception:
-  cseg	movb	ex_number,al	! it's cumbersome to get this into dseg
-	pop	ax
-	call	save
-  cseg	push	ex_number	! high byte is constant 0
-	call	_exception	! do whatever's necessary (sti only if safe)
-	add	sp,#2
-	cli
-	ret
-
-
-!*===========================================================================*
 !*				interrupt handlers			     *
 !*===========================================================================*
 
@@ -230,6 +188,7 @@ exception:
 !*===========================================================================*
 !*				hwint00 - 07				     *
 !*===========================================================================*
+! Note this is a macro, it looks like a subroutine.
 #define hwint_master(irq)	\
 	call	save			/* save interrupted process state */;\
 	inb	INT_CTLMASK						    ;\
@@ -250,6 +209,7 @@ exception:
 	outb	INT_CTLMASK		/* enable the irq		  */;\
 0:	ret				/* restart (another) process      */
 
+! Each of these entry points is an expansion of the hwint_master macro
 
 _hwint00:		! Interrupt routine for irq 0 (the clock).
 	hwint_master(0)
@@ -286,6 +246,7 @@ _hwint07:		! Interrupt routine for irq 7 (printer)
 !*===========================================================================*
 !*				hwint08 - 15				     *
 !*===========================================================================*
+! Note this is a macro, it looks like a subroutine.
 #define hwint_slave(irq)	\
 	call	save			/* save interrupted process state */;\
 	inb	INT2_CTLMASK						    ;\
@@ -308,6 +269,7 @@ _hwint07:		! Interrupt routine for irq 7 (printer)
 	outb	INT2_CTLMASK		/* enable the irq		  */;\
 0:	ret				/* restart (another) process      */
 
+! Each of these entry points is an expansion of the hwint_slave macro
 
 _hwint08:		! Interrupt routine for irq 8 (realtime clock)
 	hwint_slave(8)
@@ -345,12 +307,16 @@ _hwint15:		! Interrupt routine for irq 15
 !*				save					     *
 !*===========================================================================*
 save:				! save the machine state in the proc table.
+
+! In protected mode a jump to p_save is patched over the following
+! code during initialization.
+
 	cld			! set direction flag to a known value
 	push	ds
 	push	si
   cseg	mov	ds,kernel_ds
 	incb	_k_reenter	! from -1 if not reentering
-	jnz	push_current_stack	! stack is already kernel's
+	jnz	push_current_stack	! stack is already kernel stack
 
 	mov	si,_proc_ptr
 	mov	AXREG(si),ax
@@ -399,10 +365,13 @@ push_current_stack:
 !*===========================================================================*
 !*				s_call					     *
 !*===========================================================================*
+! This is real mode version. Alternate (_p_s_call) will be used in
+! protected mode
+
 _s_call:			! System calls are vectored here.
 				! Do save routine inline for speed,
-				! but don't save ax, bx, cx, dx,
-				! since C doesn't require preservation,
+				! but do not save ax, bx, cx, dx,
+				! since C does not require preservation,
 				! and ax returns the result code anyway.
 				! Regs bp, si, di get saved by sys_call as
 				! well, but it is impractical not to preserve
@@ -450,8 +419,11 @@ _restart:
 
 ! Flush any held-up interrupts.
 ! This reenables interrupts, so the current interrupt handler may reenter.
-! This doesn't matter, because the current handler is about to exit and no
+! This does not matter, because the current handler is about to exit and no
 ! other handlers can reenter since flushing is only done when k_reenter == 0.
+
+! In protected mode a jump to p_restart is patched over the following
+! code during initialization.
 
 	cmp	_held_head,#0	! do fast test to usually avoid function call
 	jz	over_call_unhold
@@ -493,6 +465,71 @@ restart1:
 	pop	ds
 	add	sp,#2		! skip return adr
 	iret
+
+
+!*===========================================================================*
+!*				int00-07				     *
+!*===========================================================================*
+! These are entry points for exceptions (processor generated interrupts, 
+! usually caused by error conditions such as an attempt to divide by zero)
+
+_int00:				! interrupt through vector 0
+	push	ax
+	movb	al,#0
+	jmp	exception
+
+_int01:				! interrupt through vector 1, etc
+	push	ax
+	movb	al,#1
+	jmp	exception
+
+_int02:
+	push	ax
+	movb	al,#2
+	jmp	exception
+
+_int03:
+	push	ax
+	movb	al,#3
+	jmp	exception
+
+_int04:
+	push	ax
+	movb	al,#4
+	jmp	exception
+
+_int05:
+	push	ax
+	movb	al,#5
+	jmp	exception
+
+_int06:
+	push	ax
+	movb	al,#6
+	jmp	exception
+
+_int07:
+	push	ax
+	movb	al,#7
+	!jmp	exception
+
+exception:
+  cseg	movb	ex_number,al	! it is cumbersome to get this into dseg
+	pop	ax
+	call	save
+  cseg	push	ex_number	! high byte is constant 0
+	call	_exception	! do whatever is necessary (sti only if safe)
+	add	sp,#2
+	cli
+	ret
+
+
+!*===========================================================================*
+!*				level0_call				     *
+!*===========================================================================*
+_level0_call:
+	call	save
+	jmp	@_level0_func
 
 
 !*===========================================================================*
@@ -546,7 +583,7 @@ ex_number:			! exception number
 
 ! The hardware interrupt handlers need not be altered apart from putting
 ! them in the new table (save() handles the differences).
-! Some of the intxx handlers (those for exceptions which don't push an
+! Some of the intxx handlers (those for exceptions which do not push an
 ! error code) need not have been replaced, but the names here are better.
 
 #include "protect.h"
@@ -556,12 +593,91 @@ ex_number:			! exception number
 
 ! imported variables
 
-	.bss
-
 	.extern		_tss
 	.extern		_level0_func
 
-	.text
+!*===========================================================================*
+!*				p_save					     *
+!*===========================================================================*
+! Save for 286 protected mode.
+! This is much simpler than for 8086 mode, because the stack already points
+! into process table, or has already been switched to the kernel stack.
+
+p_save:
+	cld			! set direction flag to a known value
+	pusha			! save "general" registers
+	push	ds		! save ds
+	push	es		! save es
+	mov	dx,ss		! ss is kernel data segment
+	mov	ds,dx		! load rest of kernel segments
+	mov	es,dx
+	mov	bp,sp		! prepare to return
+	incb	_k_reenter	! from -1 if not reentering
+	jnz	set_p1_restart	! stack is already kernel stack
+	mov	sp,#k_stktop
+	push	#p_restart	! build return address for interrupt handler
+	jmp	@RETADR-P_STACKBASE(bp)
+
+set_p1_restart:
+	push	#p1_restart
+	jmp	@RETADR-P_STACKBASE(bp)
+
+
+!*===========================================================================*
+!*				p_s_call				     *
+!*===========================================================================*
+_p_s_call:
+	cld			! set direction flag to a known value
+	sub	sp,#6*2		! skip RETADR, ax, cx, dx, bx, st
+	push	bp		! stack already points into process table
+	push	si
+	push	di
+	push	ds
+	push	es
+	mov	dx,ss
+	mov	ds,dx
+	mov	es,dx
+	incb	_k_reenter
+	mov	si,sp		! assumes P_STACKBASE == 0
+	mov	sp,#k_stktop
+				! end of inline save
+	sti			! allow SWITCHER to be interrupted
+				! now set up parameters for C routine sys_call
+	push	bx		! pointer to user message
+	push	ax		! src/dest
+	push	cx		! SEND/RECEIVE/BOTH
+	call	_sys_call	! sys_call(function, src_dest, m_ptr)
+				! caller is now explicitly in proc_ptr
+	mov	AXREG(si),ax	! sys_call MUST PRESERVE si
+	cli
+
+! Fall into code to restart proc/task running.
+
+p_restart:
+
+! Flush any held-up interrupts.
+! This reenables interrupts, so the current interrupt handler may reenter.
+! This does not matter, because the current handler is about to exit and no
+! other handlers can reenter since flushing is only done when k_reenter == 0.
+
+	cmp	_held_head,#0	! do fast test to usually avoid function call
+	jz	p_over_call_unhold
+	call	_unhold		! this is rare so overhead is acceptable
+p_over_call_unhold:
+	mov	si,_proc_ptr
+	lldt	P_LDT_SEL(si)		! enable segment descriptors for task
+	lea	ax,P_STACKTOP(si)	! arrange for next interrupt
+	mov	_tss+TSS2_S_SP0,ax	! to save state in process table
+	mov	sp,si		! assumes P_STACKBASE == 0
+p1_restart:
+	decb	_k_reenter
+	pop	es
+	pop	ds
+	popa
+	add	sp,#2		! skip return adr
+	iret			! continue process
+
+
 !*===========================================================================*
 !*				exception handlers			     *
 !*===========================================================================*
@@ -625,7 +741,7 @@ _general_protection:
 !*===========================================================================*
 !*				p_exception				     *
 !*===========================================================================*
-! This is called for all exceptions which don't push an error code.
+! This is called for all exceptions which do not push an error code.
 
 p_exception:
   sseg	pop	ds_ex_number
@@ -651,111 +767,26 @@ p1_exception:			! Common for all exceptions.
 
 
 !*===========================================================================*
-!*				p_save					     *
-!*===========================================================================*
-! Save for 286 protected mode.
-! This is much simpler than for 8086 mode, because the stack already points
-! into process table, or has already been switched to the kernel stack.
-
-p_save:
-	cld			! set direction flag to a known value
-	pusha			! save "general" registers
-	push	ds		! save ds
-	push	es		! save es
-	mov	dx,ss		! ss is kernel data segment
-	mov	ds,dx		! load rest of kernel segments
-	mov	es,dx
-	mov	bp,sp		! prepare to return
-	incb	_k_reenter	! from -1 if not reentering
-	jnz	set_p1_restart	! stack is already kernel's
-	mov	sp,#k_stktop
-	push	#p_restart	! build return address for interrupt handler
-	jmp	@RETADR-P_STACKBASE(bp)
-
-set_p1_restart:
-	push	#p1_restart
-	jmp	@RETADR-P_STACKBASE(bp)
-
-
-!*===========================================================================*
-!*				p_s_call				     *
-!*===========================================================================*
-_p_s_call:
-	cld			! set direction flag to a known value
-	sub	sp,#6*2		! skip RETADR, ax, cx, dx, bx, st
-	push	bp		! stack already points into process table
-	push	si
-	push	di
-	push	ds
-	push	es
-	mov	dx,ss
-	mov	ds,dx
-	mov	es,dx
-	incb	_k_reenter
-	mov	si,sp		! assumes P_STACKBASE == 0
-	mov	sp,#k_stktop
-				! end of inline save
-	sti			! allow SWITCHER to be interrupted
-				! now set up parameters for C routine sys_call
-	push	bx		! pointer to user message
-	push	ax		! src/dest
-	push	cx		! SEND/RECEIVE/BOTH
-	call	_sys_call	! sys_call(function, src_dest, m_ptr)
-				! caller is now explicitly in proc_ptr
-	mov	AXREG(si),ax	! sys_call MUST PRESERVE si
-	cli
-
-! Fall into code to restart proc/task running.
-
-p_restart:
-
-! Flush any held-up interrupts.
-! This reenables interrupts, so the current interrupt handler may reenter.
-! This doesn't matter, because the current handler is about to exit and no
-! other handlers can reenter since flushing is only done when k_reenter == 0.
-
-	cmp	_held_head,#0	! do fast test to usually avoid function call
-	jz	p_over_call_unhold
-	call	_unhold		! this is rare so overhead is acceptable
-p_over_call_unhold:
-	mov	si,_proc_ptr
-	lldt	P_LDT_SEL(si)		! enable task's segment descriptors
-	lea	ax,P_STACKTOP(si)	! arrange for next interrupt
-	mov	_tss+TSS2_S_SP0,ax	! to save state in process table
-	mov	sp,si		! assumes P_STACKBASE == 0
-p1_restart:
-	decb	_k_reenter
-	pop	es
-	pop	ds
-	popa
-	add	sp,#2		! skip return adr
-	iret			! continue process
-
-
-!*===========================================================================*
-!*				level0_call				     *
-!*===========================================================================*
-_level0_call:
-	call	save
-	jmp	@_level0_func
-
-
-!*===========================================================================*
 !*				data					     *
 !*===========================================================================*
+! These declarations assure that storage will be allocated at the very 
+! beginning of the kernel data section, so the boot monitor can be easily 
+! told how to patch these locations. Note that the magic number is put
+! here by the compiler, but will be read by, and then overwritten by,
+! the boot monitor. When the kernel starts the sizes array will be
+! found here, as if it had been initialized by the compiler.
 
 	.data
 begdata:
-_sizes:				! sizes of kernel, mm, fs filled in by build
+_sizes:				! sizes of kernel, mm, fs filled in by boot
 	.data2	0x526F		! this must be the first data entry (magic #)
-	.data2	CLICK_SHIFT	! consistency check for build
-	.zerow	6		! build uses prevous 2 words and this space
+	.space	16*2*2-2	! monitor uses previous 2 words and this space
+				! extra space allows for additional servers
+	.bss
+begbss:
 k_stack:
 	.space	K_STACK_BYTES	! kernel stack
 k_stktop:			! top of kernel stack
-
-	.bss
-begbss:
 ds_ex_number:
 	.space	2
 trap_errno:

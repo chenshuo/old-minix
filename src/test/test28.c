@@ -174,7 +174,7 @@ void test28b()
   int other = 0, dot = 0, dotdot = 0;	/* dirent counters */
   int rmdir_result;		/* tmp var */
   nlink_t nlink;
-  char *bar = "foo/bar.xxx";
+  static char bar[] = "foo/bar.xxx";
   int stat_loc;
 
   subtest = 2;

@@ -89,7 +89,7 @@ char *argv[];
 void test36a()
 {				/* Test normal operation. */
   subtest = 1;
-  System("/bin/rm -rf ../DIR_36/*");
+  System("rm -rf ../DIR_36/*");
 
 #ifdef _POSIX_CHOWN_RESTRICTED
 # if _POSIX_CHOWN_RESTRICTED - 0 == -1
@@ -126,19 +126,19 @@ void test36a()
 void test36b()
 {
   subtest = 2;
-  System("/bin/rm -rf ../DIR_36/*");
+  System("rm -rf ../DIR_36/*");
 }
 
 void test36c()
 {
   subtest = 3;
-  System("/bin/rm -rf ../DIR_36/*");
+  System("rm -rf ../DIR_36/*");
 }
 
 void test36d()
 {
   subtest = 4;
-  System("/bin/rm -rf ../DIR_36/*");
+  System("rm -rf ../DIR_36/*");
 }
 
 

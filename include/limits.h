@@ -30,13 +30,13 @@
 #if _EM_WSIZE == 4
 #define INT_MIN (-2147483647-1)	/* minimum value of a 32-bit int */
 #define INT_MAX   2147483647	/* maximum value of a 32-bit int */
-#define UINT_MAX  4294967295	/* maximum value of an unsigned 32-bit int */
+#define UINT_MAX  0xFFFFFFFF	/* maximum value of an unsigned 32-bit int */
 #endif
 
 /*Definitions about longs (32 bits in MINIX). */
 #define LONG_MIN (-2147483647L-1)/* minimum value of a long */
 #define LONG_MAX  2147483647L	/* maximum value of a long */
-#define ULONG_MAX 4294967295L	/* maximum value of an unsigned long */
+#define ULONG_MAX 0xFFFFFFFFL	/* maximum value of an unsigned long */
 
 /* Minimum sizes required by the POSIX P1003.1 standard (Table 2-3). */
 #ifdef _POSIX_SOURCE		/* these are only visible for POSIX */

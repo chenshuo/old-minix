@@ -18,7 +18,6 @@
 
 #include "kernel.h"
 #include <termios.h>
-#include <sgtty.h>
 #include <signal.h>
 #include <minix/com.h>
 #include <minix/callnr.h>

@@ -114,7 +114,7 @@ assert (ip_fd->if_ipopt.nwio_flags & NWIO_RWDATONLY);
 		data= 0;
 	}
 	if (ip_fd->if_ipopt.nwio_flags & NWIO_HDR_O_SPEC)
-		ttl= ip_fd->if_ipopt.nwio_ttl;
+		ttl= 255;				/* For traceroute */
 	else
 	{
 		data= (*ip_fd->if_get_userdata)(ip_fd->if_srfd,

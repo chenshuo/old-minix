@@ -95,7 +95,7 @@ int len;			/* length of the directory name string */
   if ( (rip->i_mode & I_TYPE) != I_DIRECTORY)
 	r = ENOTDIR;
   else
-	r = forbidden(rip, X_BIT, 0);	/* check if dir is searchable */
+	r = forbidden(rip, X_BIT);	/* check if dir is searchable */
 
   /* If error, return inode. */
   if (r != OK) {

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 1.8 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 2.1 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -13,8 +13,8 @@ export PATH
 case "$0" in
 /tmp/*)	rm -f "$0"
 	;;
-*)	cp -p "$0" /tmp/instdist
-	exec /tmp/instdist
+*)	cp -p "$0" /tmp/mkdist
+	exec /tmp/mkdist
 esac
 
 usrlist="
@@ -34,7 +34,6 @@ bin/edparams
 bin/getty
 bin/grep
 bin/installboot
-bin/instdist
 bin/kill
 bin/ln
 bin/login
@@ -53,6 +52,7 @@ bin/repartition
 bin/rm
 bin/rmdir
 bin/sed
+bin/setup
 bin/shutdown
 bin/sleep
 bin/sort
@@ -119,20 +119,28 @@ fi
 
 read ret
 umount /dev/fd$drive 2>/dev/null
-mkfs -1 -i 240 /dev/fd$drive 600 || exit
+umount /dev/fd${drive}b 2>/dev/null
+mkfs -1 -i 240 /dev/fd$drive 480 || exit
+partition -mf /dev/fd$drive 0 81:960 81:480 >/dev/null || exit
+repartition /dev/fd$drive >/dev/null || exit
+mkfs -1 /dev/fd${drive}b || exit
 mount /dev/fd$drive /mnt || exit
+mount /dev/fd${drive}b /minix || exit		# Hide /minix for a moment
 cpdir -vx $rootdir /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/root || exit
 install -d -o 0 -g 0 -m 555 /mnt/mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/usr || exit
+umount /dev/fd${drive}b || exit			# Unhide /minix
+install -d -o 2 -g 0 -m 755 /mnt/minix || exit
+set `ls -t /minix`				# Install the latest kernel
+install -c /minix/$1 /mnt/minix/`uname -r`.`uname -v` || exit
 
 # Change /etc/fstab.
 echo >/mnt/etc/fstab "\
 # Poor man's File System Table.
 
 root=unknown
-tmp=unknown
 usr=unknown"
 
 eval "$X_ROOT1"
@@ -142,8 +150,8 @@ installboot -d /dev/fd$drive /usr/mdec/bootblock boot >/dev/null
 eval "$X_ROOT2"
 
 # Partition the root floppy whether necessary or not.  (Two images can be
-# concatenated later.)
-partition -mf /dev/fd$drive 0 81:1200 0:0 81:1200 >/dev/null || exit
+# concatenated, or a combined image can be split later.)
+partition -mf /dev/fd$drive 0 81:960 0:0 81:1440 >/dev/null || exit
 
 if [ "$single" ]
 then
@@ -155,7 +163,7 @@ else
 	part=
 fi
 
-mkfs -1 -i 96 /dev/fd$drive$part 600 || exit
+mkfs -1 -i 96 /dev/fd$drive$part 720 || exit
 mount /dev/fd$drive$part /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 (cd /usr && exec tar cfD - $usrlist) | (cd /mnt && exec tar xvfp -) || exit

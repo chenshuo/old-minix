@@ -14,7 +14,7 @@ static char rcsid[] = "$Header: keys.c,v 7.2 89/12/07 16:47:50 ceriel Exp $";
 # include "prompt.h"
 # include "assert.h"
 
-char *defaultmap = "\
+char defaultmap[] = "\
 bf=P:bl=k:bl=^K:bot=l:bot=$:bp=-:bs=^B:bse=?:bsl=S:bsp=F:chm=^[:exg=x:ff=N:\
 fl=^J:fl=^M:fl=j:fp= :fs=^D:fse=/:fsl=s:fsp=f:hlp=h:nse=n:nsr=r:\
 red=^L:rep=.:bps=Z:bss=b:fps=z:fss=d:shl=!:tom=':top=\\^:vis=e:\

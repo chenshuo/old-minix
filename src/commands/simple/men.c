@@ -15,26 +15,26 @@
  * output to remain on the screen until the user has read it, the special
  * action: # may be used.  This is a macro for: 
  *
- *	getlf "Hit RETURN to menu"
+ *	echo "Hit RETURN to menu"; read ret
  *
  * Here is an example of the .menu file:
  *
- * ca:Calendar:cal %month% %year%;getlf "Hit RETURN to continue"
+ * ca:Calendar:cal %month% %year%;echo "Hit RETURN to continue";read ret
  * cp:Copy file:cp %source file% %destination file%
  * da:Date:date;sleep 3
- * du:Disk Usage:du %directory name%;getlf "Hit RETURN to continue"
+ * du:Disk Usage:du %directory name%;echo "Hit RETURN to continue";read ret
  * e:ELLE:elle %file name%
- * f:Tell fortune:fortune;getlf "Hit RETURN to continue"
- * g:Grep:grep %pattern% %file(s)%;getlf "Hit RETURN to continue"
+ * f:Tell fortune:fortune;echo "Hit RETURN to continue";read ret
+ * g:Grep:grep %pattern% %file(s)%;echo "Hit RETURN to continue";read ret
  * k:Kermit:kermit 
- * ls:List directory (short):ls -C;getlf "Hit RETURN to continue"
- * ll:List directory (long):ls -l;getlf "Hit RETURN to continue"
+ * ls:List directory (short):ls -C;echo "Hit RETURN to continue";read ret
+ * ll:List directory (long):ls -l;echo "Hit RETURN to continue";read ret
  * mi:Mined:mined %file name%
  * mk:Make file system:mkfs %special% %size or prototype name%
  * mor:Examine file:more %file name%
  * mou:Mount floppy:/etc/mount /dev/fd0 %directory to mount on%
  * mv:Rename a file:mv %old name% %new name%
- * p:Print current dir name:pwd;getlf Hit RETURN to continue"
+ * p:Print current dir name:pwd;echo Hit RETURN to continue";read ret
  * rec:Recover lost file:recover %file name%
  * rm:Remove file:rm %file name(s)%
  * v:vi:/bin/vi
@@ -46,7 +46,7 @@
 
 #include <sys/types.h>
 #include <fcntl.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -92,7 +92,7 @@ char separator = ':';		/* menu items are separated by this char */
 char prompt = '%';		/* separator for prompts in commands */
 char ret = '#';			/* generates special message */
 char *clr_str = "\033[H\033[0J";	/* ANSI for clear the screen */
-char *ret_str = "getlf \"\n\nPlease hit RETURN to go back to the menu\"";
+char *ret_str = "echo '\n\nPlease hit RETURN to go back to the menu';read ret";
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void read_file, (int argc, char *argv []));
@@ -369,21 +369,21 @@ void execute()
 {
 /* Get input and execute a command. */
 
-  struct sgttyb save, argp;
+  struct termios save, argp;
   struct item *ip;
   char c[LINE_SIZE], exec_buf[EXEC_BUF_SIZE], *cp;
 
   /* Put terminal in cbreak mode. */
-  ioctl(fileno(stdin), TIOCGETP, &save);
+  tcgetattr(fileno(stdin), &save);
   argp = save;
-  argp.sg_flags |= CBREAK;
+  argp.c_lflag |= ICANON;
 
   /* Read in characters */
   cp = &c[0];
   while (1) {
-	ioctl(fileno(stdin), TIOCSETP, &argp);
+	tcsetattr(fileno(stdin), TCSANOW, &argp);
 	read(fileno(stdin), cp, 1);
-	ioctl(fileno(stdin), TIOCSETP, &save);
+	tcsetattr(fileno(stdin), TCSANOW, &save);
 	if (*cp == newline) {
 		cp = &c[0]; /* restart */
 		continue;
@@ -440,7 +440,7 @@ char *exec;			/* pointer to exec buffer */
 		return;
 	}
 
-	/* '#' is a macro for calling getlf. */
+	/* '#' is a macro for calling "echo xxx;read ret". */
 	if (*mp == ret) {
 		pb = ret_str;
 		while (*pb != '\0') *ep++ = *pb++;

@@ -6,6 +6,9 @@
  *	way.
  */
 
+/* Changed  3 Feb 93 by Kees J. Bot:  setuid execution nonsense removed.
+ */
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <ctype.h>
@@ -20,12 +23,17 @@
 #include <minix/minlib.h>
 #include <stdio.h>
 
+#ifndef S_ISLNK
+#define S_ISLNK(mode)	0
+#define lstat		stat
+#endif
+
 #define S_IUGID (S_ISUID|S_ISGID)
 
 /* Global variables, such as flags and path names */
 int gflag, oflag, rflag, error;
 char *pgmname, path[PATH_MAX + 1];
-uid_t nuid, ouid;
+uid_t nuid;
 gid_t ngid;
 
 _PROTOTYPE(int main, (int argc, char **argv));
@@ -100,17 +108,12 @@ char *argv[];
   } else
 	gflag = 0;
 
-  ouid = getuid();
   error = 0;
   while (argc--) do_chown(*argv++);
   return(error);
 }
 
-/* Apply the user/group modification here. If chown/chgrp is setuid root
- * (when POSIX_CHOWN_RESTRICTED is true, as in Minix), chown/chgrp will
- * apply its own protection (you must be owner to change either group/user,
- * and doing so always clears BOTH setuid and setgid bits) if the caller is
- * not 'root'.
+/* Apply the user/group modification here.
  */
 void do_chown(file)
 char *file;
@@ -120,23 +123,17 @@ char *file;
   char *namp;
   struct stat st;
 
-  if (stat(file, &st)) {
+  if (lstat(file, &st)) {
 	perror(file);
 	error = 1;
 	return;
   }
-  if (ouid && ouid != st.st_uid) {
-	errno = EACCES;
+
+  if (S_ISLNK(st.st_mode) && rflag) return;	/* Note: violates POSIX. */
+
+  if (chown(file, oflag ? nuid : st.st_uid, gflag ? ngid : st.st_gid)) {
 	perror(file);
 	error = 1;
-  } else {
-	if ((st.st_mode & S_IUGID) && ouid)
-		chmod(file, st.st_mode & ~S_IUGID);
-
-	if (chown(file, oflag ? nuid : st.st_uid, gflag ? ngid : st.st_gid)) {
-		perror(file);
-		error = 1;
-	}
   }
 
   if (S_ISDIR(st.st_mode) && rflag) {

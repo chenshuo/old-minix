@@ -16,9 +16,9 @@ usr:	\
 	/usr/bin/MAKEDEV \
 	/usr/bin/adduser \
 	/usr/bin/checkhier \
-	/usr/bin/instdist \
 	/usr/bin/makewhatis \
 	/usr/bin/mkdist \
+	/usr/bin/setup \
 	/usr/bin/spell \
 	/usr/bin/srccrc \
 	/usr/bin/svclog \
@@ -55,13 +55,13 @@ clean:
 /usr/bin/checkhier:	checkhier.sh
 	install -c -o bin $? $@
 
-/usr/bin/instdist:	instdist.sh
-	install -c -o bin $? $@
-
 /usr/bin/makewhatis:	makewhatis.sh
 	install -c -o bin $? $@
 
 /usr/bin/mkdist:	mkdist.sh
+	install -c -o bin $? $@
+
+/usr/bin/setup:	setup.sh
 	install -c -o bin $? $@
 
 /usr/bin/spell:	spell.sh

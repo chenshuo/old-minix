@@ -1,4 +1,4 @@
-/*	edparams 1.16 - Modify boot parameters		Author: Kees J. Bot
+/*	edparams 1.17 - Modify boot parameters		Author: Kees J. Bot
  *								20 May 1992
  */
 
@@ -16,11 +16,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <errno.h>
-#if __minix_vmd
 #include <termios.h>
-#else
-#include <sgtty.h>
-#endif
 
 /* The Minix boot block must start with these bytes: */
 char boot_magic[] = { 0x31, 0xC0, 0x8E, 0xD8, 0xFA, 0x8E, 0xD0, 0xBC };
@@ -34,11 +30,7 @@ char boot_magic[] = { 0x31, 0xC0, 0x8E, 0xD8, 0xFA, 0x8E, 0xD0, 0xBC };
 int device;			/* Device to edit parameters. */
 char *devname;			/* Name of device. */
 
-#if __minix_vmd
 struct termios termbuf;
-#else
-struct sgttyb ttyb;
-#endif
 int istty= 1;
 
 void report(char *label)
@@ -649,19 +641,11 @@ void menu(void)
 	int fundef= 0, c, def= 1;
 	char *choice= nil;
 	environment *e;
-#if __minix_vmd
 	struct termios rawterm;
 
 	rawterm= termbuf;
 	rawterm.c_lflag &= ~(ICANON|ECHO|IEXTEN);
 	if (tcsetattr(0, TCSANOW, &rawterm) < 0) fatal("");
-#else
-	struct sgttyb rawttyb;
-
-	rawttyb= ttyb;
-	rawttyb.sg_flags= (rawttyb.sg_flags | CBREAK) & ~ECHO;
-	if (ioctl(0, TIOCSETP, &rawttyb) < 0) fatal("");
-#endif
 
 	/* Just a default menu? */
 	for (e= env; e != nil; e= e->next) if (menufun(e) == USERFUN) def= 0;
@@ -706,11 +690,7 @@ void menu(void)
 	printf("%c\n", c);
 	(void) tokenize(&cmds, choice, &fundef);
 ret:
-#if __minix_vmd
 	if (tcsetattr(0, TCSANOW, &termbuf) < 0) fatal("");
-#else
-	if (ioctl(0, TIOCSETP, &ttyb) < 0) fatal("");
-#endif
 }
 
 void help(void)
@@ -953,11 +933,7 @@ void main(int argc, char **argv)
 	int i;
 	char bootcode[SECTOR_SIZE];
 
-#if __minix_vmd
 	if (tcgetattr(0, &termbuf) < 0) istty= 0;
-#else
-	if (ioctl(0, TIOCGETP, &ttyb) < 0) istty= 0;
-#endif
 	if (argc > 2) istty= 0;
 
 	if (argc < 2) {

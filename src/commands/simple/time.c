@@ -75,7 +75,7 @@ char *argv[];
   print_time(post_buf.tms_cstime - pre_buf.tms_cstime);
   std_err(" sys\n");
 #endif
-  return(status >> 8);
+  return((status & 0377) ? -1 : (status >> 8));
 }
 
 void print_time(t)

@@ -38,7 +38,6 @@ typedef unsigned long sigset_t;
 #define SIGPIPE           13	/* write on a pipe with no one to read it */
 #define SIGALRM           14	/* alarm clock */
 #define SIGTERM           15	/* software termination signal from kill */
-#define SIGSTKFLT         16	/* used by kernel to indicate stack fault */
 
 #define SIGEMT             7	/* obsolete */
 #define SIGBUS            10	/* obsolete */
@@ -82,7 +81,6 @@ struct sigaction {
 #define SA_SIGINFO   0x0010	/* extended signal handling */
 #define SA_NOCLDWAIT 0x0020	/* don't create zombies */
 #define SA_NOCLDSTOP 0x0040	/* don't receive SIGCHLD when child stops */
-#define SA_COMPAT    0x0080	/* internal flag for old signal catchers */
 
 /* POSIX requires these values for use with sigprocmask(2). */
 #define SIG_BLOCK          0	/* for blocking signals */

@@ -23,7 +23,6 @@ all:	bin \
 	bin/repartition \
 	bin/screendump \
 	bin/sdump \
-	bin/term \
 
 bin:
 	mkdir bin
@@ -92,10 +91,6 @@ bin/sdump:	sdump.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/term:	term.c
-	$(CCLD) -o $@ -wa $?
-	install -S 4kw $@
-
 install:	bin \
 	/usr/bin/cdplay \
 	/usr/bin/dosread \
@@ -115,7 +110,6 @@ install:	bin \
 	/usr/bin/repartition \
 	/usr/bin/screendump \
 	/usr/bin/sdump \
-	/usr/bin/term \
 	/bin/loadkeys \
 	/bin/readclock \
 
@@ -168,9 +162,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/sdump:	bin/sdump
-	install -cs -o bin $? $@
-
-/usr/bin/term:	bin/term
 	install -cs -o bin $? $@
 
 /bin/loadkeys:	/usr/bin/loadkeys

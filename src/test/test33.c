@@ -79,7 +79,7 @@ void test33a()
   int stat_loc;			/* For the wait(&stat_loc) call. */
 
   subtest = 1;
-  System("/bin/rm -rf ../DIR_33/*");
+  System("rm -rf ../DIR_33/*");
 
   /* To test normal access first make some files for real uid. */
   switch (fork()) {
@@ -185,7 +185,7 @@ void test33b()
   int stat_loc;			/* For the wait(&stat_loc) call. */
 
   subtest = 2;
-  System("/bin/rm -rf ../DIR_33/*");
+  System("rm -rf ../DIR_33/*");
 
   switch (fork()) {
       case -1:	printf("Can't fork\n");	break;
@@ -331,7 +331,7 @@ void test33c()
   int i;
 
   subtest = 3;
-  System("/bin/rm -rf ../DIR_33/*");
+  System("rm -rf ../DIR_33/*");
 
   /* Test what access() does with non existing files. */
   System("rm -rf nonexist");
@@ -411,7 +411,7 @@ void test33d()
 {				/* Test access() flags. */
 #define EXCLUDE(a,b)	(((a)^(b)) == ((a)|(b)))
   subtest = 4;
-  System("/bin/rm -rf ../DIR_33/*");
+  System("rm -rf ../DIR_33/*");
 
   /* The test are rather strong, stronger that POSIX specifies. */
   /* The should be OR able, this test tests if all the 1 bits */

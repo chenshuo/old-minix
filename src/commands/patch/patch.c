@@ -324,7 +324,8 @@ char **argv;
 	set_signals(1);
     }
 #ifdef SMALL
-    Fclose(sfp);
+    if (sfp != Nullfp)
+	Fclose(sfp);
 #endif
     my_exit(failtotal);
 }

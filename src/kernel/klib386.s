@@ -13,7 +13,6 @@
 ! kernel.  They are:
 
 .define	_monitor	! exit Minix and return to the monitor
-.define	_build_sig	! build 4 word structure pushed onto stack for signals
 .define	_check_mem	! check a block of memory, return the valid size
 .define	_cp_mess	! copies messages from source to destination
 .define	_exit		! dummy for library routines
@@ -39,7 +38,7 @@
 .define	_vid_vid_copy	! move data in video ram
 .define	_level0		! call a function at level 0
 
-! The routines only guarantee to preserve the registers the `C` compiler
+! The routines only guarantee to preserve the registers the C compiler
 ! expects to be preserved (ebx, esi, edi, ebp, esp, segment registers, and
 ! direction bit in the flags).
 
@@ -102,9 +101,9 @@ _bios13:
 	movb	ah, al
 	inb	INT_CTLMASK
 	push	eax			! save interrupt masks
-	mov	eax, (_irq_use)		! map of in-use IRQ`s
+	mov	eax, (_irq_use)		! map of in-use IRQs
 	and	eax, ~[1<<CLOCK_IRQ]	! there is a special clock handler
-	outb	INT_CTLMASK		! enable all unused IRQ`s and vv.
+	outb	INT_CTLMASK		! enable all unused IRQs and vv.
 	movb	al, ah
 	outb	INT2_CTLMASK
 
@@ -173,34 +172,6 @@ csinit:	mov	eax, DS_SELECTOR
 
 
 !*===========================================================================*
-!*				build_sig				     *
-!*===========================================================================*
-! PUBLIC void build_sig(char *sig_stuff, struct proc *rp, int sig)
-! Build a structure that is pushed onto the stack for signals.  It contains
-! pc, psw, etc., and is machine dependent. The format is the same as generated
-! by hardware interrupts, except that after the "interrupt", the signal number
-! is also pushed.  The signal processing routine within the user space first
-! pops the signal number, to see which function to call.  Then it calls the
-! function.  Finally, when the function returns to the low-level signal
-! handling routine, control is passed back to where it was prior to the signal
-! by executing a return-from-interrupt instruction, hence the need for using
-! the hardware generated interrupt format on the stack.
-
-_build_sig:
-	mov	ecx, 4(esp)		! sig_stuff
-	mov	edx, 4+4(esp)		! rp
-	mov	eax, 4+4+4(esp)		! sig
-	mov	(ecx), eax		! put signal number in sig_stuff
-	mov	eax, PCREG(edx)		! signalled process` PC
-	mov	4(ecx), eax		! put pc in sig_stuff
-	mov	eax, CSREG(edx)		! signalled process` cs
-	mov	4+4(ecx), eax		! put cs in sig_stuff
-	mov	eax, PSWREG(edx)	! signalled process` PSW
-	mov	4+4+4(ecx), eax		! put psw in sig_stuff
-	ret
-
-
-!*===========================================================================*
 !*				check_mem				     *
 !*===========================================================================*
 ! PUBLIC phys_bytes check_mem(phys_bytes base, phys_bytes size);
@@ -254,7 +225,7 @@ cm_exit:
 ! space to anywhere else.  It also copies the source address provided as a
 ! parameter to the call into the first word of the destination message.
 !
-! Note that the message size, `Msize` is in DWORDS (not bytes) and must be set
+! Note that the message size, "Msize" is in DWORDS (not bytes) and must be set
 ! correctly.  Changing the definition of message in the type file and not
 ! changing it here will lead to total disaster.
 
@@ -281,9 +252,9 @@ _cp_mess:
 	add	edi, CM_ARGS+4+4+4+4(esp)	! dst offset
 
 	mov	eax, CM_ARGS(esp)	! process number of sender
-	stos				! copy sender`s number to dest message
-	add	esi, 4			! don`t copy first word
-	mov	ecx, Msize - 1		! remember, first word doesn't count
+	stos				! copy number of sender to dest message
+	add	esi, 4			! do not copy first word
+	mov	ecx, Msize - 1		! remember, first word does not count
 	rep
 	movs				! copy the message
 
@@ -291,7 +262,7 @@ _cp_mess:
 	pop	ds
 	pop	edi
 	pop	esi
-	ret				! that`s all folks!
+	ret				! that is all folks!
 
 
 !*===========================================================================*
@@ -388,7 +359,7 @@ _port_read:
 	mov	edi, PR_ARGS+4(esp)	! destination addr
 	mov	ecx, PR_ARGS+4+4(esp)	! byte count
 	shr	ecx, 1			! word count
-	rep				! (hardware can`t handle dwords)
+	rep				! (hardware cannot handle dwords)
     o16	ins				! read everything
 	pop	es
 	pop	edi
@@ -441,7 +412,7 @@ _port_write:
 	mov	esi, PW_ARGS+4(esp)	! source addr
 	mov	ecx, PW_ARGS+4+4(esp)	! byte count
 	shr	ecx, 1			! word count
-	rep				! (hardware can`t handle dwords)
+	rep				! (hardware cannot handle dwords)
     o16	outs				! write everything
 	pop	ds
 	pop	esi
@@ -631,7 +602,7 @@ _mem_rdw:
 	mov	cx, ds
 	mov	ds, 4(esp)		! segment
 	mov	eax, 4+4(esp)		! offset
-	movzx	eax, (eax)		! byte to return
+	movzx	eax, (eax)		! word to return
 	mov	ds, cx
 	ret
 
@@ -644,7 +615,7 @@ _mem_rdw:
 
 _reset:
 	lidt	(idt_zero)
-	int	3			! anything goes, the 386 won`t like it
+	int	3		! anything goes, the 386 will not like it
 .sect .data
 idt_zero:	.data4	0, 0
 .sect .text

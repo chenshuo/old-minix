@@ -24,7 +24,7 @@
 #define NL    12		/* name length */
 
 _PROTOTYPE(int main, (int argc, char *argv []));
-_PROTOTYPE(void df, (char *name, char *mnton, char *version, char *rw_flag, int silent ));
+_PROTOTYPE(int df, (char *name, char *mnton, char *version, char *rw_flag, int silent ));
 _PROTOTYPE(bit_t bit_count, (int blocks, bit_t bits, int fd ));
 _PROTOTYPE(void defaults, (void ));
 
@@ -33,6 +33,7 @@ int argc;
 char *argv[];
 {
   register int i;
+  int ex= 0;
 
   sync();			/* have to make sure disk is up-to-date */
   fprintf(stdout, "\nDevice     Inodes  Inodes  Inodes     Blocks  Blocks  Blocks");
@@ -57,14 +58,14 @@ char *argv[];
 
   if (argc == 1) defaults();
 
-  for (i = 1; i < argc; i++) df(argv[i], "", "", "", SILENT);
-  return(0);
+  for (i = 1; i < argc; i++) ex |= df(argv[i], "", "", "", SILENT);
+  return(ex);
 }
 
 
 #define percent(num, tot)  ((int) ((100L * (num) + ((tot) - 1)) / (tot)))
 
-void df(name, mnton, version, rw_flag, silent)
+int df(name, mnton, version, rw_flag, silent)
 char *name, *mnton, *version, *rw_flag;
 int silent;
 {
@@ -82,13 +83,13 @@ int silent;
 		errno = e;
 		perror(name);
 	}
-	return;
+	return(1);
   }
   lseek(fd, (off_t) BLOCK_SIZE, SEEK_SET);	/* skip boot block */
   if (read(fd, (char *) &super, (unsigned) SUPER_SIZE) != SUPER_SIZE) {
 	fprintf(stderr, "df: Can't read super block of %s\n", name);
 	close(fd);
-	return;
+	return(1);
   }
   lseek(fd, (off_t) BLOCK_SIZE * 2L, SEEK_SET);	/* skip rest of super block */
   sp = &super;
@@ -100,13 +101,13 @@ int silent;
 		fprintf(stderr, "df: %s: Foreign (byte-swapped) file system\n", name);
 	else
 		fprintf(stderr, "df: %s: Not a valid file system\n", name);
-	return;
+	return(1);
   }
   i_count = bit_count(sp->s_imap_blocks, (bit_t) sp->s_ninodes + 1, fd);
   if (i_count == -1) {
 	fprintf(stderr, "df: Can't find bit maps of %s\n", name);
 	close(fd);
-	return;
+	return(1);
   }
   i_count--;			/* There is no inode 0. */
 
@@ -115,7 +116,7 @@ int silent;
   if (z_count == -1) {
 	fprintf(stderr, "df: Can't find bit maps of %s\n", name);
 	close(fd);
-	return;
+	return(1);
   }
   totblocks = (block_t) sp->s_zones << sp->s_log_zone_size;
   z_count += sp->s_firstdatazone - 1;
@@ -123,7 +124,7 @@ int silent;
 
   /* Truncate device name to NL chars. */
   for (j = 0; j < NL; j++) devname[j] = ' ';
-  strncpy(devname, (strcmp(mnton, "/") == 0 ? "(root dev)" : mnton), (size_t)NL);
+  strncpy(devname, mnton, (size_t)NL);
   for (j = 0; j < NL; j++) if(devname[j] == '\0') devname[j] = ' ';
   devname[NL] = '\0';
 
@@ -150,6 +151,7 @@ int silent;
 	rw_flag			/* rw or ro */
 	);
   close(fd);
+  return(0);
 }
 
 bit_t bit_count(blocks, bits, fd)
@@ -204,6 +206,7 @@ void defaults()
 /* Use the root file system and all mounted file systems. */
 
   char special[PATH_MAX+1], mounted_on[PATH_MAX+1], version[10], rw_flag[10];
+  int ex= 0;
 
   /* Read in /etc/mtab. */
   if (load_mtab("df") < 0) exit(1);
@@ -212,8 +215,7 @@ void defaults()
   while (1) {
 	get_mtab_entry(special, mounted_on, version, rw_flag);
 	if (special[0] == '\0') exit(0);
-	df(special, mounted_on, version, rw_flag, REPORT);
+	ex |= df(special, mounted_on, version, rw_flag, REPORT);
   }
-
+  exit(ex);
 }
-

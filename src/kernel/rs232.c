@@ -5,7 +5,6 @@
 
 #include "kernel.h"
 #include <termios.h>
-#include <sgtty.h>
 #include <signal.h>
 #include "tty.h"
 #include "proc.h"

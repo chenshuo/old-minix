@@ -39,7 +39,10 @@ ps:	ps.c /usr/include/minix/config.h ../kernel/const.h \
 bootable:
 	exec su root mkboot bootable
 
-hdinstall hdtest fdboot:	programs
+hdboot:	programs
+	exec sh mkboot $@
+
+fdboot:	programs
 	exec su root mkboot $@
 
 all install clean::

@@ -1084,6 +1084,27 @@ find_word()
 }
 
 STATIC STATUS
+c_possible()
+{
+    CHAR	**av;
+    CHAR	*word;
+    int		ac;
+
+    word = find_word();
+    ac = rl_list_possib((char *)word, (char ***)&av);
+    if (word)
+	DISPOSE(word);
+    if (ac) {
+	columns(ac, av);
+	while (--ac >= 0)
+	    DISPOSE(av[ac]);
+	DISPOSE(av);
+	return CSmove;
+    }
+    return ring_bell();
+}
+
+STATIC STATUS
 c_complete()
 {
     CHAR	*p;
@@ -1105,27 +1126,6 @@ c_complete()
 	return s;
     }
     return c_possible();
-}
-
-STATIC STATUS
-c_possible()
-{
-    CHAR	**av;
-    CHAR	*word;
-    int		ac;
-
-    word = find_word();
-    ac = rl_list_possib((char *)word, (char ***)&av);
-    if (word)
-	DISPOSE(word);
-    if (ac) {
-	columns(ac, av);
-	while (--ac >= 0)
-	    DISPOSE(av[ac]);
-	DISPOSE(av);
-	return CSmove;
-    }
-    return ring_bell();
 }
 
 STATIC STATUS

@@ -17,7 +17,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <pwd.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,7 +35,7 @@ short int writing = 0;		/* is there a connection? */
 char *user = NULL;	/* callee's user name */
 char *tty = NULL;	/* callee's terminal if given */
 char *ourtty = NULL;	/* our terminal name */
-struct sgttyb ttyold, ttynew;	/* our tty controlling structs */
+struct termios ttyold, ttynew;	/* our tty controlling structs */
 
 extern int optind;
 
@@ -68,7 +68,7 @@ char *finduser()
   if (verbose) fprintf(stderr, "Trying to write to %s\n",
 		userptr->pw_gecos);
 
-  if ((utmpfd = open(UTMP, O_RDONLY)) < 0) {
+  if ((utmpfd = open("/etc/utmp", O_RDONLY)) < 0) {
 	fprintf(stderr, "Cannot open utmp file\n");
 	return(NULL);
   }
@@ -116,11 +116,11 @@ char *utty;			/* name of terminal found in utmp */
 	fprintf(stderr, "It may have write permission turned off\n");
 	exit(-1);
   }
-  ioctl(0, TIOCGETP, &ttyold);
-  ioctl(0, TIOCGETP, &ttynew);
-  ttynew.sg_flags |= CBREAK;
+  tcgetattr(0, &ttyold);
+  tcgetattr(0, &ttynew);
+  ttynew.c_lflag &= ~(ICANON|ECHO);
   signal(SIGINT, intr);
-  if (cbreak) ioctl(0, TIOCSETP, &ttynew);
+  if (cbreak) tcsetattr(0, TCSANOW, &ttynew);
 }
 
 
@@ -183,13 +183,15 @@ void writetty()
 
 	if (cbreak && line[0] == '\n') cb_esc = 1;
 
+	if (cbreak) write(1, line, n);
+
 	if (line[0] == '!') {
 		if (cbreak && cb_esc) {
 			cb_esc = 0;
-			ioctl(0, TIOCSETP, &ttyold);
+			tcsetattr(0, TCSANOW, &ttyold);
 			read(0, line, 79);
 			escape(line);
-			ioctl(0, TIOCSETP, &ttynew);
+			tcsetattr(0, TCSANOW, &ttynew);
 		} else if (cbreak)
 			write(otty, line, n);
 		else
@@ -247,7 +249,7 @@ char *argv[];
 	settty(sp);		/* setup our terminal */
 	sayhello();		/* print the initial message */
 	writetty();		/* the write loop */
-	ioctl(0, TIOCSETP, &ttyold);
+	tcsetattr(0, TCSANOW, &ttyold);
 	exit(0);
   }
   return(-1);
@@ -260,7 +262,7 @@ int dummy;			/* to satisfy the prototype */
 
   signal(SIGINT, SIG_IGN);
   fprintf(stderr, "\nInterrupt. Exiting write\n");
-  ioctl(0, TIOCSETP, &ttyold);
+  tcsetattr(0, TCSANOW, &ttyold);
   if (writing) write(otty, "\nEOT\n", 5);
   exit(0);
 }

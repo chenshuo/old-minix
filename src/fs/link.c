@@ -223,8 +223,8 @@ PUBLIC int do_rename()
 	if (old_dirp->i_dev != new_dirp->i_dev) r = EXDEV;
 
 	/* Parent dirs must be writable, searchable and on a writable device */
-	if ((r1 = forbidden(old_dirp, W_BIT | X_BIT, 0)) != OK ||
-	    (r1 = forbidden(new_dirp, W_BIT | X_BIT, 0)) != OK) r = r1;
+	if ((r1 = forbidden(old_dirp, W_BIT | X_BIT)) != OK ||
+	    (r1 = forbidden(new_dirp, W_BIT | X_BIT)) != OK) r = r1;
 
 	/* Some tests apply only if the new path exists. */
 	if (new_ip == NIL_INODE) {

@@ -293,8 +293,11 @@ _PROTOTYPE(int ask_save, (void));
 _PROTOTYPE(int line_number, (void));
 _PROTOTYPE(void file_status, (char *message, long count, char *file, int lines,
 						 FLAG writefl, FLAG changed ));
-void build_string();		/* varargs :-(  */
-
+#if __STDC__
+void build_string(char *buf, char *fmt, ...);
+#else
+void build_string();
+#endif
 _PROTOTYPE(char *num_out, (long number ));
 _PROTOTYPE(int get_number, (char *message, int *result ));
 _PROTOTYPE(int input, (char *inbuf, FLAG clearfl ));

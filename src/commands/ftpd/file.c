@@ -39,6 +39,7 @@ _PROTOTYPE(static int sendfile, (char *name, int xmode));
 _PROTOTYPE(static int recvfile, (char *name, int xmode));
 _PROTOTYPE(static char *uniqname, (void));
 _PROTOTYPE(static int docrc, (char *buff, int xmode));
+_PROTOTYPE(static char *path, (char *fname));
 
 #define	SEND_FILE	0
 #define	SEND_NLST	1
@@ -57,11 +58,17 @@ _PROTOTYPE(static int docrc, (char *buff, int xmode));
 #define	CNVT_GZIP	6
 #define	CNVT_UNCOMP	7
 
+
+#define	CMD_SH		"/bin/sh"
+#define	CMD_NLST	"ls"
+#define	CMD_LIST	"ls -lA"
+#define	CMD_CRC		"crc"
+
 static char *msg550 = "550 %s %s.\r\n";
 
 static unsigned long file_restart = 0;
 
-static char rnfr[80];
+static char rnfr[256];
 static char buffer[8192];
 
 static cmdpid = -1;
@@ -116,8 +123,10 @@ char *buff;
 
    if(unlink(buff))
 	printf(msg550, buff, strerror(errno));
-   else
+   else {
 	printf("250 File \"%s\" deleted.\r\n", buff);
+	logit("DELE", path(buff));
+   }
 
    return(GOOD);
 }
@@ -185,8 +194,10 @@ char *buff;
 
    if(mkdir(buff, 0777))
 	printf(msg550, buff, strerror(errno));
-   else
+   else {
 	printf("257 \"%s\" directory created.\r\n", buff);
+	logit("MKD ", path(buff));
+   }
 
    return(GOOD);
 }
@@ -209,7 +220,7 @@ char dir[128];
    if(ChkLoggedIn())
 	return(GOOD);
 
-   if(getcwd(dir, sizeof(dir)) == (char *)0)
+   if(getcwd(dir, sizeof(dir)) == (char *)NULL)
 	printf(msg550, buff, strerror(errno));
    else
 	printf("251 \"%s\" is current directory.\r\n", dir);
@@ -247,8 +258,10 @@ char *buff;
 
    if(rmdir(buff))
 	printf(msg550, buff, strerror(errno));
-   else
+   else {
 	printf("250 Directory \"%s\" deleted.\r\n", buff);
+	logit("RMD ", path(buff));
+   }
 
    return(GOOD);
 }
@@ -282,8 +295,11 @@ char *buff;
 
    if(rename(rnfr, buff) < 0)
 	printf("550 Rename failed. Error %s\r\n", strerror(errno));
-   else
+   else {
 	printf("250 Renamed %s to %s.\r\n", rnfr, buff);
+	logit("RNFR", path(rnfr));
+	logit("RNTO", path(buff));
+   }
 
    rnfr[0] = '\0';
 
@@ -300,7 +316,7 @@ int fd;
 int s;
 char *p;
 
-   if((fd = fdxcmd("crc", buff)) < 0) {
+   if((fd = fdxcmd(CMD_CRC, buff)) < 0) {
 	printf("501 Could not obtain CRC.\r\n");
 	return(GOOD);
    }
@@ -412,7 +428,7 @@ int s;
 	printf("211-%s(%s:%u) FTP server status:\r\n",
 		myhostname, inet_ntoa(myipaddr), ntohs(myport));
 	printf("    Version %s  ", FtpdVersion);
-	printf("%s, %d %s %d %02d:%02d:%02d %s\r\n", days[tm->tm_wday],
+	printf("%s, %02d %s %d %02d:%02d:%02d %s\r\n", days[tm->tm_wday],
 		tm->tm_mday, months[tm->tm_mon], 1900+tm->tm_year,
 		tm->tm_hour, tm->tm_min, tm->tm_sec, tzname[tm->tm_isdst]);
 	printf("    Connected to %s:%u\r\n", inet_ntoa(rmtipaddr), ntohs(rmtport));
@@ -420,7 +436,7 @@ int s;
 		printf("    Not logged in\r\n");
 	else
 		printf("    Logged in %s\r\n", username);
-	printf("    TYPE: %s\r\n",(type == TYPE_A) ? "Ascii" : "Image");
+	printf("    TYPE: %s\r\n",(type == TYPE_A) ? "Ascii" : "Binary");
 	printf("211 End of status\r\n");
 	return(GOOD);
    }
@@ -430,7 +446,7 @@ int s;
 
    printf("211-Status of %s:\r\n", buff);
 
-   if((fd = fdxcmd("ls -lgA", buff)) < 0)
+   if((fd = fdxcmd(CMD_LIST, buff)) < 0)
 	printf("   Could not retrieve status");
    else {
 	while((s = read(fd, buffer, 1)) == 1) {
@@ -526,7 +542,7 @@ char *smallenv[] = { "PATH=/bin:/usr/bin:/usr/local/bin", NULL, NULL };
 
    sprintf(cmd, "%s %s", xcmd, args);
 
-   argv[0] = "/bin/sh";
+   argv[0] = CMD_SH;
    argv[1] = "-c";
    argv[2] = cmd;
    argv[3] = (char *)NULL;
@@ -601,7 +617,8 @@ int cnt;
 			count++;
 			cnt = cnt - 1 - (pp - p);
 			p = pp + 1;
-		}
+		} else
+			break;
    }
 
    if(cnt == 0) {
@@ -623,7 +640,7 @@ char *name;
 char **name2;
 {
 struct stat st;
-static char fname[80];
+static char fname[256];
 char *p;
 int mode;
 
@@ -634,7 +651,7 @@ int mode;
 	} else
 		return(CNVT_NONE);
 
-   if(errno != ENOENT) {	/* doesn't exist is okay, other are not */
+   if(errno != ENOENT) {	/* doesn't exist is okay, others are not */
 	printf(msg550, name, strerror(errno));
 	return(CNVT_ERROR);
    }
@@ -694,18 +711,18 @@ char *name;
 {
 int fd;
 char *name2;
-char command[80];
+static char command[512];
 
    switch(cnvtfile(name, &name2)) {
 	case CNVT_TAR:
 		fd = fdxcmd("tar cf -", name2);
 		break;
 	case CNVT_TAR_Z:
-		sprintf(command, "tar cf - %s | compress", name2);
+		sprintf(command, "tar cf - %s | compress -q", name2);
 		fd = fdxcmd(command, "");
 		break;
 	case CNVT_COMP:
-		fd = fdxcmd("compress -c", name2);
+		fd = fdxcmd("compress -cq", name2);
 		break;
 	case CNVT_TAR_GZ:
 		sprintf(command, "tar cf - %s | gzip", name2);
@@ -715,7 +732,7 @@ char command[80];
 		fd = fdxcmd("gzip -c", name2);
 		break;
 	case CNVT_UNCOMP:
-		fd = fdxcmd("compress -dc", name2);
+		fd = fdxcmd("compress -dcq", name2);
 		break;
 	case CNVT_NONE:
 		fd = open(name, O_RDONLY);
@@ -744,6 +761,7 @@ long kbs;
 char *p, *pp;
 int len;
 off_t sp;
+int doascii;
 
    if(ChkLoggedIn()) 
 	return(CleanUpData());
@@ -751,19 +769,23 @@ off_t sp;
    switch(xmode) {
 	case SEND_NLST:
 		fname = "NLST";
-		fd = fdxcmd("ls", name);
+		fd = fdxcmd(CMD_NLST, name);
 		if(fd < 0)
 			printf(msg550, name, strerror(errno));
 		break;
 	case SEND_LIST:
 		fname = "LIST";
-		fd = fdxcmd("ls -lgA", name);
+		fd = fdxcmd(CMD_LIST, name);
 		if(fd < 0)
 			printf(msg550, name, strerror(errno));
 		break;
 	default:
 		fname = name;
 		fd = procfile(name);
+		if(fd < 0)
+			logit("FAIL", path(fname));
+		else
+			logit("SEND", path(fname));
    }
 
    if(fd < 0)
@@ -772,17 +794,18 @@ off_t sp;
    /* set file position at approriate spot */
    if(file_restart) {
 	if(type == TYPE_A) {
-		sp = file_restart;
-		while(sp--) {
+		sp = 0;
+		while(sp++ < file_restart) {
 			s = read(fd, buffer, 1);
-			if(s == -1) {
+			if(s < 0) {
 				printf(msg550, fname, strerror(errno));
 				endfdxcmd(fd);
 				file_restart = 0;
 				return(CleanUpData());
 			}
+			if(s == 0) break;
 			if(*buffer == '\n');
-				sp--;
+				sp++;
 		}
 	} else {
 		sp = lseek(fd, file_restart, SEEK_SET);
@@ -792,12 +815,12 @@ off_t sp;
 			file_restart = 0;
 			return(CleanUpData());
 		}
-		if(sp != file_restart) {
-			printf("550 File restart point error.\r\n");
-			endfdxcmd(fd);
-			file_restart = 0;
-			return(CleanUpData());
-		}
+	}
+	if(sp != file_restart) {
+		printf("550 File restart point error.\r\n");
+		endfdxcmd(fd);
+		file_restart = 0;
+		return(CleanUpData());
 	}
    }
    file_restart = 0;
@@ -810,12 +833,18 @@ off_t sp;
 	return(GOOD);
    }
 
+#ifdef DEBUG
+   fprintf(stderr, "ftpd: parent %d start sendfile \n", getpid());
+#endif
+
    /* start transfer */
+   doascii = (type == TYPE_A) ||
+   	((xmode == SEND_LIST) || (xmode == SEND_NLST)); /* per RFC1123 4.1.2.7 */
    datacount = 0;
    time(&datastart);
    while((s = read(fd, buffer, sizeof(buffer))) > 0) {
 	datacount += s;
-	if(type == TYPE_A) {
+	if(doascii) {
 		p = buffer;
 		while(s > 0) {
 			if((pp = memchr(p, '\n', s)) == (char *)NULL) {
@@ -823,7 +852,8 @@ off_t sp;
 				break;
 			}
 			len = pp - p;
-			write(ftpdata_fd, p, len);
+			if(len > 0)
+				write(ftpdata_fd, p, len);
 			write(ftpdata_fd, "\r\n", 2);
 			datacount++;
 			p = pp + 1;
@@ -833,6 +863,10 @@ off_t sp;
 		write(ftpdata_fd, buffer, s);
    }
    time(&dataend);
+
+#ifdef DEBUG
+   fprintf(stderr, "ftpd: parent %d end sendfile \n", getpid());
+#endif
 
    endfdxcmd(fd);
    close(ftpdata_fd);
@@ -861,6 +895,7 @@ long kbs;
 char *p, *pp;
 int fd, oflag;
 int s, len;
+int gotcr;
 off_t sp;
 
    if(ChkLoggedIn())
@@ -883,27 +918,31 @@ off_t sp;
    if(file_restart)
 	oflag = O_RDWR;
 
-   fd = open(fname, oflag, 0600);
+   fd = open(fname, oflag, (anonymous ? 0000:0600));
 
    if(fd < 0) {
 	printf(msg550, fname, strerror(errno));
 	return(CleanUpData());
    }
 
+   /* log the received file */
+   logit("RECV", path(fname));
+
    /* set file position at approriate spot */
    if(file_restart) {
 	if(type == TYPE_A) {
-		sp = file_restart;
-		while(sp--) {
+		sp = 0;
+		while(sp++ < file_restart) {
 			s = read(fd, buffer, 1);
-			if(s == -1) {
+			if(s < 0) {
 				printf(msg550, fname, strerror(errno));
 				close(fd);
 				file_restart = 0;
 				return(CleanUpData());
 			}
+			if(s == 0) break;
 			if(*buffer == '\n');
-				sp--;
+				sp++;
 		}
 	} else {
 		sp = lseek(fd, file_restart, SEEK_SET);
@@ -913,43 +952,71 @@ off_t sp;
 			file_restart = 0;
 			return(CleanUpData());
 		}
-		if(sp != file_restart) {
-			printf("550 File restart point error.\r\n");
-			close(fd);
-			file_restart = 0;
-			return(CleanUpData());
-		}
+	}
+	if(sp != file_restart) {
+		printf("550 File restart point error.\r\n");
+		close(fd);
+		file_restart = 0;
+		return(CleanUpData());
 	}
    }
    file_restart = 0;
 
-   printf("150 File %s okay.  Opening data connection.\r\n", fname);
+   if(xmode == RECV_UNIQ)
+   	printf("150 FILE: %s\r\n", fname);	/* per RFC1123 4.1.2.9 */
+   else
+	printf("150 File %s okay.  Opening data connection.\r\n", fname);
    fflush(stdout);
 
-   if(DataConnect())
+   if(DataConnect()) {
+   	close(fd);
 	return(GOOD);
+   }
+
+#ifdef DEBUG
+   fprintf(stderr, "ftpd: parent %d start recvfile \n", getpid());
+#endif
 
    /* start receiving file */
    datacount = 0;
+   gotcr = 0;
    time(&datastart);
    while((s = read(ftpdata_fd, buffer, sizeof(buffer))) > 0) {
 	datacount += s;
 	if(type == TYPE_A) {
 		p = buffer;
+		if(gotcr) {
+			gotcr = 0;
+			if(*p != '\n')
+				write(fd, "\r", 1);
+		}
 		while(s > 0) {
 			if((pp = memchr(p, '\r', s)) == (char *)NULL) {
 				write(fd, p, s);
 				break;
 			}
 			len = pp - p;
-			write(fd, p, len);
+			if(len > 0) 
+				write(fd, p, len);
 			p = pp + 1;
 			s = s - len - 1;
+			if(s == 0) {
+				gotcr = 1;
+				break;
+			}
+			if(*p != '\n')
+				write(fd, "\r", 1);
 		}
 	} else
 		write(fd, buffer, s);
    }
+   if(gotcr)
+	write(fd, "\r", 1);
    time(&dataend);
+
+#ifdef DEBUG
+   fprintf(stderr, "ftpd: parent %d end recvfile \n", getpid());
+#endif
 
    close(fd);
    close(ftpdata_fd); 
@@ -982,4 +1049,24 @@ struct stat st;
 		return(uniq);
    }
    return(uniq);
+}
+
+static char *spath[256];
+static char *path(fname)
+char *fname;
+{
+char dir[128];
+
+   if(getcwd(dir, sizeof(dir)) == (char *)NULL)
+	sprintf(dir, "???");
+
+   if(fname[0] == '/')
+	sprintf((char *)spath, "%s%s", newroot, fname);
+   else
+	if(dir[1] == '\0')
+		sprintf((char *)spath, "%s%s%s", newroot, dir, fname);
+	else
+		sprintf((char *)spath, "%s%s/%s", newroot, dir, fname);
+
+   return((char *)spath);
 }

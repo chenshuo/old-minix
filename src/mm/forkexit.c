@@ -55,7 +55,7 @@ PUBLIC int do_fork()
 #if (SHADOWING == 0)
   prog_bytes = (phys_bytes) prog_clicks << CLICK_SHIFT;
 #endif
-  if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
+  if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(ENOMEM);
 
 #if (SHADOWING == 0)
   /* Create a copy of the parent's core image for the child. */

@@ -9,7 +9,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sgtty.h>
+#include <termios.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -72,7 +72,7 @@ unsigned int rate = 22050;
 unsigned int time = 10;
 
 int old_stdin;
-struct sgttyb old_tty, new_tty;
+struct termios old_tty, new_tty;
 int audio, file;
 
 void usage()
@@ -85,7 +85,7 @@ void terminate(s)
 int s;
 {
   /* Restore terminal parameters */
-  ioctl(0, TIOCSETP, &old_tty);
+  tcsetattr(0, TCSANOW, &old_tty);
   (void) fcntl(0,F_SETFL,old_stdin);
   close(audio);
   close(file);
@@ -202,10 +202,9 @@ char **argv;
   printf("Samples per second: %u\n", rate);
 
   /* Set terminal parameters and remember the old ones */
-  ioctl(0, TIOCGETP, &old_tty);
-  ioctl(0, TIOCGETP, &new_tty);
-  new_tty.sg_flags |= CBREAK;
-  new_tty.sg_flags &= ~ECHO; 
+  tcgetattr(0, &old_tty);
+  new_tty = old_tty;
+  new_tty.c_lflag &= ~(ICANON|ECHO);
   old_stdin = fcntl(0, F_GETFL);
 
   /* Catch break signal to be able to restore terminal parameters in case
@@ -214,7 +213,7 @@ char **argv;
   signal(SIGINT, terminate);
 
   /* Go to non-blocking mode */
-  ioctl(0, TIOCSETP, &new_tty);
+  tcsetattr(0, TCSANOW, &new_tty);
   (void) fcntl(0, F_SETFL, old_stdin | O_NONBLOCK);
 
   printf("\nPress spacebar to start sampling...\n");

@@ -280,7 +280,7 @@ Time functions
 /* Not Sys III/V */
 
 #ifndef UXIII
-#include <sgtty.h>			/* Set/Get tty modes */
+#include <termios.h>			/* Set/Get tty modes */
 #ifndef PROVX1
 #ifndef V7
 #ifndef BSD41
@@ -400,7 +400,7 @@ static struct timeb ftp;		/* And from sys/timeb.h */
 static long clock;
 #endif /* v7 */
 
-/* sgtty/termio information... */
+/* termio/termios information... */
 
 #ifdef UXIII
   static struct termio ttold = {0};	/* Init'd for word alignment, */
@@ -410,7 +410,7 @@ static long clock;
   static struct termio ccraw = {0};
   static struct termio cccbrk = {0};
 #else
-  static struct sgttyb 			/* sgtty info... */
+  static struct termios 		/* termios info... */
     ttold, ttraw, tttvt, ttbuf,		/* for communication line */
     ccold, ccraw, cccbrk;		/* and for console */
 #endif /* uxiii */
@@ -635,7 +635,7 @@ ttopen(ttname,lcl,modem) char *ttname; int *lcl, modem; {
 /* Get tty device settings */
 
 #ifndef UXIII
-    gtty(ttyfd,&ttold);			/* Get sgtty info */
+    tcgetattr(ttyfd,&ttold);		/* Get termios info */
 #ifdef aegis
     sio_$control((short)ttyfd, sio_$raw_nl, false, st);
     if (xlocal) {	/* ignore breaks from local line */
@@ -643,8 +643,8 @@ ttopen(ttname,lcl,modem) char *ttname; int *lcl, modem; {
 	sio_$control((short)ttyfd, sio_$quit_enable, false, st);
     }
 #endif /* aegis */
-    gtty(ttyfd,&ttraw);			/* And a copy of it for packets*/
-    gtty(ttyfd,&tttvt);			/* And one for virtual tty service */
+    tcgetattr(ttyfd,&ttraw);		/* And a copy of it for packets*/
+    tcgetattr(ttyfd,&tttvt);		/* And one for virtual tty service */
 #else
     ioctl(ttyfd,TCGETA,&ttold);		/* Same deal for Sys III, Sys V */
 #ifdef aegis
@@ -683,9 +683,7 @@ ttclos() {
     	if (ttunlck())			/* Release uucp-style lock */
 	    fprintf(stderr,"Warning, problem releasing lock\n");
     }
-#ifndef MINIX
     ttold.c_cflag &= ~HUPCL;
-#endif
     ttres();				/* Reset modes. */
 /* Relinquish exclusive access if we might have had it... */
 #ifndef XENIX
@@ -788,9 +786,9 @@ ttres() {				/* Restore the tty to normal. */
     if (x < 0) perror("fcntl");
 #endif /* fndelay */
 #endif /* fionbio */
-    x = stty(ttyfd,&ttold);		/* Restore sgtty stuff */
-    debug(F101,"ttres stty","",x);
-    if (x < 0) perror("stty");
+    x = tcsetattr(ttyfd,TCSANOW,&ttold);	/* Restore termios stuff */
+    debug(F101,"ttres tcsetattr","",x);
+    if (x < 0) perror("tcsetattr");
 #endif /* uxiii */
     return(x);
 }
@@ -931,15 +929,26 @@ ttpkt(speed,flow,parity) int speed, flow, parity; {
     s = ttsspd(speed);			/* Check the speed */
 
 #ifndef UXIII
-    if (flow == 1) ttraw.sg_flags |= TANDEM; /* Use XON/XOFF if selected */
-    if (flow == 0) ttraw.sg_flags &= ~TANDEM;
-    ttraw.sg_flags |= RAW;		/* Go into raw mode */
-    ttraw.sg_flags &= ~(ECHO|CRMOD);	/* Use CR for break character */
-#ifdef TOWER1
-    ttraw.sg_flags &= ~ANYP; 		/* Must tell Tower no parity */
-#endif /* tower1 */
-    if (s > -1) ttraw.sg_ispeed = ttraw.sg_ospeed = s; /* Do the speed */
-    if (stty(ttyfd,&ttraw) < 0) return(-1);	/* Set the new modes. */
+    if (flow == 1) ttraw.c_iflag |= (IXON|IXOFF);
+    if (flow == 0) ttraw.c_iflag &= ~(IXON|IXOFF);
+
+    if (flow == DIALING)  ttraw.c_cflag |= CLOCAL|HUPCL;
+    if (flow == CONNECT)  ttraw.c_cflag &= ~CLOCAL;
+
+    ttraw.c_lflag &= ~(ICANON|ECHO);
+    ttraw.c_lflag |= ISIG;		/* do check for interrupt */
+    ttraw.c_iflag |= (BRKINT|IGNPAR);
+    ttraw.c_iflag &= ~(IGNBRK|INLCR|IGNCR|ICRNL|INPCK|ISTRIP);
+    ttraw.c_oflag &= ~OPOST;
+    ttraw.c_cflag &= ~(CSIZE|PARENB);
+    ttraw.c_cflag |= (CS8|CREAD);
+    ttraw.c_cc[VMIN] = 1;
+    ttraw.c_cc[VTIME] = 0;
+    if (s > -1) {				/* Do the speed */
+	cfsetispeed(&ttraw, s);
+	cfsetospeed(&ttraw, s);
+    }
+    if (tcsetattr(ttyfd,TCSANOW,&ttraw) < 0) return(-1);/* Set the new modes. */
 
 #ifdef MYREAD
 #ifdef BSD4
@@ -1032,16 +1041,26 @@ ttvt(speed,flow) int speed, flow; {
     s = ttsspd(speed);			/* Check the speed */
 
 #ifndef UXIII
-    if (flow == 1) tttvt.sg_flags |= TANDEM; /* XON/XOFF if selected */
-    if (flow == 0) tttvt.sg_flags &= ~TANDEM;
-    tttvt.sg_flags |= RAW;		/* Raw mode */
-#ifdef TOWER1
-    tttvt.sg_flags &= ~(ECHO|ANYP);	/* No echo or system III ??? parity */
-#else
-    tttvt.sg_flags &= ~ECHO;		/* No echo */
-#endif
-    if (s > -1) tttvt.sg_ispeed = tttvt.sg_ospeed = s; /* Do the speed */
-    if (stty(ttyfd,&tttvt) < 0) return(-1);
+    if (flow == 1) tttvt.c_iflag |= (IXON|IXOFF);
+    if (flow == 0) tttvt.c_iflag &= ~(IXON|IXOFF);
+
+    if (flow == DIALING)  tttvt.c_cflag |= CLOCAL|HUPCL;
+    if (flow == CONNECT)  tttvt.c_cflag &= ~CLOCAL;
+
+    tttvt.c_lflag &= ~(ISIG|ICANON|ECHO);
+    tttvt.c_iflag |= (IGNBRK|IGNPAR);
+    tttvt.c_iflag &= ~(INLCR|IGNCR|ICRNL|BRKINT|INPCK|ISTRIP);
+    tttvt.c_oflag &= ~OPOST;
+    tttvt.c_cflag &= ~(CSIZE|PARENB);
+    tttvt.c_cflag |= (CS8|CREAD);
+    tttvt.c_cc[VMIN] = 1;
+    tttvt.c_cc[VTIME] = 0;
+
+    if (s > -1) {			/* set speed */
+	cfsetispeed(&tttvt, s);
+	cfsetospeed(&tttvt, s);
+    }
+    if (tcsetattr(ttyfd,TCSANOW,&tttvt) < 0) return(-1);
 
 #ifdef MYREAD
 #ifdef BSD4
@@ -1489,11 +1508,9 @@ catch() {
 
 /*  G E N B R K  --  Simulate a modem break.  */
 
-#ifdef MINIX
-#define BSPEED  B110
-#else
+#ifndef MINIX
+
 #define	BSPEED	B150
-#endif
 
 genbrk(fn) int fn; {
     struct sgttyb ttbuf;
@@ -1509,6 +1526,7 @@ genbrk(fn) int fn; {
     ret = write(fn, "@", 1);
     return;
 }
+#endif
 #endif
 
 /*  T T C H K  --  Tell how many characters are waiting in tty input buffer  */
@@ -1949,9 +1967,9 @@ congm() {
     conbufn = 0;
 #endif
 #ifndef UXIII
-     gtty(0,&ccold);			/* Structure for restoring */
-     gtty(0,&cccbrk);			/* For setting CBREAK mode */
-     gtty(0,&ccraw);			/* For setting RAW mode */
+     tcgetattr(0,&ccold);		/* Structure for restoring */
+     tcgetattr(0,&cccbrk);		/* For setting CBREAK mode */
+     tcgetattr(0,&ccraw);		/* For setting RAW mode */
 #else
      ioctl(0,TCGETA,&ccold);
      ioctl(0,TCGETA,&cccbrk);
@@ -1984,9 +2002,12 @@ concb(esc) char esc; {
     if (conuid == input_pad_$uid) {pad_$raw(ios_$stdin, st); return(0);}
 #endif
 #ifndef UXIII
-    cccbrk.sg_flags |= CBREAK;		/* Set to character wakeup, */
-    cccbrk.sg_flags &= ~ECHO;		/* no echo. */
-    x = stty(0,&cccbrk);
+    cccbrk.c_lflag &= ~(ICANON|ECHO);
+    cccbrk.c_cc[VINTR] = 003;		/* interrupt char is control-c */
+    cccbrk.c_cc[VQUIT] = escchr;	/* escape during packet modes */
+    cccbrk.c_cc[VMIN] = 1;
+    cccbrk.c_cc[VTIME] = 1;
+    x = tcsetattr(0,TCSANOW,&cccbrk);
 #else
     cccbrk.c_lflag &= ~(ICANON|ECHO);
     cccbrk.c_cc[0] = 003;		/* interrupt char is control-c */
@@ -2032,9 +2053,13 @@ conbin(esc) char esc; {
     if (conuid == input_pad_$uid) {pad_$raw(ios_$stdin, st); return(0);}
 #endif
 #ifndef UXIII
-    ccraw.sg_flags |= (RAW|TANDEM);   	/* Set rawmode, XON/XOFF */
-    ccraw.sg_flags &= ~(ECHO|CRMOD);  	/* Set char wakeup, no echo */
-    return(stty(0,&ccraw));
+    ccraw.c_lflag &= ~(ISIG|ICANON|ECHO);
+    ccraw.c_iflag |= (BRKINT|IGNPAR);
+    ccraw.c_iflag &= ~(IGNBRK|INLCR|IGNCR|ICRNL|IXON|IXOFF|INPCK|ISTRIP);
+    ccraw.c_oflag &= ~OPOST;
+    ccraw.c_cc[VMIN] = 1;
+    ccraw.c_cc[VTIME] = 1;
+    return(tcsetattr(0,TCSANOW,&ccraw));
 #else
     ccraw.c_lflag &= ~(ISIG|ICANON|ECHO);
     ccraw.c_iflag |= (BRKINT|IGNPAR);
@@ -2075,7 +2100,7 @@ conres() {
     if (conuid == input_pad_$uid) {pad_$cooked(ios_$stdin, st); return(0);}
 #endif
 #ifndef UXIII
-    return(stty(0,&ccold));		/* Restore controlling tty */
+    return(tcsetattr(0,TCSANOW,&ccold));	/* Restore controlling tty */
 #else
     return(ioctl(0,TCSETAW,&ccold));
 #endif
@@ -2137,6 +2162,11 @@ conchk() {
 #else
 #ifdef V7
 #ifdef MINIX
+    if (conesc) {			/* Escape typed */
+	conesc = 0;
+	signal(SIGQUIT,esctrp);		/* Restore escape */
+	return(1);
+    }
     return(0);
 #else
     lseek(kmem[CON], (long) qaddr[CON], 0);

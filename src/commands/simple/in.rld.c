@@ -22,7 +22,8 @@ in.rld.c
 #include <termios.h>
 #include <time.h>
 #if __minix && __i86
-#include <tiny-unistd.h>
+#define SEEK_SET 0	/* Leave <unistd.h> out to keep cc from blowing up */
+_PROTOTYPE( off_t lseek, (int _fd, off_t _offset, int _whence)		);
 #else
 #include <unistd.h>
 #endif

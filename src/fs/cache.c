@@ -89,11 +89,15 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   /* If the block taken is dirty, make it clean by writing it to the disk.
    * Avoid hysterisis by flushing all other dirty blocks for the same device.
    */
-  if (bp->b_dev != NO_DEV && bp->b_dirt == DIRTY) flushall(bp->b_dev);
+  if (bp->b_dev != NO_DEV) {
+	if (bp->b_dirt == DIRTY) flushall(bp->b_dev);
+#if ENABLE_CACHE2
+	put_block2(bp);
+#endif
+  }
 
   /* Fill in block's parameters and add it to the hash chain where it goes. */
   bp->b_dev = dev;		/* fill in device number */
-  if (only_search == PREFETCH) bp->b_dev = NO_DEV;
   bp->b_blocknr = block;	/* fill in block number */
   bp->b_count++;		/* record that block is being used */
   b = (int) bp->b_blocknr & HASH_MASK;
@@ -101,7 +105,15 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   buf_hash[b] = bp;		/* add to hash list */
 
   /* Go get the requested block unless searching or prefetching. */
-  if (dev != NO_DEV && only_search == NORMAL) rw_block(bp, READING);
+  if (dev != NO_DEV) {
+#if ENABLE_CACHE2
+	if (get_block2(bp, only_search)) /* in 2nd level cache */;
+	else
+#endif
+	if (only_search == PREFETCH) bp->b_dev = NO_DEV;
+	else
+	if (only_search == NORMAL) rw_block(bp, READING);
+  }
   return(bp);			/* return the newly acquired block */
 }
 
@@ -179,8 +191,8 @@ zone_t z;			/* try to allocate new zone near this one */
 {
 /* Allocate a new zone on the indicated device and return its number. */
 
-  int major, minor, bit_blocks;
-  bit_t b, bit, mapbits;
+  int major, minor;
+  bit_t b, bit;
   struct super_block *sp;
 
   /* Note that the routine alloc_bit() returns 1 for the lowest possible
@@ -191,16 +203,14 @@ zone_t z;			/* try to allocate new zone near this one */
    * Alloc_bit() never returns 0, since this is used for NO_BIT (failure).
    */
   sp = get_super(dev);		/* find the super_block for this device */
-  mapbits =  (bit_t) (sp->s_zones - (sp->s_firstdatazone - 1) );
-  bit_blocks = (int) sp->s_zmap_blocks;	/* # blocks in the bit map */
 
   /* If z is 0, skip initial part of the map known to be fully in use. */
   if (z == sp->s_firstdatazone) {
 	bit = sp->s_zsearch;
-  }  else
+  } else {
 	bit = (bit_t) z - (sp->s_firstdatazone - 1);
-
-  b = alloc_bit(sp->s_zmap, mapbits, bit_blocks, bit);
+  }
+  b = alloc_bit(sp, ZMAP, bit);
   if (b == NO_BIT) {
 	err_code = ENOSPC;
 	major = (int) (sp->s_dev >> MAJOR) & BYTE;
@@ -228,9 +238,9 @@ zone_t numb;				/* zone to be returned */
 
   /* Locate the appropriate super_block and return bit. */
   sp = get_super(dev);
+  if (numb < sp->s_firstdatazone || numb >= sp->s_zones) return;
   bit = (bit_t) (numb - (sp->s_firstdatazone - 1));
-  if (bit <= 0 || numb >= sp->s_zones) return;	/* zone out of range */
-  free_bit(sp->s_zmap, bit);
+  free_bit(sp, ZMAP, bit);
   if (bit < sp->s_zsearch) sp->s_zsearch = bit;
 }
 
@@ -284,6 +294,10 @@ dev_t device;			/* device whose blocks are to be purged */
 
   for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++)
 	if (bp->b_dev == device) bp->b_dev = NO_DEV;
+
+#if ENABLE_CACHE2
+  invalidate2(device);
+#endif
 }
 
 

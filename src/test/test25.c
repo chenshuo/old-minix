@@ -106,7 +106,7 @@ void test25b()
 
   subtest = 2;
 
-  System("/bin/rm -rf ../DIR_25/*");
+  System("rm -rf ../DIR_25/*");
 
   System("echo Hello > he");	/* make test files */
   System("echo Hello > ha");	/* size 6 bytes */
@@ -167,7 +167,7 @@ void test25b()
 	if (wait(&stat_loc) == -1) e(39);
 	if (stat_loc != 0) e(40);
   }
-  System("/bin/rm -f /tmp/sema.25");
+  System("rm -f /tmp/sema.25");
 
   /* Check if the file status information is updated correctly */
   Stat("hi", &st1);		/* get info */
@@ -289,7 +289,7 @@ void test25b()
   (void) umask(0000);
   fd1 = open("ho", O_RDWR | O_CREAT | O_EXCL, 0777);
   if (fd1 != -1) e(114);	/* ho exists */
-  System("/bin/rm -rf new");
+  System("rm -rf new");
   time(&time1);
   while (time1 >= time((time_t *)0))	
 	;
@@ -371,7 +371,7 @@ void test25c()
 
   subtest = 3;
 
-  System("/bin/rm -rf ../DIR_25/*");
+  System("rm -rf ../DIR_25/*");
 
 
   /* Fifo file test here. */
@@ -554,7 +554,7 @@ void test25d()
 
   subtest = 4;
 
-  System("/bin/rm -rf ../DIR_25/*");
+  System("rm -rf ../DIR_25/*");
 
   /* Test maximal file name length. */
   if ((fd = open(MaxName, O_RDWR | O_CREAT, 0777)) != 3) e(1);
@@ -576,7 +576,7 @@ void test25e()
 
   subtest = 5;
 
-  System("/bin/rm -rf ../DIR_25/*");
+  System("rm -rf ../DIR_25/*");
 
   mkdir("bar", 0777);		/* make bar */
 
@@ -591,7 +591,7 @@ void test25e()
   if (errno != EACCES) e(4);
 
   /* Clean up bar. */
-  System("/bin/rm -rf bar");
+  System("rm -rf bar");
 
   /* Improper flags set on existing file. */
   System("touch noread; chmod 377 noread");	/* noread */
@@ -642,7 +642,7 @@ void test25e()
   }
 
   /* Clean up the noread and nowrite files. */
-  System("/bin/rm -rf noread nowrite");
+  System("rm -rf noread nowrite");
 
   /* Test the O_EXCL flag. */
   System("echo > exists");

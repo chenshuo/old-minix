@@ -42,7 +42,7 @@ eecmds.o eebuff.o eeerr.o eehelp.o eejust.o eemain.o eeques.o eef1.o: eefidx.h
 #	values needed when an ELLE user compiles a user profile.
 ellec: ellec.c
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ ellec.c
-	install -S 4kw $@
+	install -S 8kw $@
 
 install:	/usr/bin/elle /usr/bin/ellec
 

@@ -28,6 +28,7 @@ typedef	struct {
   int	   cursrow;			/* position of physical cursor */
   int	   curscol;
   bool     rawmode;
+  bool     cbrkmode;
   bool     echoit;
 } cursv;
 

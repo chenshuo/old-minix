@@ -2011,7 +2011,6 @@ sbx_tset(loff, align)
 chroff loff;
 int align;
 {	register int fd;
-	register char *fcp;
 
 	if(sbv_tf.sffd <= 0)
 	  {		/* Must open the temp file! */
@@ -2028,7 +2027,7 @@ int align;
 		if(fd < 0)
 			return(sbx_err(0,"Swapout creat err"));		
 #else /* Real Unix */
-		fcp = "/tmp/sbd.XXXXXX";
+		static char fcp[] = "/tmp/sbd.XXXXXX";
 		if((fd = creat(mktemp(fcp),0600)) < 0)
 			return(sbx_err(0,"Swapout creat err"));
 		/* Must re-open so that we can both read and write to it */

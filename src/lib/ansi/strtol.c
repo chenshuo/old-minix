@@ -25,11 +25,13 @@ strtoul(register const char *nptr, char **endptr, int base)
 	return (unsigned long)string2long(nptr, endptr, base, 0);
 }
 
+#define between(a, c, z)  ((unsigned) ((c) - (a)) <= (unsigned) ((z) - (a)))
+
 static unsigned long
 string2long(register const char *nptr, char ** const endptr,
 			int base, int is_signed)
 {
-	register int v;
+	register unsigned int v;
 	register unsigned long val = 0;
 	register int c;
 	int ovfl = 0, sign = 1;
@@ -57,16 +59,22 @@ string2long(register const char *nptr, char ** const endptr,
 	else if (base==16 && *nptr=='0' && (*++nptr =='x' || *nptr =='X'))
 		nptr++;
 
-	while (isdigit(c = *nptr) || isalpha(c)) {
-		if (!ovfl) {
-			if (isalpha(c))
-				v = 10 + (isupper(c) ? c - 'A' : c - 'a');
-			else
-				v = c - '0';
-			if (v >= base) break;
-			if (val > (ULONG_MAX - v) / base) ovfl++;
-			val = (val * base) + v;
+	for (;;) {
+		c = *nptr;
+		if (between('0', c, '9')) {
+			v = c - '0';
+		} else
+		if (between('a', c, 'z')) {
+			v = c - 'a' + 0xa;
+		} else
+		if (between('A', c, 'Z')) {
+			v = c - 'A' + 0xA;
+		} else {
+			break;
 		}
+		if (v >= base) break;
+		if (val > (ULONG_MAX - v) / base) ovfl++;
+		val = (val * base) + v;
 		nptr++;
 	}
 	if (endptr) {

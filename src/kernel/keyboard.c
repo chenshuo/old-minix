@@ -6,7 +6,6 @@
 
 #include "kernel.h"
 #include <termios.h>
-#include <sgtty.h>
 #include <signal.h>
 #include <unistd.h>
 #include <minix/callnr.h>
@@ -154,7 +153,7 @@ int irq;
 	*kb->ihead++ = code;
 	if (kb->ihead == kb->ibuf + KB_IN_BYTES) kb->ihead = kb->ibuf;
 	kb->icount++;
-	tty_table[CONSOLE].tty_events = 1;
+	tty_table[current].tty_events = 1;
 	force_timeout();
   }
   /* Else it doesn't fit - discard it. */
@@ -176,6 +175,7 @@ tty_t *tp;
   unsigned ch;
 
   kb = kb_addr();
+  tp = &tty_table[current];		/* always use the current console */
 
   while (kb->icount > 0) {
 	scode = *kb->itail++;			/* take one key scan code */
@@ -201,6 +201,18 @@ tty_t *tp;
 		buf[1] = '[';
 		buf[2] = numpad_map[ch - HOME];
 		(void) in_process(tp, buf, 3);
+	} else
+	if (ch == ALEFT) {
+		/* Choose lower numbered console as current console. */
+		select_console(current - 1);
+	} else
+	if (ch == ARIGHT) {
+		/* Choose higher numbered console as current console. */
+		select_console(current + 1);
+	} else
+	if (AF1 <= ch && ch <= AF12) {
+		/* Alt-F1 is console, Alt-F2 is ttyc1, etc. */
+		select_console(ch - AF1);
 	}
   }
 }
@@ -402,18 +414,21 @@ int scode;			/* scan code for a function key */
 
   code = map_key0(scode);			/* first ignore modifiers */
   if (code < F1 || code > F12) return(FALSE);	/* not our job */
-  code = map_key(scode);			/* include modifiers */
 
-  if (code == F1) p_dmp();		/* print process table */
-  if (code == F2) map_dmp();		/* print memory map */
-  if (code == F3) toggle_scroll();	/* hardware vs. software scrolling */
+  switch (map_key(scode)) {			/* include modifiers */
+
+  case F1:	p_dmp(); break;		/* print process table */
+  case F2:	map_dmp(); break;	/* print memory map */
+  case F3:	toggle_scroll(); break;	/* hardware vs. software scrolling */
 
 #if ENABLE_NETWORKING
-  if (code == F5) dp_dump();		/* network statistics */
+  case F5:	dp_dump(); break;		/* network statistics */
 #endif
-  if (code == CF7) sigchar(&tty_table[CONSOLE], SIGQUIT);
-  if (code == CF8) sigchar(&tty_table[CONSOLE], SIGINT);
-  if (code == CF9) sigchar(&tty_table[CONSOLE], SIGKILL);
+  case CF7:	sigchar(&tty_table[CONSOLE], SIGQUIT); break;
+  case CF8:	sigchar(&tty_table[CONSOLE], SIGINT); break;
+  case CF9:	sigchar(&tty_table[CONSOLE], SIGKILL); break;
+  default:	return(FALSE);
+  }
   return(TRUE);
 }
 

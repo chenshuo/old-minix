@@ -55,9 +55,9 @@ typedef char         nlink_t;	   /* number of links to a file */
 typedef unsigned long  off_t;	   /* offset within a file */
 typedef int            pid_t;	   /* process id (must be signed) */
 typedef short          uid_t;	   /* user id */
-typedef long          zone_t;	   /* zone number */
-typedef long         block_t;	   /* block number */
-typedef long           bit_t;	   /* bit number in a bit map */
+typedef unsigned long zone_t;	   /* zone number */
+typedef unsigned long block_t;	   /* block number */
+typedef unsigned long  bit_t;	   /* bit number in a bit map */
 typedef unsigned short zone1_t;	   /* zone number for V1 file systems */
 typedef unsigned short bitchunk_t; /* collection of bits in a bitmap */
 

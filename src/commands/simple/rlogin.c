@@ -52,20 +52,6 @@ static char sccsid[] = "@(#)rlogin.c	5.33 (Berkeley) 3/1/91";
 /*
  * rlogin - remote login
  */
-#if !__minix
-#include <sys/param.h>
-#include <sys/file.h>
-#include <sys/socket.h>
-#include <sys/signal.h>
-#include <sys/time.h>
-#include <sys/resource.h>
-#include <sys/wait.h>
-
-#include <netinet/in.h>
-#include <netinet/in_systm.h>
-#include <netinet/ip.h>
-#include <netdb.h>
-#else /* __minix */
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -76,29 +62,19 @@ static char sccsid[] = "@(#)rlogin.c	5.33 (Berkeley) 3/1/91";
 #include <net/gen/netdb.h>
 #include <net/gen/tcp.h>
 #include <net/gen/tcp_io.h>
-#endif /* !__minix_ */
 
-#if !__minix_vmd
-#include <sgtty.h>
-#else
 #include <termios.h>
-#endif
 #include <setjmp.h>
-#if !__minix
-#include <varargs.h>
-#endif
 #include <errno.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#if __minix
 #include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
-#endif
 
 #if __minix
 typedef unsigned char u_char;
@@ -136,10 +112,6 @@ int eight, litout, rem;
 int noescape;
 u_char escapechar = '~';
 
-#if !__minix_vmd
-typedef int speed_t;
-#endif /* !__minix_vmd */
-
 struct speed
 {
 	speed_t speed;
@@ -174,31 +146,12 @@ char *extra_wr_rem;
 size_t extra_wr_rem_new_size;
 char *extra_wr_rem_new;
 
-#endif /* !__minix_vmd */
+#endif /* __minix_vmd */
 
-#ifdef sun
-struct winsize {
-	unsigned short ws_row, ws_col;
-	unsigned short ws_xpixel, ws_ypixel;
-};
-#endif
-#if !__minix || __minix_vmd
 struct	winsize winsize;
-#endif
 
-#ifndef sun
-#if !__minix || __minix_vmd
 #define	get_window_size(fd, wp)	ioctl(fd, TIOCGWINSZ, wp)
-#else
-#define	get_window_size(fd, wp)	((void) 0)
-#endif
-#endif
 
-#if !__minix
-void exit();
-#endif
-
-#if __minix
 extern int main _ARGS(( int argc, char **argv ));
 static void usage _ARGS(( void ));
 static u_char getescape _ARGS(( char *p ));
@@ -239,7 +192,6 @@ static void sendwindow _ARGS(( void ));
 static void sigwinch _ARGS(( int sig ));
 static void subshell _ARGS(( void ));
 #endif
-#endif
 
 int main(argc, argv)
 	int argc;
@@ -249,23 +201,13 @@ int main(argc, argv)
 	extern int optind;
 	struct passwd *pw;
 	struct servent *sp;
-#if !__minix_vmd
-	struct sgttyb ttyb;
-#if !__minix
-	long omask;
-#endif
-#else
 	struct termios ttyb;
+#if __minix_vmd
 	nwio_tcpopt_t tcpopt;
 	int error;
 #endif
 	int argoff, ch, dflag, one, uid;
 	char *host, *p, *user, term[1024];
-#if !__minix
-	void lostpeer();
-	u_char getescape();
-	char *getenv();
-#endif
 
 	argoff = dflag = 0;
 	one = 1;
@@ -370,25 +312,15 @@ int main(argc, argv)
 	}
 
 	(void)strcpy(term, (p = getenv("TERM")) ? p : "network");
-#if !__minix_vmd
-	if (ioctl(0, TIOCGETP, &ttyb) == 0) {
-		(void)strcat(term, "/");
-		(void)strcat(term, speeds2str(ttyb.sg_ospeed));
-	}
-#else /* __minix_vmd */
+
 	if (tcgetattr(0, &ttyb) == 0) {
 		(void)strcat(term, "/");
 		(void)strcat(term, speeds2str(cfgetospeed(&ttyb)));
 	}
-#endif /* __minix_vmd */
 
 	(void)get_window_size(0, &winsize);
 
 	(void)signal(SIGPIPE, lostpeer);
-#if !__minix
-	/* will use SIGUSR1 for window size hack, so hold it off */
-	omask = sigblock(sigmask(SIGURG) | sigmask(SIGUSR1));
-#endif
 
 #ifdef KERBEROS
 try_connect:
@@ -431,24 +363,12 @@ try_connect:
 		rem = rcmd(&host, sp->s_port, pw->pw_name, user, term, 0);
 	}
 #else
-#if __minix
-		sp->s_port= ntohs(sp->s_port);
-#endif
 	rem = rcmd(&host, sp->s_port, pw->pw_name, user, term, 0);
 #endif /* KERBEROS */
 
 	if (rem < 0)
 		exit(1);
 
-#if !__minix
-	if (dflag &&
-	    setsockopt(rem, SOL_SOCKET, SO_DEBUG, &one, sizeof(one)) < 0)
-		(void)fprintf(stderr, "rlogin: setsockopt: %s.\n",
-		    strerror(errno));
-	one = IPTOS_LOWDELAY;
-	if (setsockopt(rem, IPPROTO_IP, IP_TOS, (char *)&one, sizeof(int)) < 0)
-		perror("rlogin: setsockopt TOS (ignored)");
-#endif
 #if __minix_vmd
 	/* Enable BSD compatibility for urgent data. */
 	tcpopt.nwto_flags= NWTO_BSD_URG;
@@ -461,67 +381,29 @@ try_connect:
 #endif
 
 	(void)setuid(uid);
-#if !__minix
-	doit(omask);
-#else
 	doit();
-#endif
 	/*NOTREACHED*/
 }
 
-#if !__minix_vmd
-int child, defflags, deflflags, tabflag;
-char deferase, defkill;
-struct tchars deftc;
-struct tchars notc = { -1, -1, -1, -1, -1, -1 };
-#if !__minix
-struct ltchars defltc;
-struct ltchars noltc = { -1, -1, -1, -1, -1, -1 };
-#endif
-#else
 struct termios defattr, rawattr;
-
+#if __minix_vmd
 int mustsendwindow;
+#else
+int child;
 #endif
 
-#if !__minix
-doit(omask)
-	long omask;
-#else
 static void
 doit()
-#endif
 {
+	struct termios sb;
 #if !__minix_vmd
-	struct sgttyb sb;
 	int r;
 #else
-	struct termios sb;
 	asio_fd_set_t fd_set;
 	struct fwait fw;
 	int result;
 #endif
-#if !__minix
-	void catch_child(), copytochild(), exit(), writeroob();
-#endif
 
-#if !__minix_vmd
-	(void)ioctl(0, TIOCGETP, (char *)&sb);
-	defflags = sb.sg_flags;
-	tabflag = defflags & TBDELAY;
-	defflags &= ECHO | CRMOD;
-	deferase = sb.sg_erase;
-	defkill = sb.sg_kill;
-#if !__minix
-	(void)ioctl(0, TIOCLGET, (char *)&deflflags);
-#endif
-	(void)ioctl(0, TIOCGETC, (char *)&deftc);
-	notc.t_startc = deftc.t_startc;
-	notc.t_stopc = deftc.t_stopc;
-#if !__minix
-	(void)ioctl(0, TIOCGLTC, (char *)&defltc);
-#endif
-#else
 	(void)tcgetattr(0, &sb);
 	defattr = sb;
 	rawattr = sb;
@@ -530,7 +412,7 @@ doit()
 							PARMRK | IXANY);
 	rawattr.c_oflag &= ~(OPOST);
 	rawattr.c_lflag &= ~(ECHONL | ECHO | ICANON | IEXTEN | ISIG);
-#endif
+
 	(void)signal(SIGINT, SIG_IGN);
 	setsignal(SIGHUP, exit);
 	setsignal(SIGQUIT, exit);
@@ -543,11 +425,7 @@ doit()
 	}
 	if (child == 0) {
 		mode(1);
-#if !__minix
-		r = reader(omask);
-#else
 		r = reader();
-#endif
 		if (r == 0) {
 			msg("connection closed.");
 #if __minix && !__minix_vmd
@@ -563,19 +441,11 @@ doit()
 		exit(1);
 	}
 
-#if !__minix
-	/*
-	 * We may still own the socket, and may have a pending SIGURG (or might
-	 * receive one soon) that we really want to send to the reader.  Set a
-	 * trap that simply copies such signals to the child.
-	 */
-	(void)signal(SIGURG, copytochild);
-	(void)signal(SIGUSR1, writeroob);
-	(void)sigsetmask(omask);
-#endif
 	(void)signal(SIGCHLD, catch_child);
 	writer();
+
 #else /* __minix_vmd */
+
 	mode(1);
 	/* mark the file descriptors 0, 1, and rem as asynchronous. */
 	mark_async(0);
@@ -691,15 +561,8 @@ setsignal(sig, act)
 	int sig;
 	void (*act) _ARGS(( int sig ));
 {
-#if !__minix
-	int omask = sigblock(sigmask(sig));
-#endif
-
 	if (signal(sig, act) == SIG_IGN)
 		(void)signal(sig, SIG_IGN);
-#if !__minix
-	(void)sigsetmask(omask);
-#endif
 }
 
 static void
@@ -725,27 +588,8 @@ int dosigwinch;
 void sigwinch();
 #endif
 
-#if !__minix
-/*
- * This is called when the reader process gets the out-of-band (urgent)
- * request to turn on the window-changing protocol.
- */
-void
-writeroob()
-{
-	if (dosigwinch == 0) {
-		sendwindow();
-		(void)signal(SIGWINCH, sigwinch);
-	}
-	dosigwinch = 1;
-}
-#endif
-
 #if !__minix_vmd
-#if __minix
-static
-#endif
-void
+static void
 catch_child(sig)
 	int sig;
 {
@@ -771,9 +615,7 @@ catch_child(sig)
  * ~^Z				suspend rlogin process.
  * ~<delayed-suspend char>	suspend rlogin process, but leave reader alone.
  */
-#if __minix
 static void
-#endif
 writer()
 {
 	register int bol, local, n;
@@ -805,12 +647,12 @@ writer()
 			}
 		} else if (local) {
 			local = 0;
-			if (c == '.' || c == deftc.t_eofc) {
+			if (c == '.' || c == defattr.c_cc[VEOF]) {
 				echo(c);
 				break;
 			}
 #if !__minix
-			if (c == defltc.t_suspc || c == defltc.t_dsuspc) {
+			if (c == defattr.c_cc[VSUSP]) {
 				bol = 1;
 				echo(c);
 				stop(c);
@@ -828,39 +670,34 @@ writer()
 					(void)write(rem, &escapechar, 1);
 		}
 
+		ch = c;
 #ifdef CRYPT
 #ifdef KERBEROS
 		if (doencrypt) {
-			if (des_write(rem, &c, 1) == 0) {
+			if (des_write(rem, &ch, 1) == 0) {
 				msg("line gone");
 				break;
 			}
 		} else
 #endif
 #endif
-			if (write(rem, &c, 1) == 0) {
+			if (write(rem, &ch, 1) == 0) {
 				msg("line gone");
 				break;
 			}
-		bol = c == defkill || c == deftc.t_eofc ||
-		    c == deftc.t_intrc ||
-#if !__minix
-		    c == defltc.t_suspc ||
-#endif
+		bol = c == defattr.c_cc[VKILL] ||
+		    c == defattr.c_cc[VEOF] ||
+		    c == defattr.c_cc[VINTR] ||
+		    c == defattr.c_cc[VSUSP] ||
 		    c == '\r' || c == '\n';
 	}
 }
 #endif
 
 #if !__minix_vmd
-#if !__minix
-echo(c)
-register int c;
-#else
 static void
 echo(c)
 int c;
-#endif
 {
 	register char *p;
 	char buf[8];
@@ -920,13 +757,8 @@ static void
 sendwindow()
 {
 	struct winsize *wp;
-#if !__minix
-	char obuf[4 + sizeof (struct winsize)];
-#else
 	char *obuf, *new_buf;
-#endif
 
-#if __minix
 	new_buf= realloc(extra_wr_rem_new, 
 					extra_wr_rem_new_size+4+sizeof(*wp));
 	if (new_buf == 0)
@@ -937,7 +769,6 @@ sendwindow()
 
 	more2read_0= 0;
 	more2write_rem= 1;
-#endif
 
 	wp = (struct winsize *)(obuf+4);
 	obuf[0] = 0377;
@@ -948,17 +779,6 @@ sendwindow()
 	wp->ws_col = htons(winsize.ws_col);
 	wp->ws_xpixel = htons(winsize.ws_xpixel);
 	wp->ws_ypixel = htons(winsize.ws_ypixel);
-
-#if !__minix
-#ifdef CRYPT
-#ifdef KERBEROS
-	if(doencrypt)
-		(void)des_write(rem, obuf, sizeof(obuf));
-	else
-#endif
-#endif
-		(void)write(rem, obuf, sizeof(obuf));
-#endif /* !__minix */
 }
 #endif /* !__minix || __minix_vmd */
 
@@ -969,132 +789,16 @@ sendwindow()
 #define	READING	1
 #define	WRITING	2
 
-jmp_buf rcvtop;
-int ppid, rcvcnt, rcvstate;
+int rcvcnt, rcvstate;
 char rcvbuf[8 * 1024];
 
-#if !__minix
-void
-oob()
-{
-	struct sgttyb sb;
-	int atmark, n, out, rcvd;
-	char waste[BUFSIZ], mark;
-
-	out = O_RDWR;
-	rcvd = 0;
-	while (recv(rem, &mark, 1, MSG_OOB) < 0)
-		switch (errno) {
-		case EWOULDBLOCK:
-			/*
-			 * Urgent data not here yet.  It may not be possible
-			 * to send it yet if we are blocked for output and
-			 * our input buffer is full.
-			 */
-			if (rcvcnt < sizeof(rcvbuf)) {
-				n = read(rem, rcvbuf + rcvcnt,
-				    sizeof(rcvbuf) - rcvcnt);
-				if (n <= 0)
-					return;
-				rcvd += n;
-			} else {
-				n = read(rem, waste, sizeof(waste));
-				if (n <= 0)
-					return;
-			}
-			continue;
-		default:
-			return;
-	}
-	if (mark & TIOCPKT_WINDOW) {
-		/* Let server know about window size changes */
-		(void)kill(ppid, SIGUSR1);
-	}
-	if (!eight && (mark & TIOCPKT_NOSTOP)) {
-		(void)ioctl(0, TIOCGETP, (char *)&sb);
-		sb.sg_flags &= ~CBREAK;
-		sb.sg_flags |= RAW;
-		(void)ioctl(0, TIOCSETN, (char *)&sb);
-		notc.t_stopc = -1;
-		notc.t_startc = -1;
-		(void)ioctl(0, TIOCSETC, (char *)&notc);
-	}
-	if (!eight && (mark & TIOCPKT_DOSTOP)) {
-		(void)ioctl(0, TIOCGETP, (char *)&sb);
-		sb.sg_flags &= ~RAW;
-		sb.sg_flags |= CBREAK;
-		(void)ioctl(0, TIOCSETN, (char *)&sb);
-		notc.t_stopc = deftc.t_stopc;
-		notc.t_startc = deftc.t_startc;
-		(void)ioctl(0, TIOCSETC, (char *)&notc);
-	}
-	if (mark & TIOCPKT_FLUSHWRITE) {
-		(void)ioctl(1, TIOCFLUSH, (char *)&out);
-		for (;;) {
-			if (ioctl(rem, SIOCATMARK, &atmark) < 0) {
-				(void)fprintf(stderr, "rlogin: ioctl: %s.\n",
-				    strerror(errno));
-				break;
-			}
-			if (atmark)
-				break;
-			n = read(rem, waste, sizeof (waste));
-			if (n <= 0)
-				break;
-		}
-		/*
-		 * Don't want any pending data to be output, so clear the recv
-		 * buffer.  If we were hanging on a write when interrupted,
-		 * don't want it to restart.  If we were reading, restart
-		 * anyway.
-		 */
-		rcvcnt = 0;
-		longjmp(rcvtop, 1);
-	}
-
-	/* oob does not do FLUSHREAD (alas!) */
-
-	/*
-	 * If we filled the receive buffer while a read was pending, longjmp
-	 * to the top to restart appropriately.  Don't abort a pending write,
-	 * however, or we won't know how much was written.
-	 */
-	if (rcvd && rcvstate == READING)
-		longjmp(rcvtop, 1);
-}
-#endif /* !__minix */
-#endif /* !__minix_vmd */
-
-#if !__minix_vmd
-/* reader: read from remote: line -> 1 */
-#if !__minix
-reader(omask)
-	int omask;
-#else
 static int
 reader()
-#endif
 {
-#if !__minix
-	void oob();
-#endif
-
-#if !defined(BSD) || BSD < 43
 	int pid = -getpid();
-#else
-	int pid = getpid();
-#endif
 	int n, remaining;
 	char *bufp = rcvbuf;
 
-#if !__minix
-	(void)signal(SIGTTOU, SIG_IGN);
-	(void)signal(SIGURG, oob);
-	ppid = getppid();
-	(void)fcntl(rem, F_SETOWN, pid);
-	(void)setjmp(rcvtop);
-	(void)sigsetmask(omask);
-#endif
 	for (;;) {
 		while ((remaining = rcvcnt - (bufp - rcvbuf)) > 0) {
 			rcvstate = WRITING;
@@ -1148,60 +852,6 @@ static void
 mode(f)
 	int f;
 {
-#if !__minix_vmd
-#if !__minix
-	struct ltchars *ltc;
-#endif
-	struct sgttyb sb;
-	struct tchars *tc;
-	int lflags;
-
-	(void)ioctl(0, TIOCGETP, (char *)&sb);
-#if !__minix
-	(void)ioctl(0, TIOCLGET, (char *)&lflags);
-#endif
-	switch(f) {
-	case 0:
-		sb.sg_flags &= ~(CBREAK|RAW|TBDELAY);
-		sb.sg_flags |= defflags|tabflag;
-		tc = &deftc;
-#if !__minix
-		ltc = &defltc;
-#endif
-		sb.sg_kill = defkill;
-		sb.sg_erase = deferase;
-		lflags = deflflags;
-		break;
-	case 1:
-		sb.sg_flags |= (eight ? RAW : CBREAK);
-		sb.sg_flags &= ~defflags;
-		/* preserve tab delays, but turn off XTABS */
-		if ((sb.sg_flags & TBDELAY) == XTABS)
-			sb.sg_flags &= ~TBDELAY;
-		tc = &notc;
-#if !__minix
-		ltc = &noltc;
-#endif
-		sb.sg_kill = sb.sg_erase = -1;
-#if !__minix
-		if (litout)
-			lflags |= LLITOUT;
-#endif
-		break;
-	default:
-		return;
-	}
-#if !__minix
-	(void)ioctl(0, TIOCSLTC, (char *)ltc);
-#endif
-	(void)ioctl(0, TIOCSETC, (char *)tc);
-#if !__minix
-	(void)ioctl(0, TIOCSETN, (char *)&sb);
-	(void)ioctl(0, TIOCLSET, (char *)&lflags);
-#else
-	(void)ioctl(0, TIOCSETP, (char *)&sb);
-#endif
-#else /* __minix_vmd */
 	struct termios *sb;
 
 	switch(f) {
@@ -1215,7 +865,6 @@ mode(f)
 		return;
 	}
 	(void)tcsetattr(0, TCSAFLUSH, sb);
-#endif
 }
 
 static void
@@ -1226,15 +875,6 @@ int sig;
 	msg("\007connection closed.");
 	done(1);
 }
-
-#if !__minix
-/* copy SIGURGs to the child process. */
-void
-copytochild()
-{
-	(void)kill(child, SIGURG);
-}
-#endif
 
 static void
 msg(str)
@@ -1264,7 +904,7 @@ static void
 usage()
 {
 	(void)fprintf(stderr,
-	    "usage: rlogin [ -%s]%s[-e char] [ -l username ] host\n",
+	    "Usage: rlogin [-%s]%s[-e char] [-l username] host\n",
 #ifdef KERBEROS
 #ifdef CRYPT
 	    "8ELx", " [-k realm] ");

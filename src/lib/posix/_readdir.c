@@ -34,7 +34,7 @@ struct dirent *readdir(DIR *dp)
 			dp->_ptr= dp->_buf;
 
 			/* Extent is zero of the first flex entry. */
-			if (dp->_v7 < 0) dp->_v7= dp->_buf[0].d_extent;
+			if (dp->_v7 == (char)-1) dp->_v7= dp->_buf[0].d_extent;
 		}
 
 		if (!dp->_v7) {

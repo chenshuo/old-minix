@@ -1,6 +1,4 @@
-
-
-/* Usage:	leave [ [+] hhmm ]
+/* Usage:	leave [ [+] hh[:]mm ]
  *
  * Author:	Terrence W. Holm
  *
@@ -9,6 +7,8 @@
  *		 -adapted to MSS
  *		 -adapted to new utmp database
  *		 -adapted to POSIX (MINIX 1.5)
+ *		Michael Temari, <temari@ix.netcom.com>
+ *		 -use localtime/mktime to fix bug with DST
  */
 
 #include <sys/types.h>
@@ -26,8 +26,6 @@
 #define STRING	   80		/* lots of room for an argument */
 #define MIN	   60L		/* seconds per minute */
 #define HOUR      (60L*60L)	/* seconds per hour */
-#define HALF_DAY  (12L*HOUR)	/* seconds per half day */
-#define DAY	   (24L*HOUR)	/* seconds per day */
 
 /* Set the following to your personal preferences for the
  * time and contents of warnings.
@@ -60,15 +58,6 @@ static char *warnings[WARNINGS] = {
 };
 
 
-#ifdef _BSD
-time_t _timezone;
-#else
-#ifndef __STDC__
-#define _timezone timezone
-#endif
-extern time_t _timezone;
-#endif
-
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void Usage, (void));
 _PROTOTYPE(void Get_Hour_Min, (char *when, int *hour, int *min));
@@ -76,7 +65,7 @@ _PROTOTYPE(int Still_Logged_On, (char *user, char *tty));
 
 void Usage()
 {
-   fprintf(stderr, "Usage: leave [[+]hhmm]\n");
+   fprintf(stderr, "Usage: leave [[+]hh[:]mm]\n");
   exit(1);
 }
 
@@ -139,6 +128,7 @@ char *argv[];
   char when[STRING];
   time_t now = time((time_t *)0);
   time_t leave, delta;
+  struct tm *tm;
   int hour, min;
   int pid, i;
   char *user = cuserid( (char *)NULL);
@@ -155,38 +145,22 @@ char *argv[];
   }
 
   /* determine the leave time from the current time and "when" */
-  tzset();
+  tm = localtime(&now);
   if (when[0] == '+') {
 	Get_Hour_Min(&when[1], &hour, &min);
-	leave = now + hour * HOUR + min * MIN;
+	tm->tm_hour += hour;
+	tm->tm_min += min;
+	leave = mktime(tm);
   } else {
 	/* user entered an absolute time */
-#ifdef _BSD
-	_timezone = -localtime(&now)->tm_gmtoff;
-#endif
 	Get_Hour_Min(&when[0], &hour, &min);
-	if (hour >= 1 && hour <= 12) {
-		/* 12-hour format: relative to previous midnight or noon */
-		leave = now - (now - _timezone) % HALF_DAY +
-			hour % 12 * HOUR + min * MIN;
-		if (leave < now - HOUR)
-			leave = leave + HALF_DAY;
-		else if (leave < now) {
-			printf("That time has already passed!\n");
-			exit(1);
-		}
-	} else if (hour <= 24) {
-		/* 24-hour format: relative to previous midnight */
-		leave = now - (now - _timezone) % DAY +
-			hour * HOUR + min * MIN;
-		if (leave < now - HOUR)
-			leave = leave + DAY;
-		else if (leave < now) {
-			printf("That time has already passed!\n");
-			exit(1);
-		}
-	} else
-		Usage();
+	tm->tm_hour = hour;
+	tm->tm_min = min;
+	leave = mktime(tm);
+	if (leave < now) {
+		printf("That time has already passed!\n");
+		exit(1);
+	}
   }
 
   printf("Alarm set for %s", ctime(&leave));

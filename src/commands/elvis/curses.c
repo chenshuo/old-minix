@@ -18,23 +18,12 @@
 #include "vi.h"
 
 #if ANY_UNIX
-# if UNIXV
-#  ifdef TERMIOS
-#   include	<termios.h>
-#  else
-#   include	<termio.h>
-#  endif
-#  ifdef S5WINSIZE
-#   include	<sys/stream.h>	/* winsize struct defined in one of these? */
-#   include	<sys/ptem.h>
-#  else
-#   undef	TIOCGWINSZ	/* we can't handle it correctly yet */
-#  endif
-# else
-#  include	<sgtty.h>
-#  if MINIX
-#   include	<sys/ioctl.h>
-#  endif
+/* The termios/termio/sgtty #ifdefs were a mess, so I removed all but termios.
+ * (KJB)
+ */
+# include	<termios.h>
+# if MINIX
+#  include	<sys/ioctl.h>
 # endif
 #endif
 
@@ -148,24 +137,8 @@ char	VISIBLEcolor[16];
 #endif
 
 #if ANY_UNIX
-# if UNIXV
-#  ifdef TERMIOS
 static struct termios	oldtermio;	/* original tty mode */
 static struct termios	newtermio;	/* cbreak/noecho tty mode */
-#  else
-static struct termio	oldtermio;	/* original tty mode */
-static struct termio	newtermio;	/* cbreak/noecho tty mode */
-#  endif
-# else
-static struct sgttyb	oldsgttyb;	/* original tty mode */
-static struct sgttyb	newsgttyb;	/* cbreak/nl/noecho tty mode */
-static int		oldint;		/* ^C or DEL, the "intr" character */
-#  ifdef TIOCSLTC
-static int		oldswitch;	/* ^Z, the "suspend" character */
-static int		olddswitch;	/* ^Y, the "delayed suspend" char */
-static int		oldquote;	/* ^V, the "quote next char" char */
-#  endif
-# endif
 #endif
 
 #if OSK
@@ -249,15 +222,7 @@ void initscr()
 
 	/* change the terminal mode to cbreak/noecho */
 #if ANY_UNIX
-# if UNIXV
-#  ifdef TERMIOS
 	tcgetattr(2, &oldtermio);
-#  else
-	ioctl(2, TCGETA, &oldtermio);
-#  endif
-# else
-	ioctl(2, TIOCGETP, &oldsgttyb);
-# endif
 #endif
 
 #if OSK
@@ -287,12 +252,6 @@ static int curses_active = FALSE;
 /* Send any required termination strings.  Turn off "raw" mode. */
 void suspend_curses()
 {
-#if ANY_UNIX && !UNIXV
-	struct tchars	tbuf;
-# ifdef TIOCSLTC
-	struct ltchars	ltbuf;
-# endif
-#endif
 #ifndef NO_CURSORSHAPE
 	if (has_CQ)
 	{
@@ -314,27 +273,7 @@ void suspend_curses()
 
 	/* change the terminal mode back the way it was */
 #if ANY_UNIX
-# if UNIXV
-#  if TERMIOS
 	tcsetattr(2, TCSADRAIN, &oldtermio);
-#  else
-	ioctl(2, TCSETAW, &oldtermio);
-#  endif
-# else
-	ioctl(2, TIOCSETP, &oldsgttyb);
-
-	ioctl(2, TIOCGETC, (struct sgttyb *) &tbuf);
-	tbuf.t_intrc = oldint;
-	ioctl(2, TIOCSETC, (struct sgttyb *) &tbuf);
-
-#  ifdef TIOCSLTC
-	ioctl(2, TIOCGLTC, &ltbuf);
-	ltbuf.t_suspc = oldswitch;
-	ltbuf.t_dsuspc = olddswitch;
-	ltbuf.t_lnextc = oldquote;
-	ioctl(2, TIOCSLTC, &ltbuf);
-#  endif
-# endif
 #endif
 #if OSK
 	_ss_opt(0, &oldsgttyb);
@@ -363,8 +302,7 @@ void resume_curses(quietly)
 	{
 		/* change the terminal mode to cbreak/noecho */
 #if ANY_UNIX
-# if UNIXV
-		ospeed = (oldtermio.c_cflag & CBAUD);
+		ospeed = cfgetospeed(&oldtermio);
 		ERASEKEY = oldtermio.c_cc[VERASE];
 		newtermio = oldtermio;
 		newtermio.c_iflag &= (IXON|IXOFF|IXANY|ISTRIP|IGNBRK);
@@ -373,47 +311,8 @@ void resume_curses(quietly)
 		newtermio.c_cc[VINTR] = ctrl('C'); /* always use ^C for interrupts */
 		newtermio.c_cc[VMIN] = 1;
 		newtermio.c_cc[VTIME] = 0;
-#  ifdef VSWTCH
-		newtermio.c_cc[VSWTCH] = 0;
-#  endif
-#  ifdef VSUSP
 		newtermio.c_cc[VSUSP] = 0;
-#  endif
-#  ifdef TERMIOS
 		tcsetattr(2, TCSADRAIN, &newtermio);
-#  else
-		ioctl(2, TCSETAW, &newtermio);
-#  endif
-# else /* BSD or V7 or Coherent or Minix */
-		struct tchars	tbuf;
-#  ifdef TIOCSLTC
-		struct ltchars	ltbuf;
-#  endif
-
-		ospeed = oldsgttyb.sg_ospeed;
-		ERASEKEY = oldsgttyb.sg_erase;
-		newsgttyb = oldsgttyb;
-		newsgttyb.sg_flags |= CBREAK;
-		newsgttyb.sg_flags &= ~(CRMOD|ECHO|XTABS);
-		ioctl(2, TIOCSETP, &newsgttyb);
-
-		ioctl(2, TIOCGETC, (struct sgttyb *) &tbuf);
-		oldint = tbuf.t_intrc;
-		tbuf.t_intrc = ctrl('C');	/* always use ^C for interrupts */
-		ioctl(2, TIOCSETC, (struct sgttyb *) &tbuf);
-
-#  ifdef TIOCSLTC
-		ioctl(2, TIOCGLTC, &ltbuf);
-		oldswitch = ltbuf.t_suspc;
-		ltbuf.t_suspc = 0;		/* disable ^Z for elvis */
-		olddswitch = ltbuf.t_dsuspc;
-		ltbuf.t_dsuspc = 0;		/* disable ^Y for elvis */
-		oldquote = ltbuf.t_lnextc;
-		ltbuf.t_lnextc = 0;		/* disable ^V for elvis */
-		ioctl(2, TIOCSLTC, &ltbuf);
-#  endif
-
-# endif
 #endif
 #if OSK
 		newsgttyb = oldsgttyb;

@@ -21,12 +21,12 @@ in.rshd.c
 #include <fcntl.h>
 #include <limits.h>
 #include <pwd.h>
+#include <grp.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <minix/config.h>
 #include <sys/ioctl.h>
 #include <net/gen/in.h>
 #include <net/gen/inet.h>
@@ -37,15 +37,21 @@ in.rshd.c
 #include <net/hton.h>
 #include <net/netlib.h>
 
+#define DEBUG 0
+
+#if DEBUG
+#define where() fprintf(stderr, "%s, %d: ", __FILE__, __LINE__)
+#endif
+
 char cmdbuf[_POSIX_ARG_MAX+1], locuser[16], remuser[16];
 extern char **environ;
 char username[20]="USER=";
 char homedir[64]="HOME=";
 char shell[64]="SHELL=";
-char *envinit[]= {homedir, shell, username, 0};
+char tz[1024]="TZ=";
+char *envinit[]= {homedir, shell, username, tz, 0};
 char *prog_name;
 char buffer[PIPE_BUF];
-pid_t pidlist[3], *pidp= pidlist;
 
 #if __STDC__
 #define PROTO(func, args) func args
@@ -54,8 +60,8 @@ pid_t pidlist[3], *pidp= pidlist;
 #endif
 
 PROTO (int main, (int argc, char *argv[]));
-PROTO (void death, (int sig));
 PROTO (void getstr, (char*buf, int cnt, char *err));
+PROTO (void close_on_exec, (int fd));
 
 int main(argc, argv)
 int argc;
@@ -67,40 +73,46 @@ char *argv[];
 	nwio_tcpatt_t tcpattachopt;
 	tcpport_t tcpport;
 	tcpport_t err_port;
-	int err_fd, pid, pid1, pds[2];
+	int err_fd, pds[2];
+	pid_t pid, pid1, new_pg;
 #if USEATTACH
 	int err2_fd;
 #endif
 	struct hostent *hostent;
 	struct passwd *pwent;
-	char *cp, *buff_ptr;
+	char *cp, *buff_ptr, *TZ;
 	char sig;
 
 	prog_name= argv[0];
 	if (argc != 1)
 	{
 		fprintf(stderr, "%s: wrong number of arguments (%d)\n",
-			argv[0], argc);
+			prog_name, argc);
 		exit(1);
 	}
 
 	signal(SIGINT, SIG_DFL);
 	signal(SIGQUIT, SIG_DFL);
-	signal(SIGTERM, death);
-	*pidp++ = getpid();
+	signal(SIGTERM, SIG_DFL);
 
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 	result= ioctl (0, NWIOGTCPCONF, &tcpconf);
 	if (result<0)
 	{
-		fprintf(stderr, "%s: ioctl(NWIOTCPCONF)= %d : %s\n", errno,
-			strerror(errno));
+		fprintf(stderr, "%s: ioctl(NWIOGTCPCONF)= %d : %s\n", 
+			prog_name, errno, strerror(errno));
 		exit(1);
 	}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 
 	tcpport= ntohs(tcpconf.nwtc_remport);
 	if (tcpport >= TCPPORT_RESERVED || tcpport < TCPPORT_RESERVED/2)
 	{
-		printf("\1%s: unprotected port (%d)\n", argv[0], tcpport);
+		printf("\1%s: unprotected port (%d)\n", prog_name, tcpport);
 		exit(1);
 	}
 	alarm(60);
@@ -111,8 +123,8 @@ char *argv[];
 		result= read(0, &c, 1);
 		if (result <0)
 		{
-			fprintf(stderr, "%s: read= %d : %s\n", errno,
-				strerror(errno));
+			fprintf(stderr, "%s: read= %d : %s\n", prog_name, 
+				errno, strerror(errno));
 		}
 		if (result<1)
 			exit(1);
@@ -131,44 +143,66 @@ char *argv[];
 			err_fd= open ("/dev/tcp", O_RDWR);
 			if (err_fd<0)
 			{
-				fprintf(stderr, "%s: open= %d : %s\n", errno,
-					strerror(errno));
+				fprintf(stderr, "%s: open= %d : %s\n", 
+					prog_name, errno, strerror(errno));
 				exit(1);
 			}
+			close_on_exec(err_fd);
 			err_tcpconf.nwtc_flags= NWTC_LP_SET | NWTC_SET_RA |
-				NWTC_SET_RP;
+				NWTC_SET_RP | NWTC_EXCL;
 			err_tcpconf.nwtc_locport= htons(lport);
 			err_tcpconf.nwtc_remport= htons(err_port);
 			err_tcpconf.nwtc_remaddr= tcpconf.nwtc_remaddr;
 
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 			result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
 			if (result<0)
 			{
 				if (errno == EADDRINUSE)
-				{
-					close(err_fd);
 					continue;
-				}
 				fprintf(stderr, 
-					"%s: ioctl(NWIOTCPCONF)= %d : %s\n",
-					errno, strerror(errno));
+					"%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
+					prog_name, errno, strerror(errno));
 				exit(1);
 			}
+			err_tcpconf.nwtc_flags= NWTC_SHARED;
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
+			result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
+			if (result<0)
+			{
+				fprintf(stderr, 
+					"%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
+					prog_name, errno, strerror(errno));
+				exit(1);
+			}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 			tcpconnopt.nwtcl_flags= 0;
 
 			do
 			{
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 				result= ioctl (err_fd, NWIOTCPCONN,
 					&tcpconnopt);
 				if (result<0 && errno == EAGAIN)
 				{
 					sleep(2);
 				}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 			} while (result <0 && errno == EAGAIN);
 			if (result <0  && errno != EADDRINUSE)
 			{
 				fprintf(stderr, "%s: ioctl(NWIOTCPCONN)= %d : %s\n",
-					errno, strerror(errno));
+					prog_name, errno, strerror(errno));
 				exit(1);
 			}
 			if (result>=0)
@@ -181,27 +215,40 @@ char *argv[];
 		}
 #if USEATTACH
 		err2_fd= open ("/dev/tcp", O_RDWR);
+		close_on_exec(err2_fd);
 		if (err2_fd<0)
 		{
 			fprintf(stderr, "%s: open= %d : %s\n", errno,
-				strerror(errno));
+				prog_name, strerror(errno));
 			exit(1);
 		}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 		result= ioctl (err2_fd, NWIOSTCPCONF, &err_tcpconf);
 		if (result<0)
 		{
-			fprintf(stderr, "%s: ioctl(NWIOTCPCONF)= %d : %s\n",
-				errno, strerror(errno));
+			fprintf(stderr, "%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
+				prog_name, errno, strerror(errno));
 			exit(1);
 		}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 		tcpattachopt.nwta_flags= 0;
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 		result= ioctl (err2_fd, NWIOTCPATTACH, &tcpattachopt);
 		if (result<0)
 		{
 			fprintf(stderr, "%s: ioctl(NWIOTCPATTACH)= %d : %s\n",
-				errno, strerror(errno));
+				prog_name, errno, strerror(errno));
 			exit(1);
 		}
+#if DEBUG
+ { where(); fprintf(stderr, "\n"); }
+#endif
 #endif
 	}
 	hostent= gethostbyaddr((char *)&tcpconf.nwtc_remaddr,
@@ -227,13 +274,19 @@ char *argv[];
 	{
 		chdir("/");
 	}
-	if (ruserok(hostent->h_name, !pwent->pw_uid, remuser, locuser) < 0)
+#if DEBUG
+ { where(); fprintf(stderr, "calling ruserok(%s, %d, %s, %s)\n", 
+	hostent->h_name, 0, remuser, locuser); }
+#endif
+	if (ruserok(hostent->h_name, 0, remuser, locuser) < 0)
 	{
 		printf("\1Permission denied.\n");
 		exit(1);
 	}
 	if (err_port)
 	{
+		/* Let's go to a different process group. */
+		new_pg= setsid();
 		pid= fork();
 		if (pid<0)
 		{
@@ -247,7 +300,6 @@ char *argv[];
 		}
 		if (pid)
 		{
-			*pidp++ = pid;
 			close(0);	/* stdin */
 			close(1);	/* stdout */
 #if USEATTACH
@@ -258,11 +310,17 @@ char *argv[];
 			for (;;)
 			{
 #if !USEATTACH
-				if (read(err_fd, &sig, 1) <= 0) exit(0);
+				if (read(err_fd, &sig, 1) <= 0)
 #else
-				if (read(err2_fd, &sig, 1) <= 0) exit(0);
+				if (read(err2_fd, &sig, 1) <= 0)
 #endif
-				death(sig);
+				{
+					printf("\1read failed: %d\n", errno);
+					exit(0);
+				}
+				pid= 0;
+				printf("\1killing %d with %d\n", -new_pg, sig);
+				kill(-new_pg, sig);
 			}
 		}
 #if USEATTACH
@@ -272,7 +330,7 @@ char *argv[];
 		if (result<0)
 		{
 			printf("\1Can't make pipe\n");
-			death(SIGTERM);
+			kill(getppid(), SIGTERM);
 			exit(1);
 		}
 		pid1= fork();
@@ -284,19 +342,18 @@ char *argv[];
 					prog_name, errno, strerror(errno));
 			}
 			printf("\1Try again.\n");
-			death(SIGTERM);
+			kill(-new_pg, SIGTERM);
 			exit(1);
 		}
 		if (pid1)
 		{
-			*pidp++ = pid1;
 			close(pds[1]);	/* write side of pipe */
 			for (;;)
 			{
 				result= read(pds[0], buffer, sizeof(buffer));
 				if (result<=0)
 				{
-					death(SIGTERM);
+					kill(pid, SIGTERM);
 					exit(0);
 				}
 				buff_ptr= buffer;
@@ -306,10 +363,11 @@ char *argv[];
 						result);
 					if (result1 <= 0)
 					{
-						fprintf(stderr, "%s: write()= %d : %s\n",
+						fprintf(stderr, 
+						"%s: write()= %d : %s\n",
 							prog_name, errno,
 							strerror(errno));
-						death(SIGTERM);
+						kill(-new_pg, SIGTERM);
 						exit(1);
 					}
 					result -= result1;
@@ -323,12 +381,21 @@ char *argv[];
 	}
 	if (*pwent->pw_shell == '\0')
 		pwent->pw_shell= "/bin/sh";
+#if __minix_vmd
+	initgroups(pwent->pw_name, pwent->pw_gid);
+#endif
 	setgid(pwent->pw_gid);
 	setuid(pwent->pw_uid);
+	TZ=getenv("TZ");
 	environ= envinit;
 	strncat(homedir, pwent->pw_dir, sizeof(homedir)-6);
 	strncat(shell, pwent->pw_shell, sizeof(shell)-7);
 	strncat(username, pwent->pw_name, sizeof(username)-6);
+	if (TZ)
+		strncat(tz, TZ, sizeof(tz)-4);
+	else
+		envinit[3]= NULL;
+
 	cp= strrchr(pwent->pw_shell, '/');
 	if (cp)
 		cp++;
@@ -344,15 +411,8 @@ char *argv[];
 	open("/dev/tty", O_RDWR);
 	fprintf(stderr, "%s: execl(%s, %s, .., %s)= %d : %s\n", prog_name,
 		pwent->pw_shell, cp, cmdbuf, errno, strerror(errno));
-	death(SIGTERM);
+	kill(getppid(), SIGTERM);
 	exit(1);
-}
-
-void death(sig)
-{
-	/* We are to die, tell our neighbours. */
-	signal(sig, SIG_IGN);
-	while (pidp > pidlist) kill(*--pidp, sig);
 }
 
 void getstr(buf, cnt, err)
@@ -373,4 +433,10 @@ char *err;
 			exit(1);
 		}
 	} while (c != 0);
+}
+
+void close_on_exec(fd)
+int fd;
+{
+	(void) fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
 }

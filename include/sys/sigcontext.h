@@ -14,8 +14,8 @@
 #include <minix/config.h>
 #endif
 
-#if !defined(CHIP) || !defined(INTEL) || !defined(FP_FORMAT)
-#include "error, configuration is not known"	/* XXX */
+#if !defined(CHIP)
+#include "error, configuration is not known"
 #endif
 
 /* The following structure should match the stackframe_s structure used
@@ -46,6 +46,17 @@ struct sigregs {
   int sr_sp;
   int sr_ss;
 };
+
+struct sigframe {		/* stack frame created for signalled process */
+  _PROTOTYPE( void (*sf_retadr), (void) );
+  int sf_signo;
+  int sf_code;
+  struct sigcontext *sf_scp;
+  int sf_fp;
+  _PROTOTYPE( void (*sf_retadr2), (void) );
+  struct sigcontext *sf_scpcopy;
+};
+
 #else
 #if (CHIP == M68000)
 struct sigregs {  
@@ -70,7 +81,7 @@ struct sigregs {
   short sr_dummy;		/* make size multiple of 4 for system.c */
 };
 #else
-#include "error, CHIP is not supported"	/* XXX */
+#include "error, CHIP is not supported"
 #endif
 #endif /* CHIP == INTEL */
 

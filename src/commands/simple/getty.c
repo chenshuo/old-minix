@@ -60,7 +60,6 @@ void sigcatch(int sig)
 	if (state == ST_SUSPEND) state = ST_RUNNING;
 	break;
   }
-  signal(sig, sigcatch);
 }
 
 
@@ -202,10 +201,13 @@ int main(int argc, char **argv)
 {
   register char *s;
   char name[30];
+  struct sigaction sa;
 
-  /* Ignore keyboard signals. */
-  signal(SIGINT, SIG_IGN);
-  signal(SIGQUIT, SIG_IGN);
+  /* Don't let QUIT dump core. */
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sa.sa_handler = exit;
+  sigaction(SIGQUIT, &sa, NULL);
 
   tty_name = ttyname(0);
   if (tty_name == NULL) {
@@ -218,8 +220,9 @@ int main(int argc, char **argv)
   chmod(tty_name, 0600);	/* mode to max secure */
 
   /* Catch some of the available signals. */
-  signal(SIGUSR1, sigcatch);
-  signal(SIGUSR2, sigcatch);
+  sa.sa_handler = sigcatch;
+  sigaction(SIGUSR1, &sa, NULL);
+  sigaction(SIGUSR2, &sa, NULL);
 
   do_getty(name, sizeof(name), argv+1);	/* handle getty() */
   name[29] = '\0';		/* make sure the name fits! */

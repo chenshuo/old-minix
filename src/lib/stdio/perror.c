@@ -20,6 +20,7 @@ perror(const char *s)
 	char *p;
 	int fd;
 
+	p = strerror(errno);
 	fd = fileno(stderr);
 	fflush(stdout);
 	fflush(stderr);
@@ -27,7 +28,6 @@ perror(const char *s)
 		_write(fd, s, strlen(s));
 		_write(fd, ": ", 2);
 	}
-	p = strerror(errno);
 	_write(fd, p, strlen(p));
 	_write(fd, "\n", 1);
 }

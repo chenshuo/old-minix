@@ -34,6 +34,7 @@
 #include <net/gen/tcp_io.h>
 #include <net/gen/socket.h>
 #include <net/gen/netdb.h>
+#include <net/gen/inet.h>
 #include "telnetd.h"
 
 static char *Version = "@(#) telnetd 1.00 (07/26/92)";
@@ -66,6 +67,7 @@ char *tty_name;
 struct ttyent *ttyp;
 nwio_tcpconf_t tcpconf;
 struct hostent *hostent;
+char *hostname;
 
    opterr = 0;
    while ((c = getopt(argc, argv, "dv")) != EOF) switch(c) {
@@ -81,13 +83,16 @@ struct hostent *hostent;
    if (optind != argc) usage();
 
    /* Obtain the name of the remote host. */
-   if (ioctl(0, NWIOGTCPCONF, &tcpconf) < 0
-	|| (hostent = gethostbyaddr((char *) &tcpconf.nwtc_remaddr,
-			sizeof(tcpconf.nwtc_remaddr), AF_INET)) == NULL) {
-	sprintf(buff,
-		"Unable to translate your IP address (%s) to a host name\r\n");
+   if (ioctl(0, NWIOGTCPCONF, &tcpconf) < 0) {
+	sprintf(buff, "Unable to obtain your IP address\r\n");
 	(void) write(1, buff, strlen(buff));
 	return(-1);
+   }
+   if ((hostent = gethostbyaddr((char *) &tcpconf.nwtc_remaddr,
+			sizeof(tcpconf.nwtc_remaddr), AF_INET)) != NULL) {
+	hostname = hostent->h_name;
+   } else {
+	hostname = inet_ntoa(tcpconf.nwtc_remaddr);
    }
 
    /* Try allocating a PTY. */
@@ -122,9 +127,11 @@ struct hostent *hostent;
 		return(-1);
 	}
 
+	close(pty_fd);
 	dup2(tty_fd, 0);
 	dup2(tty_fd, 1);
 	dup2(tty_fd, 2);
+	close(tty_fd);
 	(void) execl("/usr/sbin/getty", "getty", (char *)NULL);
 	(void) execl("/usr/bin/getty", "getty", (char *)NULL);
 	(void) execl("/usr/bin/login", "login", (char *)NULL);
@@ -136,13 +143,13 @@ struct hostent *hostent;
 	return(-1);
    }
 
-   wtmp(LOGIN_PROCESS, lineno, tty_name+5, pid, hostent->h_name);
+   wtmp(LOGIN_PROCESS, lineno, tty_name+5, pid, hostname);
 
    term_inout(pty_fd);
 
    (void) close(pty_fd);
 
-   wtmp(DEAD_PROCESS, lineno, tty_name+5, pid, hostent->h_name);
+   wtmp(DEAD_PROCESS, lineno, tty_name+5, pid, hostname);
 
    chown(tty_name, 0, 0);
    chmod(tty_name, 0666);

@@ -2,7 +2,7 @@
  * (c) copyright 1987 by the Vrije Universiteit, Amsterdam, The Netherlands.
  * See the copyright notice in the ACK home directory, in the file "Copyright".
  */
-/* $Header: strncmp.c,v 1.2 90/08/28 13:54:03 eck Exp $ */
+/* $Id: strncmp.c,v 1.4 1994/06/24 11:57:04 ceriel Exp $ */
 
 #include	<string.h>
 
@@ -19,7 +19,7 @@ strncmp(register const char *s1, register const char *s2, register size_t n)
 		if (n > 0) {
 			if (*s1 == '\0') return -1;
 			if (*--s2 == '\0') return 1;
-			return *s1 - *s2;
+			return (unsigned char) *s1 - (unsigned char) *s2;
 		}
 	}
 	return 0;

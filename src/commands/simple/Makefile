@@ -62,7 +62,6 @@ all:	bin \
 	bin/clr \
 	bin/cmp \
 	bin/co \
-	bin/comic \
 	bin/comm \
 	bin/compress \
 	bin/cp \
@@ -94,7 +93,6 @@ all:	bin \
 	bin/fortune \
 	bin/fsck \
 	bin/fsck1 \
-	bin/ftp \
 	bin/gather \
 	bin/getty \
 	bin/gomoku \
@@ -180,6 +178,7 @@ all:	bin \
 	bin/tar \
 	bin/tcpd \
 	bin/tee \
+	bin/term \
 	bin/termcap \
 	bin/test \
 	bin/tget \
@@ -197,7 +196,6 @@ all:	bin \
 	bin/uniq \
 	bin/unshar \
 	bin/update \
-	bin/users \
 	bin/uud \
 	bin/uue \
 	bin/vol \
@@ -306,10 +304,6 @@ bin/co:	co.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/comic:	comic.c
-	$(CCLD) -m -o $@ $?
-	install -S 4kw $@
-
 bin/comm:	comm.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -356,7 +350,7 @@ bin/dhrystone:	dhrystone.c
 
 bin/diff:	diff.c
 	$(CCLD) -m -o $@ $?
-	install -S 28kw $@
+	install -S 40kw $@
 
 bin/dirname:	dirname.c
 	$(CCLD) -o $@ $?
@@ -428,15 +422,11 @@ bin/fortune:	fortune.c
 
 bin/fsck:	fsck.c
 	$(CCLD) -m -o $@ $?
-	install -S 32kw $@
+	install -S 384k $@
 
 bin/fsck1:	fsck1.c
 	$(CCLD) -m -o $@ $?
 	install -S 32kw $@
-
-bin/ftp:	ftp.c
-	$(CCLD) -m -o $@ $?
-	install -S 8kw $@
 
 bin/gather:	gather.c
 	$(CCLD) -o $@ $?
@@ -448,7 +438,7 @@ bin/getty:	getty.c /usr/include/minix/config.h
 
 bin/gomoku:	gomoku.c
 	$(CCLD) -o $@ $? -lcurses
-	install -S 4kw $@
+	install -S 8kw $@
 
 bin/grep:	grep.c
 	$(CCLD) -o $@ $?
@@ -523,7 +513,7 @@ bin/leave:	leave.c
 	install -S 4kw $@
 
 bin/life:	life.c
-	$(CCLD) -o $@ $? -lcurses
+	$(CCLD) -m -o $@ $? -lcurses
 	install -S 15kw $@
 
 bin/login:	login.c
@@ -539,7 +529,7 @@ bin/lpr:	lpr.c
 	install -S 4kw $@
 
 bin/ls:	ls.c
-	$(CCLD) -o $@ $?
+	$(CCLD) -m -o $@ $?
 	install -S 20kw $@
 
 bin/mail:	mail.c
@@ -778,6 +768,10 @@ bin/tee:	tee.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
+bin/term:	term.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
 bin/termcap:	termcap.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -845,10 +839,6 @@ bin/unshar:	unshar.c
 bin/update:	update.c
 	$(CCLD) -o $@ $?
 	install -S 1kw $@
-
-bin/users:	users.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/uud:	uud.c
 	$(CCLD) -o $@ $?
@@ -923,7 +913,6 @@ install:	bin \
 	/usr/bin/clr \
 	/usr/bin/cmp \
 	/usr/bin/co \
-	/usr/bin/comic \
 	/usr/bin/comm \
 	/usr/bin/compress \
 		/usr/bin/uncompress \
@@ -962,7 +951,6 @@ install:	bin \
 	/usr/bin/fortune \
 	/usr/bin/fsck \
 	/usr/bin/fsck1 \
-	/usr/bin/ftp \
 	/usr/bin/gather \
 	/usr/bin/getty \
 	/usr/bin/gomoku \
@@ -1052,6 +1040,7 @@ install:	bin \
 	/usr/bin/tar \
 	/usr/bin/tcpd \
 	/usr/bin/tee \
+	/usr/bin/term \
 	/usr/bin/termcap \
 	/usr/bin/test \
 		/usr/bin/[ \
@@ -1071,7 +1060,6 @@ install:	bin \
 	/usr/bin/uniq \
 	/usr/bin/unshar \
 	/usr/bin/update \
-	/usr/bin/users \
 	/usr/bin/uud \
 		/usr/bin/uudecode \
 	/usr/bin/uue \
@@ -1086,28 +1074,14 @@ install:	bin \
 	/usr/bin/write \
 	/usr/bin/xargs \
 	/usr/bin/yes \
-	/bin/basename \
 	/bin/cat \
-	/bin/chmod \
-	/bin/cp \
-		/bin/clone \
-		/bin/cpdir \
-		/bin/ln \
-		/bin/mv \
-		/bin/rm \
 	/bin/date \
-	/bin/df \
 	/bin/echo \
 	/bin/expr \
 	/bin/fsck \
-	/bin/kill \
-	/bin/ls \
-	/bin/mkdir \
 	/bin/mount \
 	/bin/printroot \
 	/bin/pwd \
-	/bin/rmdir \
-	/bin/sleep \
 	/bin/sync \
 	/bin/test \
 		/bin/[ \
@@ -1186,9 +1160,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/co:	bin/co
-	install -cs -o bin $? $@
-
-/usr/bin/comic:	bin/comic
 	install -cs -o bin $? $@
 
 /usr/bin/comm:	bin/comm
@@ -1289,9 +1260,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/fsck1:	bin/fsck1
-	install -cs -o bin $? $@
-
-/usr/bin/ftp:	bin/ftp
 	install -cs -o bin $? $@
 
 /usr/bin/gather:	bin/gather
@@ -1555,6 +1523,9 @@ install:	bin \
 /usr/bin/tee:	bin/tee
 	install -cs -o bin $? $@
 
+/usr/bin/term:	bin/term
+	install -cs -o bin -g uucp -m 2755 $? $@
+
 /usr/bin/termcap:	bin/termcap
 	install -cs -o bin $? $@
 
@@ -1612,9 +1583,6 @@ install:	bin \
 /usr/bin/update:	bin/update
 	install -cs -o bin $? $@
 
-/usr/bin/users:	bin/users
-	install -cs -o bin $? $@
-
 /usr/bin/uud:	bin/uud
 	install -cs -o bin $? $@
 
@@ -1657,25 +1625,10 @@ install:	bin \
 /usr/bin/yes:	bin/yes
 	install -cs -o bin $? $@
 
-/bin/basename:	/usr/bin/basename
-	install -lcs $? $@
-
 /bin/cat:	/usr/bin/cat
 	install -lcs $? $@
 
-/bin/chmod:	/usr/bin/chmod
-	install -lcs $? $@
-
-/bin/cp:	/usr/bin/cp
-	install -lcs $? $@
-
-/bin/clone /bin/cpdir /bin/ln /bin/mv /bin/rm:	/bin/cp
-	install -l $? $@
-
 /bin/date:	/usr/bin/date
-	install -lcs $? $@
-
-/bin/df:	/usr/bin/df
 	install -lcs $? $@
 
 /bin/echo:	/usr/bin/echo
@@ -1687,15 +1640,6 @@ install:	bin \
 /bin/fsck:	/usr/bin/fsck
 	install -lcs $? $@
 
-/bin/kill:	/usr/bin/kill
-	install -lcs $? $@
-
-/bin/ls:	/usr/bin/ls
-	install -lcs $? $@
-
-/bin/mkdir:	/usr/bin/mkdir
-	install -lcs $? $@
-
 /bin/mount:	/usr/bin/mount
 	install -lcs $? $@
 
@@ -1703,12 +1647,6 @@ install:	bin \
 	install -lcs $? $@
 
 /bin/pwd:	/usr/bin/pwd
-	install -lcs $? $@
-
-/bin/rmdir:	/usr/bin/rmdir
-	install -lcs $? $@
-
-/bin/sleep:	/usr/bin/sleep
 	install -lcs $? $@
 
 /bin/sync:	/usr/bin/sync

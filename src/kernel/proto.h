@@ -113,6 +113,7 @@ _PROTOTYPE( void putk, (int c)						);
 _PROTOTYPE( void scr_init, (struct tty *tp)				);
 _PROTOTYPE( void toggle_scroll, (void)					);
 _PROTOTYPE( int con_loadfont, (phys_bytes user_phys)			);
+_PROTOTYPE( void select_console, (int cons_line)			);
 
 /* cstart.c */
 _PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mcs, U16_t mds,
@@ -134,7 +135,6 @@ _PROTOTYPE( void wreboot, (int how)					);
 
 /* klib*.s */
 _PROTOTYPE( void bios13, (void)						);
-_PROTOTYPE( void build_sig, (char *sig_stuff, struct proc *rp, int sig)	);
 _PROTOTYPE( phys_bytes check_mem, (phys_bytes base, phys_bytes size)	);
 _PROTOTYPE( void cp_mess, (int src,phys_clicks src_clicks,vir_bytes src_offset,
 		phys_clicks dst_clicks, vir_bytes dst_offset)		);

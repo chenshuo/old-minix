@@ -15,8 +15,13 @@
 #include <unistd.h>
 #include "telnetd.h"
 #include "telnet.h"
+#include <stdio.h>
 
-_PROTOTYPE(static int DoTelOpt, (int fdout, int c));
+#define	IN_DATA	0
+#define	IN_CR	1
+#define	IN_IAC	2
+#define	IN_IAC2	3
+
 _PROTOTYPE(static void dowill, (int c));
 _PROTOTYPE(static void dowont, (int c));
 _PROTOTYPE(static void dodo, (int c));
@@ -28,10 +33,6 @@ _PROTOTYPE(static void respond, (int ack, int option));
 static int TelROpts[LASTTELOPT+1];
 static int TelLOpts[LASTTELOPT+1];
 
-static int TelOpts;
-
-static int ThisOpt;
-
 static int telfdout;
 
 void tel_init()
@@ -42,7 +43,6 @@ int i;
 	TelROpts[i] = 0;
 	TelLOpts[i] = 0;
    }
-   TelOpts = 0;
 }
 
 void telopt(fdout, what, option)
@@ -94,35 +94,81 @@ int telout;
 char *buffer;
 int len;
 {
-unsigned char *p, *p2;
-int size, got_iac;
+static int InState = IN_DATA;
+static int ThisOpt = 0;
+char *p;
+char *p2;
+int size;
+int c;
 
    telfdout = telout;
-   p = (unsigned char *)buffer;
+   p = p2 = buffer;
+   size = 0;
 
    while(len > 0) {
-	while(len > 0 && TelOpts) {
-		DoTelOpt(fdout, (int)*p);
-		p++;
-		len--;
-	}
-	if(len == 0) break;
-	size = 0; p2 = p; got_iac = 0;
-	while(len--) {
-		if(*p == IAC) {
-			got_iac = 1;
-			break;
-		}
-		p++;
-		size++;
-	}
-	if(size > 0)
-		write(fdout, p2, size);
-	if(got_iac) {
-		TelOpts = 1;
-		p++;
-	}
+   	c = (unsigned char)*p++; len--;
+	switch(InState) {
+   		case IN_CR:
+   			InState = IN_DATA;
+   			if(c == 0 || c == '\n')
+   				break;
+   			/* fall through */
+   		case IN_DATA:
+   			if(c == IAC) {
+   				InState = IN_IAC;
+   				break;
+   			}
+   			*p2++ = c; size++;
+   			if(c == '\r') InState = IN_CR;
+   			break;
+   		case IN_IAC:
+   			switch(c) {
+   				case IAC:
+	   				*p2++ = c; size++;
+   					InState = IN_DATA;
+   					break;
+   				case WILL:
+   				case WONT:
+   				case DO:
+   				case DONT:
+   					InState = IN_IAC2;
+   					ThisOpt = c;
+   					break;
+   				case EOR:
+   				case SE:
+   				case NOP:
+   				case BREAK:
+   				case IP:
+   				case AO:
+   				case AYT:
+   				case EC:
+   				case EL:
+   				case GA:
+   				case SB:
+   					break;
+   				default:
+   					break;
+   			}
+   			break;
+   		case IN_IAC2:
+   			if(size > 0) {
+   				write(fdout, buffer, size);
+   				p2 = buffer;
+   				size = 0;
+   			}
+   			InState = IN_DATA;
+   			switch(ThisOpt) {
+   				case WILL:	dowill(c);	break;
+   				case WONT:	dowont(c);	break;
+   				case DO:	dodo(c);	break;
+   				case DONT:	dodont(c);	break;
+   			}
+   			break;
+   	}
    }
+
+   if(size > 0)
+   	write(fdout, buffer, size);
 }
 
 int tel_out(fdout, buf, size)
@@ -149,50 +195,6 @@ int got_iac, len;
 		(void) write(fdout, p - 1, 1);
 	size = size - len;
    }
-}
-
-static int DoTelOpt(fdout, c)
-int fdout;
-int c;
-{
-   if(TelOpts == 1) {
-	switch(c) {
-		case WILL:
-		case WONT:
-		case DO:
-		case DONT:
-			ThisOpt = c;
-			TelOpts++;
-			break;
-		case IAC:
-			write(fdout, &c, 1);
-			TelOpts = 0;
-			break;
-		default:
-			TelOpts = 0;
-	}
-	return(TelOpts);
-   }
-   switch(ThisOpt) {
-	case WILL:
-		dowill(c);
-		break;
-	case WONT:
-		dowont(c);
-		break;
-	case DO:
-		dodo(c);
-		break;
-	case DONT:
-		dodont(c);
-		break;
-	default:
-		TelOpts = 0;
-		return(0);
-   }
-   
-   TelOpts = 0;
-   return(1);
 }
 
 static void dowill(c)

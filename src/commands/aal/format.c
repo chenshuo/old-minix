@@ -4,7 +4,11 @@
  */
 /* $Header: format.c,v 1.6 91/03/11 14:32:41 ceriel Exp $ */
 
+#if __STDC__
+#include <stdarg.h>
+#else
 #include <varargs.h>
+#endif
 
 extern char *long2str();
 

@@ -3,7 +3,7 @@
 
 /* Minix release and version numbers. */
 #define OS_RELEASE "1.7"
-#define OS_VERSION "4"
+#define OS_VERSION "5"
 
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
@@ -83,8 +83,8 @@
 #define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
 
 /* Include or exclude backwards compatibility code. */
-#define ENABLE_BINCOMPAT   1	/* for binaries using obsolete calls */
-#define ENABLE_SRCCOMPAT   1	/* for sources using obsolete calls */
+#define ENABLE_BINCOMPAT   0	/* for binaries using obsolete calls */
+#define ENABLE_SRCCOMPAT   0	/* for sources using obsolete calls */
 
 /* Determine which device to use for pipes. */
 #define PIPE_DEV    ROOT_DEV	/* put pipes on root device */

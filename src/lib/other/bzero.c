@@ -5,7 +5,7 @@
 
 void bzero(dst, length)
 void *dst;
-int length;
+size_t length;
 {
-  (void) memset((_VOIDSTAR) dst, 0, (_SIZET) length);
+  (void) memset(dst, 0, length);
 }

@@ -11,9 +11,9 @@ CC=cc
 ARCH=`arch`
 
 echo -n "Shell test  2 "
-rm -rf testdir
-mkdir testdir			# all files are created here
-cd testdir
+rm -rf DIR_SH2
+mkdir DIR_SH2			# all files are created here
+cd DIR_SH2
 
 cat >file <<END
 The time has come the walrus said to talk of many things
@@ -255,6 +255,6 @@ sort <$f >y
 if cmp -s x y; then : ; else echo Error in pipeline test 2; fi
 
 cd ..
-rm -rf testdir
+rm -rf DIR_SH2
 
 echo ok

@@ -30,7 +30,12 @@ then
 		read usr
 		usr=/dev/$usr
 	esac
-	mount $usr /usr
+	mount $usr /usr || {
+		echo "\
+Please try to mount something else as /usr, then hit CTRL-D to continue startup.
+Mount $usr /usr failed -- Single user."
+		sh
+	}
 fi
 
 # Check if the system crashed.
@@ -116,4 +121,7 @@ find /usr/adm/wtmp -size +100 -exec sh -c \
 
 # Cleanup.
 test -f /usr/bin/elvprsv && elvprsv /usr/tmp/elv*
-rm -rf /tmp/. /usr/tmp/.
+rm -rf /tmp/. /usr/tmp/. /usr/spool/lpd/. /usr/spool/locks/.
+
+# Any messages?
+test -f /etc/issue && cat /etc/issue

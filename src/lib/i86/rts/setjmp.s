@@ -1,12 +1,6 @@
 .sect .text; .sect .data; .sect .bss
 .sect .bss
 .comm _gtobuf, 12
-.extern ___setjmp
-.extern _sigprocmask
-.extern __longjerr
-.extern __sigjmp
-.extern _printf, _exit
-.extern .blm, .sti, .cret
 .sect .text
 !
 ! Warning:  this code depends on the C language declaration of
@@ -20,6 +14,7 @@ SC_NOREGLOCALS=4
 !
 ! ___setjmp(jmp_buf, savemask, retaddr)
 !
+.extern ___setjmp
 ___setjmp:
 	push	bp
 	mov	bp,sp

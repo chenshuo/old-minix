@@ -6,7 +6,7 @@
 void bcopy(src, dst, length)
 _CONST void *src;
 void *dst;
-int length;
+size_t length;
 {
-  (void) memcpy((_VOIDSTAR) dst, (_CONST _VOIDSTAR) src, (_SIZET) length);
+  (void) memcpy(dst, src, length);
 }

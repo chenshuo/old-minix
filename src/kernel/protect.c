@@ -34,8 +34,8 @@ struct gatedesc_s {
 
 struct tss_s {
   reg_t backlink;
-  reg_t sp0;
-  reg_t ss0;
+  reg_t sp0;                    /* stack pointer to use during interrupt */
+  reg_t ss0;                    /*   "   segment  "  "    "        "     */
   reg_t sp1;
   reg_t ss1;
   reg_t sp2;
@@ -322,6 +322,10 @@ unsigned dpl_type;
 PUBLIC void enable_iop(pp)
 struct proc *pp;
 {
-/* Allow a user process to use I/O instructions. */
+/* Allow a user process to use I/O instructions.  Change the I/O Permission
+ * Level bits in the psw. These specify least-privileged Current Permission
+ * Level allowed to execute I/O instructions. Users and servers have CPL 3. 
+ * You can't have less privilege than that. Kernel has CPL 0, tasks CPL 1.
+ */
   pp->p_reg.psw |= 0x3000;
 }

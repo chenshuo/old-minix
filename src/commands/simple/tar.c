@@ -153,9 +153,6 @@ HEADER header;
 #define INT_TYPE	(sizeof(header.member.m_uid))
 #define LONG_TYPE	(sizeof(header.member.m_size))
 
-#define MKDIR1		"/bin/mkdir"
-#define MKDIR2		"/usr/bin/mkdir"
-
 #define NIL_HEADER	((HEADER *) 0)
 #define NIL_PTR		((char *) 0)
 #define TBLOCK_SIZE	TBLOCK
@@ -419,8 +416,8 @@ register char *file;
       case '1':			/* Link */
 	delete(file);
 	if (link(header.member.m_link, file) < 0)
-		string_print(NIL_PTR, "Cannot link %s to %s\n",
-			     header.member.m_link, file);
+		string_print(NIL_PTR, "Cannot link %s to %s: %s\n",
+			     header.member.m_link, file, strerror(errno));
 	else if (verbose_flag)
 		string_print(NIL_PTR, "Linked %s to %s\n",
 			     header.member.m_link, file);
@@ -431,7 +428,8 @@ register char *file;
 		do_chown(file);
 		verb_print("created directory", file);
 	} else {
-		string_print(NIL_PTR, "Can't make directory %s\n", file);
+		string_print(NIL_PTR, "Can't make directory %s: %s\n",
+				file, strerror(errno));
 	}
 	return;
       case '3':			/* character special */
@@ -455,11 +453,12 @@ register char *file;
 		else 
 		{
 			string_print(NIL_PTR,
-					     "cannot make %s special file major %s minor %s\n",
+				     "cannot make %s special file major %s minor %s: %s\n",
 				      (header.dbuf.typeflag == '3' ?
 				       "character" : "block"),
 					     header.dbuf.devmajor,
-					     header.dbuf.devminor);
+					     header.dbuf.devminor,
+					     strerror(errno));
 		}
 		return;
 	}
@@ -467,8 +466,8 @@ register char *file;
 #ifdef HAVE_SYMLINK
 	delete(file);
 	if (symlink(header.member.m_link, file) < 0)
-		string_print(NIL_PTR, "Cannot make symbolic link %s to %s\n",
-			     header.member.m_link, file);
+		string_print(NIL_PTR, "Cannot make symbolic link %s to %s: %s\n",
+			     header.member.m_link, file, strerror(errno));
 	else if (verbose_flag)
 		string_print(NIL_PTR, "Symbolic link %s to %s\n",
 			     header.member.m_link, file);
@@ -484,7 +483,8 @@ register char *file;
 		do_chown(file);
 		verb_print("made fifo", file);
 	} else
-		string_print(NIL_PTR, "Can't make fifo %s\n", file);
+		string_print(NIL_PTR, "Can't make fifo %s: %s\n",
+			file, strerror(errno));
 	return;
 #endif
   }
@@ -496,7 +496,8 @@ register char *file;
 		*pd2 = '\0';
 		if (access(file, 1) < 0)
 			if (mkdir(file, 0777) < 0) {
-				string_print(NIL_PTR, "Cannot mkdir %s\n", file);
+				string_print(NIL_PTR, "Cannot mkdir %s: %s\n",
+					file, strerror(errno));
 				return;
 			} else
 				string_print(NIL_PTR, "Made directory %s\n", file);
@@ -504,7 +505,8 @@ register char *file;
 		pd1 = ++pd2;
 	}
 	if ((fd = creat(file, 0600)) < 0) {
-		string_print(NIL_PTR, "Cannot create %s\n", file);
+		string_print(NIL_PTR, "Cannot create %s: %s\n",
+			file, strerror(errno));
 		return;
 	}
   }
@@ -670,7 +672,7 @@ register char *file;
 #else
   if (stat(file, &st) < 0) {
 #endif
-	string_print(NIL_PTR, "Cannot find %s\n", file);
+	string_print(NIL_PTR, "%s: %s\n", file, strerror(errno));
 	return;
   }
   if (st.st_dev == ar_dev && st.st_ino == ar_inode) {
@@ -707,7 +709,8 @@ register char *file;
 		if (NULL == getcwd(cwd, (int) sizeof cwd))
 			string_print(NIL_PTR, "Error: cannot getcwd()\n");
 		else if (chdir(file) < 0)
-			string_print(NIL_PTR, "Cannot chdir to %s\n", file);
+			string_print(NIL_PTR, "Cannot chdir to %s: %s\n",
+				file, strerror(errno));
 		else {
 			add_path(file);
 #ifdef	DIRECT_3
@@ -773,7 +776,8 @@ register char *file;
 				  sizeof(header.dbuf.linkname) - 1);
 			if (i < 0) {
 				string_print(NIL_PTR,
-					     "Cannot read symbolic link %s\n", file);
+					"Cannot read symbolic link %s: %s\n",
+					file, strerror(errno));
 				return;
 			}
 			header.dbuf.linkname[i] = 0;

@@ -35,27 +35,27 @@ typedef unsigned reg_t;		/* machine register */
  * having 32-bit registers and more segment registers.  The same names are
  * used for the larger registers to avoid differences in the code.
  */
-struct stackframe_s {
+struct stackframe_s {           /* proc_ptr points here */
 #if _WORD_SIZE == 4
-  u16_t gs;
-  u16_t fs;
+  u16_t gs;                     /* last item pushed by save */
+  u16_t fs;                     /*  ^ */
 #endif
-  u16_t es;
-  u16_t ds;
+  u16_t es;                     /*  | */
+  u16_t ds;                     /*  | */
   reg_t di;			/* di through cx are not accessed in C */
   reg_t si;			/* order is to match pusha/popa */
   reg_t fp;			/* bp */
   reg_t st;			/* hole for another copy of sp */
-  reg_t bx;
-  reg_t dx;
-  reg_t cx;
-  reg_t retreg;			/* ax */
+  reg_t bx;                     /*  | */
+  reg_t dx;                     /*  | */
+  reg_t cx;                     /*  | */
+  reg_t retreg;			/* ax and above are all pushed by save */
   reg_t retadr;			/* return address for assembly code save() */
-  reg_t pc;			/* interrupt pushes rest of frame */
-  reg_t cs;
-  reg_t psw;
-  reg_t sp;
-  reg_t ss;
+  reg_t pc;			/*  ^  last item pushed by interrupt */
+  reg_t cs;                     /*  | */
+  reg_t psw;                    /*  | */
+  reg_t sp;                     /*  | */
+  reg_t ss;                     /* these are pushed by CPU during interrupt */
 };
 
 struct segdesc_s {		/* segment descriptor for protected mode */

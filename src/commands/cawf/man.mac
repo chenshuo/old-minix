@@ -178,6 +178,8 @@
 .\" misc. initialization
 .nr tp 5n
 .PD
+.ds lq """
+.ds rq """
 .ds R \(rg
 .ds S "
 .ds Tm (TM)

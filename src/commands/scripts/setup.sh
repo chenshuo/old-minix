@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	setup 3.0 - install a Minix distribution	Author: Kees J. Bot
+#	setup 3.3 - install a Minix distribution	Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra actions.  It needs to use a sed script to change
@@ -9,43 +9,19 @@
 PATH=/bin:/usr/bin
 export PATH
 
-# Must be in / or we can't mount or umount.
-case "`pwd`" in
-/?*)	echo "Please type 'cd /', you are locking up `pwd`" >&2	
-	exit 1
+case "$1" in
+-*)	set x x		# We don't do options.
 esac
-case "$0" in
-/tmp/*)	rm -f "$0"
+
+# Installing a floppy set?
+case $# in
+0)	# No, all of Minix.
 	;;
-*)	cp -p "$0" /tmp/setup
-	exec /tmp/setup
-esac
+1)
+	cd "$1" || exit
 
-# Find out what we are running from.
-exec 9<&0 </etc/mtab			# Mounted file table.
-read thisroot rest			# Current root (/dev/ram or /dev/fd?)
-read fdusr rest				# USR (/dev/fd? or /dev/fd?c)
-exec 0<&9 9<&-
-
-# What do we know about ROOT?
-case $thisroot:$fdusr in
-/dev/ram:/dev/fd0c)	fdroot=/dev/fd0		# Combined ROOT+USR in drive 0
-			;;
-/dev/ram:/dev/fd1c)	fdroot=/dev/fd1		# Combined ROOT+USR in drive 1
-			;;
-/dev/ram:/dev/fd*)	fdroot=unknown		# ROOT is some other floppy
-			;;
-/dev/fd*:/dev/fd*)	fdroot=$thisroot	# ROOT is mounted directly
-			;;
-*)			fdroot=$thisroot	# ?
-	echo -n "\
-It looks like Minix has been installed on disk.  Do you want to install
-a floppy set for the rest of /usr or the sources? [y] "
-	read yn
-	case "$yn" in
-	''|[yY]*|sure)	;;
-	*)	exit
-	esac
+	# Annoying message still there?
+	test -f /etc/issue && grep 'setup /usr' /etc/issue && rm -f /etc/issue
 
 	size=bad
 	while [ "$size" = bad ]
@@ -76,11 +52,55 @@ What is the size of the images on the diskettes? [all] "; read size
 		esac
 	done
 
-	echo
-	cd /usr && vol -r $size /dev/fd$drive | uncompress | tar xvfp -
+	vol -r $size /dev/fd$drive | uncompress | tar xvfp -
 
 	echo Done.
 	exit
+	;;
+*)
+	echo "Usage: setup [dir]  # Install Minix, or a floppy set in 'dir'" >&2
+	exit 1
+esac
+
+# Installing Minix on the hard disk.
+# Must be in / or we can't mount or umount.
+case "`pwd`" in
+/?*)	echo "Please type 'cd /', you are locking up `pwd`" >&2	
+	exit 1
+esac
+case "$0" in
+/tmp/*)
+	rm -f "$0"
+	;;
+*)	cp -p "$0" /tmp/setup
+	exec /tmp/setup
+esac
+
+# Find out what we are running from.
+exec 9<&0 </etc/mtab			# Mounted file table.
+read thisroot rest			# Current root (/dev/ram or /dev/fd?)
+read fdusr rest				# USR (/dev/fd? or /dev/fd?c)
+exec 0<&9 9<&-
+
+# What do we know about ROOT?
+case $thisroot:$fdusr in
+/dev/ram:/dev/fd0c)	fdroot=/dev/fd0		# Combined ROOT+USR in drive 0
+			;;
+/dev/ram:/dev/fd1c)	fdroot=/dev/fd1		# Combined ROOT+USR in drive 1
+			;;
+/dev/ram:/dev/fd*)	fdroot=unknown		# ROOT is some other floppy
+			;;
+/dev/fd*:/dev/fd*)	fdroot=$thisroot	# ROOT is mounted directly
+			;;
+*)			fdroot=$thisroot	# ?
+	echo -n "\
+It looks like Minix has been installed on disk already.  Are you sure you
+know what you are doing? [y] "
+	read yn
+	case "$yn" in
+	''|[yY]*|sure)	;;
+	*)	exit
+	esac
 esac
 
 echo -n "\
@@ -118,7 +138,7 @@ the operating systems currently installed.  Restart your Minix installation
 after you have made space.
 
 To make this partition you will be put in the editor \"part\".  Follow the
-advise under the '!' key to make a new partition of type MINIX.  Do not
+advice under the '!' key to make a new partition of type MINIX.  Do not
 touch an existing partition unless you know precisely what you are doing!
 Please note the name of the partition (hd1, hd2, ..., hd9, sd1, sd2, ...
 sd9) you make.  (See the devices section in usage(8) on Minix device names.)
@@ -270,6 +290,10 @@ echo >/mnt/etc/fstab "\
 root=/dev/$root
 usr=/dev/$usr"
 
+					# How to install further?
+echo >/mnt/etc/issue "\
+Login as root and run 'setup /usr' to install floppy sets."
+
 					# National keyboard map.
 case "$keymap" in
 ?*)	cp -p "/usr/lib/keymaps/$keymap.map" /mnt/etc/keymap
@@ -281,7 +305,7 @@ umount /dev/$root || exit		# Unmount the new root.
 # Compute size of the second level file block cache.
 ram=
 echo -n "
-What is the memory size of this system in kilobytes? [plenty] "
+What is the memory size of this system in kilobytes? [4M or more] "
 read ram
 case "$ram" in '') ram=9999;; esac
 case `arch` in

@@ -1,13 +1,13 @@
 /* This file contains the terminal driver, both for the IBM console and regular
  * ASCII terminals.  It handles only the device-independent part of a TTY, the
  * device dependent parts are in console.c, rs232.c, etc.  This file contains
- * two main entry point, tty_task() and tty_wakeup(), and several minor entry
+ * two main entry points, tty_task() and tty_wakeup(), and several minor entry
  * points for use by the device-dependent code.
  *
  * The device-independent part accepts "keyboard" input from the device-
  * dependent part, performs input processing (special key interpretation),
  * and sends the input to a process reading from the TTY.  Output to a TTY
- * is sent to the device-dependend code for output processing and "screen"
+ * is sent to the device-dependent code for output processing and "screen"
  * display.  Input processing is done by the device by calling 'in_process'
  * on the input characters, output processing may be done by the device itself
  * or by calling 'out_process'.  The TTY takes care of input queuing, the
@@ -24,7 +24,6 @@
  *   DEV_IOCTL:    a process wants to change a terminal's parameters
  *   DEV_OPEN:     a tty line has been opened
  *   DEV_CLOSE:    a tty line has been closed
- *   TTY_EXIT:     a process group leader has exited
  *   CANCEL:       terminate a previous incomplete system call immediately
  *
  *    m_type      TTY_LINE   PROC_NR    COUNT   TTY_SPEK  TTY_FLAGS  ADDRESS
@@ -40,8 +39,6 @@
  * | DEV_OPEN    |minor dev| proc nr | O_NOCTTY|         |         |         |
  * |-------------+---------+---------+---------+---------+---------+---------|
  * | DEV_CLOSE   |minor dev| proc nr |         |         |         |         |
- * |-------------+---------+---------+---------+---------+---------+---------|
- * | TTY_EXIT    |minor dev| proc nr |         |         |         |         |
  * |-------------+---------+---------+---------+---------+---------+---------|
  * | CANCEL      |minor dev| proc nr |         |         |         |         |
  * ---------------------------------------------------------------------------
@@ -118,7 +115,6 @@ FORWARD _PROTOTYPE( speed_t sgspd2tspd, (int sgspd)			);
 FORWARD _PROTOTYPE( void do_ioctl_compat, (tty_t *tp, message *m_ptr)	);
 #endif
 #endif
-
 
 /* Default attributes. */
 PRIVATE struct termios termios_defaults = {
@@ -216,6 +212,418 @@ PUBLIC void tty_task()
 
 
 /*===========================================================================*
+ *				do_read					     *
+ *===========================================================================*/
+PRIVATE void do_read(tp, m_ptr)
+register tty_t *tp;		/* pointer to tty struct */
+message *m_ptr;			/* pointer to message sent to the task */
+{
+/* A process wants to read from a terminal. */
+  int r;
+
+  /* Check if there is already a process hanging in a read, check if the
+   * parameters are correct, do I/O.
+   */
+  if (tp->tty_inleft > 0) {
+	r = EIO;
+  } else
+  if (m_ptr->COUNT <= 0) {
+	r = EINVAL;
+  } else
+  if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT) == 0) {
+	r = EFAULT;
+  } else {
+	/* Copy information from the message to the tty struct. */
+	tp->tty_inrepcode = TASK_REPLY;
+	tp->tty_incaller = m_ptr->m_source;
+	tp->tty_inproc = m_ptr->PROC_NR;
+	tp->tty_in_vir = (vir_bytes) m_ptr->ADDRESS;
+	tp->tty_inleft = m_ptr->COUNT;
+
+	if (!(tp->tty_termios.c_lflag & ICANON)
+					&& tp->tty_termios.c_cc[VTIME] > 0) {
+		if (tp->tty_termios.c_cc[VMIN] == 0) {
+			/* MIN & TIME specify a read timer that finishes the
+			 * read in TIME/10 seconds if no bytes are available.
+			 */
+			lock();
+			settimer(tp, TRUE);
+			tp->tty_min = 1;
+			unlock();
+		} else {
+			/* MIN & TIME specify an inter-byte timer that may
+			 * have to be cancelled if there are no bytes yet.
+			 */
+			if (tp->tty_eotct == 0) {
+				lock();
+				settimer(tp, FALSE);
+				unlock();
+				tp->tty_min = tp->tty_termios.c_cc[VMIN];
+			}
+		}
+	}
+
+	/* Anything waiting in the input buffer? Clear it out... */
+	in_transfer(tp);
+	/* ...then go back for more */
+	handle_events(tp);
+	if (tp->tty_inleft == 0) return;		/* already done */
+
+	/* There were no bytes in the input queue available, so either suspend
+	 * the caller or break off the read if nonblocking.
+	 */
+	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {
+		r = EAGAIN;				/* cancel the read */
+		tp->tty_inleft = tp->tty_incum = 0;
+	} else {
+		r = SUSPEND;				/* suspend the caller */
+		tp->tty_inrepcode = REVIVE;
+	}
+  }
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
+}
+
+
+/*===========================================================================*
+ *				do_write				     *
+ *===========================================================================*/
+PRIVATE void do_write(tp, m_ptr)
+register tty_t *tp;
+register message *m_ptr;	/* pointer to message sent to the task */
+{
+/* A process wants to write on a terminal. */
+  int r;
+
+  /* Check if there is already a process hanging in a write, check if the
+   * parameters are correct, do I/O.
+   */
+  if (tp->tty_outleft > 0) {
+	r = EIO;
+  } else
+  if (m_ptr->COUNT <= 0) {
+	r = EINVAL;
+  } else
+  if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT) == 0) {
+	r = EFAULT;
+  } else {
+	/* Copy message parameters to the tty structure. */
+	tp->tty_outrepcode = TASK_REPLY;
+	tp->tty_outcaller = m_ptr->m_source;
+	tp->tty_outproc = m_ptr->PROC_NR;
+	tp->tty_out_vir = (vir_bytes) m_ptr->ADDRESS;
+	tp->tty_outleft = m_ptr->COUNT;
+
+	/* Try to write. */
+	handle_events(tp);
+	if (tp->tty_outleft == 0) return;		/* already done */
+
+	/* None or not all the bytes could be written, so either suspend the
+	 * caller or break off the write if nonblocking.
+	 */
+	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {		/* cancel the write */
+		r = tp->tty_outcum > 0 ? tp->tty_outcum : EAGAIN;
+		tp->tty_outleft = tp->tty_outcum = 0;
+	} else {
+		r = SUSPEND;				/* suspend the caller */
+		tp->tty_outrepcode = REVIVE;
+	}
+  }
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
+}
+
+
+/*===========================================================================*
+ *				do_ioctl				     *
+ *===========================================================================*/
+PRIVATE void do_ioctl(tp, m_ptr)
+register tty_t *tp;
+message *m_ptr;			/* pointer to message sent to task */
+{
+/* Perform an IOCTL on this terminal. Posix termios calls are handled
+ * by the IOCTL system call
+ */
+
+  int r;
+  union {
+	int i;
+#if ENABLE_SRCCOMPAT
+	struct sgttyb sg;
+	struct tchars tc;
+#endif
+  } param;
+  phys_bytes user_phys;
+  size_t size;
+
+  /* Size of the ioctl parameter. */
+  switch (m_ptr->TTY_REQUEST) {
+    case TCGETS:        /* Posix tcgetattr function */
+    case TCSETS:        /* Posix tcsetattr function, TCSANOW option */ 
+    case TCSETSW:       /* Posix tcsetattr function, TCSADRAIN option */
+    case TCSETSF:	/* Posix tcsetattr function, TCSAFLUSH option */
+        size = sizeof(struct termios);
+        break;
+
+    case TCSBRK:        /* Posix tcsendbreak function */
+    case TCFLOW:        /* Posix tcflow function */
+    case TCFLSH:        /* Posix tcflush function */
+    case TIOCGPGRP:     /* Posix tcgetpgrp function */
+    case TIOCSPGRP:	/* Posix tcsetpgrp function */
+        size = sizeof(int);
+        break;
+
+    case TIOCGWINSZ:    /* get window size (not Posix) */
+    case TIOCSWINSZ:	/* set window size (not Posix) */
+        size = sizeof(struct winsize);
+        break;
+
+#if ENABLE_SRCCOMPAT
+    case TIOCGETP:      /* BSD-style get terminal properties */
+    case TIOCSETP:	/* BSD-style set terminal properties */
+	size = sizeof(struct sgttyb);
+	break;
+
+    case TIOCGETC:      /* BSD-style get terminal special characters */ 
+    case TIOCSETC:	/* BSD-style get terminal special characters */ 
+	size = sizeof(struct tchars);
+	break;
+#endif
+#if (MACHINE == IBM_PC)
+    case KIOCSMAP:	/* load keymap (Minix extension) */
+        size = sizeof(keymap_t);
+        break;
+
+    case TIOCSFON:	/* load font (Minix extension) */
+        size = sizeof(u8_t [8192]);
+        break;
+
+#endif
+    case TCDRAIN:	/* Posix tcdrain function -- no parameter */
+    default:		size = 0;
+  }
+
+  if (size != 0) {
+	user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, size);
+	if (user_phys == 0) {
+		tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EFAULT);
+		return;
+	}
+  }
+
+  r = OK;
+  switch (m_ptr->TTY_REQUEST) {
+    case TCGETS:
+	/* Get the termios attributes. */
+	phys_copy(vir2phys(&tp->tty_termios), user_phys, (phys_bytes) size);
+	break;
+
+    case TCSETSW:
+    case TCSETSF:
+    case TCDRAIN:
+	if (tp->tty_outleft > 0) {
+		/* Wait for all ongoing output processing to finish. */
+		tp->tty_iocaller = m_ptr->m_source;
+		tp->tty_ioproc = m_ptr->PROC_NR;
+		tp->tty_ioreq = m_ptr->REQUEST;
+		tp->tty_iovir = (vir_bytes) m_ptr->ADDRESS;
+		r = SUSPEND;
+		break;
+	}
+	if (m_ptr->TTY_REQUEST == TCDRAIN) break;
+	if (m_ptr->TTY_REQUEST == TCSETSF) tty_icancel(tp);
+	/*FALL THROUGH*/
+    case TCSETS:
+	/* Set the termios attributes. */
+	phys_copy(user_phys, vir2phys(&tp->tty_termios), (phys_bytes) size);
+	setattr(tp);
+	break;
+
+    case TCFLSH:
+	phys_copy(user_phys, vir2phys(&param.i), (phys_bytes) size);
+	switch (param.i) {
+	    case TCIFLUSH:	tty_icancel(tp);			break;
+	    case TCOFLUSH:	(*tp->tty_ocancel)(tp);			break;
+	    case TCIOFLUSH:	tty_icancel(tp); (*tp->tty_ocancel)(tp);break;
+	    default:		r = EINVAL;
+	}
+	break;
+
+    case TCFLOW:
+	phys_copy(user_phys, vir2phys(&param.i), (phys_bytes) size);
+	switch (param.i) {
+	    case TCOOFF:
+	    case TCOON:
+		tp->tty_inhibited = (param.i == TCOOFF);
+		tp->tty_events = 1;
+		break;
+	    case TCIOFF:
+		(*tp->tty_echo)(tp, tp->tty_termios.c_cc[VSTOP]);
+		break;
+	    case TCION:
+		(*tp->tty_echo)(tp, tp->tty_termios.c_cc[VSTART]);
+		break;
+	    default:
+		r = EINVAL;
+	}
+	break;
+
+    case TCSBRK:
+	if (tp->tty_break != NULL) (*tp->tty_break)(tp);
+	break;
+
+    case TIOCGWINSZ:
+	phys_copy(vir2phys(&tp->tty_winsize), user_phys, (phys_bytes) size);
+	break;
+
+    case TIOCSWINSZ:
+	phys_copy(user_phys, vir2phys(&tp->tty_winsize), (phys_bytes) size);
+	/* SIGWINCH... */
+	break;
+
+#if ENABLE_SRCCOMPAT
+    case TIOCGETP:
+	compat_getp(tp, &param.sg);
+	phys_copy(vir2phys(&param.sg), user_phys, (phys_bytes) size);
+	break;
+
+    case TIOCSETP:
+	phys_copy(user_phys, vir2phys(&param.sg), (phys_bytes) size);
+	compat_setp(tp, &param.sg);
+	break;
+
+    case TIOCGETC:
+	compat_getc(tp, &param.tc);
+	phys_copy(vir2phys(&param.tc), user_phys, (phys_bytes) size);
+	break;
+
+    case TIOCSETC:
+	phys_copy(user_phys, vir2phys(&param.tc), (phys_bytes) size);
+	compat_setc(tp, &param.tc);
+	break;
+#endif
+
+#if (MACHINE == IBM_PC)
+    case KIOCSMAP:
+	/* Load a new keymap (only /dev/console). */
+	if (isconsole(tp)) r = kbd_loadmap(user_phys);
+	break;
+
+    case TIOCSFON:
+	/* Load a font into an EGA or VGA card (hs@hck.hr) */
+	if (isconsole(tp)) r = con_loadfont(user_phys);
+	break;
+#endif
+
+#if (MACHINE == ATARI)
+    case VDU_LOADFONT:
+	r = vdu_loadfont(m_ptr);
+	break;
+#endif
+
+/* These Posix functions are allowed to fail if _POSIX_JOB_CONTROL is 
+ * not defined.
+ */
+    case TIOCGPGRP:     
+    case TIOCSPGRP:	
+    default:
+#if ENABLE_BINCOMPAT
+	do_ioctl_compat(tp, m_ptr);
+	return;
+#else
+	r = ENOTTY;
+#endif
+  }
+
+  /* Send the reply. */
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
+}
+
+
+/*===========================================================================*
+ *				do_open					     *
+ *===========================================================================*/
+PRIVATE void do_open(tp, m_ptr)
+register tty_t *tp;
+message *m_ptr;			/* pointer to message sent to task */
+{
+/* A tty line has been opened.  Make it the callers controlling tty if
+ * O_NOCTTY is *not* set and it is not the log device.  1 is returned if
+ * the tty is made the controlling tty, otherwise OK or an error code.
+ */
+  int r = OK;
+
+  if (m_ptr->TTY_LINE == LOG_MINOR) {
+	/* The log device is a write-only diagnostics device. */
+	if (m_ptr->COUNT & R_BIT) r = EACCES;
+  } else {
+	if (!(m_ptr->COUNT & O_NOCTTY)) {
+		tp->tty_pgrp = m_ptr->PROC_NR;
+		r = 1;
+	}
+	tp->tty_openct++;
+  }
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
+}
+
+
+/*===========================================================================*
+ *				do_close				     *
+ *===========================================================================*/
+PRIVATE void do_close(tp, m_ptr)
+register tty_t *tp;
+message *m_ptr;			/* pointer to message sent to task */
+{
+/* A tty line has been closed.  Clean up the line if it is the last close. */
+
+  if (m_ptr->TTY_LINE != LOG_MINOR && --tp->tty_openct == 0) {
+	tp->tty_pgrp = 0;
+	tty_icancel(tp);
+	(*tp->tty_ocancel)(tp);
+	(*tp->tty_close)(tp);
+	tp->tty_termios = termios_defaults;
+	tp->tty_winsize = winsize_defaults;
+	setattr(tp);
+  }
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK);
+}
+
+
+/*===========================================================================*
+ *				do_cancel				     *
+ *===========================================================================*/
+PRIVATE void do_cancel(tp, m_ptr)
+register tty_t *tp;
+message *m_ptr;			/* pointer to message sent to task */
+{
+/* A signal has been sent to a process that is hanging trying to read or write.
+ * The pending read or write must be finished off immediately.
+ */
+
+  int proc_nr;
+  int mode;
+
+  /* Check the parameters carefully, to avoid cancelling twice. */
+  proc_nr = m_ptr->PROC_NR;
+  mode = m_ptr->COUNT;
+  if ((mode & R_BIT) && tp->tty_inleft != 0 && proc_nr == tp->tty_inproc) {
+	/* Process was reading when killed.  Clean up input. */
+	tty_icancel(tp);
+	tp->tty_inleft = tp->tty_incum = 0;
+  }
+  if ((mode & W_BIT) && tp->tty_outleft != 0 && proc_nr == tp->tty_outproc) {
+	/* Process was writing when killed.  Clean up output. */
+	(*tp->tty_ocancel)(tp);
+	tp->tty_outleft = tp->tty_outcum = 0;
+  }
+  if (tp->tty_ioreq != 0 && proc_nr == tp->tty_ioproc) {
+	/* Process was waiting for output to drain. */
+	tp->tty_ioreq = 0;
+  }
+  tp->tty_events = 1;
+  tty_reply(TASK_REPLY, m_ptr->m_source, proc_nr, EINTR);
+}
+
+
+/*===========================================================================*
  *				handle_events				     *
  *===========================================================================*/
 PUBLIC void handle_events(tp)
@@ -263,6 +671,70 @@ tty_t *tp;			/* TTY to check for events. */
 
 
 /*===========================================================================*
+ *				in_transfer				     *
+ *===========================================================================*/
+PRIVATE void in_transfer(tp)
+register tty_t *tp;		/* pointer to terminal to read from */
+{
+/* Transfer bytes from the input queue to a process reading from a terminal. */
+
+  int ch;
+  int count;
+  phys_bytes buf_phys, user_base;
+  char buf[64], *bp;
+
+  /* Anything to do? */
+  if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;
+
+  buf_phys = vir2phys(buf);
+  user_base = proc_vir2phys(proc_addr(tp->tty_inproc), 0);
+  bp = buf;
+  while (tp->tty_inleft > 0 && tp->tty_eotct > 0) {
+	ch = *tp->tty_intail;
+
+	if (!(ch & IN_EOF)) {
+		/* One character to be delivered to the user. */
+		*bp = ch & IN_CHAR;
+		tp->tty_inleft--;
+		if (++bp == bufend(buf)) {
+			/* Temp buffer full, copy to user space. */
+			phys_copy(buf_phys, user_base + tp->tty_in_vir,
+						(phys_bytes) buflen(buf));
+			tp->tty_in_vir += buflen(buf);
+			tp->tty_incum += buflen(buf);
+			bp = buf;
+		}
+	}
+
+	/* Remove the character from the input queue. */
+	if (++tp->tty_intail == bufend(tp->tty_inbuf))
+		tp->tty_intail = tp->tty_inbuf;
+	tp->tty_incount--;
+	if (ch & IN_EOT) {
+		tp->tty_eotct--;
+		/* Don't read past a line break in canonical mode. */
+		if (tp->tty_termios.c_lflag & ICANON) tp->tty_inleft = 0;
+	}
+  }
+
+  if (bp > buf) {
+	/* Leftover characters in the buffer. */
+	count = bp - buf;
+	phys_copy(buf_phys, user_base + tp->tty_in_vir, (phys_bytes) count);
+	tp->tty_in_vir += count;
+	tp->tty_incum += count;
+  }
+
+  /* Usually reply to the reader, possibly even if incum == 0 (EOF). */
+  if (tp->tty_inleft == 0) {
+	tty_reply(tp->tty_inrepcode, tp->tty_incaller, tp->tty_inproc,
+								tp->tty_incum);
+	tp->tty_inleft = tp->tty_incum = 0;
+  }
+}
+
+
+/*===========================================================================*
  *				in_process				     *
  *===========================================================================*/
 PUBLIC int in_process(tp, buf, count)
@@ -270,7 +742,7 @@ register tty_t *tp;		/* terminal on which character has arrived */
 char *buf;			/* buffer with input characters */
 int count;			/* number of input characters */
 {
-/* Characters has just been typed in.  Process, save, and echo them.  Return
+/* Characters have just been typed in.  Process, save, and echo them.  Return
  * the number of characters processed.
  */
 
@@ -427,70 +899,6 @@ int count;			/* number of input characters */
 
 
 /*===========================================================================*
- *				in_transfer				     *
- *===========================================================================*/
-PRIVATE void in_transfer(tp)
-register tty_t *tp;		/* pointer to terminal to read from */
-{
-/* Transfer bytes from the input queue to a process reading from a terminal. */
-
-  int ch;
-  int count;
-  phys_bytes buf_phys, user_base;
-  char buf[64], *bp;
-
-  /* Anything to do? */
-  if (tp->tty_inleft == 0 || tp->tty_eotct < tp->tty_min) return;
-
-  buf_phys = vir2phys(buf);
-  user_base = proc_vir2phys(proc_addr(tp->tty_inproc), 0);
-  bp = buf;
-  while (tp->tty_inleft > 0 && tp->tty_eotct > 0) {
-	ch = *tp->tty_intail;
-
-	if (!(ch & IN_EOF)) {
-		/* One character to be delivered to the user. */
-		*bp = ch & IN_CHAR;
-		tp->tty_inleft--;
-		if (++bp == bufend(buf)) {
-			/* Temp buffer full, copy to user space. */
-			phys_copy(buf_phys, user_base + tp->tty_in_vir,
-						(phys_bytes) buflen(buf));
-			tp->tty_in_vir += buflen(buf);
-			tp->tty_incum += buflen(buf);
-			bp = buf;
-		}
-	}
-
-	/* Remove the character from the input queue. */
-	if (++tp->tty_intail == bufend(tp->tty_inbuf))
-		tp->tty_intail = tp->tty_inbuf;
-	tp->tty_incount--;
-	if (ch & IN_EOT) {
-		tp->tty_eotct--;
-		/* Don't read past a line break in canonical mode. */
-		if (tp->tty_termios.c_lflag & ICANON) tp->tty_inleft = 0;
-	}
-  }
-
-  if (bp > buf) {
-	/* Leftover characters in the buffer. */
-	count = bp - buf;
-	phys_copy(buf_phys, user_base + tp->tty_in_vir, (phys_bytes) count);
-	tp->tty_in_vir += count;
-	tp->tty_incum += count;
-  }
-
-  /* Reply to the reader, even if incum == 0 (EOF). */
-  if (tp->tty_inleft == 0) {
-	tty_reply(tp->tty_inrepcode, tp->tty_incaller, tp->tty_inproc,
-								tp->tty_incum);
-	tp->tty_inleft = tp->tty_incum = 0;
-  }
-}
-
-
-/*===========================================================================*
  *				echo					     *
  *===========================================================================*/
 PRIVATE int echo(tp, ch)
@@ -498,7 +906,7 @@ register tty_t *tp;		/* terminal on which to echo */
 register int ch;		/* pointer to character to echo */
 {
 /* Echo the character if echoing is on.  Some control characters are echoed
- * with there normal effect, any other control character is echoed as "^X",
+ * with their normal effect, other control characters are echoed as "^X",
  * normal characters are echoed normally.  EOF (^D) is echoed, but immediately
  * backspaced over.  Return the character with the echoed length added to its
  * attributes.
@@ -636,126 +1044,6 @@ register tty_t *tp;		/* pointer to tty struct */
 }
 
 
-/*===========================================================================*
- *				do_read					     *
- *===========================================================================*/
-PRIVATE void do_read(tp, m_ptr)
-register tty_t *tp;		/* pointer to tty struct */
-message *m_ptr;			/* pointer to message sent to the task */
-{
-/* A process wants to read from a terminal. */
-  int r;
-
-  /* Check if there is already a process hanging in a read, check if the
-   * parameters are correct, do I/O.
-   */
-  if (tp->tty_inleft > 0) {
-	r = EIO;
-  } else
-  if (m_ptr->COUNT <= 0) {
-	r = EINVAL;
-  } else
-  if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT) == 0) {
-	r = EFAULT;
-  } else {
-	/* Copy information from the message to the tty struct. */
-	tp->tty_inrepcode = TASK_REPLY;
-	tp->tty_incaller = m_ptr->m_source;
-	tp->tty_inproc = m_ptr->PROC_NR;
-	tp->tty_in_vir = (vir_bytes) m_ptr->ADDRESS;
-	tp->tty_inleft = m_ptr->COUNT;
-
-	if (!(tp->tty_termios.c_lflag & ICANON)
-					&& tp->tty_termios.c_cc[VTIME] > 0) {
-		if (tp->tty_termios.c_cc[VMIN] == 0) {
-			/* MIN & TIME specify a read timer that finishes the
-			 * read in TIME/10 seconds if no bytes are available.
-			 */
-			lock();
-			settimer(tp, TRUE);
-			tp->tty_min = 1;
-			unlock();
-		} else {
-			/* MIN & TIME specify an inter-byte timer that may
-			 * have to be cancelled if there are no bytes yet.
-			 */
-			if (tp->tty_eotct == 0) {
-				lock();
-				settimer(tp, FALSE);
-				unlock();
-				tp->tty_min = tp->tty_termios.c_cc[VMIN];
-			}
-		}
-	}
-
-	/* Anything waiting in the input buffer? */
-	in_transfer(tp);
-	handle_events(tp);
-	if (tp->tty_inleft == 0) return;		/* already done */
-
-	/* There were no bytes in the input queue available, so either suspend
-	 * the caller or break off the read if nonblocking.
-	 */
-	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {
-		r = EAGAIN;				/* cancel the read */
-		tp->tty_inleft = tp->tty_incum = 0;
-	} else {
-		r = SUSPEND;				/* suspend the caller */
-		tp->tty_inrepcode = REVIVE;
-	}
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
-}
-
-
-/*===========================================================================*
- *				do_write				     *
- *===========================================================================*/
-PRIVATE void do_write(tp, m_ptr)
-register tty_t *tp;
-register message *m_ptr;	/* pointer to message sent to the task */
-{
-/* A process wants to write on a terminal. */
-  int r;
-
-  /* Check if there is already a process hanging in a write, check if the
-   * parameters are correct, do I/O.
-   */
-  if (tp->tty_outleft > 0) {
-	r = EIO;
-  } else
-  if (m_ptr->COUNT <= 0) {
-	r = EINVAL;
-  } else
-  if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT) == 0) {
-	r = EFAULT;
-  } else {
-	/* Copy message parameters to the tty structure. */
-	tp->tty_outrepcode = TASK_REPLY;
-	tp->tty_outcaller = m_ptr->m_source;
-	tp->tty_outproc = m_ptr->PROC_NR;
-	tp->tty_out_vir = (vir_bytes) m_ptr->ADDRESS;
-	tp->tty_outleft = m_ptr->COUNT;
-
-	/* Try to write. */
-	handle_events(tp);
-	if (tp->tty_outleft == 0) return;		/* already done */
-
-	/* None or not all the bytes could be written, so either suspend the
-	 * caller or break off the write if nonblocking.
-	 */
-	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {		/* cancel the write */
-		r = tp->tty_outcum > 0 ? tp->tty_outcum : EAGAIN;
-		tp->tty_outleft = tp->tty_outcum = 0;
-	} else {
-		r = SUSPEND;				/* suspend the caller */
-		tp->tty_outrepcode = REVIVE;
-	}
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
-}
-
-
 /*==========================================================================*
  *				out_process				    *
  *==========================================================================*/
@@ -843,184 +1131,6 @@ out_done:
 
 
 /*===========================================================================*
- *				do_ioctl				     *
- *===========================================================================*/
-PRIVATE void do_ioctl(tp, m_ptr)
-register tty_t *tp;
-message *m_ptr;			/* pointer to message sent to task */
-{
-/* Perform an IOCTL on this terminal. */
-
-  int r;
-  union {
-	int i;
-#if ENABLE_SRCCOMPAT
-	struct sgttyb sg;
-	struct tchars tc;
-#endif
-  } param;
-  phys_bytes user_phys;
-  size_t size;
-
-  /* Size of the ioctl parameter. */
-  switch (m_ptr->TTY_REQUEST) {
-    case TCGETS:
-    case TCSETS:
-    case TCSETSW:
-    case TCSETSF:	size = sizeof(struct termios);	break;
-    case TCSBRK:
-    case TCFLOW:
-    case TCFLSH:
-    case TIOCGPGRP:
-    case TIOCSPGRP:	size = sizeof(int);		break;
-    case TIOCGWINSZ:
-    case TIOCSWINSZ:	size = sizeof(struct winsize);	break;
-#if ENABLE_SRCCOMPAT
-    case TIOCGETP:
-    case TIOCSETP:	size = sizeof(struct sgttyb);	break;
-    case TIOCGETC:
-    case TIOCSETC:	size = sizeof(struct tchars);	break;
-#endif
-#if (MACHINE == IBM_PC)
-    case KIOCSMAP:	size = sizeof(keymap_t);	break;
-    case TIOCSFON:	size = sizeof(u8_t [8192]);	break;
-#endif
-    default:		size = 0;
-  }
-
-  if (size != 0) {
-	user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, size);
-	if (user_phys == 0) {
-		tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, EFAULT);
-		return;
-	}
-  }
-
-  r = OK;
-  switch (m_ptr->TTY_REQUEST) {
-    case TCGETS:
-	/* Get the termios attributes. */
-	phys_copy(vir2phys(&tp->tty_termios), user_phys, (phys_bytes) size);
-	break;
-
-    case TCSETSW:
-    case TCSETSF:
-    case TCDRAIN:
-	if (tp->tty_outleft > 0) {
-		/* Wait for all ongoing output processing to finish. */
-		tp->tty_iocaller = m_ptr->m_source;
-		tp->tty_ioproc = m_ptr->PROC_NR;
-		tp->tty_ioreq = m_ptr->REQUEST;
-		tp->tty_iovir = (vir_bytes) m_ptr->ADDRESS;
-		r = SUSPEND;
-		break;
-	}
-	if (m_ptr->TTY_REQUEST == TCDRAIN) break;
-	if (m_ptr->TTY_REQUEST == TCSETSF) tty_icancel(tp);
-	/*FALL THROUGH*/
-    case TCSETS:
-	/* Set the termios attributes. */
-	phys_copy(user_phys, vir2phys(&tp->tty_termios), (phys_bytes) size);
-	setattr(tp);
-	break;
-
-    case TCFLSH:
-	phys_copy(user_phys, vir2phys(&param.i), (phys_bytes) size);
-	switch (param.i) {
-	    case TCIFLUSH:	tty_icancel(tp);			break;
-	    case TCOFLUSH:	(*tp->tty_ocancel)(tp);			break;
-	    case TCIOFLUSH:	tty_icancel(tp); (*tp->tty_ocancel)(tp);break;
-	    default:		r = EINVAL;
-	}
-	break;
-
-    case TCFLOW:
-	phys_copy(user_phys, vir2phys(&param.i), (phys_bytes) size);
-	switch (param.i) {
-	    case TCOOFF:
-	    case TCOON:
-		tp->tty_inhibited = (param.i == TCOOFF);
-		tp->tty_events = 1;
-		break;
-	    case TCIOFF:
-		(*tp->tty_echo)(tp, tp->tty_termios.c_cc[VSTOP]);
-		break;
-	    case TCION:
-		(*tp->tty_echo)(tp, tp->tty_termios.c_cc[VSTOP]);
-		break;
-	    default:
-		r = EINVAL;
-	}
-	break;
-
-    case TCSBRK:
-	if (tp->tty_break != NULL) (*tp->tty_break)(tp);
-	break;
-
-    case TIOCGWINSZ:
-	phys_copy(vir2phys(&tp->tty_winsize), user_phys, (phys_bytes) size);
-	break;
-
-    case TIOCSWINSZ:
-	phys_copy(user_phys, vir2phys(&tp->tty_winsize), (phys_bytes) size);
-	/* SIGWINCH... */
-	break;
-
-#if ENABLE_SRCCOMPAT
-    case TIOCGETP:
-	compat_getp(tp, &param.sg);
-	phys_copy(vir2phys(&param.sg), user_phys, (phys_bytes) size);
-	break;
-
-    case TIOCSETP:
-	phys_copy(user_phys, vir2phys(&param.sg), (phys_bytes) size);
-	compat_setp(tp, &param.sg);
-	break;
-
-    case TIOCGETC:
-	compat_getc(tp, &param.tc);
-	phys_copy(vir2phys(&param.tc), user_phys, (phys_bytes) size);
-	break;
-
-    case TIOCSETC:
-	phys_copy(user_phys, vir2phys(&param.tc), (phys_bytes) size);
-	compat_setc(tp, &param.tc);
-	break;
-#endif
-
-#if (MACHINE == IBM_PC)
-    case KIOCSMAP:
-	/* Load a new keymap (only /dev/console). */
-	if (isconsole(tp)) r = kbd_loadmap(user_phys);
-	break;
-
-    case TIOCSFON:
-	/* Load a font into an EGA or VGA card (hs@hck.hr) */
-	if (isconsole(tp)) r = con_loadfont(user_phys);
-	break;
-#endif
-
-#if (MACHINE == ATARI)
-    case VDU_LOADFONT:
-	r = vdu_loadfont(m_ptr);
-	break;
-#endif
-
-    default:
-#if ENABLE_BINCOMPAT
-	do_ioctl_compat(tp, m_ptr);
-	return;
-#else
-	r = ENOTTY;
-#endif
-  }
-
-  /* Send the reply. */
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
-}
-
-
-/*===========================================================================*
  *				dev_ioctl				     *
  *===========================================================================*/
 PRIVATE void dev_ioctl(tp)
@@ -1099,92 +1209,6 @@ tty_t *tp;
 
   /* Set new line speed, character size, etc at the device level. */
   (*tp->tty_ioctl)(tp);
-}
-
-
-/*===========================================================================*
- *				do_open					     *
- *===========================================================================*/
-PRIVATE void do_open(tp, m_ptr)
-register tty_t *tp;
-message *m_ptr;			/* pointer to message sent to task */
-{
-/* A tty line has been opened.  Make it the callers controlling tty if
- * O_NOCTTY is *not* set and it is not the log device.  1 is returned if
- * the tty is made the controlling tty, otherwise OK or an error code.
- */
-  int r = OK;
-
-  if (m_ptr->TTY_LINE == LOG_MINOR) {
-	/* The log device is a write-only diagnostics device. */
-	if (m_ptr->COUNT & R_BIT) r = EACCES;
-  } else {
-	if (!(m_ptr->COUNT & O_NOCTTY)) {
-		tp->tty_pgrp = m_ptr->PROC_NR;
-		r = 1;
-	}
-	if (tp->tty_openct++ == 0) {
-	}
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
-}
-
-
-/*===========================================================================*
- *				do_close				     *
- *===========================================================================*/
-PRIVATE void do_close(tp, m_ptr)
-register tty_t *tp;
-message *m_ptr;			/* pointer to message sent to task */
-{
-/* A tty line has been closed.  Clean up the line if it is the last close. */
-
-  if (m_ptr->TTY_LINE != LOG_MINOR && --tp->tty_openct == 0) {
-	tp->tty_pgrp = 0;
-	tty_icancel(tp);
-	(*tp->tty_ocancel)(tp);
-	(*tp->tty_close)(tp);
-	tp->tty_termios = termios_defaults;
-	tp->tty_winsize = winsize_defaults;
-	setattr(tp);
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, OK);
-}
-
-
-/*===========================================================================*
- *				do_cancel				     *
- *===========================================================================*/
-PRIVATE void do_cancel(tp, m_ptr)
-register tty_t *tp;
-message *m_ptr;			/* pointer to message sent to task */
-{
-/* A signal has been sent to a process that is hanging trying to read or write.
- * The pending read or write must be finished off immediately.
- */
-
-  int proc_nr;
-  int mode;
-
-  /* Check the parameters carefully, to avoid cancelling twice. */
-  proc_nr = m_ptr->PROC_NR;
-  mode = m_ptr->COUNT;
-  if ((mode & R_BIT) && tp->tty_inleft != 0 && proc_nr == tp->tty_inproc) {
-	/* Process was reading when killed.  Clean up input. */
-	tty_icancel(tp);
-	tp->tty_inleft = tp->tty_incum = 0;
-  }
-  if ((mode & W_BIT) && tp->tty_outleft != 0 && proc_nr == tp->tty_outproc) {
-	/* Process was writing when killed.  Clean up output. */
-	(*tp->tty_ocancel)(tp);
-	tp->tty_outleft = tp->tty_outcum = 0;
-  }
-  if (tp->tty_ioreq != 0 && proc_nr == tp->tty_ioproc) {
-	/* Process was waiting for output to drain. */
-	tp->tty_ioreq = 0;
-  }
-  tp->tty_events = 1;
-  tty_reply(TASK_REPLY, m_ptr->m_source, proc_nr, EINTR);
 }
 
 
@@ -1273,16 +1297,6 @@ tty_t *tp;			/* TTY line to initialize. */
 
 
 /*==========================================================================*
- *				tty_devnop				    *
- *==========================================================================*/
-PUBLIC void tty_devnop(tp)
-tty_t *tp;
-{
-  /* Some functions need not be implemented at the device level. */
-}
-
-
-/*==========================================================================*
  *				tty_wakeup				    *
  *==========================================================================*/
 PUBLIC void tty_wakeup(now)
@@ -1342,6 +1356,16 @@ int on;				/* set timer if true, otherwise unset */
   tp->tty_timenext = *ptp;
   *ptp = tp;
   if (tp->tty_time < tty_timeout) tty_timeout = tp->tty_time;
+}
+
+
+/*==========================================================================*
+ *				tty_devnop				    *
+ *==========================================================================*/
+PUBLIC void tty_devnop(tp)
+tty_t *tp;
+{
+  /* Some functions need not be implemented at the device level. */
 }
 
 
@@ -1688,3 +1712,6 @@ message *m_ptr;
 }
 #endif /* ENABLE_BINCOMPAT */
 #endif /* ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT */
+
+
+

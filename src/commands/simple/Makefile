@@ -117,7 +117,8 @@ all:	bin \
 	bin/life \
 	bin/login \
 	bin/look \
-	bin/lpr \
+	bin/lp \
+	bin/lpd \
 	bin/ls \
 	bin/mail \
 	bin/man \
@@ -524,7 +525,11 @@ bin/look:	look.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/lpr:	lpr.c
+bin/lp:	lp.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+bin/lpd:	lpd.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -977,7 +982,8 @@ install:	bin \
 	/usr/bin/life \
 	/usr/bin/login \
 	/usr/bin/look \
-	/usr/bin/lpr \
+	/usr/bin/lp \
+	/usr/bin/lpd \
 	/usr/bin/ls \
 	/usr/bin/mail \
 	/usr/bin/man \
@@ -1337,7 +1343,10 @@ install:	bin \
 /usr/bin/look:	bin/look
 	install -cs -o bin $? $@
 
-/usr/bin/lpr:	bin/lpr
+/usr/bin/lp:	bin/lp
+	install -cs -o bin $? $@
+
+/usr/bin/lpd:	bin/lpd
 	install -cs -o daemon -m 4755 $? $@
 
 /usr/bin/ls:	bin/ls

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 1.16 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 1.17 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -88,7 +88,7 @@ do
 		;;
 	4,0)	des="console device" dev=console
 		;;
-	4,[1-3])des="virtual console $minor" dev=ttyc$minor
+	4,[1-7])des="virtual console $minor" dev=ttyc$minor
 		;;
 	4,15)	des="diagnostics device" dev=log
 		;;

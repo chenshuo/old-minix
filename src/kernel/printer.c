@@ -90,7 +90,6 @@ PRIVATE int writing;		/* nonzero while write is in progress */
 FORWARD _PROTOTYPE( void do_cancel, (message *m_ptr) );
 FORWARD _PROTOTYPE( void do_done, (void) );
 FORWARD _PROTOTYPE( void do_write, (message *m_ptr) );
-FORWARD _PROTOTYPE( void pr_error, (int status) );
 FORWARD _PROTOTYPE( void pr_start, (void) );
 FORWARD _PROTOTYPE( void print_init, (void) );
 FORWARD _PROTOTYPE( void reply, (int code, int replyee, int process,
@@ -176,9 +175,21 @@ PRIVATE void do_done()
 
   if (!writing) return;		/* interrupt while canceling */
   if (done_status != OK) {
-	oleft = 0;		/* cancel output by interrupt handler */
-	pr_error(done_status);
+	/* Printer error. */
 	status = EIO;
+	if ((done_status & ON_LINE) == 0) {
+		printf("Printer is not on line\n");
+	} else
+	if (done_status & NO_PAPER) {
+		status = EAGAIN;	/* out of paper */
+	} else {
+		printf("Printer error, status is 0x%02X\n", done_status);
+	}
+	if (status == EAGAIN && user_left < orig_count) {
+		/* Some characters have been printed, tell how many. */
+		status = orig_count - user_left;
+	}
+	oleft = 0;		/* cancel output by interrupt handler */
   } else if (user_left != 0) {
 	pr_start();
 	return;
@@ -231,25 +242,6 @@ int status;			/* number of  chars printed or error code */
 
 
 /*===========================================================================*
- *				pr_error				     *
- *===========================================================================*/
-PRIVATE void pr_error(status)
-int status;			/* printer status byte */
-{
-/* The printer is not ready.  Display a message on the console telling why. */
-
-  if ((status & ON_LINE) == 0)
-	printf("Printer is not on line\n");
-  else {
-	if (status & NO_PAPER)
-		printf("Printer is out of paper\n");
-	else
-		printf("Printer error, status is 0x%02x\n", status);
-  }
-}
-
-
-/*===========================================================================*
  *				print_init				     *
  *===========================================================================*/
 PRIVATE void print_init()
@@ -280,8 +272,6 @@ PRIVATE void pr_start()
   if ( (chunk = user_left) > sizeof obuf) chunk = sizeof obuf;
   user_phys = proc_vir2phys(proc_addr(proc_nr), user_vir);
   phys_copy(user_phys, vir2phys(obuf), (phys_bytes) chunk);
-  user_vir += chunk;
-  user_left -= chunk;
   optr = obuf;
   opending = TRUE;
   oleft = chunk;		/* now interrupt handler is enabled */
@@ -340,6 +330,9 @@ int irq;
 		out_byte(port_base + 2, NEGATE_STROBE);
 		unlock();
 		opending = FALSE;	/* show interrupt is working */
+
+		user_vir++;
+		user_left--;
 	} else {
 		/* Error.  This would be better ignored (treat as busy). */
 		done_status = status;

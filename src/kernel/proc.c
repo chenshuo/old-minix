@@ -526,7 +526,7 @@ struct proc *rp;		/* this process is now runnable */
 PUBLIC void lock_unready(rp)
 struct proc *rp;		/* this process is no longer runnable */
 {
-/* Safe gateway to ready() for tasks. */
+/* Safe gateway to unready() for tasks. */
 
   switching = TRUE;
   unready(rp);
@@ -538,7 +538,7 @@ struct proc *rp;		/* this process is no longer runnable */
  *==========================================================================*/
 PUBLIC void lock_sched()
 {
-/* Safe gateway to lock_sched() for tasks. */
+/* Safe gateway to sched() for tasks. */
 
   switching = TRUE;
   sched();

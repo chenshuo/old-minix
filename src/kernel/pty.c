@@ -71,6 +71,130 @@ FORWARD _PROTOTYPE( void pty_ocancel, (tty_t *tp)			);
 
 
 /*==========================================================================*
+ *				do_pty					    *
+ *==========================================================================*/
+PUBLIC void do_pty(tp, m_ptr)
+tty_t *tp;
+message *m_ptr;
+{
+/* Perform an open/close/read/write call on a /dev/ptypX device. */
+  pty_t *pp = tp->tty_priv;
+  int r;
+
+  switch (m_ptr->m_type) {
+    case DEV_READ:
+	/* Check, store information on the reader, do I/O. */
+	if (pp->state & TTY_CLOSED) {
+		r = 0;
+		break;
+	}
+	if (pp->rdleft != 0) {
+		r = EIO;
+		break;
+	}
+	if (m_ptr->COUNT <= 0) {
+		r = EINVAL;
+		break;
+	}
+	if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+							m_ptr->COUNT) == 0) {
+		r = EFAULT;
+		break;
+	}
+	pp->rdrepcode = TASK_REPLY;
+	pp->rdcaller = m_ptr->m_source;
+	pp->rdproc = m_ptr->PROC_NR;
+	pp->rdvir = (vir_bytes) m_ptr->ADDRESS;
+	pp->rdleft = m_ptr->COUNT;
+	pty_start(pp);
+	handle_events(tp);
+	if (pp->rdleft == 0) return;			/* already done */
+
+	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {
+		r = EAGAIN;				/* don't suspend */
+		pp->rdleft = pp->rdcum = 0;
+	} else {
+		r = SUSPEND;				/* do suspend */
+		pp->rdrepcode = REVIVE;
+	}
+	break;
+
+    case DEV_WRITE:
+	/* Check, store information on the writer, do I/O. */
+	if (pp->state & TTY_CLOSED) {
+		r = EIO;
+		break;
+	}
+	if (pp->wrleft != 0) {
+		r = EIO;
+		break;
+	}
+	if (m_ptr->COUNT <= 0) {
+		r = EINVAL;
+		break;
+	}
+	if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+							m_ptr->COUNT) == 0) {
+		r = EFAULT;
+		break;
+	}
+	pp->wrrepcode = TASK_REPLY;
+	pp->wrcaller = m_ptr->m_source;
+	pp->wrproc = m_ptr->PROC_NR;
+	pp->wrvir = (vir_bytes) m_ptr->ADDRESS;
+	pp->wrleft = m_ptr->COUNT;
+	handle_events(tp);
+	if (pp->wrleft == 0) return;			/* already done */
+
+	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {		/* don't suspend */
+		r = pp->wrcum > 0 ? pp->wrcum : EAGAIN;
+		pp->wrleft = pp->wrcum = 0;
+	} else {
+		pp->wrrepcode = REVIVE;			/* do suspend */
+		r = SUSPEND;
+	}
+	break;
+
+    case DEV_IOCTL:
+	/* No ioctl's allowed on the pty side. */
+	r = ENOTTY;
+	break;
+
+    case DEV_OPEN:
+	r = pp->state != 0 ? EIO : OK;
+	pp->state |= PTY_ACTIVE;
+	break;
+
+    case DEV_CLOSE:
+	r = OK;
+	if (pp->state & TTY_CLOSED) {
+		pp->state = 0;
+	} else {
+		pp->state |= PTY_CLOSED;
+		sigchar(tp, SIGHUP);
+	}
+	break;
+
+    case CANCEL:
+	if (m_ptr->PROC_NR == pp->rdproc) {
+		/* Cancel a read from a PTY. */
+		pp->rdleft = pp->rdcum = 0;
+	}
+	if (m_ptr->PROC_NR == pp->wrproc) {
+		/* Cancel a write to a PTY. */
+		pp->wrleft = pp->wrcum = 0;
+	}
+	r = EINTR;
+	break;
+
+    default:
+	r = EINVAL;
+  }
+  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
+}
+
+
+/*==========================================================================*
  *				pty_write				    *
  *==========================================================================*/
 PRIVATE void pty_write(tp)
@@ -298,130 +422,6 @@ tty_t *tp;
 
   pp->ocount = 0;
   pp->otail = pp->ohead;
-}
-
-
-/*==========================================================================*
- *				do_pty					    *
- *==========================================================================*/
-PUBLIC void do_pty(tp, m_ptr)
-tty_t *tp;
-message *m_ptr;
-{
-/* Perform an open/close/read/write call on a /dev/ptypX device. */
-  pty_t *pp = tp->tty_priv;
-  int r;
-
-  switch (m_ptr->m_type) {
-    case DEV_READ:
-	/* Check, store information on the reader, do I/O. */
-	if (pp->state & TTY_CLOSED) {
-		r = 0;
-		break;
-	}
-	if (pp->rdleft != 0) {
-		r = EIO;
-		break;
-	}
-	if (m_ptr->COUNT <= 0) {
-		r = EINVAL;
-		break;
-	}
-	if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-							m_ptr->COUNT) == 0) {
-		r = EFAULT;
-		break;
-	}
-	pp->rdrepcode = TASK_REPLY;
-	pp->rdcaller = m_ptr->m_source;
-	pp->rdproc = m_ptr->PROC_NR;
-	pp->rdvir = (vir_bytes) m_ptr->ADDRESS;
-	pp->rdleft = m_ptr->COUNT;
-	pty_start(pp);
-	handle_events(tp);
-	if (pp->rdleft == 0) return;			/* already done */
-
-	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {
-		r = EAGAIN;				/* don't suspend */
-		pp->rdleft = pp->rdcum = 0;
-	} else {
-		r = SUSPEND;				/* do suspend */
-		pp->rdrepcode = REVIVE;
-	}
-	break;
-
-    case DEV_WRITE:
-	/* Check, store information on the writer, do I/O. */
-	if (pp->state & TTY_CLOSED) {
-		r = EIO;
-		break;
-	}
-	if (pp->wrleft != 0) {
-		r = EIO;
-		break;
-	}
-	if (m_ptr->COUNT <= 0) {
-		r = EINVAL;
-		break;
-	}
-	if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-							m_ptr->COUNT) == 0) {
-		r = EFAULT;
-		break;
-	}
-	pp->wrrepcode = TASK_REPLY;
-	pp->wrcaller = m_ptr->m_source;
-	pp->wrproc = m_ptr->PROC_NR;
-	pp->wrvir = (vir_bytes) m_ptr->ADDRESS;
-	pp->wrleft = m_ptr->COUNT;
-	handle_events(tp);
-	if (pp->wrleft == 0) return;			/* already done */
-
-	if (m_ptr->TTY_FLAGS & O_NONBLOCK) {		/* don't suspend */
-		r = pp->wrcum > 0 ? pp->wrcum : EAGAIN;
-		pp->wrleft = pp->wrcum = 0;
-	} else {
-		pp->wrrepcode = REVIVE;			/* do suspend */
-		r = SUSPEND;
-	}
-	break;
-
-    case DEV_IOCTL:
-	/* No ioctl's allowed on the pty side. */
-	r = ENOTTY;
-	break;
-
-    case DEV_OPEN:
-	r = pp->state != 0 ? EIO : OK;
-	pp->state |= PTY_ACTIVE;
-	break;
-
-    case DEV_CLOSE:
-	r = OK;
-	if (pp->state & TTY_CLOSED) {
-		pp->state = 0;
-	} else {
-		pp->state |= PTY_CLOSED;
-		sigchar(tp, SIGHUP);
-	}
-	break;
-
-    case CANCEL:
-	if (m_ptr->PROC_NR == pp->rdproc) {
-		/* Cancel a read from a PTY. */
-		pp->rdleft = pp->rdcum = 0;
-	}
-	if (m_ptr->PROC_NR == pp->wrproc) {
-		/* Cancel a write to a PTY. */
-		pp->wrleft = pp->wrcum = 0;
-	}
-	r = EINTR;
-	break;
-
-    default:
-	r = EINVAL;
-  }
-  tty_reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
 

@@ -1,4 +1,4 @@
-/*	part 1.43 - Partition table editor		Author: Kees J. Bot
+/*	part 1.45 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 20k heap+stack.
  */
@@ -31,9 +31,10 @@
 
 /* Template:
                       ----first----  --geom/last--  ------sectors-----
-Num Sort   Type        Cyl Head Sec   Cyl Head Sec      Base      Size       Kb
-         /dev/hd0                     977    5  17
-         /dev/hd0:2      0    0   2   976    4  16         2     83043    41521
+    Device             Cyl Head Sec   Cyl Head Sec      Base      Size       Kb
+    /dev/hd0                          977    5  17
+    /dev/hd0:2           0    0   2   976    4  16         2     83043    41521
+Num Sort   Type
  1* hd1  81 MINIX        0    0   3    33    4   9         3      2880     1440
  2  hd2  81 MINIX       33    4  10   178    2   2      2883     12284     6142
  3  hd3  81 MINIX      178    2   3   976    4  16     15167     67878    33939
@@ -88,7 +89,7 @@ void tty_raw(void)
 
 char t_cd[16], t_cm[32], t_so[16], t_se[16], t_md[16], t_me[16];
 int t_li, t_co;
-#define STATUSROW	9
+#define STATUSROW	10
 
 void init_tty(void)
 /* Get terminal capabilities and set the tty to "editor" mode. */
@@ -164,7 +165,7 @@ void stat_reset(void)
 	if (need_help && statusrow < (24-2)) {
 		if (statusrow > STATUSROW) stat_start(0);
 		stat_start(0);
-		putstr("Type '?' for help, '!' for advise");
+		putstr("Type '?' for help, '!' for advice");
 	}
 	statusrow= STATUSROW;
 	need_help= 0;
@@ -434,17 +435,17 @@ void guess_geometry(void)
 
 		if (chs[0] >= alt_cyls) alt_cyls= chs[0]+1;
 
-		if (chs[0] == 0 && chs[1] == 0) continue;
 		if (chs[2] > sec) continue;
 		sec -= chs[2];
 
-		/* See if there is one CHS geometry that matches. */
+		/* See if there is exactly one CHS geometry that matches. */
 		n = 0;
 		for (s= 1; s <= 63; s++) {
 			if (sec % s != 0) continue;
 			t= sec / s;
 			if (t < chs[1]) continue;
 			t= t - chs[1];
+			if (chs[0] == 0) continue;
 			if (t % chs[0] != 0) continue;
 			h= t / chs[0];
 			if (h < 1 || h > 255) continue;
@@ -573,7 +574,7 @@ void geometry(void)
 
 typedef struct indicators {	/* Partition type to partition name. */
 	unsigned char	ind;
-	char		*name;
+	char		name[10];
 } indicators_t;
 
 indicators_t ind_table[]= {
@@ -789,8 +790,8 @@ void print(object_t *op)
 				/* Name of currently edited device. */
 		name= op->type == O_DEV ? curdev->name :
 					offset == 0 ? "" : curdev->subname;
-		if ((n= strlen(name)) < 10) n= 10;
-		strcpy(op->value, name + (n - 10));
+		if ((n= strlen(name)) < op->len) n= op->len;
+		strcpy(op->value, name + (n - op->len));
 		if (device < 0 && op->type == O_DEV) op->flags|= OF_BAD;
 		break;
 	case O_NUM:
@@ -1983,16 +1984,17 @@ int main(int argc, char **argv)
 	op= newobject(O_TEXT, 0, 0, 22, 13); op->text= "----first----";
 	op= newobject(O_TEXT, 0, 0, 37, 13); op->text= "--geom/last--";
 	op= newobject(O_TEXT, 0, 0, 52, 18); op->text= "------sectors-----";
-	op= newobject(O_TEXT, 0, 1,  0, 15); op->text= "Num Sort   Type";
+	op= newobject(O_TEXT, 0, 1,  4,  6); op->text= "Device";
 	op= newobject(O_TEXT, 0, 1, 23, 12); op->text= "Cyl Head Sec";
 	op= newobject(O_TEXT, 0, 1, 38, 12); op->text= "Cyl Head Sec";
 	op= newobject(O_TEXT, 0, 1, 56,  4); op->text= "Base";
 	op= newobject(O_TEXT, 0, 1, 66,  4); op->text= size_last;
 	op= newobject(O_TEXT, 0, 1, 77,  2); op->text= "Kb";
+	op= newobject(O_TEXT, 0, 4,  0, 15); op->text= "Num Sort   Type";
 
 	/* The device is the current object: */
-    curobj= newobject(O_DEV,  OF_MOD, 2,  9, 10);
-	op= newobject(O_SUB,       0, 3,  9, 10);
+    curobj= newobject(O_DEV,  OF_MOD, 2,  4, 15);
+	op= newobject(O_SUB,       0, 3,  4, 15);
 
 	/* Geometry: */
 	op= newobject(O_CYL,  OF_MOD, 2, 40,  4); op->entry= &table[0];
@@ -2011,7 +2013,7 @@ int main(int argc, char **argv)
 	op= newobject(O_KB,    0, 3, 78,  8); op->entry= &table[0];
 
 	/* Objects for each partition: */
-	for (r= 4, pe= table+1; r <= 7; r++, pe++) {
+	for (r= 5, pe= table+1; pe <= table+NR_PARTITIONS; r++, pe++) {
 		op= newobject(O_NUM,    OF_MOD, r,  2,  2); op->entry= pe;
 		op= newobject(O_SORT,        0, r,  3,  5); op->entry= pe;
 		op= newobject(O_TYPHEX, OF_MOD, r, 10,  2); op->entry= pe;

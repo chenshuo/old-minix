@@ -50,6 +50,14 @@
 #define BEEP_FREQ     0x0533	/* value to put into timer to set beep freq */
 #define B_TIME		   3	/* length of CTRL-G beep is ticks */
 
+/* definitions used for font management */
+#define GA_SEQUENCER_INDEX	0x3C4
+#define GA_SEQUENCER_DATA	0x3C5
+#define GA_GRAPHICS_INDEX	0x3CE
+#define GA_GRAPHICS_DATA	0x3CF
+#define GA_VIDEO_ADDRESS	0xA0000L
+#define GA_FONT_SIZE		8192
+
 /* Global variables used by the console driver. */
 PUBLIC unsigned vid_seg;	/* video ram selector (0xB0000 or 0xB8000) */
 PUBLIC unsigned vid_size;	/* 0x2000 for color or 0x0800 for mono */
@@ -95,6 +103,13 @@ PRIVATE console_t *curcons;	/* currently visible */
 /* Map from ANSI colors to the attributes used by the PC */
 PRIVATE int ansi_colors[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
+/* Structure used for font management */
+struct sequence {
+	unsigned short index;
+	unsigned char port;
+	unsigned char value;
+};
+
 FORWARD _PROTOTYPE( void cons_write, (struct tty *tp)			);
 FORWARD _PROTOTYPE( void cons_echo, (tty_t *tp, int c)			);
 FORWARD _PROTOTYPE( void out_char, (console_t *cons, int c)		);
@@ -106,6 +121,7 @@ FORWARD _PROTOTYPE( void scroll_screen, (console_t *cons, int dir)	);
 FORWARD _PROTOTYPE( void set_6845, (int reg, unsigned val)		);
 FORWARD _PROTOTYPE( void stop_beep, (void)				);
 FORWARD _PROTOTYPE( void cons_org0, (void)				);
+FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq) );
 
 
 /*===========================================================================*
@@ -877,32 +893,6 @@ PUBLIC void select_console(int cons_line)
  *				con_loadfont				     *
  *===========================================================================*/
 
-#define GA_SEQUENCER_INDEX	0x3C4
-#define GA_SEQUENCER_DATA	0x3C5
-#define GA_GRAPHICS_INDEX	0x3CE
-#define GA_GRAPHICS_DATA	0x3CF
-#define GA_VIDEO_ADDRESS	0xA0000L
-#define GA_FONT_SIZE		8192
-
-struct sequence {
-	unsigned short index;
-	unsigned char port;
-	unsigned char value;
-};
-
-FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq) );
-
-PRIVATE void ga_program(seq)
-struct sequence *seq;
-{
-  int len= 7;
-  do {
-	out_byte(seq->index, seq->port);
-	out_byte(seq->index+1, seq->value);
-	seq++;
-  } while (--len > 0);
-}
-
 PUBLIC int con_loadfont(user_phys)
 phys_bytes user_phys;
 {
@@ -939,4 +929,20 @@ phys_bytes user_phys;
   unlock();
 
   return(OK);
+}
+
+
+/*===========================================================================*
+ *				ga_program				     *
+ *===========================================================================*/
+
+PRIVATE void ga_program(seq)
+struct sequence *seq;
+{
+  int len= 7;
+  do {
+	out_byte(seq->index, seq->port);
+	out_byte(seq->index+1, seq->value);
+	seq++;
+  } while (--len > 0);
 }

@@ -379,7 +379,11 @@ _doscan(register FILE *stream, const char *format, va_list ap)
 			}
 			if (!*format) return done;
 			
-			if (!(Xtable[ic] ^ reverse)) return done;
+			if (!(Xtable[ic] ^ reverse)) {
+			/* MAT 8/9/96 no match must return character */
+				ungetc(ic, stream);
+				return done;
+			}
 
 			if (!(flags & FL_NOASSIGN))
 				str = va_arg(ap, char *);

@@ -315,11 +315,15 @@ char *argv[];
 				if (read(err2_fd, &sig, 1) <= 0)
 #endif
 				{
-					printf("\1read failed: %d\n", errno);
+#if 0
+					printf("read failed: %d\n", errno);
+#endif
 					exit(0);
 				}
 				pid= 0;
-				printf("\1killing %d with %d\n", -new_pg, sig);
+#if 0
+				printf("killing %d with %d\n", -new_pg, sig);
+#endif
 				kill(-new_pg, sig);
 			}
 		}

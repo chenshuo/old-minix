@@ -62,7 +62,6 @@ struct kb_s {
   char *ihead;			/* next free spot in input buffer */
   char *itail;			/* scan code to return to TTY */
   int icount;			/* # codes in buffer */
-
   char ibuf[KB_IN_BYTES];	/* input buffer */
 };
 
@@ -248,55 +247,53 @@ int scode;			/* scan code of key just struck or released */
   ch = map_key(scode & 0177);		/* map to ASCII */
 
   switch (ch) {
-  case CTRL:
-	control = make;
-	ch = -1;
-	break;
-  case SHIFT:
-	shift = make;
-	ch = -1;
-	break;
-  case ALT:
-	if (make) {
-		if (esc) alt2 = 1; else alt1 = 1;
-	} else {
-		alt1 = alt2 = 0;
-	}
-	ch = -1;
-	break;
-  case CALOCK:
-	if (make && caps_off) {
-		capslock = 1 - capslock;
-		set_leds();
-	}
-	caps_off = 1 - make;
-	ch = -1;
-	break;
-  case NLOCK:
-	if (make && num_off) {
-		numlock = 1 - numlock;
-		set_leds();
-	}
-	num_off = 1 - make;
-	ch = -1;
-	break;
-  case SLOCK:
-	if (make & slock_off) {
-		slock = 1 - slock;
-		set_leds();
-	}
-	slock_off = 1 - make;
-	ch = -1;
-	break;
-  case EXTKEY:
-	esc = 1;
-	return(-1);
-  default:
-	if (!make) ch = -1;
+  	case CTRL:
+		control = make;
+		ch = -1;
+		break;
+  	case SHIFT:
+		shift = make;
+		ch = -1;
+		break;
+  	case ALT:
+		if (make) {
+			if (esc) alt2 = 1; else alt1 = 1;
+		} else {
+			alt1 = alt2 = 0;
+		}
+		ch = -1;
+		break;
+  	case CALOCK:
+		if (make && caps_off) {
+			capslock = 1 - capslock;
+			set_leds();
+		}
+		caps_off = 1 - make;
+		ch = -1;
+		break;
+  	case NLOCK:
+		if (make && num_off) {
+			numlock = 1 - numlock;
+			set_leds();
+		}
+		num_off = 1 - make;
+		ch = -1;
+		break;
+  	case SLOCK:
+		if (make & slock_off) {
+			slock = 1 - slock;
+			set_leds();
+		}
+		slock_off = 1 - make;
+		ch = -1;
+		break;
+  	case EXTKEY:
+		esc = 1;
+		return(-1);
+  	default:
+		if (!make) ch = -1;
   }
-
   esc = 0;
-
   return(ch);
 }
 

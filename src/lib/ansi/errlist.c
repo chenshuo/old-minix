@@ -20,7 +20,7 @@ const char *_sys_errlist[] = {
         "Exec format error",		/* ENOEXEC */
         "Bad file number",		/* EBADF */
         "No children",			/* ECHILD */
-        "No more processes",		/* EAGAIN */
+        "Resource temporarily unavailable",/* EAGAIN */
         "Not enough core",		/* ENOMEM */
         "Permission denied",		/* EACCES */
         "Bad address",			/* EFAULT */

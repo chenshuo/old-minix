@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	checkhier 2.2 - check the directory hierarchy	Author: Kees J. Bot
+#	checkhier 2.4 - check the directory hierarchy	Author: Kees J. Bot
 #								7 May 1995
 
 case "`id`" in
@@ -62,6 +62,7 @@ drwxr-xr-x	root	operator	/usr/spool
 drwx--x--x	root	operator	/usr/spool/at
 drwx--x--x	root	operator	/usr/spool/at/past
 drwxrwxr-x	root	uucp		/usr/spool/locks
+drwx------	daemon	daemon		/usr/spool/lpd
 drwxr-xr-x	bin	operator	/usr/src
 drwxrwxrwx	root	operator	/usr/tmp
 -rwsr-xr-x	root	?		/usr/bin/at
@@ -73,7 +74,7 @@ drwxrwxrwx	root	operator	/usr/tmp
 -rwsr-xr-x	root	?		/usr/bin/format
 -rwsr-xr-x	root	?		/usr/bin/hostaddr
 -rwsr-xr-x	root	?		/usr/bin/install
--rwsr-xr-x	daemon	?		/usr/bin/lpr
+-rwsr-xr-x	daemon	?		/usr/bin/lpd
 -rwsr-xr-x	root	?		/usr/bin/mail
 -rwsr-xr-x	root	?		/usr/bin/mount
 -rwsr-xr-x	root	?		/usr/bin/passwd
@@ -97,6 +98,8 @@ EOF
 
 	while read mode owner group file
 	do
+	    ( # "fix" a memory leak in set...
+
 		set -$- `ls -ld $file 2>/dev/null` '' '' '' ''
 		curmode=$1 curowner=$3 curgroup=$4
 		test $owner = '?' && curowner=$owner
@@ -170,6 +173,8 @@ EOF
 
 		# The Minix shell forgets processes, so wait explicitly.
 		wait
+
+	    case "$banner" in '') exit 1;; *) exit 0;; esac) || banner=
 	done
 	case "$banner" in
 	'')	exit 1

@@ -195,10 +195,11 @@ char *argv[];
 	 * there are more intervals than messages, then use/
 	 * warnings[WARNINGS-1] for all subsequent messages. */
 	if (i > 0)
-		printf("\007%s\n", warnings[i > WARNINGS ? WARNINGS - 1 : i - 1]);
+		printf("\007\r%s\r\n",
+			warnings[i > WARNINGS ? WARNINGS - 1 : i - 1]);
 
 	if (i == INTERVALS) {
-		printf("That was the last time I'll tell you. Bye.\n");
+		printf("That was the last time I'll tell you. Bye.\r\n");
 		exit(0);
 	}
 	/* Sleep until the next interval. For long periods, wake up

@@ -6,9 +6,9 @@ PATH=:/bin:/usr/bin
 export PATH
 
 echo -n "Shell test  1 "
-rm -rf testdir
-mkdir testdir
-cd testdir
+rm -rf DIR_SH1
+mkdir DIR_SH1
+cd DIR_SH1
 
 f=../test1.c
 if test -r $f; then : ; else echo sh1 cannot read $f; exit 1; fi
@@ -305,6 +305,6 @@ compress -cd x.Z >x
 if cmp -s x $f; then : ; else echo Error on uue/uud test 3; fi
 
 cd ..
-rm -rf testdir
+rm -rf DIR_SH1
 
 echo ok

@@ -210,7 +210,6 @@ message *m_ptr;		/* pointer to read or write message */
   if ((*dp->dr_prepare)(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
 
   for (request = 0, iop = iovec; request < nr_requests; request++, iop++) {
-
 	if ((r = (*dp->dr_schedule)(m_ptr->PROC_NR, iop)) != OK) break;
   }
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 2.1 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 2.2 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -142,6 +142,10 @@ echo >/mnt/etc/fstab "\
 
 root=unknown
 usr=unknown"
+
+# How to install?
+echo >/mnt/etc/issue "\
+Login as root and run 'setup' to install Minix."
 
 eval "$X_ROOT1"
 umount /dev/fd$drive || exit

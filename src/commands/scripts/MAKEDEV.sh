@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 2.17 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 2.18 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -26,7 +26,7 @@ Where key is one of the following:
 	st0 st1 ...		# Make SCSI tapes rst0, nrst0, rst1 ...
 	cd0 cd1a		# Make CD-ROM devices (non SCSI)
 	console lp tty log	# One of these makes all four
-	ttyc1 ... ttyc3		# Virtual consoles
+	ttyc1 ... ttyc7		# Virtual consoles
 	tty00 ... tty03		# Make serial lines
 	ttyp0 ... ttyq0 ...	# Make tty, pty pairs
 	eth ip tcp udp		# One of these makes TCP/IP devices
@@ -159,7 +159,7 @@ do
 		$e mknod log c 4 15
 		$e chmod 222 log
 		;;
-	ttyc[1-3])
+	ttyc[1-7])
 		# Virtual consoles.
 		#
 		n=`expr $dev : '....\\(.*\\)'`	# Minor device number.

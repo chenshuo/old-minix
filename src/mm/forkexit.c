@@ -25,6 +25,7 @@
 #define LAST_FEW            2	/* last few slots reserved for superuser */
 
 PRIVATE next_pid = INIT_PROC_NR+1;	/* next pid to be assigned */
+PRIVATE process_group = 1;		/* next process grp to be assigned */
 
 /* Some C compilers require static declarations to precede their first use. */
 
@@ -78,6 +79,9 @@ PUBLIC int do_fork()
   dptr = (char *) rmc;		/* pointer to child's 'mproc' slot */
   i = sizeof(struct mproc);	/* number of bytes in a proc slot. */
   while (i--) *dptr++ = *sptr++;/* copy from parent slot to child's */
+
+  /* Set process group. */
+  if (who == INIT_PROC_NR) rmc->mp_procgrp = process_group++;
 
   rmc->mp_parent = who;		/* record child's parent */
   rmc->mp_seg[T].mem_phys = child_base;

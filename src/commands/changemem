@@ -1,6 +1,6 @@
 : The default stack size is 1K.  The following commands need more.
-b=../commands/bin
-t=../test
+b=/usr/bin
+t=/usr/src/test
 chmem =2000 $b/cc
 chmem =2000 $b/time
 chmem =2000 $b/tail

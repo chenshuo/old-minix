@@ -148,7 +148,7 @@ int real_uid;			/* set iff real uid to be tested */
   bits = rip->i_mode;
   test_uid = (real_uid ? fp->fp_realuid : fp->fp_effuid);
   test_gid = (real_uid ? fp->fp_realgid : fp->fp_effgid);
-  if (super_user) {
+  if (test_uid == SU_UID) {
 	perm_bits = 07;
   } else {
 	if (test_uid == rip->i_uid) shift = 6;		/* owner */

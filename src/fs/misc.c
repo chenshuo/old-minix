@@ -167,6 +167,13 @@ PUBLIC int do_exit()
   fp = &fproc[slot1];		/* get_filp() needs 'fp' */
   exitee = slot1;
 
+  if (fp->fp_suspended == SUSPENDED) {
+	if (fp->fp_task == XPIPE) susp_count--;
+	pro = exitee;
+	do_unpause();
+	fp->fp_suspended = NOT_SUSPENDED;
+  }
+
   /* Loop on file descriptors, closing any that are open. */
   for (i=0; i < NR_FDS; i++) {
 	fd = i;
@@ -177,12 +184,6 @@ PUBLIC int do_exit()
   put_inode(fp->fp_rootdir);
   put_inode(fp->fp_workdir);
 
-  if (fp->fp_suspended == SUSPENDED) {
-	if (fp->fp_task == XPIPE) susp_count--;
-	pro = exitee;
-	do_unpause();
-	fp->fp_suspended = NOT_SUSPENDED;
-  }
   return(OK);
 }
 

@@ -1,6 +1,6 @@
 /* scanf - formatted input conversion	Author: Patrick van Kleef */
 
-#include <stdio.h>
+#include "stdio.h"
 
 
 int scanf (format, args)
@@ -71,7 +71,7 @@ static ugc ()
 
 
 
-static index(ch, string)
+static scnindex(ch, string)
 char ch;
 char *string;
 {
@@ -289,7 +289,7 @@ union ptr_union *argp;		/* our argument list */
 			*endbracket = '\0';	/* change format string */
 
 			while (width-- && !iswhite (ic) && ic > 0 &&
-				(index (ic, format) ^ reverse)) {
+				(scnindex (ic, format) ^ reverse)) {
 				if (do_assign)
 					*(argp)->chr_p++ = (char) ic;
 				rnc ();

@@ -150,7 +150,7 @@ $@ or $* is attempted ( as in $* : a.obj )
 #define WAIT union wait
 
 #else
-/* sysV and MONIX  and LATTICE */
+/* sysV and MINIX  and LATTICE */
 struct stat {
     short int st_dev;
     unsigned short st_ino;
@@ -1896,7 +1896,7 @@ char *cmd;
     WAIT status;
 
     if ( (pid = fork()) == 0 ) {
-	execl(SHELL,"sh","-c",cmd,0);
+	execl(SHELL, "sh", "-c", cmd, (char *) 0);
 	done( -1 );
     }
     if ( pid < 0 ) {  

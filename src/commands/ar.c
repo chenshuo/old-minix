@@ -241,7 +241,7 @@ register char *argv[];
   int i = 0;
   int temp_fd, read_chars;
 
-  ar_fd = open_archive(argv[2], (show_fl || pr_fl) ? READ : APPEND);
+  ar_fd = open_archive(argv[2], (show_fl || pr_fl || ex_fl) ? READ : APPEND);
   if (rep_fl || del_fl)
 	temp_fd = open_archive(temp_arch, CREATE);
   while ((member = get_member()) != NIL_MEM) {

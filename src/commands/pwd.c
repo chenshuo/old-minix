@@ -9,7 +9,8 @@ struct direct {
 main()
 {
 	register int fd;
-	register char name[128], *n;
+	register *n;
+	char name[128];
 	char *last_index();
 	struct stat s, st;
 	struct direct d;

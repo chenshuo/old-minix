@@ -75,19 +75,19 @@ struct passwd  *getpwent ()
 	if (getline () == 0)
 		return (0);
 
-	pwd.name = _buf;
+	pwd.pw_name = _buf;
 	skip_period ();
-	pwd.passwd = _buf;
+	pwd.pw_passwd = _buf;
 	skip_period ();
-	pwd.uid = atoi (_buf);
+	pwd.pw_uid = atoi (_buf);
 	skip_period ();
-	pwd.gid = atoi (_buf);
+	pwd.pw_gid = atoi (_buf);
 	skip_period ();
-	pwd.gecos = _buf;
+	pwd.pw_gecos = _buf;
 	skip_period ();
-	pwd.dir = _buf;
+	pwd.pw_dir = _buf;
 	skip_period ();
-	pwd.shell = _buf;
+	pwd.pw_shell = _buf;
 
 	return (&pwd);
 }
@@ -99,7 +99,7 @@ char   *name;
 
 	setpwent ();
 	while ((pwd = getpwent ()) != 0)
-		if (!strcmp (pwd -> name, name))
+		if (!strcmp (pwd -> pw_name, name))
 			break;
 	endpwent ();
 	if (pwd != 0)
@@ -115,7 +115,7 @@ int     uid;
 
 	setpwent ();
 	while ((pwd = getpwent ()) != 0)
-		if (pwd -> uid == uid)
+		if (pwd -> pw_uid == uid)
 			break;
 	endpwent ();
 	if (pwd != 0)

@@ -9,6 +9,7 @@ int argc;
 char **argv;
 {
   char *file1, *file2;
+  char *last_comp();
 
   if (argc < 2 || argc > 3) usage();
   if (access(argv[1], 0) < 0) {

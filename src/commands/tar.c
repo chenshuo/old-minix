@@ -58,6 +58,8 @@ BOOL show_fl, creat_fl, ext_fl;
 int tar_fd;
 char usage[] = "Usage: tar [cxt] tarfile [files].";
 char io_buffer[BLOCK_SIZE];
+char path[NAME_SIZE];
+char pathname[NAME_SIZE];
 
 int total_blocks;
 long convert();
@@ -108,8 +110,10 @@ register char *argv[];
 	error("Cannot open ", argv[2]);
 
   if (creat_fl) {
-	for (i = 3; i < argc; i++)
+	for (i = 3; i < argc; i++) {
 		add_file(argv[i]);
+		path[0] = '\0';
+	}
 	adjust_boundary();
   }
   else
@@ -155,12 +159,12 @@ tarfile()
 	else  {
 		string_print(NIL_PTR, "%s ", mem_name);
 		if (header.member.m_linked == '1')
-			string_print(NIL_PTR, "linked to %s",
+			string_print(NIL_PTR, "linked to %s\n",
 							  header.member.m_link);
-		else
-			string_print(NIL_PTR, "%d tape blocks", block_size());
-		print("\n");
-		skip_entry();
+		else {
+			string_print(NIL_PTR, "%d tape blocks\n", block_size());
+			skip_entry();
+		}
 	}
 	flush();
   }
@@ -245,7 +249,7 @@ char *dir_name;
 	error("Cannot fork().", NIL_PTR);
   
   if (pid == 0) {
-	execl(MKDIR, "mkdir", dir_name, 0);
+	execl(MKDIR, "mkdir", dir_name, (char *) 0);
 	error("Cannot find mkdir.", NIL_PTR);
   }
 
@@ -278,9 +282,7 @@ register char *file;
   return (*(file - 2) == '/');
 }
 
-char path[NAME_SIZE];
 
-char pathname[NAME_SIZE];
 char *path_name(file)
 register char *file;
 {

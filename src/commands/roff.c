@@ -1,4 +1,19 @@
-/* roff - text justifier	Author: George Sicherman */
+/* roff - text justifier		Author: George L. Sicherman */
+
+/*
+ *	roff - C version.
+ *	the Colonel.  19 May 1983.
+ *
+ *	Copyright 1983 by G. L. Sicherman.
+ *	You may use and alter this software freely for noncommercial ends
+ *	so long as you leave this message alone.
+ *
+ *	Fix by Tim Maroney, 31 Dec 1984.
+ *	.hc implemented, 8 Feb 1985.
+ *	Fix to hyphenating with underlining, 12 Feb 1985.
+ *	Fixes to long-line hang and .bp by Dave Tutelman, 30 Mar 1985.
+ *	Fix to centering valve with long input lines, 4 May 1987.
+ */
 
 #include "sgtty.h"
 #include "signal.h"
@@ -11,9 +26,10 @@
 #define MAXMAC	64
 #define MAXDEPTH 10
 #define MAXLENGTH 255
-#define UNDERL	0200
+#define UNDERL	'\200'
 
 char cumbuf[BUFSIZ];
+
 char spacechars[] = " \t\n";
 int sflag, hflag, startpage, stoppage;
 char holdword[MAXLENGTH], *holdp;
@@ -45,7 +61,6 @@ int o_li = 0, o_n1 = 0, o_n2 = 0, o_bp = -1, o_hy = 1;
 int o_ni = 1;	/* LINE-NUMBER INDENT */
 int o_nn = 0;	/* #LINES TO SUPPRESS NUMBERING */
 int o_ti = -1;	/* TEMPORARY INDENT */
-int center = 0;
 int page_no = -1;
 int line_no = 9999;
 int n_outwords;
@@ -64,7 +79,6 @@ char *request[] = {
 char *mktemp(), *mfilnam = "/tmp/rtmXXXXXX";
 int c;		/* LAST CHAR READ */
 struct sgttyb tty;
-
 FILE *fopen();
 
 main(argc,argv)
@@ -125,9 +139,9 @@ int f;
 {
 	static int mode;
 	struct stat cbuf;
+/* This routine is not needed.
 	char *ttyname();
 
-/* This routine is not needed --
 	if (!isatty(1)) return;
 	if (!f) {
 		fstat(1,&cbuf);
@@ -135,16 +149,17 @@ int f;
 		chmod(ttyname(1),mode & ~022);
 	}
 	else chmod(ttyname(1),mode);
-*/
+* ------- end of mesg */
 }
 
 readfile()
 {
 	while (readline()) {
 		if (isrequest) continue;
-		if (center || !o_fi) {
+		if (o_ce || !o_fi) {
 			if (assylen) writeline(0,1);
 			else blankline();
+			if (o_ce) o_ce--;
 		}
 	}
 }
@@ -210,8 +225,6 @@ readline()
 	}
 out:
 	if (o_ul) o_ul--;
-	center=o_ce;
-	if (o_ce) o_ce--;
 	if (o_li) o_li--;
 	return c!=EOF;
 }
@@ -224,6 +237,10 @@ bumpword()
 {
 	char *hc;
 	*holdp = '\0';
+/*
+ *	Tutelman's fix #1, modified by the Colonel.
+ */
+	if (!o_fi || o_ce) goto giveup;
 /*
  *	We use a while-loop in case of ridiculously long words with
  *	multiple hyphenation indicators.
@@ -239,7 +256,7 @@ bumpword()
  *	There are hyphenation marks.  Use them!
  */
 				for (hc=strend(holdword); hc>=holdword; hc--) {
-					if (*hc!=o_hc) continue;
+					if ((*hc&~UNDERL)!=o_hc) continue;
 					*hc = '\0';
 					if (assylen + reallen(holdword) + 1 >
 					o_ll - IDTLEN) {
@@ -290,7 +307,7 @@ dehyph(s)
 char *s;
 {
 	char *t;
-	for (t=s; *s; s++) if (*s != o_hc) *t++ = *s;
+	for (t=s; *s; s++) if ((*s&~UNDERL) != o_hc) *t++ = *s;
 	*t='\0';
 }
 
@@ -304,7 +321,7 @@ char *s;
 {
 	register n;
 	n=0;
-	while (*s) n += (o_hc != *s++);
+	while (*s) n += (o_hc != (~UNDERL & *s++));
 	return n;
 }
 
@@ -369,8 +386,11 @@ readreq()
 	case 3: /* bp */
 	case 37: /* pa */
 		c=snread(&r,&s,1);
-		if (s>0) o_bp=page_no-r;
-		else if (s<0) o_bp=page_no+r;
+/*
+ *	Tutelman's fix #2 - the signs were reversed!
+ */
+		if (s>0) o_bp=page_no+r;
+		else if (s<0) o_bp=page_no-r;
 		else o_bp=r;
 		writebreak();
 		if (line_no) {
@@ -385,8 +405,12 @@ readreq()
 		c=cread(&o_cc);
 		break;
 	case 6: /* ce */
-		nread(&o_ce);
+/*
+ *	Fix to centering.  Set counter _after_ breaking!  --G.L.S.
+ */
+		nread(&r);
 		writebreak();
+		o_ce = r;
 		break;
 	case 7: /* de */
 		defmac();
@@ -732,7 +756,7 @@ do_tr()
 	if (skipsp()) return;
 	for (;;) {
 		c=suck();
-		if (c==EOF || c=='\n') break;;
+		if (c==EOF || c=='\n') break;
 		*t++ = c;
 	}
 	*t = '\0';
@@ -833,7 +857,7 @@ int adflag, flushflag;
 		}
 	}
 	if (o_nn) o_nn--;
-	if (center) for (j=0; j<(o_ll-assylen+1)/2; j++) spit(' ');
+	if (o_ce) for (j=0; j<(o_ll-assylen+1)/2; j++) spit(' ');
 	else for (j=0; j<IDTLEN; j++) spit(' ');
 	if (adflag && !flushflag) fillline();
 	for (j=0; j<assylen; j++) spit(assyline[j]);
@@ -1082,7 +1106,10 @@ char c;
 	ulflag=c&UNDERL;
 	c&=~UNDERL;
 	for (t = (char *)o_tr; *t; t++) if (*t++==c) {
-		c = *t;
+/*
+ *	fix - last char translates to space.
+ */
+		c = *t? *t: ' ';
 		break;
 	}
 	if (page_no < startpage || (stoppage && page_no > stoppage)) return;
@@ -1120,16 +1147,14 @@ suck()
 }
 
 /*
- *	strhas - does string have character?
- *	USG and BSD both have this in their libraries.  Now, if
- *	they could just agree on the name of the function ...
+ *	strhas - does string have character?  Allow UNDERL flag.
  */
 
 char *
 strhas(p,c)
 char *p, c;
 {
-	for (; *p; p++) if (*p==c) return p;
+	for (; *p; p++) if ((*p&~UNDERL)==c) return p;
 	return NULL;
 }
 

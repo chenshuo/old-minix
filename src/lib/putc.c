@@ -38,6 +38,6 @@ FILE *iop;
 		}
 		iop->_count=0;
 	}
-	return(0);
+	return(ch & CMASK);
 }
 

@@ -48,6 +48,10 @@ char *argv[];
 			exit (1);
 		}
 	strcpy (password, getpass ("New password: "));
+	if (password[0] == '\0') {
+		std_err("password cannot be null\n");
+		exit(1);
+	}
 	if (strcmp (password, getpass ("Retype password: "))) {
 		std_err("Passwords don't match\n");
 		exit (1);

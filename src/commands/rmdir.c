@@ -1,4 +1,6 @@
-/* rmdir - remove a directory		Author: Adri Koppes */
+/* rmdir - remove a directory		Author: Adri Koppes
+ * (modified by Paul Polderman)
+ */
 
 #include "../include/signal.h"
 #include "../include/stat.h"
@@ -27,6 +29,8 @@ register char  **argv;
 	exit (1);
 }
 
+extern char *rindex();
+
 remove (dirname)
 char   *dirname;
 {
@@ -35,6 +39,7 @@ char   *dirname;
                 cwd;
     register int fd = 0, sl = 0;
     char    dots[128];
+    register char *p;
 
     if (stat (dirname, &s)) {
 	stderr2(dirname, " doesn't exist\n");
@@ -46,6 +51,17 @@ char   *dirname;
 	error++;
 	return;
     }
+    if (p = rindex(dirname, '/'))
+	p++;
+    else
+	p = dirname;
+
+    if (strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
+	stderr2(dirname, " will not remove \".\" or \"..\"\n");
+	error++;
+	return;
+    }
+
     strcpy (dots, dirname);
     while (dirname[fd])
 	if (dirname[fd++] == '/')
@@ -78,12 +94,16 @@ char   *dirname;
 	}
     close (fd);
     strcpy (dots, dirname);
-    strcat (dots, "/.");
-    unlink (dots);
-    strcat (dots, ".");
-    unlink (dots);
-    if (unlink (dirname)) {
-	stderr2("can't remove ", dirname);
+    strcat (dots, "/..");
+    patch_path(dots);
+    for (p = dots; *p; p++)	/* find end of dots */
+	;
+    unlink(dots);		/* dirname/.. */
+    *(p - 1) = '\0';
+    unlink(dots);		/* dirname/. */
+    *(p - 3) = '\0';
+    if (unlink(dots)) {		/* dirname */
+	stderr2("can't remove ", dots);
 	std_err("\n");
 	error++;
 	return;
@@ -96,4 +116,33 @@ char *s1, *s2;
 	std_err("rmdir: ");
 	std_err(s1);
 	std_err(s2);
+}
+
+patch_path(dir)
+char *dir;	/* pathname ending with "/.." */
+{
+	register char *p, *s;
+	struct stat pst, st;
+
+	if (stat(dir, &pst) < 0)
+		return;
+	p = dir;
+	while (*p == '/') p++;
+	while (1) {
+		s = p;		/* remember start of new pathname part */
+		while (*p && *p != '/')
+			p++;	/* find next slash */
+		if (*p == '\0')
+			return;	/* if end of pathname, return */
+
+		/* check if this part of pathname == the original pathname */
+		*p = '\0';
+		stat(dir, &st);
+		if (st.st_ino == pst.st_ino && st.st_dev == pst.st_dev
+			&& strcmp(s, "..") == 0)
+				return;	
+		/* if not, try next part */
+		*p++ = '/';
+		while (*p == '/') p++;
+	}
 }

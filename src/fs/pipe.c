@@ -198,7 +198,7 @@ int bytes;			/* if hanging on task, how many bytes read */
 
   if (proc_nr < 0 || proc_nr >= NR_PROCS) panic("revive err", proc_nr);
   rfp = &fproc[proc_nr];
-  if (rfp->fp_suspended == NOT_SUSPENDED) return;
+  if (rfp->fp_suspended == NOT_SUSPENDED || rfp->fp_revived == REVIVING)return;
 
   /* The 'reviving' flag only applies to pipes.  Processes waiting for TTY get
    * a message right away.  The revival process is different for TTY and pipes.
@@ -228,7 +228,7 @@ PUBLIC int do_unpause()
  */
 
   register struct fproc *rfp;
-  int proc_nr, task;
+  int proc_nr, task, fild;
   struct filp *f;
   dev_nr dev;
   extern struct filp *get_filp();
@@ -241,15 +241,17 @@ PUBLIC int do_unpause()
   task = -rfp->fp_task;
 
   if (task != XPIPE) {
-	f = get_filp(rfp->fp_fd);
+	fild = (rfp->fp_fd >> 8) & BYTE;	/* extract file descriptor */
+	if (fild < 0 || fild >= NR_FDS) panic("unpause err 2", NO_NUM);
+	f = rfp->fp_filp[fild];
 	dev = f->filp_ino->i_zone[0];	/* device on which proc is hanging */
 	mess.TTY_LINE = (dev >> MINOR) & BYTE;
 	mess.PROC_NR = proc_nr;
 	mess.m_type = CANCEL;
-	if (sendrec(task, &mess) != OK) panic("unpause err 2", NO_NUM);
+	if (sendrec(task, &mess) != OK) panic("unpause err 3", NO_NUM);
 	while (mess.REP_PROC_NR != proc_nr) {
 		revive(mess.REP_PROC_NR, mess.REP_STATUS);
-		if (receive(task, &m) != OK) panic("unpause err 3", NO_NUM);
+		if (receive(task, &m) != OK) panic("unpause err 4", NO_NUM);
 	}
 	revive(proc_nr, EINTR);	/* signal interrupted call */
   }

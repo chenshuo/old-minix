@@ -254,9 +254,10 @@ FILE *filep;
   	while (lines && c != EOF) {
   		if (number)
   			printf("%d\t", linenr++);
-  		do {
+		while (c != '\n' && c != EOF) {
   			putchar(c);
-  		} while ((c = getc(filep)) != '\n' && c != EOF);
+			c = getc(filep);
+		}
   		putchar('\n');
   		lines--;
 		c = getc(filep);

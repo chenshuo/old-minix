@@ -1,7 +1,7 @@
 /* df - disk free block printout	Author: Andy Tanenbaum */
 
-#include "../h/const.h"
-#include "../h/type.h"
+#include "const.h"
+#include "type.h"
 #include "../fs/const.h"
 #include "../fs/type.h"
 #include "../fs/super.h"
@@ -34,7 +34,6 @@ char *name;
   char buf[BLOCK_SIZE], *s0;
   struct super_block super, *sp;
   struct stat statbuf;
-  extern char *itoa();
 
   if ( (fd = open(name,0)) < 0) {
 	perror(name);
@@ -93,7 +92,7 @@ char *name;
   num3(i_count - 1);
   prints(" used  ");
   num3(sp->s_ninodes + 1 - i_count);
-  prints(" free      blocks: ");
+  prints(" free        blocks: ");
   num3(busyblocks);
   prints(" used  ");
   num3(totblocks - busyblocks);
@@ -131,6 +130,7 @@ int fd;
 		}
 	}
   }
+  return(0);
 }
 
 
@@ -144,8 +144,8 @@ char *s1, *s2;
 num3(n)
 int n;
 {
-  if (n < 10) prints("   %s", itoa(n));
-  else if (n < 100) prints("  %s", itoa(n));
-  else if (n < 1000) prints(" %s", itoa(n));
+  extern char *itoa();
+  if (n < 10) prints("  %s", itoa(n));
+  else if (n < 100) prints(" %s", itoa(n));
   else prints("%s", itoa(n));
 }

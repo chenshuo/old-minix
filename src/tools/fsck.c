@@ -1,13 +1,13 @@
 /* fsck - file system checker		Author: Robbert van Renesse */
 
-#include "../h/const.h"
-#include "../h/type.h"
+#include "/usr/include/const.h"
+#include "/usr/include/type.h"
 #include "../fs/const.h"
 #include "../fs/type.h"
 
 /* #define DOS			/* compile to run under MS-DOS */
 #define STANDALONE		/* compile for the boot-diskette */
-
+#define HERE			/* fixes for Adaptec ACB-2070a */
 
 /* Fsck may be compiled to run in any of two situations. For each
  * a different symbol must be defined:
@@ -1850,8 +1850,13 @@ char **argv;
 		case 'h':
 			get_partition();
 			drive = (partition < PARB ? 0x80 : 0x81);
+#ifdef HERE
+			cylsiz = 100;	/* 4 heads -- ST-238-specific */
+			tracksiz = 25;
+#else
 			cylsiz = 68;
 			tracksiz = 17;
+#endif
 			printf("Checking hard disk.  %s\n", answer);
 			if (read_partition() < 0) continue;
 			repair = 1;

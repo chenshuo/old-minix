@@ -100,6 +100,7 @@ PUBLIC int do_ksig()
   proc_id = rmp->mp_pid;
   sig_map = (unshort) mm_in.SIG_MAP;
   mp = &mproc[0];		/* pretend kernel signals are from MM */
+  mp->mp_procgrp = rmp->mp_procgrp;	/* get process group right */
 
   /* Stack faults are passed from kernel to MM as pseudo-signal 16. */
   if (sig_map == 1 << (STACK_FAULT - 1)) {
@@ -113,7 +114,8 @@ PUBLIC int do_ksig()
    * and SIGQUIT, use proc_id 0, since multiple processes may have to signalled.
    */
   for (i = 0; i < NR_SIGS; i++) {
-	id = (i+1 == SIGINT || i+1 == SIGQUIT ? 0 : proc_id);
+	id= (i+1 == SIGINT || i+1 == SIGQUIT ? 0 : proc_id);
+	if (i + 1 == SIGKILL) id = -1;	/* simulate kill -1 9 */
 	if ( (sig_map >> i) & 1) check_sig(id, i + 1, SUPER_USER);
   }
 
@@ -254,7 +256,7 @@ unsigned sec;			/* how many seconds delay before the signal */
   int remaining;
 
   m_sig.m_type = SET_ALARM;
-  m_sig.PROC_NR = proc_nr;
+  m_sig.CLOCK_PROC_NR = proc_nr;
   m_sig.DELTA_TICKS = HZ * sec;
   if (sec != 0)
 	mproc[proc_nr].mp_flags |= ALARM_ON;	/* turn ALARM_ON bit on */
@@ -341,7 +343,10 @@ register struct mproc *rmp;	/* whose core is to be dumped */
   tell_fs(CHDIR, slot, 0, 0);
 
   /* Can core file be written? */
-  if (rmp->mp_realuid != rmp->mp_effuid) return;
+  if (rmp->mp_realuid != rmp->mp_effuid) {
+	tell_fs(CHDIR, 0, 1, 0);	/* go back to MM's directory */
+	return;
+  }
   xmp = mp;			/* allowed() looks at 'mp' */
   mp = rmp;
   r = allowed(core_name, &s_buf, W_BIT);	/* is core_file writable */

@@ -76,7 +76,8 @@
 
 #define F1                59	/* scan code for function key F1 */
 #define F2                60	/* scan code for function key F2 */
-#define F10               68	/* scan code for function key F9 */
+#define F9                67	/* scan code for function key F9 */
+#define F10               68	/* scan code for function key F10 */
 #define TOP_ROW           14	/* codes below this are shifted if CTRL */
 
 PRIVATE struct tty_struct {
@@ -149,8 +150,11 @@ PRIVATE char tty_copy_buf[2*MAX_OVERRUN];  /* copy buf used to avoid races */
 PRIVATE char tty_buf[TTY_BUF_SIZE];	/* scratch buffer to/from user space */
 PRIVATE int shift1, shift2, capslock, numlock;	/* keep track of shift keys */
 PRIVATE int control, alt;	/* keep track of key statii */
+PRIVATE caps_off = 1;		/* 1 = normal position, 0 = depressed */
+PRIVATE num_off = 1;		/* 1 = normal position, 0 = depressed */
 PUBLIC  int color;		/* 1 if console is color, 0 if it is mono */
 PUBLIC scan_code;		/* scan code for '=' saved by bootstrap */
+
 
 /* Scan codes to ASCII for unshifted keys */
 PRIVATE char unsh[] = {
@@ -159,7 +163,7 @@ PRIVATE char unsh[] = {
  'd','f','g','h','j','k','l',';',      047,0140,0200,0134,'z','x','c','v',
  'b','n','m',',','.','/',0201,'*',     0203,' ',0204,0241,0242,0243,0244,0245,
  0246,0247,0250,0251,0252,0205,0210,0267,  0270,0271,0211,0264,0265,0266,0214
-,0261,  0262,0263,'0',0177
+,0261,0262,0263,'0',0177
 };
 
 /* Scan codes to ASCII for shifted keys */
@@ -169,7 +173,7 @@ PRIVATE char sh[] = {
  'D','F','G','H','J','K','L',':',      042,'~',0200,'|','Z','X','C','V',
  'B','N','M','<','>','?',0201,'*',    0203,' ',0204,0221,0222,0223,0224,0225,
  0226,0227,0230,0231,0232,0204,0213,'7',  '8','9',0211,'4','5','6',0214,'1',
- '2','3','0',177
+ '2','3','0','.'
 };
 
 
@@ -309,10 +313,11 @@ char ch;			/* scan code for character that arrived */
 	if (mode == COOKED) {
 		/* First erase processing (rub out of last character). */
 		if (ch == tp->tty_erase && tp->tty_escaped == NOT_ESCAPED) {
-			chuck(tp);	/* remove last char entered */
-			echo(tp, '\b');	/* remove it from the screen */
-			echo(tp, ' ');
-			echo(tp, '\b');
+			if (chuck(tp) != -1) {	/* remove last char entered */
+				echo(tp, '\b');	/* remove it from the screen */
+				echo(tp, ' ');
+				echo(tp, '\b');
+			}
 			return;
 		}
 
@@ -359,13 +364,7 @@ char ch;			/* scan code for character that arrived */
 	/* Check for interrupt and quit characters. */
 	if (ch == tp->tty_intr || ch == tp->tty_quit) {
 		sig = (ch == tp->tty_intr ? SIGINT : SIGQUIT);
-		tp->tty_inhibited = RUNNING;	/* do implied CRTL-Q */
-		finish(tp, EINTR);		/* send reply */
-		tp->tty_inhead = tp->tty_inqueue;	/* discard input */
-		tp->tty_intail = tp->tty_inqueue;
-		tp->tty_incount = 0;
-		tp->tty_lfct = 0;
-		cause_sig(LOW_USER + 1 + line, sig);
+		sigchar(tp, line, sig);
 		return;
 	}
 
@@ -412,18 +411,25 @@ char ch;			/* scan code of key just struck or released */
   make = (ch & 0200 ? 0 : 1);	/* 1 when key depressed, 0 when key released */
   if (olivetti == FALSE) {
 	/* Standard IBM keyboard. */
-	code = (shift1 || shift2 || capslock ? sh[c] : unsh[c]);
+	code = (shift1 || shift2 ? sh[c] : unsh[c]);
 	if (control && c < TOP_ROW) code = sh[c];	/* CTRL-(top row) */
-	if (c > 70 && numlock) code = sh[c];	/* numlock depressed */
+	if (c > 70 && numlock) 		/* numlock depressed */
+		code = (shift1 || shift2 ? unsh[c] : sh[c]);
   } else {
 	/* (Olivetti M24 or AT&T 6300) with Olivetti-style keyboard. */
-	code = (shift1 || shift2 || capslock ? m24[c] : unm24[c]);
+	code = (shift1 || shift2 ? m24[c] : unm24[c]);
 	if (control && c < TOP_ROW) code = sh[c];	/* CTRL-(top row) */
-	if (c > 70 && numlock) code = m24[c];	/* numlock depressed */
+	if (c > 70 && numlock) 		/* numlock depressed */
+		code = (shift1 || shift2 ? unm24[c] : m24[c]);
   }
   code &= BYTE;
   if (code < 0200 || code >= 0206) {
 	/* Ordinary key, i.e. not shift, control, alt, etc. */
+	if (capslock)
+		if (code >= 'A' && code <= 'Z')
+			code += 'a' - 'A';
+		else if (code >= 'a' && code <= 'z')
+			code -= 'a' - 'A';
 	if (alt) code |= 0200;	/* alt key ORs 0200 into code */
 	if (control) code &= 037;
 	if (code == 0) code = AT_SIGN;	/* @ is 0100, so CTRL-@ = 0 */
@@ -437,8 +443,12 @@ char ch;			/* scan code of key just struck or released */
     case 1:	shift2 = make;		break;	/* shift key on right */
     case 2:	control = make;		break;	/* control */
     case 3:	alt = make;		break;	/* alt key */
-    case 4:	if (make) capslock = 1 - capslock; break;	/* caps lock */
-    case 5:	if (make) numlock  = 1 - numlock;  break;	/* num lock */
+    case 4:	if (make && caps_off) capslock = 1 - capslock; 
+		caps_off = 1 - make;
+		break;	/* caps lock */
+    case 5:	if (make && num_off) numlock  = 1 - numlock;  
+		num_off = 1 - make;
+		break;	/* num lock */
   }
   return(0);
 }
@@ -753,6 +763,26 @@ long other;			/* used for IOCTL replies */
 }
 
 
+/*===========================================================================*
+ *				sigchar					     *
+ *===========================================================================*/
+PRIVATE sigchar(tp, line, sig)
+register struct tty_struct *tp;	/* pointer to tty_struct */
+int line;			/* line on which signal arrived */
+int sig;			/* SIGINT, SIGQUIT, or SIGKILL */
+{
+/* Process a SIGINT, SIGQUIT or SIGKILL char from the keyboard */
+
+  tp->tty_inhibited = RUNNING;	/* do implied CRTL-Q */
+  finish(tp, EINTR);		/* send reply */
+  tp->tty_inhead = tp->tty_inqueue;	/* discard input */
+  tp->tty_intail = tp->tty_inqueue;
+  tp->tty_incount = 0;
+  tp->tty_lfct = 0;
+  cause_sig(LOW_USER + 1 + line, sig);
+}
+
+
 /*****************************************************************************/
 /*****************************************************************************/
 /*****************************************************************************/
@@ -790,6 +820,7 @@ long other;			/* used for IOCTL replies */
 /* Constants relating to the video RAM and 6845. */
 #define M_6845         0x3B0	/* port for 6845 mono */
 #define C_6845         0x3D0	/* port for 6845 color */
+#define EGA            0x3C0	/* port for EGA card */
 #define INDEX              4	/* 6845's index register */
 #define DATA               5	/* 6845's data register */
 #define CUR_SIZE          10	/* 6845's cursor size register */
@@ -830,12 +861,12 @@ PUBLIC keyboard()
 
   /* The IBM keyboard interrupts twice per key, once when depressed, once when
    * released.  Filter out the latter, ignoring all but the shift-type keys.
-   * The shift-type keys, 29, 42, 54, 56, and 69 must be processed normally.
+   * The shift-type keys, 29, 42, 54, 56, 58, and 69 must be processed normally.
    */
   k = code - 0200;		/* codes > 0200 mean key release */
   if (k > 0) {
 	/* A key has been released. */
-	if (k != 29 && k != 42 && k != 54 && k != 56 && k != 69) {
+	if (k != 29 && k != 42 && k != 54 && k != 56 && k != 58 && k != 69) {
 		port_out(INT_CTL, ENABLE);	/* re-enable interrupts */
 	 	return;		/* don't call tty_task() */
 	}
@@ -1166,6 +1197,10 @@ PRIVATE tty_init()
   int i;
   phys_bytes phy1, phy2, vram;
 
+  /* Tell the EGA card, if any, to simulate a 16K CGA card. */
+  port_out(EGA + INDEX, 4);	/* register select */
+  port_out(EGA + DATA, 1);	/* no extended memory to be used */
+
   for (tp = &tty_struct[0]; tp < &tty_struct[NR_TTYS]; tp++) {
 	tp->tty_inhead = tp->tty_inqueue;
 	tp->tty_intail = tp->tty_inqueue;
@@ -1234,5 +1269,7 @@ char ch;			/* scan code for a function key */
 
   if (ch == F1) p_dmp();	/* print process table */
   if (ch == F2) map_dmp();	/* print memory map */
+  if (ch == F9) sigchar(&tty_struct[0], 0, SIGKILL);	/* issue SIGKILL */
 }
 #endif
+

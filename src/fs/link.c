@@ -52,7 +52,10 @@ PUBLIC int do_link()
   }
 
   /* Does the final directory of 'name2' exist? */
-  if (fetch_name(name2, name2_length, M1) != OK) return(err_code);
+  if (fetch_name(name2, name2_length, M1) != OK) {
+	put_inode(rip);
+	return(err_code);
+  }
   if ( (ip = last_dir(user_path, string)) == NIL_INODE) r = err_code;
 
   /* If 'name2' exists in full (even if no space) set 'r' to error. */

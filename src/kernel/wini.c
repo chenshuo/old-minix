@@ -1,4 +1,20 @@
 /* This file contains a driver for the IBM or DTC winchester controller.
+ * This version of the driver contains Dan Dugger's Z-150 modifications
+ * to the com_out() function.
+ *
+ * It also contains some minor hacks to support the Adaptec ACB-2070a
+ * RLL controller, marked with a HERE.
+ * 
+ * things hacked so far:
+ *  NR_SECTORS changed from 0x11 to 0x19 -- 25 sectors/track
+ * things to check further:
+ *  are ports the same for IBM/DTC and ACB2070a?
+ *	-- apparently
+ *  are we reading the partition table correctly?
+ *	-- we're ignoring it for the moment
+ *  how should we handle the on-disk parameter [BIOS?]
+ *      -- find out from Adaptec how to read the bugger
+ *
  * It was written by Adri Koppes.
  *
  * The driver supports two operations: read a block and
@@ -58,8 +74,11 @@
 
 /* Parameters for the disk drive. */
 #define SECTOR_SIZE      512	/* physical sector size in bytes */
+#if 0
 #define NR_SECTORS      0x11	/* number of sectors per track */
-
+#endif
+/* HERE */
+#define NR_SECTORS      0x19    /* number of sectors per track, Adaptec */
 /* Error codes */
 #define ERR		  -1	/* general error */
 
@@ -524,6 +543,30 @@ register int bit;
 /*============================================================================*
  *				com_out					      *
  *============================================================================*/
+
+/*
+From: n0ano@wldrdg.UUCP (Don Dugger)
+Date: 13 Apr 87 17:28:28 GMT
+Organization: Wildridge Consulting,  Boulder, CO
+
+Having recently installed MINIX on my Zenith 150 I discovered that
+I had a read-only hard disk.  When writing, every few blocks would
+confuse the driver which would try to reset the disk (a very lengthy
+process) and would frequently not write out the block.  After debugging
+the Zenith BIOS I came up with the following fix which seems to correct
+the problem.  Using this fix I have copied all of the MINIX source
+to my hard disk and I've recompiled the kernel about a half-dozen
+times, all with no errors.  The fix is a new version of routine
+`com_out' for the file `kernel/wini.c'.  Just replace `com_out' with
+this one, recompile the kernel and the hard disk should work.
+
+Don Dugger
+Wildridge Consulting
+...nbires!onecom!wldrdg!n0ano
+
+*/
+
+
 PRIVATE com_out(mode)
 int mode;
 {
@@ -532,27 +575,38 @@ int mode;
 	register int i = 0;
 	int r;
 
-	port_out(WIN_SELECT, mode);
 	port_out(WIN_DMA, mode);
-	for (i=0; i<MAX_WIN_RETRY; i++) {
+	port_out(WIN_SELECT, mode);
+	for (i=0; i<300; i++) {
 		port_in(WIN_STATUS, &r);
-		if ((r & 0x0F) == 0x0D)
+		if (r & 8)
 			break;
 	}
-	if (i == MAX_WIN_RETRY) {
+	if (i == 300) {
 		w_need_reset = TRUE;
 		return(ERR);
 	}
 	lock();
-	for (i=0; i<6; i++)
+	for (i=0; i<6; i++) {
+		for (;;) {
+			port_in(WIN_STATUS, &r);
+			if (r & 1)
+				break;
+			if ((r & 8) == 0) {
+				w_need_reset = TRUE;
+				unlock();
+				return(ERR);
+			}
+		}
+		if ((r & 0xe) != 0xc) {
+			w_need_reset = TRUE;
+			unlock();
+			return(ERR);
+		}
 		port_out(WIN_DATA, command[i]);
+	}
 	unlock();
-	port_in(WIN_STATUS, &r);
-	if (r & 1) {
-		w_need_reset = TRUE;
-		return(ERR);
-	} else
-		return(OK);
+	return(OK);
 }
 
 /*============================================================================*

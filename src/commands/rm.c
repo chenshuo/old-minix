@@ -104,9 +104,9 @@ char   *name;
     }
     else {
 	if (access (name, 2) && !fflag) {
-	    stderr3 ("rm: remove ", name, " with mode ");
+	    stderr3 ("rm: remove ", name, " (mode = ");
 	    octal(s.st_mode & 0777);
-	    std_err("? ");
+	    std_err(") ? ");
 	    if (!confirm ())
 		return;
 	}
@@ -129,8 +129,8 @@ char   *name;
 	    errors++;
 	    return;
 	case 0: 
-	    execl ("/bin/rmdir", "rmdir", name, 0);
-	    execl ("/usr/bin/rmdir", "rmdir", name, 0);
+	    execl ("/bin/rmdir", "rmdir", name, (char*) 0);
+	    execl ("/usr/bin/rmdir", "rmdir", name, (char*) 0);
 	    std_err ("rm: can't exec rmdir\n");
 	    exit (1);
 	default: 

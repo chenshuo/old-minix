@@ -28,23 +28,24 @@ char *argv[];
   } else if (s < 0 || m==S_IFREG || m==S_IFCHR || m==S_IFBLK){
 	/* Exactly two arguments.  Check for cp f1 f1. */
 	if (equal(argv[1], argv[2])) {
-		std_err("cp: cannot copy a file to itself\n");
+		std_err("Cannot copy a file to itself\n");
 		exit(-1);
 	}
 
 	/* Command is of the form cp f1 f2. */
 	fd1 = open(argv[1], 0);
-	if (fd1 < 0) {stderr3("cannot open ", argv[1], "\n"); exit(1);}
+	if (fd1 < 0) {stderr3("Cannot open ", argv[1], "\n"); exit(1);}
 	fstat(fd1, &sbuf);
 	fd2 = creat(argv[2], sbuf.st_mode & 0777);
-	if (fd2 < 0) {stderr3("cannot create ", argv[2], "\n"); exit(2);}
+	if (fd2 < 0) {stderr3("Cannot create ", argv[2], "\n"); exit(2);}
 	fstat(fd2, &sbuf2);
 	if ( (sbuf2.st_mode & S_IFMT) == S_IFBLK) isfloppy = 1;
 	copyfile(fd1, fd2);
   } else {
-	stderr3("cannot copy to ", argv[2], "\n");
+	stderr3("Cannot copy to ", argv[2], "\n");
 	exit(3);
   }
+  exit(0);
 }
 
 
@@ -62,7 +63,7 @@ char *argv[];
   for (i = 1; i < argc - 1; i++) {
 	fd1 = open(argv[i], 0);
 	if (fd1 < 0) {
-		stderr3("cannot open ", argv[i], "\n");
+		stderr3("Cannot open ", argv[i], "\n");
 		continue;
 	}
 
@@ -82,7 +83,7 @@ char *argv[];
 	fstat(fd1, &sbuf);
 	fd2 = creat(dirname, sbuf.st_mode & 0777);
 	if (fd2 < 0) {
-		stderr3("cannot create ", dirname, "\n");
+		stderr3("Cannot create ", dirname, "\n");
 		continue;
 	}
 	copyfile(fd1, fd2);
@@ -100,7 +101,7 @@ int fd1, fd2;
 
   do {
 	n = read(fd1, cpbuf, TRANSFER_UNIT);
-	if (n < 0) {std_err("cp: read error\n"); break;}
+	if (n < 0) {std_err("Write error\n"); break;}
 	if (n > 0) {
 		m = write(fd2, cpbuf, n);
 		if (m != n) {
@@ -146,7 +147,6 @@ int n;
 stderr3(s1, s2, s3)
 char *s1, *s2, *s3;
 {
-  std_err("cp: ");
   std_err(s1);
   std_err(s2);
   std_err(s3);

@@ -52,7 +52,7 @@ char *argv[];
   files = argc - 1;
   k = 1;
   cp = argv[1];
-  if (*cp++ == '-') {
+  if (argc >1 && *cp++ == '-') {
 	files--;
 	k++;			/* points to first file */
 	while (*cp != 0) {

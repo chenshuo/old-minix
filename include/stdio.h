@@ -35,7 +35,6 @@ extern struct _io_buf {
 
 #define getchar() 		getc(stdin)
 #define putchar(c) 		putc(c,stdout)
-#define puts(s)			fputs(s,stdout)
 #define fgetc(f)		getc(f)
 #define fputc(c,f)		putc(c,f)
 #define feof(p) 		(((p)->_flags & _EOF) != 0)

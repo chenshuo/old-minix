@@ -30,8 +30,8 @@
 #include "glo.h"
 #include "proc.h"
 
-#define NORMAL_STATUS   0xDF	/* printer gives this status when idle */
-#define BUSY_STATUS     0x5F	/* printer gives this status when busy */
+#define NORMAL_STATUS   0x90	/* printer gives this status when idle */
+#define BUSY_STATUS     0x10	/* printer gives this status when busy */
 #define ASSERT_STROBE   0x1D	/* strobe a character to the interface */
 #define NEGATE_STROBE   0x1C	/* enable interrupt on interface */
 #define SELECT          0x0C	/* select printer bit */
@@ -46,6 +46,7 @@
 #define DELAY_COUNT      100	/* regulates delay between characters */
 #define DELAY_LOOP      1000	/* delay when printer is busy */
 #define MAX_REP         1000	/* controls max delay when busy */
+#define STATUS_MASK	0xB0	/* mask to filter out status bits */ 
 
 PRIVATE int port_base;		/* I/O port for printer: 0x 378 or 0x3BC */
 PRIVATE int caller;		/* process to tell when printing done (FS) */
@@ -118,13 +119,13 @@ message *m_ptr;			/* pointer to the newly arrived message */
   	/* Start the printer. */
 	for (i = 0; i < MAX_REP; i++) {
 	  	port_in(port_base + 1, &value);
-	  	if (value == NORMAL_STATUS) {
+	  	if ((value&STATUS_MASK) == NORMAL_STATUS) {
 		 	pr_busy = TRUE;
 			pr_char();	/* print first character */
 			r = SUSPEND;	/* tell FS to suspend user until done */
 			break;
 		} else {
-			if (value == BUSY_STATUS) {
+			if ((value&STATUS_MASK) == BUSY_STATUS) {
 				for (j = 0; j <DELAY_LOOP; j++) /* delay */ ;
 				continue;
 			}
@@ -136,7 +137,7 @@ message *m_ptr;			/* pointer to the newly arrived message */
   }
 
   /* Reply to FS, no matter what happened. */
-  if (value == BUSY_STATUS) r = EAGAIN;
+  if ((value&STATUS_MASK) == BUSY_STATUS) r = EAGAIN;
   reply(TASK_REPLY, m_ptr->m_source, m_ptr->PROC_NR, r);
 }
 
@@ -250,7 +251,7 @@ PUBLIC pr_char()
 
   while (pcount > 0) {
   	port_in(port_base + 1, &value);	/* get printer status */
-  	if (value == NORMAL_STATUS) {
+  	if ((value&STATUS_MASK) == NORMAL_STATUS) {
 		/* Everything is all right.  Output another character. */
 		c = get_byte(es, offset);	/* fetch char from user buf */
 		ch = c & BYTE;
@@ -261,7 +262,7 @@ PUBLIC pr_char()
 		pcount--;
 		cum_count++;	/* count characters output */
 		for (i = 0; i < DELAY_COUNT; i++) ;	/* delay loop */
-	} else if (value == BUSY_STATUS) {
+	} else if ((value&STATUS_MASK) == BUSY_STATUS) {
 		 	return;		/* printer is busy; wait for interrupt*/
 	} else {
 		 	break;		/* err: send message to printer task */
@@ -273,3 +274,5 @@ PUBLIC pr_char()
   int_mess.REP_STATUS = (pcount == 0 ? OK : value);
   interrupt(PRINTER, &int_mess);
 }
+
+

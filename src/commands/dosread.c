@@ -13,7 +13,7 @@
 
 #include "stat.h"
 
-#define DRIVE		"/dev/fdX"
+#define DRIVE		"/dev/atX"
 #define DRIVE_NR	7
 
 #define DDDD	0xFD
@@ -183,7 +183,7 @@ register char *argv[];
 		sub_entries = 16;	/* 512 / 32 */
 	}
 	else {
-		print_string(TRUE, "Diskette is neither 360K nor 1.2M\n");
+		print_string(TRUE, "Diskette is not DOS 2.0 360K or 1.2M\n");
 		leave(1);
 	}
 
@@ -276,7 +276,7 @@ register char *pathname;
 	int i = 0;
 
 	if (function == FIND) {
-		while (*pathname != '/' && *pathname && i < 11)
+		while (*pathname != '/' && *pathname && i < 12)
 			file_name[i++] = *pathname++;
 		while (*pathname != '/' && *pathname)
 			pathname++;
@@ -397,6 +397,8 @@ register DIRECTORY *entry;
 
 	if (entry->d_size == 0)	       /* Empty file */
 		return;
+	if (Aflag)
+		entry->d_size--;
 
 	do {
 		disk_read(clus_add(cl_no), buffer, cluster_size);
@@ -467,10 +469,9 @@ register short bytes;
 			else if ((output[index++] = *buffer++) == EOF_MARK) {
 				if (lf_pending) {
 					output[index - 1] = '\r';
-					index++;
+					output[index++] = EOF_MARK;
 					lf_pending = FALSE;
 				}
-				index--;
 				return;
 			}
 		}
@@ -491,19 +492,15 @@ char *name;
 	short i, r;
 	long size = 0L;
 
+	bcopy("           ",&entry->d_name[0],11);	/* clear entry */
 	for (i = 0, ptr = name; i < 8 && *ptr != '.' && *ptr; i++)
 		entry->d_name[i] = *ptr++;
-	while (i < 8)
-		entry->d_name[i++] = ' ';
-	r = strlen(name);
-	while (r && name[r - 1] != '.')
-		r--;
-
-	i = 0;
-	while (r && i < 3 && name[r])
-		entry->d_ext[i++] = name[r++];
-	while (i < 3)
-		entry->d_ext[i++] = ' ';
+	while (*ptr != '.' && *ptr)
+		ptr++;
+	if (*ptr == '.')
+		ptr++;
+	for (i=0;i < 3 && *ptr; i++)
+		entry->d_ext[i] = *ptr++;
 
 	for (i = 0; i < 10; i++)
 		entry->d_reserved[i] = '\0';
@@ -581,7 +578,7 @@ DIRECTORY *entry;
 	i = 0;
 	while (day >= mon_len[i]) {
 		month++;
-		day -= mon_len[i];
+		day -= mon_len[i++];
 	}
 	day++;
 
@@ -638,7 +635,7 @@ register char *buffer;
 		*buffer++ = c;
 	}
 
-	return (buffer - begin);
+	return (int) (buffer - begin);
 }
 
 get_char()
@@ -816,7 +813,7 @@ int args;
 
 	if (err_fl) {
 		flush();
-		write(2, buf, buf_ptr - buf);
+		write(2, buf, (int) (buf_ptr - buf));
 	}
 	else
 		print(STD_OUT, buf, 0);

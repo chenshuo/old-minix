@@ -1,7 +1,7 @@
 /* ls - list files and directories 	Author: Andy Tanenbaum */
 
-#include "../h/const.h"
-#include "../h/type.h"
+#include "const.h"
+#include "type.h"
 #include "stat.h"
 #include "../fs/const.h"
 #include "../fs/type.h"
@@ -350,13 +350,20 @@ struct file *fp;
 		s = (short) fp->size;
 		fprintf(stdout, "%2d, %2d ", (s>>8)&0377, s&0377);
 	} else {
-		fprintf(stdout, "%7D ", fp->size);
+		fprintf(stdout, "%6D ", fp->size);	/* DEBUG use 6D */
 	}
 	date(fp->modtime);
   }
 
 	/* Print file name. */
-	fprintf(stdout, "%s\n",fp->name);
+	m = 0;
+	p1 = fp->name;
+	while (*p1 != 0 && (m < DIRNAMELEN || *p1 == '/') ) {
+		fprintf(stdout, "%c", *p1);
+		m = (*p1 == '/' ? 0 : m + 1);
+		p1++;
+	}
+	fprintf(stdout, "\n");
 }
 
 

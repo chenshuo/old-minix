@@ -23,7 +23,7 @@ char *argv[];
   setbuf(stdout, buffer);
   flags = 0;
   p = argv[1];
-  if (*p == '-') {
+  if (argc > 1 && *p == '-') {
 	/* Flags present. */
 	flags++;
 	p++;
@@ -165,25 +165,15 @@ int words[8], k, radix;
 }
 
 
-bdump(words, k, c)
-int words[8];
+bdump(bytes, k, c)
+char bytes[16];
 int k;
 char c;
 {
   int i;
-  int c1, c2;
 
-  i = 0;
   if (linenr++ != 1) printf("       ");
-  while (i < k) {
-	c1 = words[i>>1] & 0377;
-	c2 = (words[i>>1]>>8) & 0377;
-	byte(c1, c);
-	i++;
-	if (i == k) {printf("\n"); return;}
-	byte(c2, c);
-	i++;
-  }
+  for (i = 0; i < k; i++) byte(bytes[i] & 0377, c);
   printf("\n");
 }
 

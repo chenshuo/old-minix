@@ -24,7 +24,7 @@ char *argv[];
 	d++;
 
   if (argc == 2) {       /* if no suffix */
-	prints("%s \n",d);
+	prints("%s\n",d);
 	exit(0);
   } else {		    /* if suffix is present */
 	c = d;
@@ -32,5 +32,5 @@ char *argv[];
 	j = strlen(c) - suflen;
 	if (strcmp(c+j, argv[2]) == 0) *(c+j) = 0;
   }
-  prints("%s \n",c);
+  prints("%s\n",c);
 } 

@@ -105,7 +105,7 @@
 #define NR_DRIVES          2	/* maximum number of drives */
 #define DIVISOR          128	/* used for sector size encoding */
 #define MAX_FDC_RETRY    100	/* max # times to try to output to FDC */
-#define NT                 4	/* number of diskette/drive combinations */
+#define NT                 6	/* number of diskette/drive combinations */
 
 /* Variables. */
 PRIVATE struct floppy {		/* main drive struct, one entry per drive */
@@ -138,19 +138,27 @@ PRIVATE message mess;		/* message buffer for in and out */
 PRIVATE char len[] = {-1,0,1,-1,2,-1,-1,3,-1,-1,-1,-1,-1,-1,-1,4};
 PRIVATE char interleave[] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 
-/* Four combinations of diskette/drive are supported:
+/* Six combinations of diskette/drive are supported:
  * # Drive  diskette  Sectors  Tracks  Rotation Data-rate  Comment
  * 0  360K    360K      9       40     300 RPM  250 kbps   Standard PC DSDD
- * 1  720K    360K      9       40     300 RPM  250 kbps   Quad density PC
- * 2  1.2M    360K      9       40     360 RPM  300 kbps   PC disk in AT drive
- * 3  1.2M    1.2M     15       80     360 RPM  500 kbps   AT disk in AT drive
+ * 1  1.2M    1.2M     15       80     360 RPM  500 kbps   AT disk in AT drive
+ * 2  720K    360K      9       40     300 RPM  250 kbps   Quad density PC
+ * 3  720K    720K      9       80     300 RPM  250 kbps   Toshiba, et al.
+ * 4  1.2M    360K      9       40     360 RPM  300 kbps   PC disk in AT drive
+ * 5  1.2M    720K      9       80     360 RPM  300 kbps   Toshiba in AT drive
  */
-PRIVATE int gap[NT]           = {0x2A, 0x2A, 0x23, 0x1B}; /* gap size */
-PRIVATE int rate[NT]          = {0x02, 0x02, 0x01, 0x00}; /* 250,300,500 kbps*/
-PRIVATE int nr_sectors[NT]    = {9,    9,    9,    15};   /* sectors/track */
-PRIVATE int nr_blocks[NT]     = {720,  720,  720,  2400}; /* sectors/diskette*/
-PRIVATE int steps_per_cyl[NT] = {1,    2,    2,    1};	  /* 2 = dbl step */
-PRIVATE int mtr_setup[NT]     = {HZ/4,HZ/4,3*HZ/4,3*HZ/4};/* in ticks */
+PRIVATE int gap[NT] =
+	{0x2A, 0x1B, 0x2A, 0x2A, 0x23, 0x23}; /* gap size */
+PRIVATE int rate[NT] = 
+	{0x02, 0x00, 0x02, 0x02, 0x01, 0x01}; /* 250,300,500 kbps*/
+PRIVATE int nr_sectors[NT] = 
+	{9,    15,   9,    9,    9,    9};   /* sectors/track */
+PRIVATE int nr_blocks[NT] = 
+	{720,  2400, 720,  1440, 720,  1440}; /* sectors/diskette*/
+PRIVATE int steps_per_cyl[NT] = 
+	{1,    1,    2,    1,    2,    1};   /* 2 = dbl step */
+PRIVATE int mtr_setup[NT] = 
+	{HZ/4,3*HZ/4,HZ/4,HZ/4,3*HZ/4,3*HZ/4};/* in ticks */
 
 /*===========================================================================*
  *				floppy_task				     * 

@@ -83,7 +83,7 @@ int fd1, fd2;
 flush()
 {
   if (next != buffer) 
-	if (write(1, buffer, next - buffer) <= 0) quit();
+	if (write(1, buffer, (int) (next - buffer)) <= 0) quit();
 }
 
 

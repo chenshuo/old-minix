@@ -1,6 +1,6 @@
 /* kill - send a signal to a process	Author: Adri Koppes  */
 
-#include "../h/signal.h"
+#include "signal.h"
 
 main(argc,argv)
 int argc;
@@ -30,6 +30,6 @@ char **argv;
 
 usage()
 {
-  prints("usage: kill pid\n");
+  prints("Usage: kill pid\n");
   exit(1);
 }

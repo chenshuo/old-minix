@@ -81,6 +81,23 @@ unsigned size;
   return(new);
 }
 
+char *calloc(m,size)
+unsigned m,size;
+{
+  char *malloc();
+  char *cp;
+  register int i;
+  register char *temp;
+
+  i = m*size;
+  if ((cp=malloc(i))==(char *)0) return (char *)0;
+
+  /* malloc succeeded--clear allocated memory */
+  for (temp = cp ; i-- ; ) *temp++ = '\0';
+  return cp;
+}
+
+
 free(p)
 char *p;
 {

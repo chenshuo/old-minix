@@ -1,5 +1,5 @@
 /* This is a special version of printf.  It is used only by the operating
- * system itself, and should never be included in user programs.   The name
+ * system itself, and should never be included in user programs. The name
  * printk never appears in the operating system, because the macro printf
  * has been defined as printk there.
  */
@@ -13,6 +13,7 @@ int *arglist;
 {
   int w, k, r, *valp;
   unsigned u;
+  char **pp;
   long l, *lp;
   char a[MAXDIGITS], *p, *p1, c;
 
@@ -31,6 +32,7 @@ int *arglist;
 	}
 
 	lp = (long *) valp;
+	pp = (char **) valp;
 
 	switch(*s) {
 	    case 'd':	k = *valp++; l = k;  r = 10;  break;
@@ -40,7 +42,7 @@ int *arglist;
 	    case 'O':	l = *lp++;  r = 8;  valp = (int *) lp; break;
 	    case 'X':	l = *lp++;  r = 16; valp = (int *) lp; break;
 	    case 'c':	k = *valp++; putc(k); s++; continue;
-	    case 's':	p = (char *) *valp++; 
+	    case 's':	p = *pp++; valp = (int *) pp;
 			p1 = p;
 			while(c = *p++) putc(c); s++;
 			if ( (k = w - (p-p1-1)) > 0) while (k--) putc(' ');

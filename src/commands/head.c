@@ -1,11 +1,12 @@
 /* head - print the first few lines of a file	Author: Andy Tanenbaum */
+/* change to use putc() instead of prints()    --  Dean Long 3/7/87    */
+
 
 #include "stdio.h"
 
 #define DEFAULT 10
 
 char buff[BUFSIZ];
-char lbuf[256];
 
 main(argc, argv)
 int argc;
@@ -40,12 +41,13 @@ char *argv[];
   	if (nfiles > 1) prints("==> %s <==\n", argv[k]);
   	if (fopen(argv[k], "r") == NULL) 
 		prints("head: cannot open %s\n", argv[k]);
-	else
+	else {
 		do_file(n);
+	 	fflush(stdout);
+	}
   	k++;
   	if (k < argc) prints("\n");
   }
-  fflush(stdout);
   exit(0);
 }
 
@@ -54,21 +56,18 @@ char *argv[];
 do_file(n)
 int n;
 {
+  int c;
+
   /* Print the first 'n' lines of a file. */
-  while (n--) do_line();
-}
-
-
-do_line()
-{
-/* Print one line. */
-
-  char c, *cp;
-  cp = lbuf;
-  while ( (c = getc(stdin)) != '\n') *cp++ = c;
-  *cp++ = '\n';
-  *cp++ = 0;
-  prints("%s",lbuf);
+  while(n)
+    switch (c = getc(stdin)) {
+      case EOF :
+        return;
+      case '\n':
+        --n;
+      default  :
+        putc((char)c, stdout);
+    }
 }
 
 

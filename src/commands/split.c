@@ -63,14 +63,14 @@ split()
   	while (--n >= 0) {
   		if (*index++ == '\n')
   			if (++lines % cut_line == 0)  {
-  				if (write(fd, base, index-base) != index-base)
+  				if (write(fd,base,(int)(index-base)) != (int)(index-base))
 					quit();
   				base = index;
   				close(fd);
   				fd = newfile();
   			}
   	}
-  	if (write(fd, base, index - base) != index - base) quit();
+  	if (write(fd, base, (int) (index-base)) != (int) (index-base)) quit();
   }
 }
 

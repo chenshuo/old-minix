@@ -16,6 +16,7 @@
 #include <pwd.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <net/gen/in.h>
 #include <net/gen/tcp.h>
 
@@ -126,6 +127,8 @@ struct passwd *pwd;
 		username, pwd->pw_dir);
 	loggedin = 1;
    }
+
+   (void) umask(anonymous ? 0400 : 0077);
 
    return(GOOD);
 }

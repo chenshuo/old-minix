@@ -145,6 +145,21 @@ PUBLIC int do_sigprocmask()
 }
 
 /*===========================================================================*
+ *                            do_sigsuspend                                  *
+ *===========================================================================*/
+PUBLIC int do_sigsuspend()
+{
+  mp->mp_sigmask2 = mp->mp_sigmask;	/* save the old mask */
+  mp->mp_sigmask = (sigset_t) sig_set;
+  sigdelset(&mp->mp_sigmask, SIGKILL);
+  mp->mp_flags |= SIGSUSPENDED;
+  dont_reply = TRUE;
+  check_pending();
+  return OK;
+}
+
+
+/*===========================================================================*
  *                               do_sigreturn				     *
  *===========================================================================*/
 PUBLIC int do_sigreturn()
@@ -162,21 +177,6 @@ PUBLIC int do_sigreturn()
   check_pending();
   return(r);
 }
-
-/*===========================================================================*
- *                            do_sigsuspend                                  *
- *===========================================================================*/
-PUBLIC int do_sigsuspend()
-{
-  mp->mp_sigmask2 = mp->mp_sigmask;	/* save the old mask */
-  mp->mp_sigmask = (sigset_t) sig_set;
-  sigdelset(&mp->mp_sigmask, SIGKILL);
-  mp->mp_flags |= SIGSUSPENDED;
-  dont_reply = TRUE;
-  check_pending();
-  return OK;
-}
-
 
 /*===========================================================================*
  *				do_kill					     *
@@ -402,7 +402,9 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 	stop_proc(rmp, signo);	/* a signal causes it to stop */
 	return;
   }
-  if (sigismember(&rmp->mp_ignore, signo)) return;
+  /* Some signals are ignored by default. */
+  if (sigismember(&rmp->mp_ignore, signo)) return; 
+
   if (sigismember(&rmp->mp_sigmask, signo)) {
 	/* Signal should be blocked. */
 	sigaddset(&rmp->mp_sigpending, signo);
@@ -425,7 +427,7 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 				 + 3 * sizeof(char *) + 2 * sizeof(int);
 
 	if (adjust(rmp, rmp->mp_seg[D].mem_len, new_sp) != OK)
-		goto dodefault;
+		goto doterminate;
 
 	rmp->mp_sigmask |= rmp->mp_sigact[signo].sa_mask;
 	if (sigflags & SA_NODEFER)
@@ -446,10 +448,10 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 	unpause(slot);
 	return;
   }
-dodefault:
-  /* Signal should not or cannot be caught.  Take default action. */
+doterminate:
+  /* Signal should not or cannot be caught.  Terminate the process. */
   rmp->mp_sigstatus = (char) signo;
-  if (sigismember(&core_bits, signo)) {
+  if (sigismember(&core_sset, signo)) {
 	/* Switch to the user's FS environment and dump core. */
 	tell_fs(CHDIR, slot, FALSE, 0);
 	dump_core(rmp);
@@ -620,10 +622,10 @@ register struct mproc *rmp;	/* whose core is to be dumped */
   rmp->mp_sigstatus |= DUMPED;
 
   /* Make sure the stack segment is up to date.
-   * DEBUG.  We don't want adjust() to fail unless current_sp is preposteous,
-   * but it might fail due to safety checking.  Also, we don't really want the
-   * adjust() for sending a signal to fail due to safety checking.  Maybe make
-   * SAFETY_BYTES a parameter.
+   * We don't want adjust() to fail unless current_sp is preposterous,
+   * but it might fail due to safety checking.  Also, we don't really want 
+   * the adjust() for sending a signal to fail due to safety checking.  
+   * Maybe make SAFETY_BYTES a parameter.
    */
   sys_getsp(slot, &current_sp);
   adjust(rmp, rmp->mp_seg[D].mem_len, current_sp);

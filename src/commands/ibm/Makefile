@@ -57,7 +57,7 @@ bin/mixer:	mixer.c
 
 bin/part:	part.c
 	$(CCLD) -m -o $@ $?
-	install -S 10kw $@
+	install -S 11kw $@
 
 bin/partition:	partition.c
 	$(CCLD) -o $@ $?

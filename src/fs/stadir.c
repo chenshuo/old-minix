@@ -26,8 +26,7 @@ PUBLIC int do_chdir()
 {
 /* Change directory.  This function is  also called by MM to simulate a chdir
  * in order to do EXEC, etc.  It also changes the root directory, the uids and
- * gids, and the umask.  The name of this function is now misleading and the
- * cd_flag argument is no longer supported.
+ * gids, and the umask. 
  */
 
   int r;

@@ -49,7 +49,7 @@ char username[20]="USER=";
 char homedir[64]="HOME=";
 char shell[64]="SHELL=";
 char tz[1024]="TZ=";
-char *envinit[]= {homedir, shell, username, tz, 0};
+char *envinit[]= {homedir, shell, username, tz, "PATH=:/bin:/usr/bin", 0};
 char *prog_name;
 char buffer[PIPE_BUF];
 

@@ -99,10 +99,10 @@ int what, p1, p2, p3;
  *      tell_fs(EXIT, proc, 0, 0)
  *      tell_fs(FORK, parent, child, pid)
  *      tell_fs(SETGID, proc, realgid, effgid)
+ *      tell_fs(SETSID, proc, 0, 0)
  *      tell_fs(SETUID, proc, realuid, effuid)
  *      tell_fs(SYNC, 0, 0, 0)
  *      tell_fs(UNPAUSE, proc, signr, 0)
- *      tell_fs(SETPGRP, proc, 0, 0)
  */
 
   message m;

@@ -1,5 +1,7 @@
 # Generate binary keymaps.
 
+LK =	/usr/lib/keymaps
+
 .SUFFIXES:	.src .map
 
 .src.map:
@@ -14,56 +16,61 @@ all:	\
 	japanese.map \
 	latin-am.map \
 	olivetti.map \
+	scandinavn.map \
 	spanish.map \
 	uk.map \
 	us-std.map \
 	us-swap.map \
 
 install:	\
-	/usr/lib/keymaps \
-	/usr/lib/keymaps/french.map \
-	/usr/lib/keymaps/german.map \
-	/usr/lib/keymaps/italian.map \
-	/usr/lib/keymaps/japanese.map \
-	/usr/lib/keymaps/latin-am.map \
-	/usr/lib/keymaps/olivetti.map \
-	/usr/lib/keymaps/spanish.map \
-	/usr/lib/keymaps/uk.map \
-	/usr/lib/keymaps/us-std.map \
-	/usr/lib/keymaps/us-swap.map \
+	$(LK) \
+	$(LK)/french.map \
+	$(LK)/german.map \
+	$(LK)/italian.map \
+	$(LK)/japanese.map \
+	$(LK)/latin-am.map \
+	$(LK)/olivetti.map \
+	$(LK)/scandinavn.map \
+	$(LK)/spanish.map \
+	$(LK)/uk.map \
+	$(LK)/us-std.map \
+	$(LK)/us-swap.map \
 
 clean:
 	rm -f a.out *.map
 
-/usr/lib/keymaps:
+$(LK):
 	install -d $@
 
-/usr/lib/keymaps/french.map:	french.map
+$(LK)/french.map:	french.map
 	install -c $? $@
 
-/usr/lib/keymaps/german.map:	german.map
+$(LK)/german.map:	german.map
 	install -c $? $@
 
-/usr/lib/keymaps/italian.map:	italian.map
+$(LK)/italian.map:	italian.map
 	install -c $? $@
 
-/usr/lib/keymaps/japanese.map:	japanese.map
+$(LK)/japanese.map:	japanese.map
 	install -c $? $@
 
-/usr/lib/keymaps/latin-am.map:	latin-am.map
+$(LK)/latin-am.map:	latin-am.map
 	install -c $? $@
 
-/usr/lib/keymaps/olivetti.map:	olivetti.map
+$(LK)/olivetti.map:	olivetti.map
 	install -c $? $@
 
-/usr/lib/keymaps/spanish.map:	spanish.map
+$(LK)/scandinavn.map:	scandinavn.map
 	install -c $? $@
 
-/usr/lib/keymaps/uk.map:	uk.map
+$(LK)/spanish.map:	spanish.map
 	install -c $? $@
 
-/usr/lib/keymaps/us-std.map:	us-std.map
+$(LK)/uk.map:	uk.map
 	install -c $? $@
 
-/usr/lib/keymaps/us-swap.map:	us-swap.map
+$(LK)/us-std.map:	us-std.map
+	install -c $? $@
+
+$(LK)/us-swap.map:	us-swap.map
 	install -c $? $@

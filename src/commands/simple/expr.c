@@ -340,7 +340,7 @@ char *err;
 
 #define PROGLENGTH	1024	/* bytes reserved for r-programs */
 
-#define	CLASS_BYTES	((CHAR_MAX - CHAR_MIN) / CHAR_BIT)
+#define	CLASS_BYTES	((CHAR_MAX - CHAR_MIN + 1 + CHAR_BIT-1) / CHAR_BIT)
 
 unsigned char rprogram[PROGLENGTH];	/* regexp program storage */
 unsigned int rflags = RABEGIN;	/* regexp program context */
@@ -477,7 +477,7 @@ register char *regexp;
 			    && regexp[1] > first) {
 				++regexp;
 				last = *regexp++;
-				for (i = first; i < last; ++i) {
+				for (i = first; i <= last; ++i) {
 					rpc[(i - CHAR_MIN) / CHAR_BIT] |=
 						1 << ((i - CHAR_MIN) % CHAR_BIT);
 				}

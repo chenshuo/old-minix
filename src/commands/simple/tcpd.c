@@ -22,6 +22,7 @@ tcpd.c
 #include <net/hton.h>
 
 #if PARANOID
+/* -DPARANOID: Log any and all connections.  Requires 8kw stack space. */
 #include <time.h>
 #include <net/gen/socket.h>
 char LOG[] = "/usr/adm/authlog";

@@ -7,6 +7,7 @@
  * Version:     0.10    06/21/92 (pre-release not yet completed)
  *              0.20    07/01/92
  *              0.30    01/15/96 (Minix 1.7.1 initial release)
+ *              0.40    08/27/96
  *
  * Author:      Michael Temari, <temari@ix.netcom.com>
  */
@@ -125,9 +126,9 @@ int firsttime;
 			strncpy(buff, reply, 4);
 			buff[3] = ' ';
 		}
-	   } while(strncmp(reply, buff, 3) && reply[3] == '-');
+	   } while(strncmp(reply, buff, 3) || reply[3] == '-');
 	   s = atoi(buff);
-   } while(s<200 && s != 125 & s != 150);
+   } while(s < 200 && s != 125 & s != 150);
 
    return(s);
 }
@@ -201,7 +202,9 @@ char junk[10];
    printf("pwd           Display current directory on remote host\n");
    printf("quit          Close connection and exit\n");
    printf("quote         Send raw ftp command to remote host\n");
+   printf("reget         Restart a partial file retrieve from remote host\n");
    printf("remotehelp    Display ftp commands implemented on remote host\n");
+   printf("reput         Restart a partial file send to remote host\n");
    printf("rm            Remove file on remote host\n");
    printf("rmdir         Remove directory on remote host\n");
    printf("site          Send a site specific command\n");
@@ -251,7 +254,9 @@ static struct commands commands[] = {
 	"pwd",          DOpwd,
 	"quit",         DOquit,
 	"quote",        DOquote,
+	"reget",	DOrretr,
 	"remotehelp",   DOremotehelp,
+	"reput",	DOrstor,
 	"rm",           DOdelete,
 	"rmdir",        DOrmdir,
 	"site",		DOsite,

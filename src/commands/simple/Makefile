@@ -40,7 +40,6 @@ MAKE	= exec make -$(MAKEFLAGS) install
 
 all:	bin \
 	bin/add_route \
-	bin/animals \
 	bin/ascii \
 	bin/at \
 	bin/atrun \
@@ -215,10 +214,6 @@ bin:
 
 bin/add_route:	add_route.c
 	$(CCLD) -o $@ add_route.c
-	install -S 4kw $@
-
-bin/animals:	animals.c
-	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
 bin/ascii:	ascii.c
@@ -894,7 +889,6 @@ bin/yes:	yes.c
 
 install:	bin \
 	/usr/bin/add_route \
-	/usr/bin/animals \
 	/usr/bin/ascii \
 	/usr/bin/at \
 	/usr/bin/atrun \
@@ -1094,9 +1088,6 @@ install:	bin \
 	/bin/umount \
 
 /usr/bin/add_route:	bin/add_route
-	install -cs -o bin $? $@
-
-/usr/bin/animals:	bin/animals
 	install -cs -o bin $? $@
 
 /usr/bin/ascii:	bin/ascii

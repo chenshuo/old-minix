@@ -395,7 +395,7 @@ char dir_name[NAME_MAX];		/* name of directory to be removed */
   if ((r = search_dir(rip, "", (ino_t *) 0, IS_EMPTY)) != OK) return r;
 
   if (strcmp(dir_name, ".") == 0 || strcmp(dir_name, "..") == 0)return(EINVAL);
-  if (rip->i_num == ROOT_INODE) return(EBUSY); /* can't remove `root' */
+  if (rip->i_num == ROOT_INODE) return(EBUSY); /* can't remove 'root' */
   
   for (rfp = &fproc[INIT_PROC_NR + 1]; rfp < &fproc[NR_PROCS]; rfp++)
 	if (rfp->fp_workdir == rip || rfp->fp_rootdir == rip) return(EBUSY);

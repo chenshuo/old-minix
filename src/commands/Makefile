@@ -37,6 +37,8 @@ all install clean:
 	cd scripts && $(MAKE) $@
 	cd sh && $(MAKE) $@
 	cd simple && $(MAKE) $@
+	cd talk && $(MAKE) $@
+	cd talkd && $(MAKE) $@
 	cd telnet && $(MAKE) $@
 	cd telnetd && $(MAKE) $@
 	cd yap && $(MAKE) $@

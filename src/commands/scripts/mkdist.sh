@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 2.2 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 2.3 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -42,6 +42,7 @@ bin/mined
 bin/mkdir
 bin/mkfs
 bin/mknod
+bin/more
 bin/mv
 bin/od
 bin/part
@@ -64,6 +65,7 @@ bin/uname
 bin/uncompress
 bin/update
 bin/vol
+bin/yap
 bin/zcat
 lib
 lib/keymaps

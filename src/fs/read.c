@@ -162,16 +162,6 @@ int rw_flag;			/* READING or WRITING */
   }
 
   /* On write, update file size and access time. */
-  /* DEBUG FIXME.  Don't we have to set i_dirty after changing i_size?
-   * Probably write_map will already have changed it for the WRITING case
-   * and it doesn't matter for the case of reading from pipes.  However,
-   * it would be cleaner to set it for all cases at the start of this
-   * routine, and not in write_map, etc., now that the inode is almost
-   * always dirtied by changing some of its times.
-   *
-   * Does POSIX really say not to change i_ctime after an unsuccesful write?
-   * It is possible for part of a failed write to work and change i_size.
-   */
   if (rw_flag == WRITING) {
 	if (regular || mode_word == I_DIRECTORY) {
 		if (position > f_size) rip->i_size = position;

@@ -149,7 +149,7 @@ vir_clicks s_vir;		/* virtual address for start of stack seg */
  * is needed, since the data and stack may not exceed 4096 clicks.
  */
 
-#if (PAGE_SIZE > 1)
+#if (CHIP == INTEL && _WORD_SIZE == 2)
   int pt, pd, ps;		/* segment sizes in pages */
 
   pt = ( (tc << CLICK_SHIFT) + PAGE_SIZE - 1)/PAGE_SIZE;

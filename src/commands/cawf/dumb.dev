@@ -6,7 +6,7 @@
 .\" call margin adjustment device-dependent for sake of some unusual cases
 .ad
 .\" page parameters
-.pl 11i
+.pl 10i
 .ll 6.5i
 .po 0
 .\" --------------------------------

@@ -1,6 +1,6 @@
-/*	part 1.45 - Partition table editor		Author: Kees J. Bot
+/*	part 1.47 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
- * Needs about 20k heap+stack.
+ * Needs about 22k heap+stack.
  */
 #define nil 0
 #include <sys/types.h>
@@ -165,7 +165,8 @@ void stat_reset(void)
 	if (need_help && statusrow < (24-2)) {
 		if (statusrow > STATUSROW) stat_start(0);
 		stat_start(0);
-		putstr("Type '?' for help, '!' for advice");
+		putstr(
+"Type '+' or '-' to change, 'r' to read, '?' for more help, '!' for advice");
 	}
 	statusrow= STATUSROW;
 	need_help= 0;
@@ -418,46 +419,66 @@ void guess_geometry(void)
  * tables didn't have C/H/S numbers we would not care at all...)
  */
 {
-	int n;
+	int i, n;
 	struct part_entry *pe;
 	unsigned chs[3];
 	unsigned long sec;
-	unsigned CHS[3], h, s, t;
+	unsigned h, s;
+	unsigned char HS[256][8];	/* Bit map off all possible H/S */
 
 	alt_cyls= alt_heads= alt_secs= 0;
 
-	for (pe= table+1; pe <= table+NR_PARTITIONS; pe++) {
+	/* Initially all possible H/S combinations are possible.  HS[h][0]
+	 * bit 0 is used to rule out a head value.
+	 */
+	for (h= 1; h <= 255; h++) {
+		for (s= 0; s < 8; s++) HS[h][s]= 0xFF;
+	}
+
+	for (i= 0; i < 2*NR_PARTITIONS; i++) {
+		pe= &(table+1)[i >> 1];
 		if (pe->sysind == NO_PART) continue;
 
-		/* Use the "end sector" numbers. */
-		dos2chs(&pe->last_head, chs);
-		sec= pe->lowsec + pe->size - 1;
+		/* Get the end or start sector numbers (in that order). */
+		if ((i & 1) == 0) {
+			dos2chs(&pe->last_head, chs);
+			sec= pe->lowsec + pe->size - 1;
+		} else {
+			dos2chs(&pe->start_head, chs);
+			sec= pe->lowsec;
+		}
 
 		if (chs[0] >= alt_cyls) alt_cyls= chs[0]+1;
 
-		if (chs[2] > sec) continue;
-		sec -= chs[2];
-
-		/* See if there is exactly one CHS geometry that matches. */
-		n = 0;
-		for (s= 1; s <= 63; s++) {
-			if (sec % s != 0) continue;
-			t= sec / s;
-			if (t < chs[1]) continue;
-			t= t - chs[1];
-			if (chs[0] == 0) continue;
-			if (t % chs[0] != 0) continue;
-			h= t / chs[0];
-			if (h < 1 || h > 255) continue;
-			n++;
-			CHS[1]= h; CHS[2]= s;
-		}
-		if (n == 1) {
-			/* Got a good geometry! */
-			alt_heads= CHS[1];
-			alt_secs= CHS[2];
+		/* Which H/S combinations can be ruled out? */
+		for (h= 1; h <= 255; h++) {
+			if (HS[h][0] == 0) continue;
+			n = 0;
+			for (s= 1; s <= 63; s++) {
+				if ((chs[0] * h + chs[1]) * s + chs[2] != sec) {
+					HS[h][s/8] &= ~(1 << (s%8));
+				}
+				if (HS[h][s/8] & (1 << (s%8))) n++;
+			}
+			if (n == 0) HS[h][0]= 0;
 		}
 	}
+
+	/* See if only one remains. */
+	i= 0;
+	for (h= 1; h <= 255; h++) {
+		if (HS[h][0] == 0) continue;
+		for (s= 1; s <= 63; s++) {
+			if (HS[h][s/8] & (1 << (s%8))) {
+				i++;
+				alt_heads= h;
+				alt_secs= s;
+			}
+		}
+	}
+
+	/* Forget it if more than one choice... */
+	if (i > 1) alt_cyls= alt_heads= alt_secs= 0;
 }
 
 void geometry(void)
@@ -981,10 +1002,13 @@ void m_toggle(int ev, object_t *op)
 	unsigned t;
 
 	if (ev != 'X') return;
+	if (alt_cyls == cylinders && alt_heads == heads && alt_secs == sectors)
+		return;
 
 	t= cylinders; cylinders= alt_cyls; alt_cyls= t;
 	t= heads; heads= alt_heads; alt_heads= t;
 	t= sectors; sectors= alt_secs; alt_secs= t;
+	dirty= 1;
 	recompute0();
 }
 
@@ -1670,8 +1694,17 @@ void m_write(int ev, object_t *op)
 	int c;
 	struct part_entry new_table[NR_PARTITIONS], *pe;
 
-	if ((ev != 'w' && ev != E_WRITE) || !dirty) return;
+	if (ev != 'w' && ev != E_WRITE) return;
 	if (device < 0) { dirty= 0; return; }
+	if (!dirty) {
+		if (ev == 'w') {
+			stat_start(1);
+			printf("%s is not changed, or has already been written",
+							curdev->subname);
+			stat_end(2);
+		}
+		return;
+	}
 
 	if (bootblock[510] != 0x55 || bootblock[511] != 0xAA) {
 		/* Invalid boot block, warn user. */
@@ -1808,7 +1841,7 @@ int quitting= 0;
 void m_quit(int ev, object_t *op)
 /* Write the partition table if modified and exit. */
 {
-	if (ev != 'q') return;
+	if (ev != 'q' && ev != 'x') return;
 
 	quitting= 1;
 
@@ -1823,35 +1856,34 @@ void m_help(int ev, object_t *op)
 		char	*keys;
 		char	*what;
 	} help[]= {
-	  { "? !",		  "This help / more advice!" },
-	  { "+ - (= _ PgUp PgDn)","Select/increment/decrement/make active" },
-	  { "0-9 (a-f)",	  "Enter value" },
-	  { "hjkl (arrow keys)",  "Move around" },
-	  { "CTRL-K CTRL-J",	  "Move entry up/down" },
-	  { "CTRL-L",		  "Redraw screen" },
-	  { ">",		  "Start a subpartition table" },
-	  { "<",		  "Back to the primary partition table" },
-	  { "m",		  "Cycle through magic values" },
-	  { "spacebar",		  "Show \"Size\" or \"Last\"" },
-	  { "r w",		  "Read/write partition table" },
-	  { "p s q",		  "Raw dump / Shell escape / Quit (bail out)" },
-	  { "y n DEL",		  "Answer \"yes\", \"no\", \"cancel\"" },
+	 { "? !",		 "This help / more advice!" },
+	 { "+ - (= _ PgUp PgDn)","Select/increment/decrement/make active" },
+	 { "0-9 (a-f)",		 "Enter value" },
+	 { "hjkl (arrow keys)",	 "Move around" },
+	 { "CTRL-K CTRL-J",	 "Move entry up/down" },
+	 { "CTRL-L",		 "Redraw screen" },
+	 { ">",			 "Start a subpartition table" },
+	 { "<",			 "Back to the primary partition table" },
+	 { "m",			 "Cycle through magic values" },
+	 { "spacebar",		 "Show \"Size\" or \"Last\"" },
+	 { "r w",		 "Read/write partition table" },
+	 { "p s q x",		 "Raw dump / Shell escape / Quit / Exit" },
+	 { "y n DEL",		 "Answer \"yes\", \"no\", \"cancel\"" },
 	};
 	static char *advice[] = {
-	  "Choose a disk with '+' and '-', then hit 'r'.",
-	  "",
-	  "To make a new partition:  Move over to the Size or Kb field of an",
-	  "unused partition and type the size.  Hit the 'm' key to pad the",
-	  "partition out to a cylinder boundary.  Hit 'm' again to pad it out",
-	  "to the end of the disk.  You can hit 'm' more than once on a base",
-	  "or size field to see several interesting values go by.",
-	  "Note: Other Operating Systems can be picky about partitions that",
-	  "are not padded to cylinder boundaries.  Look for highlighted head",
-	  "or sector numbers.",
-	  "",
-	  "To delete a partition:  Type a zero in the hex Type field.",
-	  "To make a partition active:  Type '+' in the Num field.",
-	  "To study the list of keys:  Type '?'.",
+"* Choose a disk with '+' and '-', then hit 'r'.",
+"* To change any value: Move to it and use '+', '-' or type the desired value.",
+"* To make a new partition:  Move over to the Size or Kb field of an unused",
+"  partition and type the size.  Hit the 'm' key to pad the partition out to",
+"  a cylinder boundary.  Hit 'm' again to pad it out to the end of the disk.",
+"  You can hit 'm' more than once on a base or size field to see several",
+"  interesting values go by.  Note: Other Operating Systems can be picky about",
+"  partitions that are not padded to cylinder boundaries.  Look for highlighted",
+"  head or sector numbers.",
+"* To reuse a partition:  Change the type to MINIX.",
+"* To delete a partition:  Type a zero in the hex Type field.",
+"* To make a partition active:  Type '+' in the Num field.",
+"* To study the list of keys:  Type '?'.",
 	};
 
 	if (ev == '?') {

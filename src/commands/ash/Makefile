@@ -87,7 +87,7 @@ bltin/regexp.o:	bltin/regexp.c
 	cd bltin && $(CC) -I.. $(CFLAGS) -c regexp.c
 
 # Dependencies you say?  This will have to do.
-$(OBJS): errmsg.h error.h eval.h exec.h expand.h init.h input.h \
+$(OBJS): error.h eval.h exec.h expand.h init.h input.h \
 	jobs.h machdep.h mail.h main.h memalloc.h mystring.h options.h \
 	output.h parser.h redir.h shell.h trap.h var.h \
 	builtins.h nodes.h signames.h syntax.h

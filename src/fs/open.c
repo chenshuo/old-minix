@@ -3,11 +3,11 @@
  *
  * The entry points into this file are
  *   do_creat:	perform the CREAT system call
- *   do_mknod:	perform the MKNOD system call
  *   do_open:	perform the OPEN system call
+ *   do_mknod:	perform the MKNOD system call
+ *   do_mkdir:	perform the MKDIR system call
  *   do_close:	perform the CLOSE system call
  *   do_lseek:  perform the LSEEK system call
- *   do_mkdir:	perform the MKDIR system call
  */
 
 #include "fs.h"
@@ -31,6 +31,7 @@ FORWARD _PROTOTYPE( int pipe_open, (struct inode *rip,Mode_t bits,int oflags));
 FORWARD _PROTOTYPE( struct inode *new_node, (char *path, Mode_t bits,
 							zone_t z0)	);
 
+
 /*===========================================================================*
  *				do_creat				     *
  *===========================================================================*/
@@ -42,92 +43,6 @@ PUBLIC int do_creat()
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
   r = common_open(O_WRONLY | O_CREAT | O_TRUNC, (mode_t) mode);
   return(r);
-}
-
-
-/*===========================================================================*
- *				do_mknod				     *
- *===========================================================================*/
-PUBLIC int do_mknod()
-{
-/* Perform the mknod(name, mode, addr) system call. */
-
-  register mode_t bits, mode_bits;
-  struct inode *ip;
-
-  /* Only the super_user may make nodes other than fifos. */
-  mode_bits = (mode_t) m.m1_i2;	/* mode of the inode */
-  if (!super_user && ((mode_bits & I_TYPE) != I_NAMED_PIPE)) return(EPERM);
-  if (fetch_name(m.m1_p1, m.m1_i1, M1) != OK) return(err_code);
-  bits = (mode_bits & I_TYPE) | (mode_bits & ALL_MODES & fp->fp_umask);
-  ip = new_node(user_path, bits, (zone_t) m.m1_i3);
-  put_inode(ip);
-  return(err_code);
-}
-
-
-/*===========================================================================*
- *				new_node				     *
- *===========================================================================*/
-PRIVATE struct inode *new_node(path, bits, z0)
-char *path;			/* pointer to path name */
-mode_t bits;			/* mode of the new inode */
-zone_t z0;			/* zone number 0 for new inode */
-{
-/* New_node() is called by common_open(), do_mknod(), and do_mkdir().  
- * In all cases it allocates a new inode, makes a directory entry for it on 
- * the path 'path', and initializes it.  It returns a pointer to the inode if 
- * it can do this; otherwise it returns NIL_INODE.  It always sets 'err_code'
- * to an appropriate value (OK or an error code).
- */
-
-  register struct inode *rlast_dir_ptr, *rip;
-  register int r;
-  char string[NAME_MAX];
-
-  /* See if the path can be opened down to the last directory. */
-  if ((rlast_dir_ptr = last_dir(path, string)) == NIL_INODE) return(NIL_INODE);
-
-  /* The final directory is accessible. Get final component of the path. */
-  rip = advance(rlast_dir_ptr, string);
-  if ( rip == NIL_INODE && err_code == ENOENT) {
-	/* Last path component does not exist.  Make new directory entry. */
-	if ( (rip = alloc_inode(rlast_dir_ptr->i_dev, bits)) == NIL_INODE) {
-		/* Can't creat new inode: out of inodes. */
-		put_inode(rlast_dir_ptr);
-		return(NIL_INODE);
-	}
-
-	/* Force inode to the disk before making directory entry to make
-	 * the system more robust in the face of a crash: an inode with
-	 * no directory entry is much better than the opposite.
-	 */
-	rip->i_nlinks++;
-	rip->i_zone[0] = z0;		/* major/minor device numbers */
-	rw_inode(rip, WRITING);		/* force inode to disk now */
-
-	/* New inode acquired.  Try to make directory entry. */
-	if ((r = search_dir(rlast_dir_ptr, string, &rip->i_num,ENTER)) != OK) {
-		put_inode(rlast_dir_ptr);
-		rip->i_nlinks--;	/* pity, have to free disk inode */
-		rip->i_dirt = DIRTY;	/* dirty inodes are written out */
-		put_inode(rip);	/* this call frees the inode */
-		err_code = r;
-		return(NIL_INODE);
-	}
-
-  } else {
-	/* Either last component exists, or there is some problem. */
-	if (rip != NIL_INODE)
-		r = EEXIST;
-	else
-		r = err_code;
-  }
-
-  /* Return the directory inode and exit. */
-  put_inode(rlast_dir_ptr);
-  err_code = r;
-  return(rip);
 }
 
 
@@ -290,6 +205,72 @@ mode_t omode;
   return(fd);
 }
 
+
+/*===========================================================================*
+ *				new_node				     *
+ *===========================================================================*/
+PRIVATE struct inode *new_node(path, bits, z0)
+char *path;			/* pointer to path name */
+mode_t bits;			/* mode of the new inode */
+zone_t z0;			/* zone number 0 for new inode */
+{
+/* New_node() is called by common_open(), do_mknod(), and do_mkdir().  
+ * In all cases it allocates a new inode, makes a directory entry for it on 
+ * the path 'path', and initializes it.  It returns a pointer to the inode if 
+ * it can do this; otherwise it returns NIL_INODE.  It always sets 'err_code'
+ * to an appropriate value (OK or an error code).
+ */
+
+  register struct inode *rlast_dir_ptr, *rip;
+  register int r;
+  char string[NAME_MAX];
+
+  /* See if the path can be opened down to the last directory. */
+  if ((rlast_dir_ptr = last_dir(path, string)) == NIL_INODE) return(NIL_INODE);
+
+  /* The final directory is accessible. Get final component of the path. */
+  rip = advance(rlast_dir_ptr, string);
+  if ( rip == NIL_INODE && err_code == ENOENT) {
+	/* Last path component does not exist.  Make new directory entry. */
+	if ( (rip = alloc_inode(rlast_dir_ptr->i_dev, bits)) == NIL_INODE) {
+		/* Can't creat new inode: out of inodes. */
+		put_inode(rlast_dir_ptr);
+		return(NIL_INODE);
+	}
+
+	/* Force inode to the disk before making directory entry to make
+	 * the system more robust in the face of a crash: an inode with
+	 * no directory entry is much better than the opposite.
+	 */
+	rip->i_nlinks++;
+	rip->i_zone[0] = z0;		/* major/minor device numbers */
+	rw_inode(rip, WRITING);		/* force inode to disk now */
+
+	/* New inode acquired.  Try to make directory entry. */
+	if ((r = search_dir(rlast_dir_ptr, string, &rip->i_num,ENTER)) != OK) {
+		put_inode(rlast_dir_ptr);
+		rip->i_nlinks--;	/* pity, have to free disk inode */
+		rip->i_dirt = DIRTY;	/* dirty inodes are written out */
+		put_inode(rip);	/* this call frees the inode */
+		err_code = r;
+		return(NIL_INODE);
+	}
+
+  } else {
+	/* Either last component exists, or there is some problem. */
+	if (rip != NIL_INODE)
+		r = EEXIST;
+	else
+		r = err_code;
+  }
+
+  /* Return the directory inode and exit. */
+  put_inode(rlast_dir_ptr);
+  err_code = r;
+  return(rip);
+}
+
+
 /*===========================================================================*
  *				pipe_open				     *
  *===========================================================================*/
@@ -320,6 +301,87 @@ register int oflags;
 
 
 /*===========================================================================*
+ *				do_mknod				     *
+ *===========================================================================*/
+PUBLIC int do_mknod()
+{
+/* Perform the mknod(name, mode, addr) system call. */
+
+  register mode_t bits, mode_bits;
+  struct inode *ip;
+
+  /* Only the super_user may make nodes other than fifos. */
+  mode_bits = (mode_t) m.m1_i2;	/* mode of the inode */
+  if (!super_user && ((mode_bits & I_TYPE) != I_NAMED_PIPE)) return(EPERM);
+  if (fetch_name(m.m1_p1, m.m1_i1, M1) != OK) return(err_code);
+  bits = (mode_bits & I_TYPE) | (mode_bits & ALL_MODES & fp->fp_umask);
+  ip = new_node(user_path, bits, (zone_t) m.m1_i3);
+  put_inode(ip);
+  return(err_code);
+}
+
+
+/*===========================================================================*
+ *				do_mkdir				     *
+ *===========================================================================*/
+PUBLIC int do_mkdir()
+{
+/* Perform the mkdir(name, mode) system call. */
+
+  int r1, r2;			/* status codes */
+  ino_t dot, dotdot;		/* inode numbers for . and .. */
+  mode_t bits;			/* mode bits for the new inode */
+  char string[NAME_MAX];	/* last component of the new dir's path name */
+  register struct inode *rip, *ldirp;
+
+  /* Check to see if it is possible to make another link in the parent dir. */
+  if (fetch_name(name1, name1_length, M1) != OK) return(err_code);
+  ldirp = last_dir(user_path, string);	/* pointer to new dir's parent */
+  if (ldirp == NIL_INODE) return(err_code);
+  if ( (ldirp->i_nlinks & BYTE) >= LINK_MAX) {
+	put_inode(ldirp);	/* return parent */
+	return(EMLINK);
+  }
+
+  /* Next make the inode. If that fails, return error code. */
+  bits = I_DIRECTORY | (mode & RWX_MODES & fp->fp_umask);
+  rip = new_node(user_path, bits, (zone_t) 0);
+  if (rip == NIL_INODE || err_code == EEXIST) {
+	put_inode(rip);		/* can't make dir: it already exists */
+	put_inode(ldirp);	/* return parent too */
+	return(err_code);
+  }
+
+  /* Get the inode numbers for . and .. to enter in the directory. */
+  dotdot = ldirp->i_num;	/* parent's inode number */
+  dot = rip->i_num;		/* inode number of the new dir itself */
+
+  /* Now make dir entries for . and .. unless the disk is completely full. */
+  /* Use dot1 and dot2, so the mode of the directory isn't important. */
+  rip->i_mode = bits;	/* set mode */
+  r1 = search_dir(rip, dot1, &dot, ENTER);	/* enter . in the new dir */
+  r2 = search_dir(rip, dot2, &dotdot, ENTER);	/* enter .. in the new dir */
+
+  /* If both . and .. were successfully entered, increment the link counts. */
+  if (r1 == OK && r2 == OK) {
+	/* Normal case.  It was possible to enter . and .. in the new dir. */
+	rip->i_nlinks++;	/* this accounts for . */
+	ldirp->i_nlinks++;	/* this accounts for .. */
+	ldirp->i_dirt = DIRTY;	/* mark parent's inode as dirty */
+  } else {
+	/* It was not possible to enter . or .. probably disk was full. */
+	(void) search_dir(ldirp, string, (ino_t *) 0, DELETE);
+	rip->i_nlinks--;	/* undo the increment done in new_node() */
+  }
+  rip->i_dirt = DIRTY;		/* either way, i_nlinks has changed */
+
+  put_inode(ldirp);		/* return the inode of the parent dir */
+  put_inode(rip);		/* return the inode of the newly made dir */
+  return(err_code);		/* new_node() always sets 'err_code' */
+}
+
+
+/*===========================================================================*
  *				do_close				     *
  *===========================================================================*/
 PUBLIC int do_close()
@@ -345,8 +407,10 @@ PUBLIC int do_close()
 			/* Invalidate cache entries unless special is mounted
 			 * or ROOT
 			 */
-			(void) do_sync();	/* purge cache */
-			if (!mounted(rip)) invalidate(dev);
+			if (!mounted(rip)) {
+			        (void) do_sync();	/* purge cache */
+				invalidate(dev);
+			}    
 		}
 		/* Use the dmap_close entry to do any special processing
 		 * required.
@@ -432,64 +496,4 @@ PUBLIC int do_lseek()
   rfilp->filp_pos = pos;
   reply_l1 = pos;		/* insert the long into the output message */
   return(OK);
-}
-
-
-/*===========================================================================*
- *				do_mkdir				     *
- *===========================================================================*/
-PUBLIC int do_mkdir()
-{
-/* Perform the mkdir(name, mode) system call. */
-
-  int r1, r2;			/* status codes */
-  ino_t dot, dotdot;		/* inode numbers for . and .. */
-  mode_t bits;			/* mode bits for the new inode */
-  char string[NAME_MAX];	/* last component of the new dir's path name */
-  register struct inode *rip, *ldirp;
-
-  /* Check to see if it is possible to make another link in the parent dir. */
-  if (fetch_name(name1, name1_length, M1) != OK) return(err_code);
-  ldirp = last_dir(user_path, string);	/* pointer to new dir's parent */
-  if (ldirp == NIL_INODE) return(err_code);
-  if ( (ldirp->i_nlinks & BYTE) >= LINK_MAX) {
-	put_inode(ldirp);	/* return parent */
-	return(EMLINK);
-  }
-
-  /* Next make the inode. If that fails, return error code. */
-  bits = I_DIRECTORY | (mode & RWX_MODES & fp->fp_umask);
-  rip = new_node(user_path, bits, (zone_t) 0);
-  if (rip == NIL_INODE || err_code == EEXIST) {
-	put_inode(rip);		/* can't make dir: it already exists */
-	put_inode(ldirp);	/* return parent too */
-	return(err_code);
-  }
-
-  /* Get the inode numbers for . and .. to enter in the directory. */
-  dotdot = ldirp->i_num;	/* parent's inode number */
-  dot = rip->i_num;		/* inode number of the new dir itself */
-
-  /* Now make dir entries for . and .. unless the disk is completely full. */
-  /* Use dot1 and dot2, so the mode of the directory isn't important. */
-  rip->i_mode = bits;	/* set mode */
-  r1 = search_dir(rip, dot1, &dot, ENTER);	/* enter . in the new dir */
-  r2 = search_dir(rip, dot2, &dotdot, ENTER);	/* enter .. in the new dir */
-
-  /* If both . and .. were successfully entered, increment the link counts. */
-  if (r1 == OK && r2 == OK) {
-	/* Normal case.  It was possible to enter . and .. in the new dir. */
-	rip->i_nlinks++;	/* this accounts for . */
-	ldirp->i_nlinks++;	/* this accounts for .. */
-	ldirp->i_dirt = DIRTY;	/* mark parent's inode as dirty */
-  } else {
-	/* It was not possible to enter . or .. probably disk was full. */
-	(void) search_dir(ldirp, string, (ino_t *) 0, DELETE);
-	rip->i_nlinks--;	/* undo the increment done in new_node() */
-  }
-  rip->i_dirt = DIRTY;		/* either way, i_nlinks has changed */
-
-  put_inode(ldirp);		/* return the inode of the parent dir */
-  put_inode(rip);		/* return the inode of the newly made dir */
-  return(err_code);		/* new_node() always sets 'err_code' */
 }

@@ -123,4 +123,4 @@ $(LIB86)/end.a:	end86.a
 	install -c -o bin $? $@
 
 clean:
-	rm -rf *.[oa] */*.o */*.bak
+	find . -name '*.[oa]' -o -name '*.bak' | xargs rm

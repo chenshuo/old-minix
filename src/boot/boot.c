@@ -1,4 +1,4 @@
-/*	boot 2.4.1 - Load and start Minix.		Author: Kees J. Bot
+/*	boot 2.5.0 - Load and start Minix.		Author: Kees J. Bot
  *								27 Dec 1991
  *
  * Copyright 1996 Kees J. Bot, All rights reserved.
@@ -8,7 +8,7 @@
  * author.  Use of so called "C beautifiers" is explicitly prohibited.
  */
 
-char version[]=		"2.4";
+char version[]=		"2.5";
 
 #define nil 0
 #define _POSIX_SOURCE	1
@@ -1152,7 +1152,7 @@ int delay(char *msec)
 
 	do {
 		switch (peekchar()) {
-		case 0:		break;
+		case -1:	break;
 		case ESC:	interrupt(); return 0;
 		case '\n':	swap= 0;
 		default:	(void) getchar();
@@ -1202,7 +1202,7 @@ void menu(void)
 
 	/* Wait for a keypress. */
 	do {
-		while (peekchar() == 0) if (expired()) return;
+		while (peekchar() == -1) if (expired()) return;
 
 		unschedule();
 

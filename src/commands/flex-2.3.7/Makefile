@@ -108,6 +108,7 @@ scan.c : scan.l
 	$(FLEX) $(FLEX_FLAGS) $(COMPRESSION) scan.l >scan.c
 
 scan.o : scan.c parse.h flexdef.h
+	$(CC) $(CFLAGS) -wa -c scan.c
 
 main.o : main.c flexdef.h
 	$(CC) $(CFLAGS) -c $(SKELFLAGS) main.c

@@ -30,7 +30,7 @@ struct filp **fpt;		/* place to return filp slot */
 
   *k = -1;			/* we need a way to tell if file desc found */
 
-  /* Search the fproc table for a free file descriptor. */
+  /* Search the fproc fp_filp table for a free file descriptor. */
   for (i = start; i < OPEN_MAX; i++) {
 	if (fp->fp_filp[i] == NIL_FILP) {
 		/* A file descriptor has been located. */

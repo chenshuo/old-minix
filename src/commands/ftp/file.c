@@ -24,8 +24,11 @@ _PROTOTYPE(static int asciisend, (int fd, int fdout));
 _PROTOTYPE(static int binarysend, (int fd, int fdout));
 _PROTOTYPE(static int asciirecv, (int fd, int fdin));
 _PROTOTYPE(static int binaryrecv, (int fd, int fdin));
+_PROTOTYPE(static int asciisize, (int fd, off_t *filesize));
+_PROTOTYPE(static off_t asciisetsize, (int fd, off_t filesize));
 
 static char buffer[8192];
+static char bufout[8192];
 static char line2[512];
 
 static char *dir(path, full)
@@ -52,34 +55,41 @@ int fd;
 int fdout;
 {
 int s, len;
-char *p, *pp;
-long total=0L;
+char c;
+char *p;
+char *op, *ope;
+unsigned long total=0L;
 
    if(atty) {
 	printf("Sent ");
 	fflush(stdout);
    }
 
+   op = bufout;
+   ope = bufout + sizeof(bufout) - 3;
+
    while((s = read(fd, buffer, sizeof(buffer))) > 0) {
 	total += (long)s;
 	p = buffer;
-	while(s > 0) {
-		if((pp = memchr(p, '\n', s)) == (char *)NULL) {
-			write(fdout, p, s);
-			break;
+	while(s-- > 0) {
+		c = *p++;
+		if(c == '\r') {
+			*op++ = '\r';
+			total++;
 		}
-		len = pp - p;
-		if(len > 0)
-			write(fdout, p, len);
-		write(fdout, "\r\n", 2);
-		p = pp + 1;
-		s = s - len - 1;
+		*op++ = c;
+		if(op >= ope) {
+			write(fdout, bufout, op - bufout);
+			op = bufout;
+		}
 	}
 	if(atty) {
-		printf("%8ld bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
+		printf("%8lu bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
 		fflush(stdout);
 	}
    }
+   if(op > bufout)
+	write(fdout, bufout, op - bufout);
    if(atty) {
 	printf("\n");
 	fflush(stdout);
@@ -93,7 +103,7 @@ int fd;
 int fdout;
 {
 int s;
-long total=0L;
+unsigned long total=0L;
 
    if(atty) {
 	printf("Sent ");
@@ -104,7 +114,7 @@ long total=0L;
 	write(fdout, buffer, s);
 	total += (long)s;
 	if(atty) {
-		printf("%8ld bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
+		printf("%8lu bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
 		fflush(stdout);
 	}
    }
@@ -142,46 +152,45 @@ int fdin;
 {
 int s, len;
 int gotcr;
-char *p, *pp;
-long total=0L;
+char c;
+char *p;
+char *op, *ope;
+unsigned long total=0L;
 
    if(isatty && fd > 2) {
 	printf("Received ");
 	fflush(stdout);
    }
    gotcr = 0;
+   op = bufout; ope = bufout + sizeof(bufout) - 3;
    while((s = read(fdin, buffer, sizeof(buffer))) > 0) {
 	p = buffer;
 	total += (long)s;
-	if(gotcr) {
-		gotcr = 0;
-		if(*p != '\n')
-			write(fd, "\r", 1);
-	}
-	while(s > 0) {
-		if((pp = memchr(p, '\r', s)) == (char *)NULL) {
-			write(fd, p, s);
-			break;
+	while(s-- > 0) {
+		c = *p++;
+		if(gotcr) {
+			gotcr = 0;
+			if(c != '\n')
+				*op++ = '\r';
 		}
-		len = pp - p;
-		if(len > 0)
-			write(fd, p, len);
-		p = pp + 1;
-		s = s - len - 1;
-		if(s == 0) {
+		if(c == '\r')
 			gotcr = 1;
-			break;
+		else
+			*op++ = c;
+		if(op >= ope) {
+			write(fd, bufout, op - bufout);
+			op = bufout;
 		}
-		if(*p != '\n')
-			write(fd, "\r", 1);
 	}
 	if(atty && fd > 2) {
-		printf("%8ld bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
+		printf("%8lu bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
 		fflush(stdout);
 	}
    }
    if(gotcr)
-	write(fd, "\r", 1);
+	*op++ = '\r';
+   if(op > bufout)
+	write(fd, bufout, op - bufout);
    if(atty && fd > 2) {
 	printf("\n");
 	fflush(stdout);
@@ -194,7 +203,7 @@ int fd;
 int fdin;
 {
 int s;
-long total=0L;
+unsigned long total=0L;
 
    if(atty && fd > 2) {
 	printf("Received ");
@@ -204,7 +213,7 @@ long total=0L;
 	write(fd, buffer, s);
 	total += (long)s;
 	if(atty && fd > 2) {
-		printf("%8ld bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
+		printf("%8lu bytes\b\b\b\b\b\b\b\b\b\b\b\b\b\b", total);
 		fflush(stdout);
 	}
    }
@@ -540,6 +549,61 @@ int s;
    return(s);
 }
 
+int DOrretr()
+{
+char *file, *localfile;
+int fd;
+int s;
+off_t filesize;
+char restart[16];
+
+   if(DOcmdcheck())
+	return(0);
+
+   file = cmdargv[1];
+
+   if(cmdargc < 2) {
+	readline("Remote File: ", line2, sizeof(line2));
+	file = line2;
+   }
+
+   if(cmdargc < 3)
+	localfile = file;
+   else
+	localfile = cmdargv[2];
+
+   fd = open(localfile, O_RDWR);
+
+   if(fd < 0) {
+	printf("Could not open local file %s. Error %s\n", localfile, strerror(errno));
+	return(0);
+   }
+
+   if(type == TYPE_A) {
+   	if(asciisize(fd, &filesize)) {
+   		printf("Could not determine ascii file size of %s\n", localfile);
+   		close(fd);
+   		return(0);
+   	}
+   } else
+	filesize = lseek(fd, 0, SEEK_END);
+
+   sprintf(restart, "%lu", filesize);
+
+   s = DOcommand("REST", restart);
+
+   if(s != 350) {
+   	close(fd);
+   	return(s);
+   }
+
+   s = DOdata("RETR", file, RETR, fd);
+
+   close(fd);
+
+   return(s);
+}
+
 int DOMretr()
 {
 char *files;
@@ -666,6 +730,70 @@ int s;
    return(s);
 }
 
+int DOrstor()
+{
+char *file, *remotefile;
+int fd;
+int s;
+off_t filesize, rmtsize;
+char restart[16];
+
+   if(DOcmdcheck())
+	return(0);
+
+   file = cmdargv[1];
+
+   if(cmdargc < 2) {
+	readline("Local File: ", line2, sizeof(line2));
+	file = line2;
+   }
+
+   if(cmdargc < 3)
+	remotefile = file;
+   else
+	remotefile = cmdargv[2];
+
+   s = DOcommand("SIZE", remotefile);
+
+   if(s != 215)
+   	return(s);
+
+   rmtsize = atol(reply+4);
+
+   fd = open(file, O_RDONLY);
+
+   if(fd < 0) {
+	printf("Could not open local file %s. Error %s\n", file, strerror(errno));
+	return(0);
+   }
+
+   if(type == TYPE_A)
+   	filesize = asciisetsize(fd, rmtsize);
+   else
+	filesize = lseek(fd, rmtsize, SEEK_SET);
+
+   if(filesize != rmtsize) {
+	printf("Could not set file start of %s\n", file);
+   	close(fd);
+   	return(0);
+   }
+
+   sprintf(restart, "%lu", rmtsize);
+
+   s = DOcommand("REST", restart);
+
+   if(s != 350) {
+   	close(fd);
+   	return(s);
+   }
+
+   s = DOdata("STOR", remotefile, STOR, fd);
+
+   close(fd);
+
+   return(s);
+}
+
 int DOstou()
 {
 char *file, *remotefile;
@@ -743,4 +871,52 @@ FILE *fp;
    unlink(name);
 
    return(s);
+}
+
+static int asciisize(fd, filesize)
+int fd;
+off_t *filesize;
+{
+unsigned long count;
+char *p, *pp;
+int cnt;
+
+   count = 0;
+
+   while((cnt = read(fd, buffer, sizeof(buffer))) > 0) {
+	p = buffer; pp = buffer + cnt;
+	count += cnt;
+	while(p < pp)
+		if(*p++ == '\n')
+			count++;
+   }
+
+   if(cnt == 0) {
+	*filesize = count;
+	return(0);
+   }
+
+   return(1);
+}
+
+static off_t asciisetsize(fd, filesize)
+int fd;
+off_t filesize;
+{
+off_t sp;
+int s;
+
+   sp = 0;
+
+   while(sp < filesize) {
+	s = read(fd, buffer, 1);
+	if(s < 0)
+		return(-1);
+	if(s == 0) break;
+	sp++;
+	if(*buffer == '\n')
+		sp++;
+   }
+
+   return(sp);
 }

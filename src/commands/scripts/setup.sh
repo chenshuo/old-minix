@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	setup 3.3 - install a Minix distribution	Author: Kees J. Bot
+#	setup 3.5 - install a Minix distribution	Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra actions.  It needs to use a sed script to change
@@ -21,7 +21,7 @@ case $# in
 	cd "$1" || exit
 
 	# Annoying message still there?
-	test -f /etc/issue && grep 'setup /usr' /etc/issue && rm -f /etc/issue
+	grep "'setup /usr'" /etc/issue >/dev/null 2>&1 && rm -f /etc/issue
 
 	size=bad
 	while [ "$size" = bad ]
@@ -114,7 +114,10 @@ Note 2: If things go wrong then hit DEL and start over.
 Note 3: The installation procedure is described in the manual page
         usage(8).  It will be hard without it.
 
-Note 4: If you see a colon (:) then you should hit RETURN or ENTER to continue.
+Note 4: Some questions have default answers, like this: [y]
+	Simply hit RETURN (or ENTER) if you want to choose that answer.
+
+Note 5: If you see a colon (:) then you should hit RETURN to continue.
 :"
 read ret
 
@@ -159,26 +162,7 @@ done
 root=${primary}a
 usr=${primary}c
 
-upgrade=
-if df /dev/$usr 2>/dev/null
-then
-	echo -n "
-There is already a Minix system present in /dev/$primary.  Do you want
-to upgrade it to this version?  If yes then the current contents of
-/usr (/dev/$usr) will be moved into /usr/.old/.  You can restore the
-files you want to keep from that directory.  Note that you need enough
-space in /dev/$usr for the old and the new files.  Upgrade? [y] "
-	read yn
-	case "$yn" in
-	[nN]*)	echo;echo "No?  Then we will reinstall"
-		;;
-	*)	upgrade=t
-	esac
-fi
-
-if [ ! "$upgrade" ]
-then
-	echo -n "
+echo -n "
 You have created a partition named:	/dev/$primary
 The following subpartitions are about to be created on /dev/$primary:
 
@@ -188,50 +172,28 @@ The following subpartitions are about to be created on /dev/$primary:
 Hit return if everything looks fine, or hit DEL to bail out if you want to
 think it over.  The next step will destroy /dev/$primary.
 :"
-	read ret
+read ret
 					# Secondary master bootstrap.
-	installboot -m /dev/$primary /usr/mdec/masterboot >/dev/null || exit
+installboot -m /dev/$primary /usr/mdec/masterboot >/dev/null || exit
 
 					# Partition the primary.
-	partition /dev/$primary 1 81:2880* 0:0 81:0+ >/dev/null || exit
+partition /dev/$primary 1 81:2880* 0:0 81:0+ >/dev/null || exit
 
-	echo "
+echo "
 Migrating from floppy to disk...
 "
 
-	mkfs /dev/$usr
-	echo "\
-Scanning /dev/$usr for bad blocks.  (Hit DEL if there are no bad blocks)"
-	trap ': nothing' 2
-	readall -b /dev/$usr | sh
-	echo "Scan done"
-	sleep 2
-	trap 2
-fi
-mount /dev/$usr /mnt || exit		# Mount the intended /usr.
+mkfs /dev/$usr
+echo "\
+Scanning /dev/$usr for bad blocks.  (Hit DEL to stop the scan if are absolutely
+sure that there can not be any bad blocks.  Otherwise just wait.)"
+trap ': nothing' 2
+readall -b /dev/$usr | sh
+echo "Scan done"
+sleep 2
+trap 2
 
-if [ "$upgrade" ]
-then
-	echo "
-Saving /usr/* into /usr/.old and migrating from floppy to disk...
-"
-	if [ -d /mnt/.old ]
-	then
-		echo -n "\
-There is already a '.old' directory there.  Did you break off and restart
-the installation?  Shall I clean up the half-way installed mess? [y] "
-		read yn
-		case "$yn" in
-		[nN])	echo "\
-No?  Then please inspect /dev/$usr yourself, it is still mounted on /mnt/.
-When done type 'cd /; umount /dev/$usr' and restart the installation."
-			exit 1
-		esac
-	else
-		mkdir /mnt/.old || exit
-		mv /mnt/* /mnt/.old || exit
-	fi
-fi
+mount /dev/$usr /mnt || exit		# Mount the intended /usr.
 
 cpdir -v /usr /mnt || exit		# Copy the usr floppy.
 
@@ -305,9 +267,9 @@ umount /dev/$root || exit		# Unmount the new root.
 # Compute size of the second level file block cache.
 ram=
 echo -n "
-What is the memory size of this system in kilobytes? [4M or more] "
+What is the memory size of this system in kilobytes? [4096 or more] "
 read ram
-case "$ram" in '') ram=9999;; esac
+case "$ram" in '') ram=4096;; esac
 case `arch` in
 i86)	cache=`expr "0$ram" - 1024`
 	test $cache -lt 32 && cache=0
@@ -327,5 +289,5 @@ eval "$X_ROOT2"
 
 echo "
 Please insert the installation ROOT floppy and type 'halt' to exit Minix.
-You can type 'boot $root' to try the newly installed Minix system.  See
-\"Testing\" in the usage manual."
+You can type 'boot $primary' to try the newly installed Minix system.  See
+\"TESTING\" in the usage manual."

@@ -118,12 +118,12 @@ PRIVATE void mm_init()
   struct mem_map kernel_map[NR_SEGS];
   int mem;
 
-  /* Build the set of signals which cause core dumps.
-   * (core_bits is now misnamed.  DEBUG.)
+  /* Build the set of signals which cause core dumps. Do it the Posix
+   * way, so no knowledge of bit positions is needed.
    */
-  sigemptyset(&core_bits);
+  sigemptyset(&core_sset);
   for (sig_ptr = core_sigs; *sig_ptr != 0; sig_ptr++)
-	sigaddset(&core_bits, *sig_ptr);
+	sigaddset(&core_sset, *sig_ptr);
 
   /* Get the memory map of the kernel to see how much memory it uses,
    * including the gap between address 0 and the start of the kernel.

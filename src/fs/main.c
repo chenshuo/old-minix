@@ -1,4 +1,3 @@
-
 /* This file contains the main program of the File System.  It consists of
  * a loop that gets messages requesting work, carries out the work, and sends
  * replies.
@@ -32,9 +31,6 @@ FORWARD _PROTOTYPE( void get_work, (void)				);
 FORWARD _PROTOTYPE( void load_ram, (void)				);
 FORWARD _PROTOTYPE( void load_super, (Dev_t super_dev)			);
 
-#if (CHIP == INTEL)
-FORWARD _PROTOTYPE( phys_bytes get_physbase, (void)			);
-#endif
 
 /*===========================================================================*
  *				main					     *
@@ -123,6 +119,7 @@ int result;			/* result of the call (usually OK or error #) */
   send(whom, &m1);
 }
 
+
 /*===========================================================================*
  *				fs_init					     *
  *===========================================================================*/
@@ -134,7 +131,7 @@ PRIVATE void fs_init()
   int i;
   message mess;
   
-  /* The following 3 initializations are needed to let dev_open succeed .*/
+  /* The following initializations are needed to let dev_opcl succeed .*/
   fp = (struct fproc *) NULL;
   who = FS_PROC_NR;
 
@@ -176,6 +173,7 @@ PRIVATE void fs_init()
   (void) sendrec(MEM, &mess);
 }
 
+
 /*===========================================================================*
  *				buf_pool				     *
  *===========================================================================*/
@@ -200,6 +198,22 @@ PRIVATE void buf_pool()
 
   for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) bp->b_hash = bp->b_next;
   buf_hash[0] = front;
+}
+
+
+/*===========================================================================*
+ *				get_boot_parameters			     *
+ *===========================================================================*/
+PUBLIC struct bparam_s boot_parameters;
+
+PRIVATE void get_boot_parameters()
+{
+/* Ask kernel for boot parameters. */
+
+  m1.m_type = SYS_GBOOT;
+  m1.PROC1 = FS_PROC_NR;
+  m1.MEM_PTR = (char *) &boot_parameters;
+  (void) sendrec(SYSTASK, &m1);
 }
 
 
@@ -350,38 +364,3 @@ dev_t super_dev;			/* place to get superblock from */
   sp->s_rd_only = 0;
   return;
 }
-
-/*===========================================================================*
- *				get_boot_parameters			     *
- *===========================================================================*/
-PUBLIC struct bparam_s boot_parameters;
-
-PRIVATE void get_boot_parameters()
-{
-/* Ask kernel for boot parameters. */
-
-  m1.m_type = SYS_GBOOT;
-  m1.PROC1 = FS_PROC_NR;
-  m1.MEM_PTR = (char *) &boot_parameters;
-  (void) sendrec(SYSTASK, &m1);
-}
-
-#if (CHIP == INTEL)
-/*===========================================================================*
- *				get_physbase				     *
- *===========================================================================*/
-PRIVATE phys_bytes get_physbase()
-{
-/* Ask kernel for base of fs data space. */
-
-  m1.m_type = SYS_UMAP;
-  m1.SRC_PROC_NR = FS_PROC_NR;
-  m1.SRC_SPACE = D;
-  m1.SRC_BUFFER = 0;
-  m1.COPY_BYTES = 1;
-  if (sendrec(SYSTASK, &m1) != OK || m1.SRC_BUFFER == 0)
-	panic("Can't get fs base", NO_NUM);
-  return(m1.SRC_BUFFER);
-}
-#endif /* INTEL */
-

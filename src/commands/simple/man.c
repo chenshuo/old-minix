@@ -1,4 +1,4 @@
-/*	man 1.4 - display online manual pages		Author: Kees J. Bot
+/*	man 2.0 - display online manual pages		Author: Kees J. Bot
  *								17 Mar 1993
  */
 #define nil NULL
@@ -189,7 +189,7 @@ int apropos= 0;		/* man -k word == apropos word. */
 enum ROFF { NROFF, TROFF } rofftype= NROFF;
 char *roff[] = { "nroff", "troff" };
 
-int shown= 0;		/* True if something has been shown. */
+int shown;		/* True if something has been shown. */
 int tty;		/* True if displaying on a terminal. */
 char *manpath;		/* The manual directory path. */
 char *pager;		/* The pager to use. */
@@ -341,7 +341,7 @@ void keyword(char *keyword)
 
 enum pagetype { CAT, CATZ, MAN, MANZ };
 
-int showpage(char *page, enum pagetype ptype, int section_0)
+int showpage(char *page, enum pagetype ptype, char *macros)
 /* Show a manual page if it exists using the proper decompression and
  * formatting tools.
  */
@@ -359,9 +359,7 @@ int showpage(char *page, enum pagetype ptype, int section_0)
 	}
 
 	if (ptype == MAN || ptype == MANZ) {
-		putinline(roff[rofftype],
-			section_0 ? "-mnx" : "-man",
-			(char *) nil);
+		putinline(roff[rofftype], macros, (char *) nil);
 	}
 
 	if (tty) {
@@ -400,18 +398,12 @@ int trymandir(char *mandir, char *title, char *section)
 	FILE *wf;
 	char whatis[1024], pagename[1024], *wpage, *wsection;
 	int rsw, rsp;
-	int section_0, ntries;
+	int ntries;
 	int (*searchidx)(FILE *, char *, char **, char **);
 	struct searchnames {
 		enum pagetype	ptype;
 		char		*pathfmt;
 	} *sp;
-	static struct searchnames search0[] = {
-		{ CAT,	"%s/cat%s/%s"		},	/* Minix */
-		{ CATZ,	"%s/cat%s/%s.Z"		},
-		{ MAN,	"%s/man%s/%s"		},
-		{ MANZ,	"%s/man%s/%s.Z"		},
-	};
 	static struct searchnames searchN[] = {
 		{ CAT,	"%s/cat%s/%s.%s"	},	/* SysV */
 		{ CATZ,	"%s/cat%s/%s.%s.Z"	},
@@ -451,22 +443,14 @@ int trymandir(char *mandir, char *title, char *section)
 		 *	cat1/getc.1s.Z
 		 *	man1/getc.1s
 		 *	man1/getc.1s.Z
-		 * (For section 0 try without .0 suffix.)
 		 */
 
 		if (strlen(mandir) + 2 * strlen(wsection) + strlen(wpage)
 					+ 10 > arraysize(pagename))
 			continue;
 
-		section_0= (strcmp(wsection, "0") == 0);
-		if (section_0) {
-			sp= search0;
-			ntries= arraysize(search0);
-		} else {
-			sp= searchN;
-			ntries= arraysize(searchN);
-		}
-
+		sp= searchN;
+		ntries= arraysize(searchN);
 		do {
 			if (sp->ptype <= CATZ && rofftype != NROFF)
 				continue;
@@ -474,7 +458,8 @@ int trymandir(char *mandir, char *title, char *section)
 			sprintf(pagename, sp->pathfmt,
 				mandir, wsection, wpage, wsection);
 
-			rsp= showpage(pagename, sp->ptype, section_0);
+			rsp= showpage(pagename, sp->ptype,
+				strcmp(wsection, "9") == 0 ? "-mnx" : "-man");
 		} while (sp++, !rsp && --ntries != 0);
 
 		if (all) rsp= 0;
@@ -626,9 +611,10 @@ int main(int argc, char **argv)
 		if (whatis || apropos) {
 			keyword(title);
 		} else {
+			shown= 0;
 			searchmanpath(title, section);
 
-			if (!shown) (void) showpage(title, MAN, 0);
+			if (!shown) (void) showpage(title, MAN, "-man");
 
 			if (!shown) {
 				fprintf(stderr, "man: no manual on %s\n",

@@ -8,8 +8,8 @@
  * T_GETINS	return value from instruction space 
  * T_GETDATA	return value from data space 
  * T_GETUSER	return value from user process table
- * T_SETINS	set value from instruction space
- * T_SETDATA	set value from data space
+ * T_SETINS	set value in instruction space
+ * T_SETDATA	set value in data space
  * T_SETUSER	set value in user process table 
  * T_RESUME	resume execution 
  * T_EXIT	exit

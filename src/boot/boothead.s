@@ -509,7 +509,7 @@ _peekchar:
 	movb	ah, #0x01	! Keyboard status
 	int	0x16
 	jnz	getc		! Keypress?
-	xor	ax, ax		! No key
+	mov	ax, #-1		! No key
 	ret
 _getchar:
 	xorb	ah, ah		! Read character from keyboard

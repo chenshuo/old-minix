@@ -54,12 +54,12 @@
 #	define DL_ADDR		m2_p1
 #	define DL_STAT		m2_l1
 
-/* Bits in `DL_STAT' field of DL replies. */
+/* Bits in 'DL_STAT' field of DL replies. */
 #	define DL_PACK_SEND	0x01
 #	define DL_PACK_RECV	0x02
 #	define DL_READ_IP	0x04
 
-/* Bits in `DL_MODE' field of DL requests. */
+/* Bits in 'DL_MODE' field of DL requests. */
 #	define DL_NOMODE	0x0
 #	define DL_PROMISC_REQ	0x2
 #	define DL_MULTI_REQ	0x4

@@ -70,6 +70,7 @@ static unsigned long file_restart = 0;
 
 static char rnfr[256];
 static char buffer[8192];
+static char bufout[8192];
 
 static cmdpid = -1;
 
@@ -189,8 +190,13 @@ char *buff;
 int doMKD(buff)
 char *buff;
 {
+   mode_t mask;
+
    if(ChkLoggedIn())
 	return(GOOD);
+
+   if(anonymous)
+	mask = umask(0000);
 
    if(mkdir(buff, 0777))
 	printf(msg550, buff, strerror(errno));
@@ -198,6 +204,9 @@ char *buff;
 	printf("257 \"%s\" directory created.\r\n", buff);
 	logit("MKD ", path(buff));
    }
+
+   if(anonymous)
+	(void) umask(mask);
 
    return(GOOD);
 }
@@ -758,8 +767,9 @@ int fd, s;
 time_t datastart, dataend;
 unsigned long datacount;
 long kbs;
-char *p, *pp;
-int len;
+char c;
+char *p;
+char *op, *ope;
 off_t sp;
 int doascii;
 
@@ -795,7 +805,8 @@ int doascii;
    if(file_restart) {
 	if(type == TYPE_A) {
 		sp = 0;
-		while(sp++ < file_restart) {
+		while(sp < file_restart) {
+			sp++;
 			s = read(fd, buffer, 1);
 			if(s < 0) {
 				printf(msg550, fname, strerror(errno));
@@ -804,7 +815,7 @@ int doascii;
 				return(CleanUpData());
 			}
 			if(s == 0) break;
-			if(*buffer == '\n');
+			if(*buffer == '\n')
 				sp++;
 		}
 	} else {
@@ -817,7 +828,7 @@ int doascii;
 		}
 	}
 	if(sp != file_restart) {
-		printf("550 File restart point error.\r\n");
+		printf("550 File restart point error. %lu not %lu\r\n", sp, file_restart);
 		endfdxcmd(fd);
 		file_restart = 0;
 		return(CleanUpData());
@@ -842,26 +853,28 @@ int doascii;
    	((xmode == SEND_LIST) || (xmode == SEND_NLST)); /* per RFC1123 4.1.2.7 */
    datacount = 0;
    time(&datastart);
+   op = bufout; ope = bufout + sizeof(bufout) - 3;
    while((s = read(fd, buffer, sizeof(buffer))) > 0) {
 	datacount += s;
 	if(doascii) {
 		p = buffer;
-		while(s > 0) {
-			if((pp = memchr(p, '\n', s)) == (char *)NULL) {
-				write(ftpdata_fd, p, s);
-				break;
+		while(s-- > 0) {
+			c = *p++;
+			if(c == '\n') {
+				*op++ = '\r';
+				datacount++;
 			}
-			len = pp - p;
-			if(len > 0)
-				write(ftpdata_fd, p, len);
-			write(ftpdata_fd, "\r\n", 2);
-			datacount++;
-			p = pp + 1;
-			s = s - len - 1;
+			*op++ = c;
+			if(op >= ope) {
+				write(ftpdata_fd, bufout, op - bufout);
+				op = bufout;
+			}
 		}
 	} else
 		write(ftpdata_fd, buffer, s);
    }
+   if(op > bufout)
+	write(ftpdata_fd, bufout, op - bufout);
    time(&dataend);
 
 #ifdef DEBUG
@@ -892,9 +905,11 @@ char *fname;
 time_t datastart, dataend;
 unsigned long datacount;
 long kbs;
-char *p, *pp;
+char c;
+char *p;
+char *op, *ope;
 int fd, oflag;
-int s, len;
+int s;
 int gotcr;
 off_t sp;
 
@@ -918,7 +933,7 @@ off_t sp;
    if(file_restart)
 	oflag = O_RDWR;
 
-   fd = open(fname, oflag, (anonymous ? 0000:0600));
+   fd = open(fname, oflag, 0666);
 
    if(fd < 0) {
 	printf(msg550, fname, strerror(errno));
@@ -932,7 +947,8 @@ off_t sp;
    if(file_restart) {
 	if(type == TYPE_A) {
 		sp = 0;
-		while(sp++ < file_restart) {
+		while(sp < file_restart) {
+			sp++;
 			s = read(fd, buffer, 1);
 			if(s < 0) {
 				printf(msg550, fname, strerror(errno));
@@ -941,7 +957,7 @@ off_t sp;
 				return(CleanUpData());
 			}
 			if(s == 0) break;
-			if(*buffer == '\n');
+			if(*buffer == '\n')
 				sp++;
 		}
 	} else {
@@ -954,7 +970,7 @@ off_t sp;
 		}
 	}
 	if(sp != file_restart) {
-		printf("550 File restart point error.\r\n");
+		printf("550 File restart point error. %lu not %lu\r\n", sp, file_restart);
 		close(fd);
 		file_restart = 0;
 		return(CleanUpData());
@@ -980,38 +996,35 @@ off_t sp;
    /* start receiving file */
    datacount = 0;
    gotcr = 0;
+   op = bufout; ope = bufout + sizeof(bufout) - 3;
    time(&datastart);
    while((s = read(ftpdata_fd, buffer, sizeof(buffer))) > 0) {
 	datacount += s;
 	if(type == TYPE_A) {
 		p = buffer;
-		if(gotcr) {
-			gotcr = 0;
-			if(*p != '\n')
-				write(fd, "\r", 1);
-		}
-		while(s > 0) {
-			if((pp = memchr(p, '\r', s)) == (char *)NULL) {
-				write(fd, p, s);
-				break;
+		while(s-- > 0) {
+			c = *p++;
+			if(gotcr) {
+				gotcr = 0;
+				if(c != '\n')
+					*op++ = '\r';
 			}
-			len = pp - p;
-			if(len > 0) 
-				write(fd, p, len);
-			p = pp + 1;
-			s = s - len - 1;
-			if(s == 0) {
+			if(c == '\r')
 				gotcr = 1;
-				break;
+			else
+				*op++ = c;
+			if(op >= ope) {
+				write(fd, bufout, op - bufout);
+				op = bufout;
 			}
-			if(*p != '\n')
-				write(fd, "\r", 1);
 		}
 	} else
 		write(fd, buffer, s);
    }
    if(gotcr)
-	write(fd, "\r", 1);
+	*op++ = '\r';
+   if(op > bufout)
+	write(fd, bufout, op - bufout);
    time(&dataend);
 
 #ifdef DEBUG

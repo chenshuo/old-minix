@@ -88,7 +88,7 @@ fi
 if [ "$net" ]
 then
 	echo -n "Starting network daemons: "
-	for daemon in rarpd nonamed irdpd
+	for daemon in rarpd nonamed irdpd talkd
 	do
 		if [ -f /usr/bin/$daemon ]
 		then

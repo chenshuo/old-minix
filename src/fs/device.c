@@ -81,24 +81,6 @@ message *mess_ptr;		/* message pointer */
   mess_ptr->DEVICE = (mess_ptr->DEVICE >> MINOR) & BYTE;
   mess_ptr->PROC_NR = fp - fproc;
 
-  /* The interface could be greatly improved by using 2 functions,
-   * dev_open(Dev_t dev, Mode_t mode) and dev_close(Dev_t dev) instead of
-   * pseudo-message passing.  The conversion of the dev to major+minor+
-   * task+function would be done here (and there would be another level
-   * of function calls).  Checking the dev here (in find_dev) would stop
-   * main.c crashing badly from bad boot/root dev numbers.
-   *
-   * Other problems: the printer driver is not called for open/close
-   * processing.  It should be.
-   *
-   * find_dev should return ENODEV for bad devices and that result
-   * should be tested for and passed back in the message (or in the
-   * new function interface).  do_mount should respect this code, or
-   * whatever is returned by the driver, and not convert it to EINVAL.
-   *
-   * This reminds me that EINVAL is a funny code for umount to return
-   * when the dev is not mounted.
-   */
   call_task(task_nr, mess_ptr);
 
   /* Task has completed.  See if call completed. */

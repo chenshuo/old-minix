@@ -1,4 +1,4 @@
-/*	synctree 4.14 - Synchronise file tree.		Author: Kees J. Bot
+/*	synctree 4.15 - Synchronise file tree.		Author: Kees J. Bot
  *								5 Apr 1989
  * SYNOPSYS
  *	synctree [-iuf] [[user1@machine1:]dir1 [[user2@]machine2:]dir2
@@ -56,7 +56,11 @@
 #endif
 
 #ifndef S_ISLNK
-#define	S_ISLNK(m)	0
+/* There were no symlinks in medieval times. */
+#define S_ISLNK(mode)			(0)
+#define lstat				stat
+#define symlink(path1, path2)		(errno= ENOSYS, -1)
+#define readlink(path, buf, len)	(errno= ENOSYS, -1)
 #endif
 
 #define NUMBYTES     4	/* Any number fits in this many bytes. */
@@ -136,17 +140,13 @@ static int ex= 0;	/* exit status. */
 
 static void because()
 {
-	fprintf(stderr, ": ");
-	fflush(stderr);
-	perror("");
+	fprintf(stderr, ": %s\n", strerror(errno));
 	ex= 1;
 }
 
 static void perr(label) char *label;
 {
-	fprintf(stderr, "%s: ", arg0);
-	fflush(stderr);
-	perror(label);
+	fprintf(stderr, "%s: %s: %s\n", arg0, label, strerror(errno));
 	ex= 1;
 }
 
@@ -375,11 +375,7 @@ static int getstat(name, stp) char *name; struct stat *stp;
 
 	if (strcmp(name, BACKUP) == 0) return -1;
 
-#ifdef S_IFLNK
 	if (lstat(name, stp) < 0) return -1;
-#else
-	if (stat(name, stp) < 0) return -1;
-#endif
 
 	if (stp->st_mode == S_IFREG && stp->st_mtime == 0) return -1;
 
@@ -438,18 +434,17 @@ static int advance()
 		}
 		setpath(E);
 		if (getstat(path, &st) == 0) {
-#ifdef S_IFLNK
 			if (S_ISLNK(st.st_mode)) {
 				int n;
 
-				if ((n= readlink(path, lnkpth, PATH_MAX)) >= 0
-				) {
+				if ((n= readlink(path, lnkpth, PATH_MAX)) >= 0)
+				{
 					lnkpth[n]= 0;
 					break;
 				}
-			} else
-#endif
+			} else {
 				break;
+			}
 		}
 		if (errno != 0 && errno != ENOENT) perr(path);
 	}
@@ -576,13 +571,12 @@ static void slave()
 					inform(LINK);
 					send(linkpath, strlen(linkpath) + 1);
 				} else
-#ifdef S_IFLNK
 				if (S_ISLNK(st.st_mode)) {
 					inform(SYMLINK);
 					send(lnkpth, strlen(lnkpth) + 1);
-				} else
-#endif
+				} else {
 					inform(PATH);
+				}
 				send(path, strlen(path) + 1);
 				sendstat(&st);
 			}
@@ -637,8 +631,6 @@ static int execute(argv) char **argv;
 /* Execute a command and return its success or failure. */
 {
 	int pid, r, status;
-
-	if (getenv("PATH") == NULL) putenv("PATH=:/bin:/usr/bin");
 
 	if ((pid= fork())<0) {
 		perr("fork()");
@@ -1009,6 +1001,7 @@ static void add(update) int update;
 		fprintf(stderr,
 			"%s: Won't add file with strange mode %05o: %s\n",
 			arg0, Sst.st_mode, Spath);
+		order(CANCEL);
 		return;
 	}
 	setmodes(1);
@@ -1148,14 +1141,12 @@ static void master()
 				receive(Spath, sizeof(Spath));
 				recstat(&Sst);
 				break;
-#ifdef S_IFLNK
 			case SYMLINK:
 				Slinkpath= nil;
 				receive(Slnkpth, sizeof(Slnkpth));
 				receive(Spath, sizeof(Spath));
 				recstat(&Sst);
 				break;
-#endif
 			case DONE:
 				Sdone= 1;
 				break;

@@ -14,7 +14,7 @@ all:	$(PROG)
 
 $(PROG):	$(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)
-	install -S 4kw $@
+	install -S 8kw $@
 
 clean:
 	rm -f $(PROG) $(OBJS)

@@ -79,7 +79,7 @@ EXTERN tty_t tty_table[NR_CONS+NR_RS_LINES+NR_PTYS];
 /* Fields and flags on characters in the input queue. */
 #define IN_CHAR       0x00FF	/* low 8 bits are the character itself */
 #define IN_LEN        0x0F00	/* length of char if it has been echoed */
-#define IN_LSHIFT          8	/* lenght = (c & IN_LEN) >> IN_LSHIFT */
+#define IN_LSHIFT          8	/* length = (c & IN_LEN) >> IN_LSHIFT */
 #define IN_EOT        0x1000	/* char is a line break (^D, LF) */
 #define IN_EOF        0x2000	/* char is EOF (^D), do not return to user */
 #define IN_ESC        0x4000	/* escaped by LNEXT (^V), no interpretation */

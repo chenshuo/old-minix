@@ -48,9 +48,12 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   int b;
   register struct buf *bp, *prev_ptr;
 
-  /* Search the hash chain for (dev, block). */
+  /* Search the hash chain for (dev, block). Do_read() can use 
+   * get_block(NO_DEV ...) to get an unnamed block to fill with zeros when
+   * someone wants to read from a hole in a file, in which case this search
+   * is skipped
+   */
   if (dev != NO_DEV) {
-	/* ??? DEBUG What if dev == NO_DEV ??? */
 	b = (int) block & HASH_MASK;
 	bp = buf_hash[b];
 	while (bp != NIL_BUF) {
@@ -87,7 +90,7 @@ int only_search;		/* if NO_READ, don't read, else act normal */
   }
 
   /* If the block taken is dirty, make it clean by writing it to the disk.
-   * Avoid hysterisis by flushing all other dirty blocks for the same device.
+   * Avoid hysteresis by flushing all other dirty blocks for the same device.
    */
   if (bp->b_dev != NO_DEV) {
 	if (bp->b_dirt == DIRTY) flushall(bp->b_dev);
@@ -176,9 +179,6 @@ int block_type;			/* INODE_BLOCK, DIRECTORY_BLOCK, or whatever */
    */
   if ((block_type & WRITE_IMMED) && bp->b_dirt==DIRTY && bp->b_dev != NO_DEV)
 	rw_block(bp, WRITING);
-
-  /* Super blocks must not be cached, lest mount use cached block. */
-  if (block_type == ZUPER_BLOCK) bp->b_dev = NO_DEV;
 }
 
 
@@ -320,31 +320,6 @@ dev_t dev;			/* device to flush */
 
 
 /*===========================================================================*
- *				rm_lru					     *
- *===========================================================================*/
-PRIVATE void rm_lru(bp)
-struct buf *bp;
-{
-/* Remove a block from its LRU chain. */
-
-  struct buf *next_ptr, *prev_ptr;
-
-  bufs_in_use++;
-  next_ptr = bp->b_next;	/* successor on LRU chain */
-  prev_ptr = bp->b_prev;	/* predecessor on LRU chain */
-  if (prev_ptr != NIL_BUF)
-	prev_ptr->b_next = next_ptr;
-  else
-	front = next_ptr;	/* this block was at front of chain */
-
-  if (next_ptr != NIL_BUF)
-	next_ptr->b_prev = prev_ptr;
-  else
-	rear = prev_ptr;	/* this block was at rear of chain */
-}
-
-
-/*===========================================================================*
  *				rw_scattered				     *
  *===========================================================================*/
 PUBLIC void rw_scattered(dev, bufq, bufqsize, rw_flag)
@@ -415,4 +390,29 @@ int rw_flag;			/* READING or WRITING */
 	bufq += j;
 	bufqsize -= j;
   }
+}
+
+
+/*===========================================================================*
+ *				rm_lru					     *
+ *===========================================================================*/
+PRIVATE void rm_lru(bp)
+struct buf *bp;
+{
+/* Remove a block from its LRU chain. */
+
+  struct buf *next_ptr, *prev_ptr;
+
+  bufs_in_use++;
+  next_ptr = bp->b_next;	/* successor on LRU chain */
+  prev_ptr = bp->b_prev;	/* predecessor on LRU chain */
+  if (prev_ptr != NIL_BUF)
+	prev_ptr->b_next = next_ptr;
+  else
+	front = next_ptr;	/* this block was at front of chain */
+
+  if (next_ptr != NIL_BUF)
+	next_ptr->b_prev = prev_ptr;
+  else
+	rear = prev_ptr;	/* this block was at rear of chain */
 }

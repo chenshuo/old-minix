@@ -193,15 +193,17 @@ char *argv[];
 		switch (key) {
 		default:
 			tell(1, "\r\nTerm commands:\r\n",
-				" h - this help\r\n",
+				" ? - this help\r\n",
 				candial ? " d - redial\r\n" : "",
 				" s - subshell (e.g. for file transfer)\r\n",
+				" h - hangup (+++ ATH)\r\n",
 				" b - send a break\r\n",
 				" q - exit term\r\n",
 				"^] - send a CTRL-]\r\n\n",
 				NIL);
 			break;
 		case 'd':
+			/* Redial by sending the dial commands again. */
 			for (i = 1; i < argc; ++i) {
 				if (argv[i][0] != '-') continue;
 				tell(commfd, argv[i] + 1, "\r", NIL);
@@ -215,7 +217,15 @@ char *argv[];
 			(void) tcsetattr(0, TCSANOW, &tcstdin);
 			reader(1);
 			break;
+		case 'h':
+			/* Hangup by using the +++ escape and ATH command. */
+			sleep(2);
+			tell(commfd, "+++", NIL);
+			sleep(2);
+			tell(commfd, "ATH\r", NIL);
+			break;
 		case 'b':
+			/* Send a break. */
 			tcsendbreak(commfd, 0);
 			break;
 		case 'q':

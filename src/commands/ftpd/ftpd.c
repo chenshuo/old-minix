@@ -11,9 +11,10 @@
  * 06/27/96 0.92		Michael Temari, <temari@ix.netcom.com>
  * 07/02/96 0.93		Michael Temari, <temari@ix.netcom.com>
  * 07/15/96 0.94		Michael Temari, <temari@ix.netcom.com>
+ * 08/27/96 0.95		Michael Temari, <temari@ix.netcom.com>
  */
 
-char *FtpdVersion = "0.94";
+char *FtpdVersion = "0.95";
 
 #include <sys/types.h>
 #include <signal.h>

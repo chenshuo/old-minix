@@ -22,4 +22,4 @@ EXTERN char *res_ptr;		/* result, if pointer */
 
 extern _PROTOTYPE (int (*call_vec[]), (void) );	/* system call handlers */
 extern char core_name[];	/* file name where core images are produced */
-EXTERN sigset_t core_bits;	/* which signals cause core images */
+EXTERN sigset_t core_sset;	/* which signals cause core images */

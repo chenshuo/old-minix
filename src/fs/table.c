@@ -105,11 +105,12 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 /* The order of the entries here determines the mapping between major device
  * numbers and tasks.  The first entry (major device 0) is not used.  The
  * next entry is major device 1, etc.  Character and block devices can be
- * intermixed at random.  If this ordering is changed, the devices in h/boot.h
- * must be changed to correspond to the new values.  Note that the major
- * device numbers used in /dev are NOT the same as the task numbers used
- * inside the kernel (as defined in h/com.h).  Also note that if /dev/mem
- * is changed from 1, NULL_MAJOR must be changed in <include/minix/com.h>.
+ * intermixed at random.  If this ordering is changed, the devices in
+ * <include/minix/boot.h> must be changed to correspond to the new values.
+ * Note that the major device numbers used in /dev are NOT the same as the 
+ * task numbers used inside the kernel (as defined in <include/minix/com.h>).
+ * Also note that if /dev/mem is changed from 1, NULL_MAJOR must be changed
+ * in <include/minix/com.h>.
  */
 PUBLIC struct dmap dmap[] = {
 /*  ?   Open       Read/Write   Close       Task #      Device  File

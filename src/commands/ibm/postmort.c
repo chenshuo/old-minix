@@ -1,8 +1,8 @@
 /* postmort - post mortem dump		Author: C. W. Rose */
 
-/* Postmort: perform post-mortem on PC Minix 1.5 core files.
+/* Postmort: perform post-mortem on PC Minix 1.7 core files.
  *
- * $Id: postmort.c,v 1.1 1992/03/26 08:05:56 cwr Rel $
+ * $Id$
  */
 
  /* The 1.5 core file structure is a struct mem_map, the segment memory map,
@@ -97,6 +97,7 @@ _PROTOTYPE(void dump_maps, (struct mem_map * mp));
 _PROTOTYPE(void dump_one_seg, (int fd, int segindex));
 _PROTOTYPE(void dump_proc_table, (struct proc * pt));
 _PROTOTYPE(void dump_registers, (struct proc * pt));
+_PROTOTYPE(void dump_sym_tab, (struct sym *st));
 _PROTOTYPE(void dump_stack, (struct stackframe_s * sp));
 _PROTOTYPE(int main, (int argc, char *argv[]));
 _PROTOTYPE(int parse_line, (char *ps));
@@ -294,6 +295,21 @@ struct proc *pt;
 }
 
 
+/* D u m p _ s y m _ t a b
+ *
+ * Dump the symbol table
+ */
+void dump_sym_tab(st)
+struct sym *st;
+{
+  int j;
+
+  printf("Symbol table entries (text):\n\n");
+  for (j = 0; j < maxsym; j++) 
+	printf("0x%08.8x T %s\n", symtab[j].addr, symtab[j].label);
+}
+
+
 /* D u m p _ s t a c k
  *
  * Dump the stack frame
@@ -440,6 +456,7 @@ char *argv[];
   }
   if (opt_d) {
 	printf("\n");
+	dump_sym_tab(symtab);
 	dump_all_segs(fdc);
   }
 

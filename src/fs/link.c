@@ -47,7 +47,8 @@ PUBLIC int do_link()
 
   /* Check to see if the file has maximum number of links already. */
   r = OK;
-  if ( (rip->i_nlinks & BYTE) >= LINK_MAX) r = EMLINK;
+  if (rip->i_nlinks >= (rip->i_sp->s_version == V1 ? CHAR_MAX : SHRT_MAX))
+	r = EMLINK;
 
   /* Only super_user may link to directories. */
   if (r == OK)
@@ -230,7 +231,8 @@ PUBLIC int do_rename()
 	if (new_ip == NIL_INODE) {
 		/* don't rename a file with a file system mounted on it. */
 		if (old_ip->i_dev != old_dirp->i_dev) r = EXDEV;
-		if (odir && (new_dirp->i_nlinks & BYTE) >= LINK_MAX &&
+		if (odir && new_dirp->i_nlinks >=
+		    (new_dirp->i_sp->s_version == V1 ? CHAR_MAX : SHRT_MAX) &&
 		    !same_pdir && r == OK) r = EMLINK;
 	} else {
 		if (old_ip == new_ip) r = SAME; /* old=new */

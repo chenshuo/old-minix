@@ -416,7 +416,7 @@ time_t *tp;
   while (tm->tm_year > 93 || (tm->tm_year == 93 && tm->tm_mon >= 8)) {
 	/* Step back a year or a month. */
 	days += tm->tm_year > 93 ? tm->tm_yday+1 : tm->tm_mday;
-	t = *tp - days * 24 * 3600L;
+	t = *tp - days * (24 * 3600L);
 
 	tm = localtime(&t);
   }

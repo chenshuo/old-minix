@@ -42,7 +42,8 @@
 #define	TTY_STACK	(3 * SMALL_STACK)
 #define SYN_ALRM_STACK	SMALL_STACK
 
-#define DP8390_STACK	(SMALL_STACK * ENABLE_DP8390)
+#define DP8390_STACK	(2 * SMALL_STACK * ENABLE_DP8390)
+#define RTL8139_STACK	(2 * SMALL_STACK * ENABLE_RTL8139)
 
 #if (CHIP == INTEL)
 #define	IDLE_STACK	((3+3+4) * sizeof(char *))  /* 3 intr, 3 temps, 4 db */
@@ -64,7 +65,7 @@
 #define	HARDWARE_STACK	0		/* dummy task, uses kernel stack */
 
 
-#define	TOT_STACK_SPACE		(TTY_STACK + DP8390_STACK + \
+#define	TOT_STACK_SPACE		(TTY_STACK + DP8390_STACK + RTL8139_STACK + \
 	SYN_ALRM_STACK + IDLE_STACK + HARDWARE_STACK + PRINTER_STACK + \
 	NR_CTRLRS * CTRLR_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + \
 	SYS_STACK + SB16_STACK + SB16MIXER_STACK)
@@ -82,6 +83,9 @@ PUBLIC struct tasktab tasktab[] = {
 	{ tty_task,		TTY_STACK,	"TTY"		},
 #if ENABLE_DP8390
 	{ dp8390_task,		DP8390_STACK,	"DP8390"	},
+#endif
+#if ENABLE_RTL8139
+	{ rtl8139_task,		RTL8139_STACK,	"RTL8139"	},
 #endif
 #if ENABLE_SB16
 	{ sb16_task,		SB16_STACK,	"SB16"		},

@@ -716,11 +716,16 @@ int makedhcp(dhcp_t *dp, u8_t *class, size_t calen, u8_t *client, size_t cilen,
 		ifnp= np;
 	    }
 
-	    if (config_length(opt) == 1
+	    if (between(1, config_length(opt), 2)
 		&& config_isatom(opt)
 		&& strcasecmp(opt->word, "server") == 0
+		&& (opt->next == nil
+		    || strcasecmp(opt->next->word, "inform") == 0)
 	    ) {
-		if (np != nil) ifnp->flags |= NF_SERVING;
+		if (np != nil) {
+		    ifnp->flags |= NF_SERVING;
+		    if (opt->next != nil) ifnp->flags |= NF_INFORM;
+		}
 	    } else
 	    if (config_length(opt) == 2
 		&& config_isatom(opt)

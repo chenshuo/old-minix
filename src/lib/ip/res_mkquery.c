@@ -114,7 +114,7 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 		cp += sizeof(u_short);
 		putshort(class, (u8_t *)cp);
 		cp += sizeof(u_short);
-		hp->dh_qdcount = htons(1);
+		hp->dh_qdcount = HTONS(1);
 		if (op == QUERY || data == NULL)
 			break;
 		/*
@@ -134,7 +134,7 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 		cp += sizeof(u_long);
 		putshort(0, (u8_t *)cp);
 		cp += sizeof(u_short);
-		hp->dh_arcount = htons(1);
+		hp->dh_arcount = HTONS(1);
 		break;
 
 	case IQUERY:
@@ -156,7 +156,7 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 			bcopy(data, cp, datalen);
 			cp += datalen;
 		}
-		hp->dh_ancount = htons(1);
+		hp->dh_ancount = HTONS(1);
 		break;
 
 #ifdef ALLOW_UPDATES
@@ -191,7 +191,7 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 			cp += datalen;
 		}
 		if ( (op == UPDATED) || (op == UPDATEDA) ) {
-			hp->ancount = htons(0);
+			hp->ancount = HTONS(0);
 			break;
 		}
 		/* Else UPDATEM/UPDATEMA, so drop into code for UPDATEA */
@@ -213,7 +213,7 @@ res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)
 			bcopy(newrr->r_data, cp, newrr->r_size);
 			cp += newrr->r_size;
 		}
-		hp->ancount = htons(0);
+		hp->ancount = HTONS(0);
 		break;
 
 #endif /* ALLOW_UPDATES */

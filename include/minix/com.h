@@ -32,8 +32,9 @@
 #	define TTY_EXIT	   11	/* a process group leader has exited */	
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#define DP8390		(SB16 - ENABLE_DP8390)
-				/* networking task */
+#define DP8390		(RTL8139 - ENABLE_DP8390)
+#define RTL8139		(SB16 - ENABLE_RTL8139)
+				/* networking tasks */
 
 /* Message type for data link layer reqests. */
 #	define DL_WRITE		3
@@ -139,7 +140,6 @@
 
 /* Names of message fields for messages to CLOCK task. */
 #define DELTA_TICKS    m6_l1	/* alarm interval in clock ticks */
-#define FUNC_TO_CALL   m6_f1	/* pointer to function to call */
 #define NEW_TIME       m6_l1	/* value to set clock to (SET_TIME) */
 #define CLOCK_PROC_NR  m6_i1	/* which proc (or task) wants the alarm? */
 #define SECONDS_LEFT   m6_l1	/* how many seconds were remaining */

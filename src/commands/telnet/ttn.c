@@ -13,6 +13,7 @@ ttn.c
 #include <fcntl.h>
 #include <termios.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,10 +33,10 @@ ttn.c
 #define PROTOTYPE(func,args) func()
 #endif
 
-PROTOTYPE (int main, (int argc, char *argv[]) );
 static int do_read(int fd, char *buf, unsigned len);
 static void screen(void);
-static void keyboard (void);
+static void keyboard(void);
+static void send_brk(void);
 static int process_opt (char *bp, int count);
 static void do_option (int optsrt);
 static void dont_option (int optsrt);
@@ -43,6 +44,8 @@ static void will_option (int optsrt);
 static void wont_option (int optsrt);
 static int writeall (int fd, char *buffer, int buf_size);
 static int sb_termtype (char *sb, int count);
+static void fatal(char *fmt, ...);
+static void usage(void);
 
 #if DEBUG
 #define where() (fprintf(stderr, "%s %d:", __FILE__, __LINE__))
@@ -51,10 +54,10 @@ static int sb_termtype (char *sb, int count);
 static char *prog_name;
 static tcp_fd;
 static char *term_env;
+static int esc_char= '~';
+static enum { LS_NORM, LS_BOL, LS_ESC } line_state= LS_BOL;
 
-main(argc, argv)
-int argc;
-char *argv[];
+int main(int argc, char *argv[])
 {
 	struct hostent *hostent;
 	struct servent *servent;
@@ -62,92 +65,98 @@ char *argv[];
 	tcpport_t port;
 	int pid, ppid;
 	nwio_tcpconf_t tcpconf;
-	int result, count;
+	int c, r;
 	nwio_tcpcl_t tcpconnopt;
-	char buffer[1024];
 	struct termios termios;
-	char *tcp_device;
+	char *tcp_device, *remote_name, *port_name;
+	char *e_arg;
 
-	prog_name= argv[0];
-	if (argc <2 || argc>3)
+	(prog_name=strrchr(argv[0],'/')) ? prog_name++ : (prog_name=argv[0]);
+
+	e_arg= NULL;
+	while (c= getopt(argc, argv, "?e:"), c != -1)
 	{
-		fprintf(stderr, "Usage: %s host <port>\r\n", argv[0]);
-		exit(1);
-	}
-	hostent= gethostbyname(argv[1]);
-	if (!hostent)
-	{
-		host= inet_addr(argv[1]);
-		if (host == -1)
+		switch(c)
 		{
-			fprintf(stderr, "%s: unknown host (%s)\r\n",
-				argv[0], argv[1]);
-			exit(1);
+		case '?': usage();
+		case 'e': e_arg= optarg; break;
+		default:
+			fatal("Optind failed: '%c'", c);
 		}
 	}
-	else
-		host= *(ipaddr_t *)(hostent->h_addr);
 
-	if (argc < 3)
+	if (optind >= argc)
+		usage();
+	remote_name= argv[optind++];
+	if (optind < argc)
+		port_name= argv[optind++];
+	else
+		port_name= NULL;
+	if (optind != argc)
+		usage();
+
+	if (e_arg)
+	{
+		switch(strlen(e_arg))
+		{
+		case 0: esc_char= -1; break;
+		case 1: esc_char= e_arg[0]; break;
+		default: fatal("Invalid escape character '%s'", e_arg);
+		}
+	}
+
+	hostent= gethostbyname(remote_name);
+	if (!hostent)
+		fatal("Unknown host %s", remote_name);
+	host= *(ipaddr_t *)(hostent->h_addr);
+
+	if (!port_name)
 		port= htons(TCPPORT_TELNET);
 	else
 	{
-		servent= getservbyname (argv[2], "tcp");
+		servent= getservbyname (port_name, "tcp");
 		if (!servent)
 		{
-			port= htons(strtol (argv[2], (char **)0, 0));
+			port= htons(strtol(port_name, (char **)0, 0));
 			if (!port)
-			{
-				fprintf(stderr, "%s: unknown port (%s)\r\n",
-					argv[0], argv[2]);
-				exit(1);
-			}
+				fatal("Unknown port %s", port_name);
 		}
 		else
 			port= (tcpport_t)(servent->s_port);
 	}
 
-	fprintf(stderr, "Connecting to %s:%u...\r\n",
+	fprintf(stderr, "Connecting to %s:%u...\n",
 		inet_ntoa(host), ntohs(port));
 
 	tcp_device= getenv("TCP_DEVICE");
 	if (tcp_device == NULL)
 		tcp_device= TCP_DEVICE;
 	tcp_fd= open (tcp_device, O_RDWR);
-	if (tcp_fd<0)
-	{
-		perror ("unable to open /dev/tcp");
-		exit(1);
-	}
+	if (tcp_fd == -1)
+		fatal("Unable to open %s: %s", tcp_device, strerror(errno));
+
 	tcpconf.nwtc_flags= NWTC_LP_SEL | NWTC_SET_RA | NWTC_SET_RP;
 	tcpconf.nwtc_remaddr= host;
 	tcpconf.nwtc_remport= port;
 
-	result= ioctl (tcp_fd, NWIOSTCPCONF, &tcpconf);
-	if (result<0)
-	{
-		perror ("unable to NWIOSTCPCONF");
-		exit(1);
-	}
+	r= ioctl (tcp_fd, NWIOSTCPCONF, &tcpconf);
+	if (r == -1)
+		fatal("NWIOSTCPCONF failed: %s", strerror(errno));
 
 	tcpconnopt.nwtcl_flags= 0;
-
 	do
 	{
-		result= ioctl (tcp_fd, NWIOTCPCONN, &tcpconnopt);
-		if (result < 0 && errno == EAGAIN)
+		r= ioctl (tcp_fd, NWIOTCPCONN, &tcpconnopt);
+		if (r == -1 && errno == EAGAIN)
 		{
-			fprintf(stderr,"%s: got EAGAIN, sleeping(1s)\r\n",
+			fprintf(stderr, "%s: Got EAGAIN, sleeping(1s)\n",
 				prog_name);
 			sleep(1);
 		}
-	} while (result <0 && errno == EAGAIN);
-	if (result<0)
-	{
-		perror ("unable to NWIOTCPCONN");
-		exit(1);
-	}
-	fprintf(stderr, "Connected\r\n");
+	} while (r == -1 && errno == EAGAIN);
+	if (r == -1)
+		fatal("Unable to connect: %s", strerror(errno));
+	printf("Connected\n");
 	ppid= getpid();
 	pid= fork();
 	switch(pid)
@@ -174,6 +183,7 @@ fprintf(stderr, "killing %d with %d\r\n", pid, SIGKILL);
 		tcsetattr(0, TCSANOW, &termios);
 		break;
 	}
+	exit(0);
 }
 
 static int do_read(fd, buf, len)
@@ -262,40 +272,80 @@ assert (optsize);
 
 static void keyboard()
 {
-	nwio_tcpatt_t nwio_tcpatt;
-	char buffer[1024];
-	int result;
+	char c, buffer[1024];
 	int count;
-
-	nwio_tcpatt.nwta_flags= 0;
 
 	for (;;)
 	{
-		count= read (0, buffer, sizeof(buffer));
-		if (count<0)
-		{
-			fprintf(stderr, "%s: read: %s\r\n", prog_name,
-			strerror(errno));
-			return;
-		}
+		count= read (0, buffer, 1 /* sizeof(buffer) */);
+		if (count == -1)
+			fatal("Read: %s\r\n", strerror(errno));
 		if (!count)
 			return;
-#if DEBUG && 0
- { where(); fprintf(stderr, "writing %d bytes\r\n", count); }
-#endif
+
+		if (line_state != LS_NORM)
+		{
+			c= buffer[0];
+			if (line_state == LS_BOL)
+			{
+				if (c == esc_char)
+				{
+					line_state= LS_ESC;
+					continue;
+				}
+				line_state= LS_NORM;
+			}
+			else if (line_state == LS_ESC)
+			{
+				line_state= LS_NORM;
+				if (c == '.')
+					return;
+				if (c == '#')
+				{
+					send_brk();
+					continue;
+				}
+
+				/* Not a valid command or a repeat of the
+				 * escape char
+				 */
+				if (c != esc_char)
+				{
+					c= esc_char;
+					write(tcp_fd, &c, 1);
+				}
+			}
+		}
+		if (buffer[0] == '\n')
+			write(tcp_fd, "\r", 1);
 		count= write(tcp_fd, buffer, count);
-#if 0
 		if (buffer[0] == '\r')
-			write(tcp_fd, "\n", 1);
-#endif
+		{
+			line_state= LS_BOL;
+			write(tcp_fd, "\0", 1);
+		}
 		if (count<0)
 		{
 			perror("write");
+			fprintf(stderr, "errno= %d\r\n", errno);
 			return;
 		}
 		if (!count)
 			return;
 	}
+}
+
+static void send_brk(void)
+{
+	int r;
+	unsigned char buffer[2];
+
+	buffer[0]= IAC;
+	buffer[1]= IAC_BRK;
+
+	r= writeall(tcp_fd, (char *)buffer, 2);
+	if (r == -1)
+		fatal("Error writing to TCP connection: %s", strerror(errno));
 }
 
 #define next_char(var) \
@@ -401,8 +451,8 @@ fprintf(stderr, "got unknown command (%d)\r\n", command);
 
 static void do_option (int optsrt)
 {
-	unsigned char reply[3], *rp;
-	int count, result;
+	unsigned char reply[3];
+	int result;
 
 	switch (optsrt)
 	{
@@ -428,10 +478,8 @@ static void do_option (int optsrt)
 		break;
 	default:
 #if DEBUG
- { where(); fprintf(stderr, "got a DO (%d)\r\n", optsrt); }
-#endif
-#if DEBUG
- { where(); fprintf(stderr, "WONT (%d)\r\n", optsrt); }
+		fprintf(stderr, "got a DO (%d)\r\n", optsrt);
+		fprintf(stderr, "WONT (%d)\r\n", optsrt);
 #endif
 		reply[0]= IAC;
 		reply[1]= IAC_WONT;
@@ -445,8 +493,8 @@ static void do_option (int optsrt)
 
 static void will_option (int optsrt)
 {
-	unsigned char reply[3], *rp;
-	int count, result;
+	unsigned char reply[3];
+	int result;
 
 	switch (optsrt)
 	{
@@ -462,11 +510,13 @@ static void will_option (int optsrt)
 		else
 		{
 			struct termios termios;
+
 			tcgetattr(0, &termios);
 			termios.c_iflag &= ~(ICRNL|IGNCR|INLCR|IXON|IXOFF);
 			termios.c_oflag &= ~(OPOST);
 			termios.c_lflag &= ~(ECHO|ECHONL|ICANON|IEXTEN|ISIG);
 			tcsetattr(0, TCSANOW, &termios);
+
 			DO_echo= TRUE;
 			reply[0]= IAC;
 			reply[1]= IAC_DO;
@@ -498,10 +548,8 @@ static void will_option (int optsrt)
 		break;
 	default:
 #if DEBUG
- { where(); fprintf(stderr, "got a WILL (%d)\r\n", optsrt); }
-#endif
-#if DEBUG
- { where(); fprintf(stderr, "DONT (%d)\r\n", optsrt); }
+		fprintf(stderr, "got a WILL (%d)\r\n", optsrt);
+		fprintf(stderr, "DONT (%d)\r\n", optsrt);
 #endif
 		reply[0]= IAC;
 		reply[1]= IAC_DONT;
@@ -534,14 +582,11 @@ assert (result <= buf_size);
 
 static void dont_option (int optsrt)
 {
-	unsigned char reply[3], *rp;
-	int count, result;
-
 	switch (optsrt)
 	{
 	default:
 #if DEBUG
- { where(); fprintf(stderr, "got a DONT (%d)\r\n", optsrt); }
+		fprintf(stderr, "got a DONT (%d)\r\n", optsrt);
 #endif
 		break;
 	}
@@ -549,14 +594,11 @@ static void dont_option (int optsrt)
 
 static void wont_option (int optsrt)
 {
-	unsigned char reply[3], *rp;
-	int count, result;
-
 	switch (optsrt)
 	{
 	default:
 #if DEBUG
- { where(); fprintf(stderr, "got a WONT (%d)\r\n", optsrt); }
+		fprintf(stderr, "got a WONT (%d)\r\n", optsrt);
 #endif
 		break;
 	}
@@ -621,3 +663,27 @@ static int sb_termtype (char *bp, int count)
 	}
 	return offset;
 }
+
+static void fatal(char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	fprintf(stderr, "%s: ", prog_name);
+	vfprintf(stderr, fmt, ap);
+	fprintf(stderr, "\n");
+	va_end(ap);
+
+	exit(1);
+}
+
+static void usage(void)
+{
+	fprintf(stderr, "Usage: %s [-e esc-char] host [port]\r\n",
+		prog_name);
+	exit(1);
+}
+
+/*
+ * $PchId: ttn.c,v 1.5 2002/05/07 12:06:41 philip Exp $
+ */

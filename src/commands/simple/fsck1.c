@@ -971,7 +971,7 @@ dir_struct *dp;
 	}
 	return(1);
   }
-  if ((unsigned) count[dp->d_inum] == LINK_MAX) {
+  if ((unsigned) count[dp->d_inum] == CHAR_MAX) {
 	printf("too many links to ino %u\n", dp->d_inum);
 	printf("discovered at entry '");
 	printname(dp->d_name);
@@ -1307,11 +1307,11 @@ d_inode *ip;
   }
   nfreeinode--;
   setbit(imap, (bit_nr) ino);
-  if ((unsigned) ip->i_nlinks > LINK_MAX) {
+  if ((unsigned) ip->i_nlinks > CHAR_MAX) {
 	printf("link count too big in ");
 	printpath(1, 0);
 	printf("cnt = %u)\n", (unsigned) ip->i_nlinks);
-	count[ino] -= LINK_MAX;
+	count[ino] -= CHAR_MAX;
 	setbit(spec_imap, (bit_nr) ino);
   } else
 	count[ino] -= (unsigned) ip->i_nlinks;

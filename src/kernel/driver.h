@@ -43,7 +43,6 @@ _PROTOTYPE( char *no_name, (void) );
 _PROTOTYPE( int do_nop, (struct driver *dp, message *m_ptr) );
 _PROTOTYPE( struct device *nop_prepare, (int device) );
 _PROTOTYPE( void nop_cleanup, (void) );
-_PROTOTYPE( void clock_mess, (int ticks, watchdog_t func) );
 _PROTOTYPE( int do_diocntl, (struct driver *dr, message *m_ptr) );
 
 /* Parameters for the disk drive. */

@@ -61,7 +61,9 @@
 #include "drvlib.h"
 #if ENABLE_AHA1540_SCSI
 #include <fcntl.h>
-#include <sys/ioctl.h>
+#include <sys/ioc_disk.h>
+#include <sys/ioc_tape.h>
+#include <sys/ioc_scsi.h>
 #include <sys/mtio.h>
 
 
@@ -305,7 +307,7 @@ typedef struct {
 
 /* Miscellaneous parameters */
 #define SCSI_TIMEOUT	 250	/* SCSI selection timeout (ms), 0 = none */
-#define AHA_TIMEOUT	 500	/* max msec wait for controller reset */
+#define AHA_TIMEOUT   500000L	/* max usec wait for controller reset */
 
 #define MAX_DEVICES	   8	/* 8 devices for the 8 SCSI targets */
 #define NR_DISKDEVS	 (MAX_DEVICES * DEV_PER_DRIVE)
@@ -408,6 +410,7 @@ PRIVATE struct scsi *s_sp;	/* active SCSI device struct */
 PRIVATE struct device *s_dv;	/* active partition */
 PRIVATE int s_type;		/* disk, nonrewind tape, rewind tape? */
 PRIVATE int aha_irq;		/* configured IRQ */
+PRIVATE irq_hook_t aha_hook;	/* interrupt hook */
 PRIVATE mailbox_t mailbox[2];	/* out and in mailboxes */
 PRIVATE inquiry_t inqdata;	/* results of Inquiry command */
 
@@ -436,7 +439,7 @@ FORWARD _PROTOTYPE( int scsi_command, (phys_bytes data, vir_bytes len) );
 FORWARD _PROTOTYPE( void aha_command, (int outlen, byte *outptr,
 						int inlen, byte *inptr) );
 FORWARD _PROTOTYPE( int aha_reset, (void) );
-FORWARD _PROTOTYPE( int s_handler, (int irq) );
+FORWARD _PROTOTYPE( int s_handler, (irq_hook_t *hook) );
 
 FORWARD _PROTOTYPE( void h2b16, (big16 b, U16_t l) );
 FORWARD _PROTOTYPE( void h2b24, (big24 b, u32_t l) );
@@ -668,7 +671,7 @@ PRIVATE int scsi_probe()
 		switch ((sense->add_code << 8) | sense->add_qual) {
 		case 0x0401:
 			/* "It is becoming ready."  Fine, we wait. */
-			milli_delay(1000);
+			micro_delay(1000000L);
 			break;
 		case 0x0402:
 			/* "Initialization command required."  So we tell it
@@ -1675,7 +1678,7 @@ vir_bytes len;
 
   mailbox[0].status = AHA_MBOXSTART;
 
-  out_byte(AHA_DATAREG, AHACOM_STARTSCSI);  /* hey, you've got mail! */
+  outb(AHA_DATAREG, AHACOM_STARTSCSI);  /* hey, you've got mail! */
 
   /* Wait for the SCSI command to complete. */
   while (mailbox[1].status == AHA_MBOXFREE) {
@@ -1767,21 +1770,21 @@ byte *outptr, *inptr;
 
   /* Send command bytes. */
   for (i = 0; i < outlen; i++) {
-	while (in_byte(AHA_STATREG) & AHA_CDF) {}	/* !! timeout */
-	out_byte(AHA_DATAREG, *outptr++);
+	while (inb(AHA_STATREG) & AHA_CDF) {}	/* !! timeout */
+	outb(AHA_DATAREG, *outptr++);
   }
 
   /* Receive data bytes. */
   for (i = 0; i < inlen; i++) {
-	while (!(in_byte(AHA_STATREG) & AHA_DF)
-		&& !(in_byte(AHA_INTRREG) & AHA_HACC)) {}  /* !! timeout */
-	*inptr++ = in_byte(AHA_DATAREG);
+	while (!(inb(AHA_STATREG) & AHA_DF)
+		&& !(inb(AHA_INTRREG) & AHA_HACC)) {}  /* !! timeout */
+	*inptr++ = inb(AHA_DATAREG);
   }
 
   /* Wait for command completion. */
-  while (!(in_byte(AHA_INTRREG) & AHA_HACC)) {}	/* !! timeout */
-  out_byte(AHA_CNTLREG, AHA_IRST);	/* clear interrupt */
-  if (aha_irq != 0) enable_irq(aha_irq);
+  while (!(inb(AHA_INTRREG) & AHA_HACC)) {}	/* !! timeout */
+  outb(AHA_CNTLREG, AHA_IRST);		/* clear interrupt */
+  if (aha_irq != 0) enable_irq(&aha_hook);
 
   /* !! should check status register here for invalid command */
 }
@@ -1798,7 +1801,7 @@ PRIVATE int aha_reset()
   long v;
   static char aha0_env[] = "AHA0", aha_fmt[] = "x:d:d:x";
   byte cmd[5], haidata[4], getcdata[3], extbios[2];
-  struct milli_state ms;
+  struct micro_state ms;
 
   /* Get the configuration info from the environment. */
   v = AHA_BASEREG;
@@ -1818,12 +1821,12 @@ PRIVATE int aha_reset()
   tr_speed = v;
 
   /* Reset controller, wait for self test to complete. */
-  out_byte(AHA_CNTLREG, AHA_HRST);
-  milli_start(&ms);
-  while (((stat = in_byte(AHA_STATREG)) & (AHA_STST | AHA_DIAGF | AHA_INIT
+  outb(AHA_CNTLREG, AHA_HRST);
+  micro_start(&ms);
+  while (((stat = inb(AHA_STATREG)) & (AHA_STST | AHA_DIAGF | AHA_INIT
 		| AHA_IDLE | AHA_CDF | AHA_DF)) != (AHA_INIT | AHA_IDLE))
   {
-	if (milli_elapsed(&ms) >= AHA_TIMEOUT) {
+	if (micro_elapsed(&ms) >= AHA_TIMEOUT) {
 		printf(
 		  "aha0: AHA154x controller not responding, status = 0x%02x\n",
 			stat);
@@ -1864,20 +1867,20 @@ PRIVATE int aha_reset()
   /* Set up the DMA channel. */
   switch (getcdata[0]) {
   case 0x80:		/* channel 7 */
-	out_byte(0xD6, 0xC3);
-	out_byte(0xD4, 0x03);
+	outb(0xD6, 0xC3);
+	outb(0xD4, 0x03);
 	break;
   case 0x40:		/* channel 6 */
-	out_byte(0xD6, 0xC2);
-	out_byte(0xD4, 0x02);
+	outb(0xD6, 0xC2);
+	outb(0xD4, 0x02);
 	break;
   case 0x20:		/* channel 5 */
-	out_byte(0xD6, 0xC1);
-	out_byte(0xD4, 0x01);
+	outb(0xD6, 0xC1);
+	outb(0xD4, 0x01);
 	break;
   case 0x01:		/* channel 0 */
-	out_byte(0x0B, 0x0C);
-	out_byte(0x0A, 0x00);
+	outb(0x0B, 0x0C);
+	outb(0x0A, 0x00);
 	break;
   default:
 	printf("aha0: AHA154x: strange DMA channel\n");
@@ -1898,9 +1901,9 @@ PRIVATE int aha_reset()
   }
 
   /* Enable interrupts on the given irq. */
-  put_irq_handler(irq, s_handler);
+  put_irq_handler(&aha_hook, irq, s_handler);
   aha_irq = irq;
-  enable_irq(irq);
+  enable_irq(&aha_hook);
 
   /* Initialize request related data: Command Control Block, mailboxes.
    * (We want to have the mailboxes initialized early, because the 1540C
@@ -1961,16 +1964,16 @@ PRIVATE int aha_reset()
 /*===========================================================================*
  *				s_handler				     *
  *===========================================================================*/
-PRIVATE int s_handler(irq)
-int irq;
+PRIVATE int s_handler(hook)
+irq_hook_t *hook;
 {
 /* Host adapter interrupt, send message to SCSI task and reenable interrupts. */
 
-  if (in_byte(AHA_INTRREG) & AHA_HACC) {
+  if (inb(AHA_INTRREG) & AHA_HACC) {
 	/* Simple commands are polled. */
 	return 0;
   } else {
-	out_byte(AHA_CNTLREG, AHA_IRST);	/* clear interrupt */
+	outb(AHA_CNTLREG, AHA_IRST);	/* clear interrupt */
 	interrupt(aha_tasknr);
 	return 1;
   }

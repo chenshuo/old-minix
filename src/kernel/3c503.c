@@ -14,10 +14,13 @@
 #include "kernel.h"
 #include <net/gen/ether.h>
 #include <net/gen/eth_io.h>
+#if __minix_vmd
+#include "config.h"
+#endif
 #include "dp8390.h"
 #include "3c503.h"
 
-#if (ENABLE_DP8390 && ENABLE_3C503) || __minix_vmd
+#if ENABLE_DP8390 && ENABLE_3C503
 
 _PROTOTYPE(static void el2_init, (dpeth_t *dep));
 _PROTOTYPE(static void el2_stop, (dpeth_t *dep));
@@ -184,3 +187,7 @@ dpeth_t * dep;
 #endif /* ENABLE_DP8390 && ENABLE_3C503 */
 
 /** 3c503.c **/
+
+/*
+ * $PchId: 3c503.c,v 1.2 1999/01/13 21:37:07 philip Exp $
+ */

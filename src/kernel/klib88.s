@@ -17,16 +17,10 @@
 .define	__exit		! dummy for library routines
 .define	___exit		! dummy for library routines
 .define	.fat, .trp	! dummies for library routines
-.define	_in_byte	! read a byte from a port and return it
-.define	_in_word	! read a word from a port and return it
-.define	_out_byte	! write a byte to a port
-.define	_out_word	! write a word to a port
-.define	_port_read	! transfer data from (disk controller) port to memory
-.define	_port_read_byte	! likewise byte by byte
-.define	_port_write	! transfer data from memory to (disk controller) port
-.define	_port_write_byte ! likewise byte by byte
-.define	_lock		! disable interrupts
-.define	_unlock		! enable interrupts
+.define	_phys_insw	! transfer data from (disk controller) port to memory
+.define	_phys_insb	! likewise byte by byte
+.define	_phys_outsw	! transfer data from memory to (disk controller) port
+.define	_phys_outsb	! likewise byte by byte
 .define	_enable_irq	! enable an irq at the 8259 controller
 .define	_disable_irq	! disable an irq
 .define	_phys_copy	! copy data from anywhere to anywhere in memory
@@ -371,273 +365,183 @@ ___exit:
 
 
 !*===========================================================================*
-!*				in_byte					     *
+!*				phys_insw				     *
 !*===========================================================================*
-! PUBLIC unsigned in_byte(port_t port);
-! Read an (unsigned) byte from the i/o port  port  and return it.
+! PUBLIC void phys_insw(Port_t port, phys_bytes buf, size_t count);
+! Input an array from an I/O port.  Absolute address version of insw().
 
-_in_byte:
-	pop	bx
-	pop	dx		! port
-	dec	sp
-	dec	sp
-	inb			! input 1 byte
-	subb	ah,ah		! unsign extend
-	jmp	(bx)
+_phys_insw:
+	call	portio_intro
+	mov	es, bx			! destination segment
+	mov	di, ax			! destination offset
+	shr	cx, #1			! word count
+   rep	ins				! input many words
+	jmp	portio_return
 
-
-!*===========================================================================*
-!*				in_word					     *
-!*===========================================================================*
-! PUBLIC unsigned short in_word(port_t port);
-! Read an (unsigned) word from the i/o port and return it.
-
-_in_word:
-	pop	bx
-	pop	dx		! port
-	dec	sp
-	dec	sp		! added to new klib.s 3/21/91 d.e.c.
-	inw			! input 1 word no sign extend needed
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				out_byte				     *
-!*===========================================================================*
-! PUBLIC void out_byte(port_t port, int value);
-! Write  value  (cast to a byte)  to the I/O port  port.
-
-_out_byte:
-	pop	bx
-	pop	dx		! port
-	pop	ax		! value
-	sub	sp,#2+2
-	outb			! output 1 byte
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				out_word				     *
-!*===========================================================================*
-! PUBLIC void out_word(port_t port, int value);
-! Write  value  (cast to a word)  to the I/O port  port.
-
-_out_word:
-	pop	bx
-	pop	dx		! port
-	pop	ax		! value
-	sub	sp,#2+2
-	outw			! output 1 word
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				port_read				     *
-!*===========================================================================*
-! PUBLIC void port_read(port_t port, phys_bytes destination,unsigned bytcount);
-! Transfer data from (hard disk controller) port to memory.
-
-_port_read:
-	push	bp
-	mov	bp,sp
+portio_intro:
+	pop	ax			! hold return address
+	push	bp			! create stack frame
+	mov	bp, sp
+	push	si
 	push	di
-	push	es
-
-	call	portio_setup
-	shr	cx,#1		! count in words
-	mov	di,bx		! di = destination offset
-	mov	es,ax		! es = destination segment
-	rep
-	ins
-
-	pop	es
-	pop	di
-	pop	bp
-	ret
-
+	push	ax			! retore return address
+	mov	dx, 4(bp)		! port to do I/O
+	mov	ax, 6(bp)		! source/destination address in bx:ax
+	mov	bx, 8(bp)
+	mov	cx, 10(bp)		! count in bytes
+	cld				! direction is UP
 portio_setup:
-	mov	ax,4+2(bp)	! source/destination address in dx:ax
-	mov	dx,4+2+2(bp)
-	mov	bx,ax
-	and	bx,#OFF_MASK	! bx = offset = address % 16
-	andb	dl,#HCHIGH_MASK	! ax = segment = address / 16 % 0x10000
-	andb	al,#HCLOW_MASK
-	orb	al,dl
-	movb	cl,#HCLICK_SHIFT
-	ror	ax,cl
-	mov	cx,4+2+4(bp)	! count in bytes
-	mov	dx,4(bp)	! port to read from
-	cld			! direction is UP
+	push	cx			! segment/offset setup
+	movb	ch, bl
+	mov	bx, ax
+	and	ax, #0x000F		! ax = offset = address % HCLICK_SIZE
+	movb	cl, #4
+	shr	bx, cl
+	shlb	ch, cl
+	orb	bh, ch			! bx = segment = address / HCLICK_SIZE
+	pop	cx
 	ret
 
-
-!*===========================================================================*
-!*				port_read_byte				     *
-!*===========================================================================*
-! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
-!							unsigned bytcount);
-! Transfer data port to memory.
-
-_port_read_byte:
-	push	bp
-	mov	bp,sp
-	push	di
-	push	es
-
-	call	portio_setup
-	mov	di,bx		! di = destination offset
-	mov	es,ax		! es = destination segment
-	rep
-	insb
-
-	pop	es
-	pop	di
-	pop	bp
-	ret
-
-
-!*===========================================================================*
-!*				port_write				     *
-!*===========================================================================*
-! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
-! Transfer data from memory to (hard disk controller) port.
-
-_port_write:
-	push	bp
-	mov	bp,sp
-	push	si
-	push	ds
-
-	call	portio_setup
-	shr	cx,#1		! count in words
-	mov	si,bx		! si = source offset
-	mov	ds,ax		! ds = source segment
-	rep
-	outs
-
-	pop	ds
+portio_return:
+	mov	ax, ss			! restore segment registers
+	mov	ds, ax
+	mov	es, ax
+	pop	di			! unwind stack frame
 	pop	si
 	pop	bp
 	ret
 
 
 !*===========================================================================*
-!*				port_write_byte				     *
+!*				phys_insb				     *
 !*===========================================================================*
-! PUBLIC void port_write_byte(port_t port, phys_bytes source,
-!							unsigned bytcount);
-! Transfer data from memory to port.
+! PUBLIC void phys_insb(Port_t port, phys_bytes buf, size_t count);
+! Input an array from an I/O port.  Absolute address version of insb().
+! Note: The 8086 doesn't have string I/O instructions, so a loop is used.
 
-_port_write_byte:
-	push	bp
-	mov	bp,sp
-	push	si
-	push	ds
-
-	call	portio_setup
-	mov	si,bx		! si = source offset
-	mov	ds,ax		! ds = source segment
-	rep
-	outsb
-
-	pop	ds
-	pop	si
-	pop	bp
-	ret
+_phys_insb:
+	call	portio_intro
+	mov	es, bx			! destination segment
+	mov	di, ax			! destination offset
+	jcxz	1f
+0:	inb	dx			! input 1 byte
+	stosb				! write 1 byte
+	loop	0b			! many times
+1:
+	jmp	portio_return
 
 
 !*===========================================================================*
-!*				lock					     *
+!*				phys_outsw				     *
 !*===========================================================================*
-! PUBLIC void lock();
-! Disable CPU interrupts.
+! PUBLIC void phys_outsw(Port_t port, phys_bytes buf, size_t count);
+! Output an array to an I/O port.  Absolute address version of outsw().
 
-_lock:
-	cli				! disable interrupts
-	ret
+_phys_outsw:
+	call	portio_intro
+	mov	ds, bx			! source segment
+	mov	si, ax			! source offset
+	shr	cx, #1			! word count
+   rep	outs				! output many words
+	jmp	portio_return
 
 
 !*===========================================================================*
-!*				unlock					     *
+!*				phys_outsb				     *
 !*===========================================================================*
-! PUBLIC void unlock();
-! Enable CPU interrupts.
+! PUBLIC void phys_outsb(Port_t port, phys_bytes buf, size_t count);
+! Output an array to an I/O port.  Absolute address version of outsb().
 
-_unlock:
-	sti
-	ret
+_phys_outsb:
+	call	portio_intro
+	mov	ds, bx			! source segment
+	mov	si, ax			! source offset
+	jcxz	1f
+0:	lodsb				! read 1 byte
+	outb	dx			! output 1 byte
+	loop	0b			! many times
+1:
+	jmp	portio_return
 
 
 !*==========================================================================*
 !*				enable_irq				    *
 !*==========================================================================*/
-! PUBLIC void enable_irq(unsigned irq)
+! PUBLIC void enable_irq(irq_hook_t *hook)
 ! Enable an interrupt request line by clearing an 8259 bit.
 ! Equivalent code for irq < 8:
-!	out_byte(INT_CTLMASK, in_byte(INT_CTLMASK) & ~(1 << irq));
+!   if ((irq_actids[hook->irq] &= ~hook->id) == 0)
+!	outb(INT_CTLMASK, inb(INT_CTLMASK) & ~(1 << irq));
 
 _enable_irq:
-	mov	bx, sp
-	mov	cx, 2(bx)		! irq
+	push	bp
+	mov	bp, sp
 	pushf
 	cli
+	mov	bx, 4(bp)		! hook
+	mov	cx, 4(bx)		! irq
+	mov	ax, 6(bx)		! id bit
+	not	ax
+	mov	bx, cx
+	add	bx, bx
+	and	_irq_actids(bx), ax	! clear this id bit
+	jnz	en_done			! still masked by other handlers?
 	movb	ah, #~1
 	rolb	ah, cl			! ah = ~(1 << (irq % 8))
+	mov	dx, #INT_CTLMASK	! enable irq < 8 at the master 8259
 	cmpb	cl, #8
-	jae	enable_8		! enable irq >= 8 at the slave 8259
-enable_0:
-	inb	INT_CTLMASK
+	jb	0f
+	mov	dx, #INT2_CTLMASK	! enable irq >= 8 at the slave 8259
+0:	inb	dx
 	andb	al, ah
-	outb	INT_CTLMASK		! clear bit at master 8259
-	popf
-	ret
-enable_8:
-	inb	INT2_CTLMASK
-	andb	al, ah
-	outb	INT2_CTLMASK		! clear bit at slave 8259
-	popf
+	outb	dx			! clear bit at the 8259
+en_done:popf
+	leave
 	ret
 
 
 !*==========================================================================*
 !*				disable_irq				    *
 !*==========================================================================*/
-! PUBLIC int disable_irq(unsigned irq)
+! PUBLIC int disable_irq(irq_hook_t *hook)
 ! Disable an interrupt request line by setting an 8259 bit.
 ! Equivalent code for irq < 8:
-!	out_byte(INT_CTLMASK, in_byte(INT_CTLMASK) | (1 << irq));
+!   irq_actids[hook->irq] |= hook->id;
+!   outb(INT_CTLMASK, inb(INT_CTLMASK) | (1 << irq));
 ! Returns true iff the interrupt was not already disabled.
 
 _disable_irq:
-	mov	bx, sp
-	mov	cx, 2(bx)		! irq
+	push	bp
+	mov	bp, sp
 	pushf
 	cli
+	mov	bx, 4(bp)		! hook
+	mov	cx, 4(bx)		! irq
+	mov	ax, 6(bx)		! id bit
+	pushf
+	cli
+	mov	bx, cx
+	add	bx, bx
+	or	_irq_actids(bx), ax	! set this id bit
 	movb	ah, #1
 	rolb	ah, cl			! ah = (1 << (irq % 8))
+	mov	dx, #INT_CTLMASK	! disable irq < 8 at the master 8259
 	cmpb	cl, #8
-	jae	disable_8		! disable irq >= 8 at the slave 8259
-disable_0:
-	inb	INT_CTLMASK
+	jb	0f
+	mov	dx, #INT2_CTLMASK	! disable irq >= 8 at the slave 8259
+0:	inb	dx
 	testb	al, ah
 	jnz	dis_already		! already disabled?
 	orb	al, ah
-	outb	INT_CTLMASK		! set bit at master 8259
-	popf
+	outb	dx			! set bit at the 8259
 	mov	ax, #1			! disabled by this function
-	ret
-disable_8:
-	inb	INT2_CTLMASK
-	testb	al, ah
-	jnz	dis_already		! already disabled?
-	orb	al, ah
-	outb	INT2_CTLMASK		! set bit at slave 8259
 	popf
-	mov	ax, #1			! disabled by this function
+	leave
 	ret
 dis_already:
-	popf
 	xor	ax, ax			! already disabled
+	popf
+	leave
 	ret
 
 
@@ -1010,19 +914,14 @@ p_cp_mess:
 !*===========================================================================*
 !*				p_portio_setup				     *
 !*===========================================================================*
-! The port_read, port_write, etc. functions need a setup routine that uses
-! a segment descriptor.
+! The phys_insw, phys_outsw, etc. functions need an address setup routine that
+! uses a segment descriptor.
 p_portio_setup:
-	mov	ax,4+2(bp)	! source/destination address in dx:ax
-	mov	dx,4+2+2(bp)
-	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,dl
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH,dh
-	xor	bx,bx		! bx = 0 = start of segment
-	mov	ax,#DS_286_SELECTOR ! ax = segment selector
-	mov	cx,4+2+4(bp)	! count in bytes
-	mov	dx,4(bp)	! port to read from
-	cld			! direction is UP
+	mov	_gdt+DS_286_OFFSET+DESC_BASE, ax
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE, bl
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_HIGH, bh
+	xor	ax, ax			! ax = 0 = start of segment
+	mov	bx, #DS_286_SELECTOR	! bx = segment selector
 	ret
 
 

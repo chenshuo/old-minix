@@ -24,6 +24,9 @@
  *
  *		Customizable login banner.
  *		11/13/95	Kees J. Bot
+ *
+ *		Suspend/resume signals removed.
+ *		2001-04-04	Kees J. Bot
  */
 
 #include <sys/types.h>
@@ -39,43 +42,19 @@
 char LOGIN[] =		"/usr/bin/login";
 char SHELL[] =		"/bin/sh";
 
-#define ST_IDLE			 44	/* the getty is idle */
-#define ST_RUNNING		 55	/* getty is now RUNNING */
-#define ST_SUSPEND		 66	/* getty was SUSPENDed for dialout */
-
-
-int state = ST_IDLE;		/* the IDLE/SUSPEND/RUNNING state flag */
 char *tty_name;			/* name of the line */
-
 
 /* Crude indication of a tty being physically secure: */
 #define securetty(dev)		((unsigned) ((dev) - 0x0400) < (unsigned) 8)
-
-
-void sigcatch(int sig)
-{
-/* Catch the signals that want to catch. */
-
-  switch(sig) {
-  case SIGUSR1:	/* SIGUSR1 means SUSPEND */
-	if (state == ST_IDLE) state = ST_SUSPEND;
-	break;
-  case SIGUSR2:	/* SIGUSR2 means RESTART */
-	if (state == ST_SUSPEND) state = ST_RUNNING;
-	break;
-  }
-}
-
 
 void std_out(char *s)
 {
   write(1, s, strlen(s));
 }
 
-
 /* Read one character from stdin.
  */
-int areadch(void)
+int readch(void)
 {
   int st;
   char ch1;
@@ -87,16 +66,11 @@ int areadch(void)
 	exit(0);
   }
   if (st < 0) {
-	if (errno == EINTR) return(-1);		/* SIGNAL received! */
-	if (errno != EINTR) {
-		std_out("getty: ");
-		std_out(tty_name);
-		std_out(": read error\n");
-		pause();
-		exit(1);
-	}
+	std_out("getty: ");
+	std_out(tty_name);
+	std_out(": read error\n");
+	exit(1);
   }
-
   return(ch1 & 0xFF);
 }
 
@@ -162,26 +136,10 @@ void do_getty(char *name, size_t len, char **args)
 	}
 
 	np = name;
-	while (ch != '\n') {
-		ch = areadch();	/* adaptive READ */
-		switch (ch) {
-		    case -1:	/* signalled! */
-			if (state == ST_SUSPEND) {
-				while (state != ST_IDLE) {
-					pause();
-					if (state == ST_RUNNING)
-							state = ST_IDLE;
-				}
-			}
-			ch = ' ';
-			continue;
-		    case '\n':
-			*np = '\0';
-			break;
-		    default:
-			if (np < name + len) *np++ = ch;
-		}
+	while ((ch = readch()) != '\n') {
+		if (np < name + len) *np++ = ch;
 	}
+	*np = '\0';
 	if (*name == '\0') ch = ' ';	/* blank line typed! */
   }
 }
@@ -229,11 +187,6 @@ int main(int argc, char **argv)
 
   chown(tty_name, 0, 0);	/* set owner of TTY to root */
   chmod(tty_name, 0600);	/* mode to max secure */
-
-  /* Catch some of the available signals. */
-  sa.sa_handler = sigcatch;
-  sigaction(SIGUSR1, &sa, NULL);
-  sigaction(SIGUSR2, &sa, NULL);
 
   do_getty(name, sizeof(name), argv+1);	/* handle getty() */
   name[29] = '\0';		/* make sure the name fits! */

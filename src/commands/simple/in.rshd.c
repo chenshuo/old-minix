@@ -78,7 +78,6 @@ char *argv[];
 #if USEATTACH
 	int err2_fd;
 #endif
-	struct hostent *hostent;
 	struct passwd *pwent;
 	char *cp, *buff_ptr, *TZ;
 	char sig;
@@ -259,14 +258,6 @@ char *argv[];
 #endif
 #endif
 	}
-	hostent= gethostbyaddr((char *)&tcpconf.nwtc_remaddr,
-		sizeof(tcpconf.nwtc_remaddr), AF_INET);
-	if (!hostent)
-	{
-		printf("\1Host name for your adress (%s) unknown\n",
-			inet_ntoa(tcpconf.nwtc_remaddr));
-		exit(1);
-	}
 	getstr(remuser, sizeof(remuser), "remuser");
 	getstr(locuser, sizeof(locuser), "locuser");
 	getstr(cmdbuf, sizeof(cmdbuf), "cmdbuf");
@@ -283,10 +274,10 @@ char *argv[];
 		chdir("/");
 	}
 #if DEBUG
- { where(); fprintf(stderr, "calling ruserok(%s, %d, %s, %s)\n", 
-	hostent->h_name, 0, remuser, locuser); }
+ { where(); fprintf(stderr, "calling iruserok(%s, %d, %s, %s)\n", 
+	inet_ntoa(tcpconf.nwtc_remaddr), 0, remuser, locuser); }
 #endif
-	if (ruserok(hostent->h_name, 0, remuser, locuser) < 0)
+	if (iruserok(tcpconf.nwtc_remaddr, 0, remuser, locuser) < 0)
 	{
 		printf("\1Permission denied.\n");
 		exit(1);

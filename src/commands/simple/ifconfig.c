@@ -182,7 +182,7 @@ char *argv[];
 			}
 		}
 		close(ip_fd);
-	} while (a_flag && ++ifno < 16);
+	} while (a_flag && ++ifno < 32);
 	exit(0);
 }
 

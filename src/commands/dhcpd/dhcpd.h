@@ -71,6 +71,8 @@ typedef struct buf {
 /* Type of network device open: Ethernet, ICMP, BOOTP client, BOOTP server. */
 typedef enum { FT_CLOSED, FT_ETHERNET, FT_ICMP, FT_BOOTPC, FT_BOOTPS } fdtype_t;
 
+#define FT_ALL	FT_CLOSED	/* To close all open descriptors at once. */
+
 typedef struct fd {		/* An open descriptor. */
 	i8_t		fd;		/* Open descriptor. */
 	u8_t		fdtype;		/* Type of network open. */
@@ -86,10 +88,10 @@ typedef enum { NT_IP, NT_SINK, NT_ETHERNET } nettype_t;
 typedef struct network {	/* Information on a network. */
 	u8_t		n;		/* Network number. */
 	ether_addr_t	eth;		/* Ethernet address of this net. */
-	u8_t		flags;		/* Various flags. */
 	u8_t		type;		/* What kind of net is this? */
 	i8_t		sol_ct;		/* Router solicitation count. */
 	ether_addr_t	conflict;	/* Address conflict with this one. */
+	unsigned	flags;		/* Various flags. */
 	fd_t		*fdp;		/* Current open device. */
 	struct network	*wait;		/* Wait for a resource list. */
 	ipaddr_t	ip;		/* IP address of this net. */
@@ -106,14 +108,15 @@ typedef struct network {	/* Information on a network. */
 } network_t;
 
 /* Flags. */
-#define NF_NEGOTIATING	0x01		/* Negotiating with a DHCP server. */
-#define NF_BOUND	0x02		/* Address configured through DHCP. */
-#define NF_SERVING	0x04		/* I'm a server on this network. */
-#define NF_RELAYING	0x08		/* I'm relaying for this network. */
-#define NF_WAIT		0x10		/* Wait for a resource to free up. */
-#define NF_IRDP		0x20		/* IRDP is used on this net. */
-#define NF_CONFLICT	0x40		/* There is an address conflict. */
-#define NF_POSSESSIVE	0x80		/* Keep address if lease expires. */
+#define NF_NEGOTIATING	0x001		/* Negotiating with a DHCP server. */
+#define NF_BOUND	0x002		/* Address configured through DHCP. */
+#define NF_SERVING	0x004		/* I'm a server on this network. */
+#define NF_RELAYING	0x008		/* I'm relaying for this network. */
+#define NF_WAIT		0x010		/* Wait for a resource to free up. */
+#define NF_IRDP		0x020		/* IRDP is used on this net. */
+#define NF_CONFLICT	0x040		/* There is an address conflict. */
+#define NF_POSSESSIVE	0x080		/* Keep address if lease expires. */
+#define NF_INFORM	0x100		/* It's ok to answer DHCPINFORM. */
 
 /* Functions defined in dhcpd.c. */
 void report(const char *label);
@@ -131,7 +134,6 @@ void closefd(fd_t *fdp);
 int opendev(network_t *np, fdtype_t fdtype, int compete);
 void closedev(network_t *np, fdtype_t fdtype);
 char *ipdev(int n);
-int get_ipconf(char *device, ipaddr_t *ip, ipaddr_t *mask);
 void set_ipconf(char *device, ipaddr_t ip, ipaddr_t mask, unsigned mtu);
 
 /* Ether.c */

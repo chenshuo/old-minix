@@ -740,7 +740,7 @@ unsigned long cluster;
 		break;
 	case 16:
 		pnext= read_bytes(ffp, ffp->ff_fat_start +
-			((unsigned) cluster * 2), 2);
+			(cluster * 2), 2);
 		if (pnext == 0)
 			return 0;
 		next= b2u16(pnext[0], pnext[1]);

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 2.1 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 2.2 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -130,24 +130,24 @@ do
     6,0)	des="line printer, parallel port" dev=lp
 	;;
     7,*)
-	d=`expr $minor % 16`
-	n=`expr $minor / 16`
+	d=`expr $minor % 8`
+	n=`expr $minor / 8`
 	case $d in
-	1)  case $name in
+	0)  case $name in
 	    psip*)
 		des="Pseudo IP #$n" dev=psip
 		;;
 	    *)  des="raw ethernet #$n" dev=eth
 	    esac
 	    ;;
-	2)  des="raw IP #$n" dev=ip
+	1)  des="raw IP #$n" dev=ip
 	    ;;
-	3)  des="TCP/IP #$n" dev=tcp
+	2)  des="TCP/IP #$n" dev=tcp
 	    ;;
-	4)  des="UDP #$n" dev=udp
+	3)  des="UDP #$n" dev=udp
 	esac
 	case $d in
-	[1234])
+	[0123])
 	    if [ "$name" = "$dev" ]
 	    then
 		des="$des (default)"

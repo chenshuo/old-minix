@@ -24,6 +24,6 @@ clean::
 
 all install clean::
 	cd boot && $(MAKE) $@
-	test ! -d commands || { cd commands && $(MAKE) $@; }
+	test ! -f commands/Makefile || { cd commands && $(MAKE) $@; }
 	cd inet && $(MAKE) $@
 	cd tools && $(MAKE) $@

@@ -6,7 +6,7 @@
  *   GET_TIME:    a process wants the real time in seconds
  *   SET_TIME:    a process wants to set the real time in seconds
  *   SET_ALARM:   a process wants to be alerted after a specified interval
- *   SET_SYN_AL:  set the sync alarm
+ *   SET_SYNC_AL: set the sync alarm
  *
  *
  * The input message is format m6.  The parameters are as follows:
@@ -21,16 +21,16 @@
  * |------------+----------+---------+---------|
  * | SET_TIME   |          |         | newtime |
  * |------------+----------+---------+---------|
- * | SET_ALARM  | proc_nr  |f to call|  delta  |
+ * | SET_ALARM  | proc_nr  |         |  delta  |
  * |------------+----------+---------+---------|
- * | SET_SYN_AL | proc_nr  |         |  delta  |
+ * | SET_SYNC_AL| proc_nr  |         |  delta  |
  * ---------------------------------------------
  * NEW_TIME, DELTA_CLICKS, and SECONDS_LEFT all refer to the same field in
  * the message, depending upon the message type.
  *
  * Reply messages are of type OK, except in the case of a HARD_INT, to
  * which no reply is generated. For the GET_* messages the time is returned
- * in the NEW_TIME field, and for the SET_ALARM and SET_SYN_AL the time
+ * in the NEW_TIME field, and for the SET_ALARM and SET_SYNC_AL the time
  * in seconds remaining until the alarm is returned is returned in the same
  * field.
  *
@@ -45,6 +45,7 @@
  */
 
 #include "kernel.h"
+#include <stddef.h>
 #include <signal.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -56,7 +57,7 @@
 
 /* Clock parameters. */
 #if (CHIP == INTEL)
-#define COUNTER_FREQ (2*TIMER_FREQ)	/* counter frequency using sqare wave*/
+#define COUNTER_FREQ (2*TIMER_FREQ) /* counter frequency using square wave */
 #define LATCH_COUNT     0x00	/* cc00xxxx, c = channel, x = any */
 #define SQUARE_WAVE     0x36	/* ccaammmb, a = access, m = mode, b = BCD */
 				/*   11x11, 11 = LSB then MSB, x11 = sq wave */
@@ -73,31 +74,25 @@
 /* Clock task variables. */
 PRIVATE clock_t realtime;	/* real time clock */
 PRIVATE time_t boot_time;	/* time in seconds of system boot */
-PRIVATE clock_t next_alarm;	/* probable time of next alarm */
-PRIVATE message mc;		/* message buffer for both input and output */
-PRIVATE int watchdog_proc;	/* contains proc_nr at call of *watch_dog[]*/
-PRIVATE watchdog_t watch_dog[NR_TASKS+NR_PROCS];
-
-/* Variables used by both clock task and synchronous alarm task */
-PRIVATE int syn_al_alive= TRUE; /* don't wake syn_alrm_task before inited*/
-PRIVATE int syn_table[NR_TASKS+NR_PROCS]; /* which tasks get CLOCK_INT*/
+PRIVATE timer_t *timers;	/* list of active timers */
+PRIVATE clock_t next_timer;	/* when the first timer expires */
+PRIVATE timer_t tmr_alarm[NR_PROCS];	/* timers for alarm(2) */
 
 /* Variables changed by interrupt handler */
 PRIVATE clock_t pending_ticks;	/* ticks seen by low level only */
 PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
 PRIVATE struct proc *prev_ptr;	/* last user process run by clock task */
 
-FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
-		long delta_ticks, watchdog_t fuction) );
 FORWARD _PROTOTYPE( void do_clocktick, (void) );
-FORWARD _PROTOTYPE( void do_get_time, (void) );
-FORWARD _PROTOTYPE( void do_getuptime, (void) );
+FORWARD _PROTOTYPE( void do_get_time, (message *m_ptr) );
+FORWARD _PROTOTYPE( void do_getuptime, (message *m_ptr) );
 FORWARD _PROTOTYPE( void do_set_time, (message *m_ptr) );
-FORWARD _PROTOTYPE( void do_setalarm, (message *m_ptr) );
+FORWARD _PROTOTYPE( void do_setalarm, (message *m_ptr, int handler,
+						tmr_func_t function) );
 FORWARD _PROTOTYPE( void init_clock, (void) );
-FORWARD _PROTOTYPE( void cause_alarm, (void) );
-FORWARD _PROTOTYPE( void do_setsyn_alrm, (message *m_ptr) );
-FORWARD _PROTOTYPE( int clock_handler, (int irq) );
+FORWARD _PROTOTYPE( void cause_alarm, (timer_t *tp) );
+FORWARD _PROTOTYPE( void cause_synalarm, (timer_t *tp) );
+FORWARD _PROTOTYPE( int clock_handler, (irq_hook_t *hook) );
 
 /*===========================================================================*
  *				clock_task				     *
@@ -109,7 +104,7 @@ PUBLIC void clock_task()
  * of the 6 possible calls this is by looking at 'mc.m_type'.  Then
  * it dispatches.
  */
-
+  message mc;			/* message buffer for both input and output */
   int opcode;
 
   init_clock();			/* initialize clock task */
@@ -126,11 +121,11 @@ PUBLIC void clock_task()
 
      switch (opcode) {
 	case HARD_INT:   do_clocktick();	break;
-	case GET_UPTIME: do_getuptime();	break;
-	case GET_TIME:	 do_get_time();		break;
+	case GET_UPTIME: do_getuptime(&mc);	break;
+	case GET_TIME:	 do_get_time(&mc);	break;
 	case SET_TIME:	 do_set_time(&mc);	break;
-	case SET_ALARM:	 do_setalarm(&mc);	break;
-	case SET_SYNC_AL:do_setsyn_alrm(&mc);	break;
+	case SET_ALARM:	 do_setalarm(&mc, CLOCK, cause_alarm);	break;
+	case SET_SYNC_AL:do_setalarm(&mc, SYN_ALRM_TASK, cause_synalarm); break;
 	default: panic("clock task got bad message", mc.m_type);
      }
 
@@ -139,7 +134,6 @@ PUBLIC void clock_task()
     if (opcode != HARD_INT) send(mc.m_source, &mc);
   }
 }
-
 
 /*===========================================================================*
  *				do_clocktick				     *
@@ -152,33 +146,28 @@ PRIVATE void do_clocktick()
 
   register struct proc *rp;
   register int proc_nr;
+  timer_t *tp;
+  struct proc *p;
 
-  if (next_alarm <= realtime) {
-	/* An alarm may have gone off, but proc may have exited, so check. */
-	next_alarm = LONG_MAX;	/* start computing next alarm */
-	for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
-		if (rp->p_alarm != 0) {
-			/* See if this alarm time has been reached. */
-			if (rp->p_alarm <= realtime) {
-				/* A timer has gone off.  If it is a user proc,
-				 * send it a signal.  If it is a task, call the
-				 * function previously specified by the task.
-				 */
-				proc_nr = proc_number(rp);
-				if (watch_dog[proc_nr+NR_TASKS]) {
-					watchdog_proc= proc_nr;
-					(*watch_dog[proc_nr+NR_TASKS])();
-				}
-				else
-					cause_sig(proc_nr, SIGALRM);
-				rp->p_alarm = 0;
-			}
-
-			/* Work on determining which alarm is next. */
-			if (rp->p_alarm != 0 && rp->p_alarm < next_alarm)
-				next_alarm = rp->p_alarm;
+  if (next_timer <= realtime) {
+	/* One or more timers may have expired.  If so move the expired timers
+	 * to the per-task expired timers list and alert the task.
+	 */
+	while ((tp = timers) != NULL && tp->tmr_exp_time <= realtime) {
+		timers = tp->tmr_next;
+		p= proc_addr(tp->tmr_task);
+		if (p->p_exptimers == NULL && p != proc_ptr) {
+			interrupt(tp->tmr_task);
 		}
+		tp->tmr_next = p->p_exptimers;
+		p->p_exptimers = tp;
 	}
+
+	/* When does the next timer expire? */
+	next_timer = timers == NULL ? TMR_NEVER : timers->tmr_exp_time;
+
+	/* It's possible that one of the clock's own timers expired. */
+	tmr_exptimers();
   }
 
   /* If a user process has been running too long, pick another one. */
@@ -189,17 +178,99 @@ PRIVATE void do_clocktick()
   }
 }
 
+/*===========================================================================*
+ *				tmr_settimer				     *
+ *===========================================================================*/
+PUBLIC void tmr_settimer(tp, task, exp_time, fp)
+timer_t *tp;
+int task;
+clock_t exp_time;
+tmr_func_t fp;
+{
+  /* Activate a timer to run function 'fp' at time 'exp_time'.  The timer
+   * is to be owned by the given task.  (Usually the clock task, the calling
+   * task itself or the synchronous alarm task.)
+   */
+  timer_t **atp;
+
+  if (tp->tmr_exp_time != TMR_NEVER) tmr_clrtimer(tp);
+  tp->tmr_task = task;
+  tp->tmr_exp_time = exp_time;
+  tp->tmr_func = fp;
+
+  /* Put the timer in the list of active timers with the first to expire in
+   * front.
+   */
+  for (atp = &timers; *atp != NULL; atp = &(*atp)->tmr_next) {
+	if (exp_time < (*atp)->tmr_exp_time) break;
+  }
+  tp->tmr_next = *atp;
+  *atp = tp;
+  
+  /* The new timer may be the first. */
+  next_timer = timers->tmr_exp_time;
+}
+
+/*===========================================================================*
+ *				tmr_clrtimer				     *
+ *===========================================================================*/
+PUBLIC void tmr_clrtimer(tp)
+timer_t *tp;
+{
+  /* Deactivate a timer by removing it from the active and expired lists. */
+  timer_t **atp;
+  struct proc *p;
+
+  tp->tmr_exp_time = TMR_NEVER;
+
+  for (atp = &timers; *atp != NULL; atp = &(*atp)->tmr_next) {
+	if (*atp == tp) {
+		*atp = tp->tmr_next;
+		return;
+	}
+  }
+
+  p = proc_addr(tp->tmr_task);
+  for (atp = &p->p_exptimers; *atp != NULL; atp = &(*atp)->tmr_next) {
+	if (*atp == tp) {
+		*atp = tp->tmr_next;
+		return;
+	}
+  }
+}
+
+/*===========================================================================*
+ *				tmr_exptimers				     *
+ *===========================================================================*/
+PUBLIC void tmr_exptimers()
+{
+  /* One or more timers of the caller may have expired.  Run the functions
+   * they reference and deactivate the timers.  This function must be called
+   * by the clock task if its main timer expires, or by a task in its main
+   * loop if p_exptimers is non-NULL.
+   */
+  timer_t *tp;
+  struct proc *p;
+
+  p = proc_ptr;
+
+  while ((tp = p->p_exptimers) != NULL) {
+	p->p_exptimers = tp->tmr_next;
+	tp->tmr_exp_time = TMR_NEVER;
+	(*tp->tmr_func)(tp);
+  }
+}
 
 /*===========================================================================*
  *				do_getuptime				     *
  *===========================================================================*/
-PRIVATE void do_getuptime()
+PRIVATE void do_getuptime(m_ptr)
+message *m_ptr;			/* pointer to request message */
 {
 /* Get and return the current clock uptime in ticks. */
 
-  mc.NEW_TIME = realtime;	/* current uptime */
+  m_ptr->NEW_TIME = realtime;	/* current uptime */
 }
-
 
 /*===========================================================================*
  *				get_uptime				     *
@@ -219,17 +290,16 @@ PUBLIC clock_t get_uptime()
   return(uptime);
 }
 
-
 /*===========================================================================*
  *				do_get_time				     *
  *===========================================================================*/
-PRIVATE void do_get_time()
+PRIVATE void do_get_time(m_ptr)
+message *m_ptr;			/* pointer to request message */
 {
 /* Get and return the current clock time in seconds. */
 
-  mc.NEW_TIME = boot_time + realtime/HZ;	/* current real time */
+  m_ptr->NEW_TIME = boot_time + realtime/HZ;	/* current real time */
 }
-
 
 /*===========================================================================*
  *				do_set_time				     *
@@ -242,97 +312,72 @@ message *m_ptr;			/* pointer to request message */
   boot_time = m_ptr->NEW_TIME - realtime/HZ;
 }
 
-
 /*===========================================================================*
  *				do_setalarm				     *
  *===========================================================================*/
-PRIVATE void do_setalarm(m_ptr)
+PRIVATE void do_setalarm(m_ptr, handler, function)
 message *m_ptr;			/* pointer to request message */
+int handler;			/* CLOCK or SYN_ALRM_TASK */
+tmr_func_t function;		/* cause_alarm or cause_synalarm */
 {
-/* A process wants an alarm signal or a task wants a given watch_dog function
- * called after a specified interval.
- */
+/* A process requests an alarm signal or a synchronous alarm. */
 
   register struct proc *rp;
   int proc_nr;			/* which process wants the alarm */
   long delta_ticks;		/* in how many clock ticks does he want it? */
-  watchdog_t function;		/* function to call (tasks only) */
+  timer_t *tp;
 
   /* Extract the parameters from the message. */
   proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
   delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
-  function = (watchdog_t) m_ptr->FUNC_TO_CALL;
-					/* function to call (tasks only) */
-  rp = proc_addr(proc_nr);
-  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm-realtime+(HZ-1)) / HZ);
-  if (!istaskp(rp)) function= 0;	/* user processes get signaled */
-  common_setalarm(proc_nr, delta_ticks, function);
-}
-
-
-/*===========================================================================*
- *				do_setsyn_alrm				     *
- *===========================================================================*/
-PRIVATE void do_setsyn_alrm(m_ptr)
-message *m_ptr;			/* pointer to request message */
-{
-/* A process wants a synchronous alarm.
- */
-
-  register struct proc *rp;
-  int proc_nr;			/* which process wants the alarm */
-  long delta_ticks;		/* in how many clock ticks does he want it? */
-
-  /* Extract the parameters from the message. */
-  proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
-  delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
-  rp = proc_addr(proc_nr);
-  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm-realtime+HZ-1)/HZ);
-  common_setalarm(proc_nr, delta_ticks, cause_alarm);
-}
-
-
-/*===========================================================================*
- *				common_setalarm				     *
- *===========================================================================*/
-PRIVATE void common_setalarm(proc_nr, delta_ticks, function)
-int proc_nr;			/* which process wants the alarm */
-long delta_ticks;		/* in how many clock ticks does he want it? */
-watchdog_t function;		/* function to call (0 if cause_sig is
-				 * to be called */
-{
-/* Finish up work of do_set_alarm and do_setsyn_alrm.  Record an alarm
- * request and check to see if it is the next alarm needed.
- */
-
-  register struct proc *rp;
 
   rp = proc_addr(proc_nr);
-  rp->p_alarm = (delta_ticks == 0 ? 0 : realtime + delta_ticks);
-  watch_dog[proc_nr+NR_TASKS] = function;
+  tp = &tmr_alarm[proc_nr];
 
-  /* Which alarm is next? */
-  next_alarm = LONG_MAX;
-  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++)
-	if(rp->p_alarm != 0 && rp->p_alarm < next_alarm)next_alarm=rp->p_alarm;
+  /* Return the number of seconds left on the old timer. */
+  if (tp->tmr_exp_time <= realtime || tp->tmr_exp_time == TMR_NEVER) {
+	m_ptr->SECONDS_LEFT = 0;
+  } else {
+	m_ptr->SECONDS_LEFT = (tp->tmr_exp_time - realtime + (HZ-1)) / HZ;
+  }
 
+  /* Clear or set the new timer. */
+  if (delta_ticks == 0) {
+	tmr_clrtimer(tp);
+  } else {
+	tmr_arg(tp)->ta_int = proc_nr;
+	tmr_settimer(tp, handler, get_uptime() + delta_ticks, function);
+  }
 }
-
 
 /*===========================================================================*
  *				cause_alarm				     *
  *===========================================================================*/
-PRIVATE void cause_alarm()
+PRIVATE void cause_alarm(tp)
+timer_t *tp;
+{
+/* Routine called if a timer goes off for a process that requested an SIGALRM
+ * signal using the alarm(2) system call.  The timer argument contains the
+ * process number of the process to signal.
+ */
+
+  cause_sig(tmr_arg(tp)->ta_int, SIGALRM);
+}
+
+/*===========================================================================*
+ *				cause_synalarm				     *
+ *===========================================================================*/
+PRIVATE void cause_synalarm(tp)
+timer_t *tp;
 {
 /* Routine called if a timer goes off and the process requested a synchronous
- * alarm. The process number is in the global variable watchdog_proc (HACK).
+ * alarm.  Send that process a CLOCK_INT message.
  */
   message mess;
 
-  syn_table[watchdog_proc + NR_TASKS]= TRUE;
-  if (!syn_al_alive) send (SYN_ALRM_TASK, &mess);
+  mess.m_type= CLOCK_INT;
+  send(tmr_arg(tp)->ta_int, &mess);
 }
-
 
 /*===========================================================================*
  *				syn_alrm_task				     *
@@ -340,46 +385,38 @@ PRIVATE void cause_alarm()
 PUBLIC void syn_alrm_task()
 {
 /* Main program of the synchronous alarm task.
- * This task receives messages only from cause_alarm in the clock task.
- * It sends a CLOCK_INT message to a process that requested a syn_alrm.
- * Synchronous alarms are so called because, unlike a signals or the
- * activation of a watchdog, a synchronous alarm is received by a process
+ * All this task ever does is expire timers that call the cause_synalarm
+ * function that sends processes a CLOCK_INT message.  These alarm messages
+ * are called synchronous alarms because, unlike a signals or the timers
+ * run by the CLOCK task, a synchronous alarm is received by a process
  * when it is in a known part of its code, that is, when it has issued
  * a call to receive a message.
  */
-
   message mess;
-  int work_done;	/* ready to sleep ? */
-  int *al_ptr;		/* pointer in syn_table */
-  int i;
-
-  syn_al_alive= TRUE;
-  for (i= 0, al_ptr= syn_table; i<NR_TASKS+NR_PROCS; i++, al_ptr++)
-	*al_ptr= FALSE;
 
   while (TRUE) {
-	work_done= TRUE;
-	for (i= 0, al_ptr= syn_table; i<NR_TASKS+NR_PROCS; i++, al_ptr++)
-		if (*al_ptr) {
-			*al_ptr= FALSE;
-			mess.m_type= CLOCK_INT;
-			send (i-NR_TASKS, &mess);
-			work_done= FALSE;
-		}
-	if (work_done) {
-		syn_al_alive= FALSE;
-		receive (CLOCK, &mess);
-		syn_al_alive= TRUE;
-	}
+	tmr_exptimers();		/* send synchronous alarms */
+
+	receive(HARDWARE, &mess);	/* wait for an interrupt */
   }
 }
 
+/*===========================================================================*
+ *				cancel_alarm				     *
+ *===========================================================================*/
+PUBLIC void cancel_alarm(proc_nr)
+int proc_nr;			/* process to cancel alarm for */
+{
+/* Cancel the alarm timer of a process, probably because it has exited. */
+
+  tmr_clrtimer(&tmr_alarm[proc_nr]);
+}
 
 /*===========================================================================*
  *				clock_handler				     *
  *===========================================================================*/
-PRIVATE int clock_handler(irq)
-int irq;
+PRIVATE int clock_handler(hook)
+irq_hook_t *hook;
 {
 /* This executes on every clock tick (i.e., every time the timer chip
  * generates an interrupt). It does a little bit of work so the clock
@@ -401,7 +438,7 @@ int irq;
  *		These are used for accounting.  It does not matter if proc.c
  *		is changing them, provided they are always valid pointers,
  *		since at worst the previous process would be billed.
- *	next_alarm, realtime, sched_ticks, bill_ptr, prev_ptr,
+ *	next_timer, realtime, sched_ticks, bill_ptr, prev_ptr,
  *	rdy_head[USER_Q]:
  *		These are tested to decide whether to call interrupt().  It
  *		does not matter if the test is sometimes (rarely) backwards
@@ -436,7 +473,7 @@ int irq;
 
   if (ps_mca) {
 	/* Acknowledge the PS/2 clock interrupt. */
-	out_byte(PORT_B, in_byte(PORT_B) | CLOCK_ACK_BIT);
+	outb(PORT_B, inb(PORT_B) | CLOCK_ACK_BIT);
   }
 
   /* Update user and system accounting times.
@@ -465,10 +502,10 @@ int irq;
   if (sched_ticks == 1) fd_timer();		/* floppy deselect */
 #endif
 
-  if (next_alarm <= now ||
-      sched_ticks == 1 &&
-      bill_ptr == prev_ptr &&
-      rdy_head[USER_Q] != NIL_PROC) {
+  if (next_timer <= now
+	|| (sched_ticks == 1 && bill_ptr == prev_ptr
+		&& rdy_head[USER_Q] != NIL_PROC)
+  ) {
 	interrupt(CLOCK);
 	return 1;	/* Reenable interrupts */
   }
@@ -489,14 +526,14 @@ int irq;
 PRIVATE void init_clock()
 {
 /* Initialize channel 0 of the 8253A timer to e.g. 60 Hz. */
+  static irq_hook_t clock_hook;
 
-  out_byte(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
-  out_byte(TIMER0, TIMER_COUNT);	/* load timer low byte */
-  out_byte(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
-  put_irq_handler(CLOCK_IRQ, clock_handler);	/* set the interrupt handler */
-  enable_irq(CLOCK_IRQ);		/* ready for clock interrupts */
+  outb(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
+  outb(TIMER0, TIMER_COUNT);		/* load timer low byte */
+  outb(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
+  put_irq_handler(&clock_hook, CLOCK_IRQ, clock_handler);/* register handler */
+  enable_irq(&clock_hook);		/* ready for clock interrupts */
 }
-
 
 /*===========================================================================*
  *				clock_stop				     *
@@ -505,68 +542,76 @@ PUBLIC void clock_stop()
 {
 /* Reset the clock to the BIOS rate. (For rebooting) */
 
-  out_byte(TIMER_MODE, 0x36);
-  out_byte(TIMER0, 0);
-  out_byte(TIMER0, 0);
-}
-
-
-/*==========================================================================*
- *				milli_delay				    *
- *==========================================================================*/
-PUBLIC void milli_delay(millisec)
-unsigned millisec;
-{
-/* Delay some milliseconds. */
-
-  struct milli_state ms;
-
-  milli_start(&ms);
-  while (milli_elapsed(&ms) < millisec) {}
+  outb(TIMER_MODE, 0x36);
+  outb(TIMER0, 0);
+  outb(TIMER0, 0);
 }
 
 /*==========================================================================*
- *				milli_start				    *
+ *				micro_delay				    *
  *==========================================================================*/
-PUBLIC void milli_start(msp)
-struct milli_state *msp;
+PUBLIC void micro_delay(micros)
+unsigned long micros;
 {
-/* Prepare for calls to milli_elapsed(). */
+/* Delay some microseconds. */
+  struct micro_state ms;
 
+  micro_start(&ms);
+  while (micro_elapsed(&ms) < micros) {}
+}
+
+/*==========================================================================*
+ *				micro_start				    *
+ *==========================================================================*/
+PUBLIC void micro_start(msp)
+struct micro_state *msp;
+{
+  /* Prepare for calls to micro_elapsed(). */
   msp->prev_count = 0;
   msp->accum_count = 0;
 }
 
-
 /*==========================================================================*
- *				milli_elapsed				    *
+ *				micro_elapsed				    *
  *==========================================================================*/
-PUBLIC unsigned milli_elapsed(msp)
-struct milli_state *msp;
+PUBLIC unsigned long micro_elapsed(msp)
+struct micro_state *msp;
 {
-/* Return the number of milliseconds since the call to milli_start().  Must be
- * polled rapidly.
- */
+  /* Return the number of microseconds since the call to micro_start().  Must
+   * be polled rapidly.
+   *
+   * Micro_elapsed() is used by micro_delay() to busy wait until some
+   * number of microseconds have elapsed.  Micro_elapsed() can also be
+   * used to poll a device for some time.
+   */
   unsigned count;
 
-  /* Read the counter for channel 0 of the 8253A timer.  The counter
-   * decrements at twice the timer frequency (one full cycle for each
-   * half of square wave).  The counter normally has a value between 0
-   * and TIMER_COUNT, but before the clock task has been initialized,
-   * its maximum value is 65535, as set by the BIOS.
+  /* Read the counter of channel 0 of the 8253A timer.  This counter counts
+   * down at a rate of TIMER_FREQ and restarts at TIMER_COUNT-1 when it
+   * reaches zero.  We count each tick here, unlike the main task that cares
+   * more about the HZ per second restarts.
    */
-  out_byte(TIMER_MODE, LATCH_COUNT);	/* make chip copy count to latch */
-  count = in_byte(TIMER0);	/* countdown continues during 2-step read */
-  count |= in_byte(TIMER0) << 8;
+  lock();
+  outb(TIMER_MODE, LATCH_COUNT);
+  count = inb(TIMER0);
+  count |= (inb(TIMER0) << 8);
+  unlock();
 
   /* Add difference between previous and new count unless the counter has
-   * increased (restarted its cycle).  We may lose a tick now and then, but
-   * microsecond precision is not needed.
+   * increased (restarted its cycle).  In that case add 1, which should be
+   * correct when polling rapidly.
    */
   msp->accum_count += count <= msp->prev_count ? (msp->prev_count - count) : 1;
   msp->prev_count = count;
 
-  return msp->accum_count / (TIMER_FREQ / 1000);
+  /* Return the number of microseconds counted, avoiding overflow. */
+  if (msp->accum_count < ULONG_MAX / 1000000) {
+	/* Precise for about 3600 us. */
+	return msp->accum_count * 1000000 / TIMER_FREQ;
+  } else {
+	/* Longer periods need not be so precise. */
+	return msp->accum_count / TIMER_FREQ * 1000000;
+  }
 }
 #endif /* (CHIP == INTEL) */
 

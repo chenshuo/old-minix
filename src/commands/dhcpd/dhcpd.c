@@ -1,4 +1,4 @@
-/*	dhcpd 1.7 - Dynamic Host Configuration Protocol daemon.
+/*	dhcpd 1.15 - Dynamic Host Configuration Protocol daemon.
  *							Author: Kees J. Bot
  *								11 Jun 1999
  */
@@ -42,7 +42,7 @@ static int aflag, rflag;	/* True if adding or deleting pool addresses. */
 #define BCAST_IP	HTONL(0xFFFFFFFFUL)
 
 /* We try to play with up to this many networks. */
-#define N_NETS		16
+#define N_NETS		32
 static unsigned n_nets;		/* Actual number of networks. */
 
 void report(const char *label)
@@ -450,18 +450,20 @@ static size_t servdhcp(network_t *np, buf_t *bp, size_t dlen)
     ) {
 	get_buf(&abp);
 
-	dyn= 0;
-	if (type == DHCP_INFORM) {
-	    /* This host already has an address, it just wants information. */
-	    cip= bp->dhcp->ciaddr;
-	} else {
-	    /* Is this host in my tables? */
-	    (void) makedhcp(abp->dhcp, class, calen,
-					client, cilen, 0, ifip, nil);
-	    cip= abp->dhcp->yiaddr;
+	/* Is the client in my tables? */
+	(void) makedhcp(abp->dhcp, class, calen, client, cilen, 0, ifip, nil);
+	cip= abp->dhcp->yiaddr;
 
-	    /* If not, do we have a dynamic address? */
-	    if (cip == 0 && (cip= findpool(client, cilen, ifip)) != 0) dyn= 1;
+	dyn= 0;
+	/* If not, do we have a dynamic address? */
+	if (cip == 0 && (cip= findpool(client, cilen, ifip)) != 0) dyn= 1;
+
+	if (type == DHCP_INFORM) {
+	    /* The client already has an address, it just wants information.
+	     * We only answer if we could answer a normal request (cip != 0),
+	     * unless configured to answer anyone.
+	     */
+	    if (cip != 0 || (np->flags & NF_INFORM)) cip= bp->dhcp->ciaddr;
 	}
 
 	if (cip == 0 || !makedhcp(abp->dhcp, class, calen,
@@ -570,6 +572,7 @@ static size_t servdhcp(network_t *np, buf_t *bp, size_t dlen)
 
 	    if (type == DHCP_INFORM) {
 		/* Oops, this one has a fixed address, so no lease business. */
+		abp->dhcp->yiaddr= 0;
 		settag(abp->dhcp, DHCP_TAG_LEASE, nil, 0);
 		settag(abp->dhcp, DHCP_TAG_RENEWAL, nil, 0);
 		settag(abp->dhcp, DHCP_TAG_REBINDING, nil, 0);
@@ -585,11 +588,6 @@ static size_t servdhcp(network_t *np, buf_t *bp, size_t dlen)
 
 	    settag(abp->dhcp, DHCP_TAG_TYPE, &atype, sizeof(atype));
 
-	    if (type == -1) {	/* BOOTP */
-		abp->dhcp->magic= 0;	/* Wipe newfangled DHCP stuff. */
-		memset(abp->dhcp->options, 0, sizeof(abp->dhcp->options));
-	    }
-
 	    /* Figure out where to send this to. */
 	    abp->udpio->uih_src_addr= np->ip;
 	    abp->udpio->uih_src_port= port_server;
@@ -601,7 +599,9 @@ static size_t servdhcp(network_t *np, buf_t *bp, size_t dlen)
 		abp->udpio->uih_dst_addr= BCAST_IP;
 		abp->udpio->uih_dst_port= port_client;
 	    } else
-	    if (bp->udpio->uih_src_addr != 0) {
+	    if (bp->udpio->uih_src_addr != 0
+		&& bp->udpio->uih_dst_addr == np->ip
+	    ) {
 		abp->udpio->uih_dst_addr= bp->udpio->uih_src_addr;
 		abp->udpio->uih_dst_port= port_client;
 	    } else {
@@ -633,8 +633,8 @@ static size_t servdhcp(network_t *np, buf_t *bp, size_t dlen)
 
     /* I'm a relay?  If the server sends a reply to me then relay back. */
     if ((np->flags & NF_RELAYING)
-	&& bp->udpio->uih_src_addr == np->server
 	&& bp->dhcp->op == DHCP_BOOTREPLY
+	&& bp->dhcp->giaddr == np->ip
     ) {
 	bp->dhcp->giaddr= 0;
 	bp->udpio->uih_src_addr= np->ip;
@@ -757,12 +757,17 @@ int main(int argc, char **argv)
 
     /* Initial configuration. */
     for (i= 0; i < N_NETS; i++) {
-	int err;
+	int fd;
 	ipaddr_t ip, mask;
 
 	/* Is there something there? */
-	err= get_ipconf(ipdev(i), &ip, &mask);
-	if (err == ENOENT) continue;
+	if ((fd= open(ipdev(i), O_RDWR|O_NONBLOCK)) < 0) {
+	    if (errno != ENOENT && errno != ENODEV && errno != ENXIO) {
+		fatal(ipdev(i));
+	    }
+	    continue;
+	}
+	close(fd);
 
 	network[n_nets++]= np= newnetwork();
 	np->n= i;
@@ -776,16 +781,6 @@ int main(int argc, char **argv)
 		    np->type == NT_SINK ? " (sink)" : "");
 	    }
 	    closedev(np, FT_ETHERNET);
-	}
-
-	/* Already configured by ifconfig? */
-	if (err == 0) {
-	    np->ip= ip;
-	    np->mask= mask;
-	    if (debug >= 1) {
-		printf("%s: IP address is %s (ifconfig?)\n",
-		    ipdev(np->n), cidr_ntoa(np->ip, np->mask));
-	    }
 	}
 
 	/* Only true Ethernets worry about DHCP. */
@@ -842,7 +837,7 @@ int main(int argc, char **argv)
 	    }
 	    set_ipconf(ipdev(np->n), np->ip, np->mask, mtu);
 	    if (debug >= 1) {
-		printf("%s: IP address is %s (dhcp.conf)\n",
+		printf("%s: IP address is %s\n",
 		    ipdev(np->n), cidr_ntoa(np->ip, np->mask));
 	    }
 	    np->flags |= NF_BOUND;
@@ -875,7 +870,7 @@ int main(int argc, char **argv)
 		if (np->rebind <= now) np->server= BCAST_IP;
 
 		if (np->lease <= now) {
-		    if (np->flags & NF_BOUND) closedev(np, FT_BOOTPC);
+		    if (np->flags & NF_BOUND) closedev(np, FT_ALL);
 
 		    if ((np->flags & (NF_BOUND | NF_POSSESSIVE)) == NF_BOUND) {
 			set_ipconf(ipdev(np->n), np->ip= 0, np->mask= 0, 0);
@@ -1045,7 +1040,7 @@ int main(int argc, char **argv)
 		int type;
 		ipaddr_t mask, gateway, relay, server;
 		u16_t mtu;
-		u32_t lease, renew, rebind;
+		u32_t lease, renew, rebind, t;
 
 		relay= bp->udpio->uih_src_addr;
 		if (gettag(bp->dhcp, DHCP_TAG_SERVERID, &pdata, nil)) {
@@ -1087,25 +1082,24 @@ int main(int argc, char **argv)
 		    gateway= 0;
 		}
 
+		lease= NEVER;
 		if (gettag(bp->dhcp, DHCP_TAG_LEASE, &pdata, nil)) {
 		    memcpy(&lease, pdata, sizeof(lease));
 		    lease= ntohl(lease);
-		} else {
-		    lease= NEVER;
 		}
 
+		rebind= lease - lease / 8;
 		if (gettag(bp->dhcp, DHCP_TAG_REBINDING, &pdata, nil)) {
-		    memcpy(&rebind, pdata, sizeof(rebind));
-		    rebind= ntohl(rebind);
-		} else {
-		    rebind= lease - lease / 8;
+		    memcpy(&t, pdata, sizeof(t));
+		    t= ntohl(t);
+		    if (t < rebind) rebind= t;
 		}
 
+		renew= lease / 2;
 		if (gettag(bp->dhcp, DHCP_TAG_RENEWAL, &pdata, nil)) {
-		    memcpy(&renew, pdata, sizeof(renew));
-		    renew= ntohl(renew);
-		} else {
-		    renew= lease / 2;
+		    memcpy(&t, pdata, sizeof(t));
+		    t= ntohl(t);
+		    if (t < renew) renew= t;
 		}
 
 		if (type == DHCP_OFFER && np->rebind <= np->renew) {
@@ -1244,6 +1238,7 @@ int main(int argc, char **argv)
 	/* Perform router solicitations. */
 	for (i= 0; i < n_nets; i++) {
 	    np= network[i];
+	    if (!(np->flags & NF_BOUND)) continue;
 
 	    if (np->solicit <= now) {
 		if (!opendev(np, FT_ICMP, 1)) continue;
@@ -1287,6 +1282,7 @@ int main(int argc, char **argv)
 	/* Read router adverts. */
 	for (i= 0; i < n_nets; i++) {
 	    np= network[i];
+	    if (!(np->flags & NF_BOUND)) continue;
 	    if (np->sol_ct < 0) continue;
 
 	    if (!opendev(np, FT_ICMP, 0)) continue;
@@ -1317,23 +1313,18 @@ int main(int argc, char **argv)
 	    put_buf(&bp);
 	}
 
-	/* We start serving if the client side stuff has quieted down. */
+	/* We start serving if all the interfaces so marked are configured. */
 	for (i= 0; i < n_nets; i++) {
 	    np= network[i];
-	    if (!(np->flags & NF_BOUND)) continue;
-	    if (np->flags & NF_RELAYING) {
+	    if ((np->flags & NF_RELAYING) && (np->flags & NF_BOUND)) {
 		if (((np->ip ^ np->server) & np->mask) == 0) {
 		    /* Don't relay to a server that is on this same net. */
 		    np->flags &= ~NF_RELAYING;
 		}
 	    }
-	    if (np->flags & (NF_SERVING|NF_RELAYING)) serving= 1;
-	}
-	if (now <= start + 4*DELTA_FAST) {
-	    for (i= 0; i < n_nets; i++) {
-		if (network[i]->renew <= now + DELTA_FAST) serving= 0;
-		if (network[i]->solicit <= now + DELTA_SOL) serving= 0;
-	    }
+	    if (!(np->flags & (NF_SERVING|NF_RELAYING))) continue;
+	    if (!(np->flags & NF_BOUND)) { serving= 0; break; }
+	    serving= 1;
 	}
 
 	/* Read DHCP requests. */

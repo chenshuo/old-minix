@@ -1,168 +1,158 @@
-/*  look - look up words in the dictionary	Author: Terrence W. Holm */
-
-
-/*  look  [ -f ]  prefix[/suffix]  [ dictionary ]
- *
- *  Looks for all words in the on-line dictionary
- *  beginning with the specified <prefix> and ending
- *  with <suffix>.
- *
- *  Fold to lower case if "-f" given. Use the file
- *  "dictionary" or /usr/lib/dict/words.
- *
- ******************************************************
- *
- *  This command was written for MINIX, and is slightly
- *  different than the UNIX look(1). First of all, the
- *  list of words is in a different place. Second, these
- *  words are not sorted by -df. And finally, the
- *  ``suffix'' option was added to limit the output of
- *  the multiple variations of each word as contained
- *  in the MINIX dictionary.
+/*	look 1.3 - Find lines in a sorted list.		Author: Kees J. Bot
  */
-
-#include <ctype.h>
+#define nil 0
 #include <sys/types.h>
-#include <string.h>
-#include <unistd.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
 
-#ifdef UNIX
-#define  WORDS   "/usr/dict/words"
-#else
-#define  WORDS   "/usr/lib/dict/words"
-#endif
+char DEFAULT[] = "/usr/lib/dict/words";
 
-#define  MAX_WORD_LENGTH   80	/* including '\0'  */
+char *string, *wordlist= DEFAULT;
 
-_PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(void Fold, (char *str));
-_PROTOTYPE(void File_Error, (char *word_file));
+#define MAXLEN	1024	/* Maximum word length. */
 
-int main(argc, argv)
-int argc;
-char *argv[];
+int dflg= 0, fflg= 0;
 
+void nonascii(char *what)
 {
-  int fold = 0;
-  char *prefix;
-  char *suffix;
-  char *word_file = WORDS;
-
-  FILE *words;
-  long head = 0;
-  long tail;
-  long mid_point;
-  char word[MAX_WORD_LENGTH];
-  char unfolded_word[MAX_WORD_LENGTH];
-  int cmp;
-
-
-  /* Check the arguments: fold, prefix, suffix and word_file.  */
-
-  if (argc > 1 && strcmp(argv[1], "-f") == 0) {
-	fold = 1;
-	--argc;
-	++argv;
-  }
-  if (argc < 2 || argc > 3) {
-	fprintf(stderr, "Usage: %s [-f] prefix[/suffix] [dictionary]\n", argv[0]);
+	fprintf(stderr, "look: %s contains non-ASCII characters.\n", what);
 	exit(1);
-  }
-  prefix = argv[1];
+}
 
-  if ((suffix = strchr(prefix, '/')) == NULL)
-	suffix = "";
-  else
-	*suffix++ = '\0';
+int compare(char *prefix, char *word)
+{
+	char *p= prefix, *w= word;
+	int cp, cw;
 
-  if (fold) {
-	Fold(prefix);
-	Fold(suffix);
-  }
-  if (argc == 3) word_file = argv[2];
+	do {
+		do {
+			if ((cp= *p++) == 0) return 0;
+			if (!isascii(cp)) nonascii("prefix string");
+		} while (dflg && !isspace(cp) && !isalnum(cp));
 
+		if (dflg) {
+			if (isspace(cp)) {
+				while (isspace(*p)) p++;
+				cp= ' ';
+			}
+		}
+		if (fflg && isupper(cp)) cp= tolower(cp);
 
-  /* Open the word file, and find how big it is.  */
-  if ((words = fopen(word_file, "r")) == NULL) File_Error(word_file);
-  if (fseek(words, 0L, SEEK_END) != 0) File_Error(word_file);
-  tail = ftell(words);
+		do {
+			if ((cw= *w++) == 0) return 1;
+			if (!isascii(cw)) nonascii(wordlist);
+		} while (dflg && !isspace(cw) && !isalnum(cw));
 
-  /* Use a binary search on the word file to find a 512 byte	 */
-  /* Window containing the first word starting with "prefix".	 */
-  while (head + 512 < tail) {
-	mid_point = (head + tail) / 2;
-	if (fseek(words, mid_point, SEEK_SET) != 0) File_Error(word_file);
+		if (dflg) {
+			if (isspace(cw)) {
+				while (isspace(*w)) w++;
+				cw= ' ';
+			}
+		}
+		if (fflg && isupper(cw)) cw= tolower(cw);
+	} while (cp == cw);
 
-	/* Skip the partial word we seeked into.  */
-	fgets(word, MAX_WORD_LENGTH, words);
-	if (fgets(word, MAX_WORD_LENGTH, words) == NULL)
-		File_Error(word_file);
-	word[strlen(word) - 1] = '\0';	/* remove \n  */
-	strcpy(unfolded_word, word);
-	if (fold) Fold(word);
-	cmp = strcmp(prefix, word);
-	if (cmp == 0) {
-		printf("%s\n", unfolded_word);
-		head = ftell(words);
-		break;
+	return cp - cw;
+}
+
+char *readword(FILE *f)
+{
+	static char word[MAXLEN + 2];
+	int n;
+
+	if (fgets(word, sizeof(word), f) == nil) {
+		if (ferror(f)) {
+			fprintf(stderr, "look: read error on %s",
+				wordlist);
+			exit(1);
+		}
+		return nil;
 	}
-	if (cmp < 0)
-		tail = mid_point;
+
+	n= strlen(word);
+
+	if (word[n-1] != '\n') {
+		fprintf(stderr, "look: word from %s is too long\n", wordlist);
+		exit(1);
+	}
+	word[n-1] = 0;
+
+	return word;
+}
+
+void look(void)
+{
+	off_t low, mid, high;
+	FILE *f;
+	char *word;
+	int c;
+
+	if ((f= fopen(wordlist, "r")) == nil) {
+		fprintf(stderr, "look: Can't open %s\n", wordlist);
+		exit(1);
+	}
+
+	low= 0;
+
+	fseek(f, (off_t) 0, 2);
+
+	high= ftell(f);
+
+	while (low <= high) {
+		mid= (low + high) / 2;
+
+		fseek(f, mid, 0);
+
+		if (mid != 0) readword(f);
+
+		if ((word= readword(f)) == nil)
+			c= -1;
+		else
+			c= compare(string, word);
+
+		if (c <= 0) high= mid - 1; else low= mid + 1;
+	}
+	fseek(f, low, 0);
+	if (low != 0) readword(f);
+
+	c=0;
+	while (c >= 0 && (word= readword(f)) != nil) {
+		c= compare(string, word);
+
+		if (c == 0) puts(word);
+	}
+}
+
+int main(int argc, char **argv)
+{
+	if (argc == 2) dflg= fflg= 1;
+
+	while (argc > 1 && argv[1][0] == '-') {
+		char *p= argv[1] + 1;
+
+		while (*p != 0) {
+			switch (*p++) {
+			case 'd':	dflg= 1; break;
+			case 'f':	fflg= 1; break;
+			default:
+				fprintf(stderr, "look: Bad flag: %c\n", p[-1]);
+				exit(1);
+			}
+		}
+		argc--;
+		argv++;
+	}
+	if (argc == 3)
+		wordlist= argv[2];
 	else
-		head = ftell(words);
-  }
-
-  fseek(words, head, SEEK_SET);
-
-
-
-  {
-	/* Print out all the words starting with "prefix".  */
-
-	size_t prefix_length = strlen(prefix);
-	int suffix_length = strlen(suffix);
-	int word_length;
-
-
-	while (fgets(word, MAX_WORD_LENGTH, words) != NULL) {
-		word_length = strlen(word) - 1;
-		word[word_length] = '\0';	/* remove \n  */
-		strcpy(unfolded_word, word);
-		if (fold) Fold(word);
-		cmp = strncmp(prefix, word, prefix_length);
-		if (cmp < 0) break;
-		if (cmp == 0)
-			if (suffix_length == 0 || (word_length >= suffix_length
-			    && strcmp(suffix, word + word_length - suffix_length) == 0))
-				printf("%s\n", unfolded_word);
+	if (argc != 2) {
+		fprintf(stderr, "Usage: look [-df] string [file]\n");
+		exit(1);
 	}
-  }
-
-  fclose(words);
-
-  return(0);
+	string= argv[1];
+	look();
+	exit(0);
 }
-
-
-
-void Fold(str)
-char *str;
-
-{
-  while (*str) {
-	if (isupper(*str)) *str = *str - 'A' + 'a';
-	str++;
-  }
-}
-
-
-
-void File_Error(word_file)
-char *word_file;
-
-{
-  perror(word_file);
-  exit(1);
-}
+/* Kees J. Bot 24-5-89. */

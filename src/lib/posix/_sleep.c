@@ -22,6 +22,8 @@ unsigned sleep(unsigned sleep_seconds)
 	struct sigaction action_alarm, action_orig;
 	unsigned alarm_seconds, nap_seconds;
 
+	if (sleep_seconds == 0) return 0;	/* No rest for the wicked */
+
 	/* Mask all signals. */
 	sigfillset(&ss_full);
 	sigprocmask(SIG_BLOCK, &ss_full, &ss_orig);

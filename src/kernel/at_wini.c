@@ -153,8 +153,8 @@ struct command {
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
-#define TIMEOUT        31500	/* controller timeout in ms */
-#define RECOVERYTIME     500	/* controller recovery time in ms */
+#define TIMEOUT      5000000	/* controller timeout in us */
+#define RECOVERYTIME  500000	/* controller recovery time in us */
 #define INITIALIZED	0x01	/* drive is initialized */
 #define DEAF		0x02	/* controller must be reset */
 #define SMART		0x04	/* drive supports ATA commands */
@@ -180,6 +180,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned precomp;		/* write precompensation cylinder / 4 */
   unsigned max_count;		/* max request for this drive */
   unsigned open_ct;		/* in-use count */
+  irq_hook_t hook;		/* interrupt hook */
   struct device part[DEV_PER_DRIVE];	/* disks and partitions */
   struct device subpart[SUB_PER_DRIVE];	/* subpartitions */
 } wini[MAX_DRIVES], *w_wn;
@@ -189,6 +190,7 @@ PRIVATE int w_command;			/* current command in execution */
 PRIVATE int w_status;			/* status after interrupt */
 PRIVATE int w_drive;			/* selected drive */
 PRIVATE struct device *w_dv;		/* device's base and size */
+PRIVATE timer_t w_tmr_timeout;		/* timer for w_timeout */
 
 FORWARD _PROTOTYPE( void init_params, (void) );
 FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
@@ -202,12 +204,12 @@ FORWARD _PROTOTYPE( int com_out, (struct command *cmd) );
 FORWARD _PROTOTYPE( void w_need_reset, (void) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int com_simple, (struct command *cmd) );
-FORWARD _PROTOTYPE( void w_timeout, (void) );
+FORWARD _PROTOTYPE( void w_timeout, (timer_t *tp) );
 FORWARD _PROTOTYPE( int w_reset, (void) );
 FORWARD _PROTOTYPE( void w_intr_wait, (void) );
 FORWARD _PROTOTYPE( int at_intr_wait, (void) );
 FORWARD _PROTOTYPE( int w_waitfor, (int mask, int value) );
-FORWARD _PROTOTYPE( int w_handler, (int irq) );
+FORWARD _PROTOTYPE( int w_handler, (irq_hook_t *hook) );
 FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry) );
 #if ENABLE_ATAPI
 FORWARD _PROTOTYPE( int atapi_sendpacket, (u8_t *packet, unsigned cnt) );
@@ -383,7 +385,7 @@ PRIVATE int w_identify()
 	wn->state |= SMART;
 
 	/* Device information. */
-	port_read(wn->base + REG_DATA, tmp_phys, SECTOR_SIZE);
+	phys_insw(wn->base + REG_DATA, tmp_phys, SECTOR_SIZE);
 
 	/* Why are the strings byte swapped??? */
 	for (i = 0; i < 40; i++) id_string[i] = id_byte(27)[i^1];
@@ -419,7 +421,7 @@ PRIVATE int w_identify()
 	wn->state |= ATAPI;
 
 	/* Device information. */
-	port_read(wn->base + REG_DATA, tmp_phys, 512);
+	phys_insw(wn->base + REG_DATA, tmp_phys, 512);
 
 	/* Why are the strings byte swapped??? */
 	for (i = 0; i < 40; i++) id_string[i] = id_byte(27)[i^1];
@@ -451,8 +453,8 @@ PRIVATE int w_identify()
 
   /* Everything looks OK; register IRQ so we can stop polling. */
   wn->irq = w_drive < 2 ? AT_IRQ0 : AT_IRQ1;
-  put_irq_handler(wn->irq, w_handler);
-  enable_irq(wn->irq);
+  put_irq_handler(&wn->hook, wn->irq, w_handler);
+  enable_irq(&wn->hook);
 
   return(OK);
 }
@@ -591,7 +593,7 @@ unsigned nr_req;		/* length of request vector */
 			if ((r = at_intr_wait()) != OK) {
 				/* An error, send data to the bit bucket. */
 				if (w_status & STATUS_DRQ) {
-					port_read(w_wn->base + REG_DATA,
+					phys_insw(w_wn->base + REG_DATA,
 						tmp_phys, SECTOR_SIZE);
 				}
 				break;
@@ -603,10 +605,10 @@ unsigned nr_req;		/* length of request vector */
 
 		/* Copy bytes to or from the device's buffer. */
 		if (opcode == DEV_GATHER) {
-			port_read(w_wn->base + REG_DATA,
+			phys_insw(w_wn->base + REG_DATA,
 				user_base + iov->iov_addr, SECTOR_SIZE);
 		} else {
-			port_write(w_wn->base + REG_DATA,
+			phys_outsw(w_wn->base + REG_DATA,
 				user_base + iov->iov_addr, SECTOR_SIZE);
 
 			/* Data sent, wait for an interrupt. */
@@ -652,7 +654,7 @@ struct command *cmd;		/* Command block */
   }
 
   /* Select drive. */
-  out_byte(base + REG_LDH, cmd->ldh);
+  outb(base + REG_LDH, cmd->ldh);
 
   if (!w_waitfor(STATUS_BSY, 0)) {
 	printf("%s: drive not ready\n", w_name());
@@ -660,16 +662,16 @@ struct command *cmd;		/* Command block */
   }
 
   /* Schedule a wakeup call, some controllers are flaky. */
-  clock_mess(WAKEUP, w_timeout);
+  tmr_settimer(&w_tmr_timeout, CLOCK, get_uptime() + WAKEUP, w_timeout);
 
-  out_byte(base + REG_CTL, wn->pheads >= 8 ? CTL_EIGHTHEADS : 0);
-  out_byte(base + REG_PRECOMP, cmd->precomp);
-  out_byte(base + REG_COUNT, cmd->count);
-  out_byte(base + REG_SECTOR, cmd->sector);
-  out_byte(base + REG_CYL_LO, cmd->cyl_lo);
-  out_byte(base + REG_CYL_HI, cmd->cyl_hi);
+  outb(base + REG_CTL, wn->pheads >= 8 ? CTL_EIGHTHEADS : 0);
+  outb(base + REG_PRECOMP, cmd->precomp);
+  outb(base + REG_COUNT, cmd->count);
+  outb(base + REG_SECTOR, cmd->sector);
+  outb(base + REG_CYL_LO, cmd->cyl_lo);
+  outb(base + REG_CYL_HI, cmd->cyl_hi);
   w_status = STATUS_ADMBSY;
-  out_byte(base + REG_COMMAND, w_command = cmd->command);
+  outb(base + REG_COMMAND, w_command = cmd->command);
   return(OK);
 }
 
@@ -725,7 +727,8 @@ struct command *cmd;		/* Command block */
 /*===========================================================================*
  *				w_timeout				     *
  *===========================================================================*/
-PRIVATE void w_timeout()
+PRIVATE void w_timeout(tp)
+timer_t *tp;
 {
   struct wini *wn = w_wn;
 
@@ -765,13 +768,13 @@ PRIVATE int w_reset()
   struct wini *wn;
 
   /* Wait for any internal drive recovery. */
-  milli_delay(RECOVERYTIME);
+  micro_delay(RECOVERYTIME);
 
   /* Strobe reset bit */
-  out_byte(w_wn->base + REG_CTL, CTL_RESET);
-  milli_delay(1);
-  out_byte(w_wn->base + REG_CTL, 0);
-  milli_delay(1);
+  outb(w_wn->base + REG_CTL, CTL_RESET);
+  micro_delay(1000L);
+  outb(w_wn->base + REG_CTL, 0);
+  micro_delay(1000L);
 
   /* Wait for controller ready */
   if (!w_waitfor(STATUS_BSY, 0)) {
@@ -819,7 +822,7 @@ PRIVATE int at_intr_wait()
   if ((w_status & (STATUS_BSY | STATUS_WF | STATUS_ERR)) == 0) {
 	r = OK;
   } else
-  if ((w_status & STATUS_ERR) && (in_byte(w_wn->base + REG_ERROR) & ERROR_BB)) {
+  if ((w_status & STATUS_ERR) && (inb(w_wn->base + REG_ERROR) & ERROR_BB)) {
   	r = ERR_BAD_SECTOR;	/* sector marked bad, retries won't help */
   } else {
   	r = ERR;		/* any other error */
@@ -838,13 +841,13 @@ int value;			/* required status */
 {
 /* Wait until controller is in the required state.  Return zero on timeout. */
 
-  struct milli_state ms;
+  struct micro_state ms;
 
-  milli_start(&ms);
+  micro_start(&ms);
   do {
-       w_status = in_byte(w_wn->base + REG_STATUS);
+       w_status = inb(w_wn->base + REG_STATUS);
        if ((w_status & mask) == value) return 1;
-  } while (milli_elapsed(&ms) < TIMEOUT);
+  } while (micro_elapsed(&ms) < TIMEOUT);
 
   w_need_reset();	/* Controller gone deaf. */
   return(0);
@@ -854,12 +857,12 @@ int value;			/* required status */
 /*==========================================================================*
  *				w_handler				    *
  *==========================================================================*/
-PRIVATE int w_handler(irq)
-int irq;
+PRIVATE int w_handler(hook)
+irq_hook_t *hook;
 {
 /* Disk interrupt, send message to winchester task and reenable interrupts. */
 
-  w_status = in_byte(w_wn->base + REG_STATUS);	/* acknowledge interrupt */
+  w_status = inb(w_wn->base + REG_STATUS);	/* acknowledge interrupt */
   interrupt(win_tasknr);
   return 1;
 }
@@ -993,7 +996,7 @@ unsigned nr_req;		/* length of request vector */
 			chunk = before;
 			if (chunk > count) chunk = count;
 			if (chunk > DMA_BUF_SIZE) chunk = DMA_BUF_SIZE;
-			port_read(w_wn->base + REG_DATA, tmp_phys, chunk);
+			phys_insw(w_wn->base + REG_DATA, tmp_phys, chunk);
 			before -= chunk;
 			count -= chunk;
 		}
@@ -1002,7 +1005,7 @@ unsigned nr_req;		/* length of request vector */
 			chunk = nbytes;
 			if (chunk > count) chunk = count;
 			if (chunk > iov->iov_size) chunk = iov->iov_size;
-			port_read(w_wn->base + REG_DATA,
+			phys_insw(w_wn->base + REG_DATA,
 					user_base + iov->iov_addr, chunk);
 			position += chunk;
 			nbytes -= chunk;
@@ -1019,7 +1022,7 @@ unsigned nr_req;		/* length of request vector */
 		while (count > 0) {		/* Excess data. */
 			chunk = count;
 			if (chunk > DMA_BUF_SIZE) chunk = DMA_BUF_SIZE;
-			port_read(w_wn->base + REG_DATA, tmp_phys, chunk);
+			phys_insw(w_wn->base + REG_DATA, tmp_phys, chunk);
 			count -= chunk;
 		}
 	}
@@ -1049,7 +1052,7 @@ unsigned cnt;
   message mess;
 
   /* Select Master/Slave drive */
-  out_byte(wn->base + REG_DRIVE, wn->ldhpref);
+  outb(wn->base + REG_DRIVE, wn->ldhpref);
 
   if (!w_waitfor(STATUS_BSY | STATUS_DRQ, 0)) {
 	printf("%s: drive not ready\n", w_name());
@@ -1057,18 +1060,18 @@ unsigned cnt;
   }
 
   /* Schedule wakeup call. */
-  clock_mess(WAKEUP, w_timeout);
+  tmr_settimer(&w_tmr_timeout, CLOCK, get_uptime() + WAKEUP, w_timeout);
 
 #if _WORD_SIZE > 2
   if (cnt > 0xFFFE) cnt = 0xFFFE;	/* Max data per interrupt. */
 #endif
 
-  out_byte(wn->base + REG_FEAT, 0);
-  out_byte(wn->base + REG_IRR, 0);
-  out_byte(wn->base + REG_SAMTAG, 0);
-  out_byte(wn->base + REG_CNT_LO, (cnt >> 0) & 0xFF);
-  out_byte(wn->base + REG_CNT_HI, (cnt >> 8) & 0xFF);
-  out_byte(wn->base + REG_COMMAND, w_command = ATAPI_PACKETCMD);
+  outb(wn->base + REG_FEAT, 0);
+  outb(wn->base + REG_IRR, 0);
+  outb(wn->base + REG_SAMTAG, 0);
+  outb(wn->base + REG_CNT_LO, (cnt >> 0) & 0xFF);
+  outb(wn->base + REG_CNT_HI, (cnt >> 8) & 0xFF);
+  outb(wn->base + REG_COMMAND, w_command = ATAPI_PACKETCMD);
 
   if (!w_waitfor(STATUS_BSY | STATUS_DRQ, STATUS_DRQ)) {
 	printf("%s: timeout (BSY|DRQ -> DRQ)\n");
@@ -1077,7 +1080,7 @@ unsigned cnt;
   w_status |= STATUS_ADMBSY;		/* Command not at all done yet. */
 
   /* Send the command packet to the device. */
-  port_write(wn->base + REG_DATA, vir2phys(packet), 12);
+  outsw(wn->base + REG_DATA, packet, 12);
   return(OK);
 }
 
@@ -1098,10 +1101,10 @@ PRIVATE int atapi_intr_wait()
 
   w_intr_wait();
 
-  e = in_byte(wn->base + REG_ERROR);
-  len = in_byte(wn->base + REG_CNT_LO);
-  len |= in_byte(wn->base + REG_CNT_HI) << 8;
-  irr = in_byte(wn->base + REG_IRR);
+  e = inb(wn->base + REG_ERROR);
+  len = inb(wn->base + REG_CNT_LO);
+  len |= inb(wn->base + REG_CNT_HI) << 8;
+  irr = inb(wn->base + REG_IRR);
   if (ATAPI_DEBUG) {
 	printf("S=%02x E=%02x L=%04x I=%02x\n", w_status, e, len, irr);
   }

@@ -7,10 +7,15 @@ struct stat;
 _PROTOTYPE( phys_clicks alloc_mem, (phys_clicks clicks)			);
 _PROTOTYPE( void free_mem, (phys_clicks base, phys_clicks clicks)	);
 _PROTOTYPE( void mem_init, (phys_clicks *total, phys_clicks *free)	);
+#if ENABLE_SWAP
 _PROTOTYPE( int swap_on, (char *file, u32_t offset, u32_t size)	);
 _PROTOTYPE( int swap_off, (void)					);
 _PROTOTYPE( void swap_in, (void)					);
 _PROTOTYPE( void swap_inqueue, (struct mproc *rmp)			);
+#else /* !SWAP */
+#define swap_in()			((void)0)
+#define swap_inqueue(rmp)		((void)0)
+#endif /* !SWAP */
 
 /* break.c */
 _PROTOTYPE( int adjust, (struct mproc *rmp,

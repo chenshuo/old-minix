@@ -373,14 +373,11 @@ struct hostent *hostent;
    /* Look up the host name of the remote host. */
    hostent = gethostbyaddr((char *) &rmtipaddr, sizeof(rmtipaddr), AF_INET);
    if(!hostent) {
-	printf("421-FTP service unable to translate your IP address (%s)\r\n",
-		inet_ntoa(rmtipaddr));
-	printf("421 to your host name. Closing.\r\n");
-	fflush(stdout);
-	exit(1);
+	strcpy(rmthostname, inet_ntoa(rmtipaddr));
+   } else {
+	strncpy(rmthostname, hostent->h_name, sizeof(rmthostname)-1);
+	rmthostname[sizeof(rmthostname)-1] = '\0';
    }
-   strncpy(rmthostname, hostent->h_name, sizeof(rmthostname)-1);
-   rmthostname[sizeof(rmthostname)-1] = '\0';
 }
 
 static void timeout(sig)

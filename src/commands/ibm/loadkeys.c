@@ -12,7 +12,7 @@
 #if __minix_vmd
 #define KBD_DEVICE	"/dev/kbd"
 #else
-#define KBD_DEVICE	((char *) NULL)
+#define KBD_DEVICE	"/dev/console"
 #endif
 
 u16_t keymap[NR_SCAN_CODES * MAP_COLS];
@@ -83,12 +83,9 @@ int main(int argc, char *argv[])
 	n++;
   }
 
-#if __minix_vmd
   if ((fd = open(KBD_DEVICE, O_WRONLY)) < 0) fatal(KBD_DEVICE);
-#else
-  fd = 0;
-#endif
 
   if (ioctl(fd, KIOCSMAP, keymap) < 0) fatal(KBD_DEVICE);
-  exit(0);
+
+  return 0;
 }

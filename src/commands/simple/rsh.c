@@ -42,8 +42,8 @@ static char sccsid[] = "@(#)rsh.c	5.24 (Berkeley) 7/1/91";
 #endif /* not lint */
 
 /*
- * $Source: mit/rsh/RCS/rsh.c,v $
- * $Header: mit/rsh/RCS/rsh.c,v 5.1 89/07/31 19:28:59 kfall Exp Locker: kfall $
+ * $Source: /home/student5/philip/REPOSITORY/minix.tcpip/command.1.6.17/ucb/rsh.c,v $
+ * $Header: rsh.c,v 1.1 92/02/20 16:44:42 philip Exp $
  */
 
 #if _MINIX
@@ -65,7 +65,8 @@ char *copyargs _ARGS(( char **argv ));
 void sendsig _ARGS(( int signo ));
 void talk _ARGS(( int nflag, long omask, int pid, int rem ));
 
-#define _PATH_RLOGIN	"/usr/bin/rlogin"
+#define _PATH_RLOGIN1	"/bin/rlogin"
+#define _PATH_RLOGIN2	"/usr/bin/rlogin"
 
 typedef unsigned u_int;
 #else
@@ -199,8 +200,9 @@ main(argc, argv)
 	if (!argv[optind]) {
 		if (asrsh)
 			*argv = "rlogin";
-		execv(_PATH_RLOGIN, argv);
-		(void)fprintf(stderr, "rsh: can't exec %s.\n", _PATH_RLOGIN);
+		execv(_PATH_RLOGIN1, argv);
+		execv(_PATH_RLOGIN2, argv);
+		(void)fprintf(stderr, "rsh: can't exec rlogin\n");
 		exit(1);
 	}
 
@@ -342,7 +344,9 @@ try_connect:
 
 	if (!nflag && pid)
 	{
-		/* printf("killing %d with %d\n", pid, SIGKILL); */
+#if DEBUG
+		printf("killing %d with %d\n", pid, SIGKILL);
+#endif
 		(void)kill(pid, SIGKILL);
 	}
 	exit(0);
@@ -429,9 +433,9 @@ done:
 		{
 			if (pid1)
 			{
-				/*
+#if DEBUG
 				printf("killing %d with %d\n", pid1, SIGKILL);
-				*/
+#endif
 				kill(pid1, SIGKILL);
 				return;
 			}

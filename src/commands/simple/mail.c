@@ -1,6 +1,8 @@
 /*  mail - send/receive mail 		 Author: Peter S. Housel */
 /* Version 0.2 of September 1990: added -e, -t, * options - cwr */
 
+/* 2003-07-18: added -s option - ASW */
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -63,6 +65,7 @@ int msgstatus = 0;		/* return the mail status */
 int distlist = 0;		/* include distribution list */
 char mailbox[PATHLEN];		/* user's mailbox/maildrop */
 char tempname[PATHLEN] = "/tmp/mailXXXXXX";	/* temporary file */
+char *subject = NULL;
 FILE *boxfp = NULL;		/* mailbox file */
 jmp_buf printjump;		/* for quitting out of letters */
 unsigned oldmask;		/* saved umask() */
@@ -101,7 +104,7 @@ char *argv[];
 
   oldmask = umask(022);		/* change umask for security */
 
-  while (EOF != (c = getopt(argc, argv, "epqrf:tdv"))) switch (c) {
+  while (EOF != (c = getopt(argc, argv, "epqrf:tdvs:"))) switch (c) {
 	    case 'e':	++msgstatus;	break;	
 
 	    case 't':	++distlist;	break;
@@ -121,6 +124,8 @@ char *argv[];
 	    case 'd':	usemailer = 0;	break;
 
 	    case 'v':	++verbose;	break;
+
+	    case 's':	subject = optarg; break;
 
 	    default:
 		usage();
@@ -298,13 +303,23 @@ nobox:
 		(void) time(&now);
 		fprintf(boxfp, "From %s %24.24s\n", sender, ctime(&now));
 	}
+
+	/* Add the To: header line */
+	fprintf(boxfp, "To: %s\n", vec[i]);
+
 	if (distlist) {
 		fprintf(boxfp, "Dist: ");
 		for (j = 0; j < count; ++j)
 			if (getpwnam(vec[j]) != NULL && j != i)
 				fprintf(boxfp, "%s ", vec[j]) ;
-		fprintf(boxfp, "\n\n");
+		fprintf(boxfp, "\n");
 	}
+
+	/* Add the Subject: header line */
+	if (subject != NULL) fprintf(boxfp, "Subject: %s\n", subject);
+
+	fprintf(boxfp, "\n");
+ 
 	if ((copy(mailfp, boxfp) < 0) || (fclose(boxfp) != 0)) {
 		fprintf(stderr, "mail: error delivering to user %s", vec[i]);
 		perror(" ");
@@ -712,8 +727,8 @@ char *command;
 
 void usage()
 {
-  fprintf(stderr, "usage: mail [-v] user [...]\n");
-  fprintf(stderr, "       mail [-epqr] [-f file] [-t arg]\n");
+  fprintf(stderr, "usage: mail [-epqr] [-f file]\n");
+  fprintf(stderr, "       mail [-dtv] [-s subject] user [...]\n");
 }
 
 char *basename(name)

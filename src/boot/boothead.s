@@ -186,7 +186,8 @@ quit:	mov	ax, #any_key
 	call	_printf
 	xorb	ah, ah			! Read character from keyboard
 	int	0x16
-reboot:	call	restore_video
+reboot:	call	dev_reset
+	call	restore_video
 	int	0x19			! Reboot the system
 .data
 any_key:
@@ -409,6 +410,8 @@ chmem:	.ascii	" memory, use chmem to increase the heap\n\0"
 !	otherwise 0.
 .define	_dev_open
 _dev_open:
+	call	dev_reset	! Optionally reset the disks
+	movb	dev_state, #0	! State is "closed"
 	push	es
 	push	di		! Save registers used by BIOS calls
 	movb	dl, _device	! The default device
@@ -464,6 +467,7 @@ geoboth:
 	movb	al, cl		! al = sectors per track
 	mulb	dh		! ax = heads * sectors
 	mov	secspcyl, ax	! Sectors per cylinder = heads * sectors
+	movb	dev_state, #1	! Device state is "open"
 	xor	ax, ax		! Code for success
 geodone:
 	pop	di
@@ -478,11 +482,22 @@ seclist:
 .text
 
 ! int dev_close(void);
-!	Close the current device.  Under the BIOS this does nothing.
+!	Close the current device.  Under the BIOS this does nothing much.
 .define	_dev_close
 _dev_close:
 	xor	ax, ax
+	movb	dev_state, al	! State is "closed"
 	ret
+
+! Reset the disks if needed.  Minix may have messed things up.
+dev_reset:
+	cmpb	dev_state, #0	! Need reset if dev_state < 0
+	jge	0f
+	xorb	ah, ah		! Reset (ah = 0)
+	movb	dl, #0x80	! All disks
+	int	0x13
+	movb	dev_state, #0	! State is "closed"
+0:	ret
 
 ! int dev_boundary(u32_t sector);
 !	True if a sector is on a boundary, i.e. sector % sectors == 0.
@@ -519,7 +534,12 @@ _readsectors:
 rwsec:	push	si
 	push	di
 	push	es
-	mov	ax, 4(bp)
+	cmpb	dev_state, #0	! Device state?
+	jg	0f		! >0 if open
+	call	_dev_open	! Initialize
+	test	ax, ax
+	jnz	badopen
+0:	mov	ax, 4(bp)
 	mov	dx, 6(bp)
 	call	abs2seg
 	mov	bx, ax
@@ -565,8 +585,8 @@ bigdisk:
 	mov	8(si), ax	! Starting block number = dx:ax
 	mov	10(si), dx
 	movb	dl, _device	! dl = device to use
-	movb	ah, 13(bp)	! Code for disk read (0x02) or write (0x03)
-	orb	ah, #0x40	! Extended read (0x42) or write (0x43)
+	mov	ax, #0x4000	! This, or-ed with 0x02 or 0x03 becomes
+	orb	ah, 13(bp)	! extended read (0x4200) or write (0x4300)
 	int	0x13
 	!jmp	rdeval
 rdeval:
@@ -591,7 +611,7 @@ ioerr:	cmpb	ah, #0x80	! Disk timed out?  (Floppy drive empty)
 	jnc	more		! Succesful reset, try request again
 finish:	movb	al, ah
 	xorb	ah, ah		! ax = error number
-	pop	es
+badopen:pop	es
 	pop	di
 	pop	si
 	pop	bp
@@ -618,18 +638,31 @@ _getch:
 	xchg	ax, unchar	! Ungotten character?
 	test	ax, ax
 	jnz	gotch
-getch:	hlt			! Play dead until interrupted (see pause())
+getch:
+	hlt			! Play dead until interrupted (see pause())
 	movb	ah, #0x01	! Keyboard status
 	int	0x16
-	jnz	press		! Keypress?
-	call	_expired	! Timer expired?
+	jz	0f		! Nothing typed
+	xorb	ah, ah		! Read character from keyboard
+	int	0x16
+	jmp	press		! Keypress
+0:	mov	dx, line	! Serial line?
+	test	dx, dx
+	jz	0f
+	add	dx, #5		! Line Status Register
+	inb	dx
+	testb	al, #0x01	! Data Ready?
+	jz	0f
+	mov	dx, line
+	!add	dx, 0		! Receive Buffer Register
+	inb	dx		! Get character
+	jmp	press
+0:	call	_expired	! Timer expired?
 	test	ax, ax
 	jz	getch
 	mov	ax, #ESC	! Return ESC
 	ret
 press:
-	xorb	ah, ah		! Read character from keyboard
-	int	0x16
 	cmpb	al, #0x0D	! Carriage return?
 	jnz	nocr
 	movb	al, #0x0A	! Change to linefeed
@@ -682,7 +715,24 @@ _putk:	mov	bx, sp
 	movb	al, #0x0A	! Restore the '\n' and print it
 putc:	movb	ah, #0x0E	! Print character in teletype mode
 	mov	bx, #0x0001	! Page 0, foreground color
-	int	0x10		! Call BIOS VIDEO_IO
+	int	0x10
+	mov	bx, line	! Serial line?
+	test	bx, bx
+	jz	nulch
+	push	ax		! Save character to print
+	call	_get_tick	! Current clock tick counter
+	mov	cx, ax
+	add	cx, #2		! Don't want to see it count twice
+1:	lea	dx, 5(bx)	! Line Status Register
+	inb	dx
+	testb	al, #0x20	! Transmitter Holding Register Empty?
+	jnz	0f
+	call	_get_tick
+	cmp	ax, cx		! Clock ticked more than once?
+	jne	1b
+0:	pop	ax		! Restore character to print
+	mov	dx, bx		! Transmit Holding Register
+	outb	dx		! Send character down the serial line
 nulch:	ret
 
 ! void pause(void);
@@ -704,24 +754,91 @@ _set_mode:
 	je	modeok		! Mode already as requested?
 	mov	cur_vid_mode, ax
 _clear_screen:
+	xor	ax, ax
+	mov	es, ax		! es = Vector segment
 	mov	ax, cur_vid_mode
-	andb	ah, #0x7F	! Test bits 8-14, clear bit 15 (8x8 flag)
+	movb	ch, ah		! Copy of the special flags
+	andb	ah, #0x0F	! Test bits 8-11, clear special flags
 	jnz	xvesa		! VESA extended mode?
 	int	0x10		! Reset video (ah = 0)
-	jmp	mdset
+	jmp	md_480
 xvesa:	mov	bx, ax		! bx = extended mode
 	mov	ax, #0x4F02	! Reset video
 	int	0x10
-mdset:	testb	cur_vid_mode+1, #0x80
-	jz	setcur		! 8x8 font requested?
-	mov	ax, #0x1112	! Load ROM 8 by 8 double-dot patterns
+md_480:				! Basic video mode is set, now build on it
+	testb	ch, #0x20	! 480 scan lines requested?
+	jz	md_14pt
+	mov	dx, #0x3CC	! Get CRTC port
+	inb	dx
+	movb	dl, #0xD4
+	testb	al, #1		! Mono or color?
+	jnz	0f
+	movb	dl, #0xB4
+0:	mov	ax, #0x110C	! Vertical sync end (also unlocks CR0-7)
+	call	out2
+	mov	ax, #0x060B	! Vertical total
+	call	out2
+	mov	ax, #0x073E	! (Vertical) overflow
+	call	out2
+	mov	ax, #0x10EA	! Vertical sync start
+	call	out2
+	mov	ax, #0x12DF	! Vertical display end
+	call	out2
+	mov	ax, #0x15E7	! Vertical blank start
+	call	out2
+	mov	ax, #0x1604	! Vertical blank end
+	call	out2
+	push	dx
+	movb	dl, #0xCC	! Misc output register (read)
+	inb	dx
+	movb	dl, #0xC2	! (write)
+	andb	al, #0x0D	! Preserve clock select bits and color bit
+	orb	al, #0xE2	! Set correct sync polarity
+	outb	dx
+	pop	dx		! Index register still in dx
+md_14pt:
+	testb	ch, #0x40	! 9x14 point font requested?
+	jz	md_8pt
+	mov	ax, #0x1111	! Load ROM 9 by 14 font
 	xorb	bl, bl		! Load block 0
 	int	0x10
-setcur:	xor	dx, dx		! dl = column = 0, dh = row = 0
+	testb	ch, #0x20	! 480 scan lines?
+	jz	md_8pt
+	mov	ax, #0x12DB	! VGA vertical display end
+	call	out2
+   eseg	movb	0x0484, #33	! Tell BIOS the last line number
+md_8pt:
+	testb	ch, #0x80	! 8x8 point font requested?
+	jz	setcur
+	mov	ax, #0x1112	! Load ROM 8 by 8 font
+	xorb	bl, bl		! Load block 0
+	int	0x10
+	testb	ch, #0x20	! 480 scan lines?
+	jz	setcur
+	mov	ax, #0x12DF	! VGA vertical display end
+	call	out2
+   eseg	movb	0x0484, #59	! Tell BIOS the last line number
+setcur:
+	xor	dx, dx		! dl = column = 0, dh = row = 0
 	xorb	bh, bh		! Page 0
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
+	push	ss
+	pop	es		! Restore es
 modeok:	ret
+
+! Out to the usual [index, data] port pair that are common for VGA devices
+! dx = port, ah = index, al = data.
+out2:
+	push	dx
+	push	ax
+	movb	al, ah
+	outb	dx		! Set index
+	inc	dx
+	pop	ax
+	outb	dx		! Send data
+	pop	dx
+	ret
 
 restore_video:			! To restore the video mode on exit
 	mov	ax, old_vid_mode
@@ -730,16 +847,43 @@ restore_video:			! To restore the video mode on exit
 	pop	ax
 	ret
 
+! void serial_init(int line)
+!	Initialize copying console I/O to a serial line.
+.define	_serial_init
+_serial_init:
+	mov	bx, sp
+	mov	dx, 2(bx)	! Line number
+	push	ds
+	xor	ax, ax
+	mov	ds, ax		! Vector and BIOS data segment
+	mov	bx, dx		! Line number
+	shl	bx, #1		! Word offset
+	mov	bx, 0x0400(bx)	! I/O port for the given line
+	pop	ds
+	mov	line, bx	! Remember I/O port
+serial_init:
+	mov	bx, line
+	test	bx, bx		! I/O port must be nonzero
+	jz	0f
+	mov	ax, #0x00E3	! 9600 N-8-1
+	int	0x14		! Initialize serial line dx
+	lea	dx, 4(bx)	! Modem Control Register
+	movb	al, #0x0B	! DTR, RTS, OUT2
+	outb	dx
+0:	ret
+
 ! u32_t get_tick(void);
 !	Return the current value of the clock tick counter.  This counter
 !	increments 18.2 times per second.  Poll it to do delays.  Does not
 !	work on the original PC, but works on the PC/XT.
 .define _get_tick
 _get_tick:
+	push	cx
 	xorb	ah, ah		! Code for get tick count
 	int	0x1A
 	mov	ax, dx
 	mov	dx, cx		! dx:ax = cx:dx = tick count
+	pop	cx
 	ret
 
 
@@ -883,12 +1027,12 @@ minix86:
 
 	test	_k_flags, #K_RET ! Can the kernel return?
 	jz	noret86
+	xor	dx, dx		! If little ext mem then monitor not preserved
+	xor	ax, ax
+	cmp	_mon_return, ax	! Minix can return to the monitor?
+	jz	0f
 	mov	dx, cs		! Monitor far return address
 	mov	ax, #ret86
-	cmp	_mem+14, #0	! Any extended memory?  (mem[1].size > 0 ?)
-	jnz	0f
-	xor	dx, dx		! If no ext mem then monitor not preserved
-	xor	ax, ax
 0:	push	dx		! Push monitor far return address or zero
 	push	ax
 noret86:
@@ -1009,9 +1153,8 @@ is25:
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
 
-	xorb	ah, ah		! Whack the disk system, Minix may have messed
-	movb	dl, #0x80	! it up
-	int	0x13
+	movb	dev_state, #-1	! Minix may have upset the disks, must reset.
+	call	serial_init	! Likewise with our serial console
 
 	call	_getprocessor
 	cmp	ax, #286
@@ -1108,9 +1251,12 @@ int86:
 	.data1	o32
 	push	12(bp)		! Far driver address
 	mov	ax, #0x90CB	! RETF; NOP
-0: cseg	mov	intret, ax	! Patch `INT n' or `RETF; NOP' into code
+0:
+ cseg	cmp	ax, intret	! Needs to be changed?
+	je	0f		! If not then avoid a huge I-cache stall
+   cseg	mov	intret, ax	! Patch `INT n' or `RETF; NOP' into code
 	jmp	.+2		! Clear instruction queue
-
+0:
 	mov	ds, 16(bp)	! Load parameters
 	mov	es, 18(bp)
 	.data1	o32
@@ -1245,6 +1391,25 @@ A20ok:	inb	0x92		! Check port A
 	jne	A20ok		! If not then wait
 	ret
 
+! void int15(bios_env_t *ep)
+!	Do an "INT 15" call, primarily for APM (Power Management).
+.define _int15
+_int15:
+	push	si		! Save callee-save register si
+	mov	si, sp
+	mov	si, 4(si)	! ep
+	mov	ax, (si)	! ep->ax
+	mov	bx, 2(si)	! ep->bx
+	mov	cx, 4(si)	! ep->cx
+	int	0x15		! INT 0x15 BIOS call
+	pushf			! Save flags
+	mov	(si), ax	! ep->ax
+	mov	2(si), bx	! ep->bx
+	mov	4(si), cx	! ep->cx
+	pop	6(si)		! ep->flags
+	pop	si		! Restore
+	ret
+
 .data
 	.ascii	"(null)\0"	! Just in case someone follows a null pointer
 	.align	2
@@ -1321,6 +1486,7 @@ p_mcs_desc:
 .bss
 	.comm	old_vid_mode, 2	! Video mode at startup
 	.comm	cur_vid_mode, 2	! Current video mode
+	.comm	dev_state, 2	! Device state: reset (-1), closed (0), open (1)
 	.comm	sectors, 2	! # sectors of current device
 	.comm	secspcyl, 2	! (Sectors * heads) of current device
 	.comm	msw, 4		! Saved machine status word (cr0)
@@ -1328,3 +1494,4 @@ p_mcs_desc:
 	.comm	escape, 2	! Escape typed?
 	.comm	bus, 2		! Saved return value of _get_bus
 	.comm	unchar, 2	! Char returned by ungetch(c)
+	.comm	line, 2		! Serial line I/O port to copy console I/O to.

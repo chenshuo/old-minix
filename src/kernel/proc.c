@@ -86,11 +86,13 @@ int task;			/* number of task to be started */
 	unlock();
 	return;
   }
+  switching = TRUE;
 
   /* If task is not waiting for an interrupt, record the blockage. */
   if ( (rp->p_flags & (RECEIVING | SENDING)) != RECEIVING ||
       !isrxhardware(rp->p_getfrom)) {
 	rp->p_int_blocked = TRUE;
+	switching = FALSE;
 	return;
   }
 
@@ -104,15 +106,8 @@ int task;			/* number of task to be started */
   rp->p_flags &= ~RECEIVING;
   rp->p_int_blocked = FALSE;
 
-   /* Make rp ready and run it unless a task is already running.  This is
-    * ready(rp) in-line for speed.
-    */
-  if (rdy_head[TASK_Q] != NIL_PROC)
-	rdy_tail[TASK_Q]->p_nextready = rp;
-  else
-	proc_ptr = rdy_head[TASK_Q] = rp;
-  rdy_tail[TASK_Q] = rp;
-  rp->p_nextready = NIL_PROC;
+  ready(rp);
+  switching = FALSE;
 }
 
 /*===========================================================================*
@@ -133,7 +128,7 @@ message *m_ptr;			/* pointer to message */
   int n;
 
   /* Check for bad system call parameters. */
-  if (!isoksrc_dest(src_dest)) return(E_BAD_SRC);
+  if (!isoksrc_dest(src_dest)) return(E_BAD_DEST);
   rp = proc_ptr;
 
   if (isuserp(rp) && function != BOTH) return(E_NO_PERM);

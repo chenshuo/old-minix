@@ -16,6 +16,11 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
+#include <stddef.h>
+
+#if (CHIP == INTEL)
+#include <ibm/portio.h>
+#endif
 
 #include "const.h"
 #include "type.h"

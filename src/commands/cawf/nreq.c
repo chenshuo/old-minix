@@ -94,6 +94,7 @@ static struct nr_req {
 	{ "fi",		nr_fi  },
 	{ "fl",		nr_fl  },
 	{ "ft",		nr_ft  },
+	{ "hy",		nr_nil },
 	{ "i0",		nr_nil },
 	{ "it",		nr_it  },
 	{ "lg",		nr_nil },

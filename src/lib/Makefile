@@ -26,6 +26,7 @@ all:
 	cd math && $(MAKE)
 	cd other && $(MAKE)
 	cd posix && $(MAKE)
+	test `arch` = i86 || { cd regex && $(MAKE); }
 	cd rts && $(MAKE)
 	cd stdio && $(MAKE)
 	cd syscall && $(MAKE)

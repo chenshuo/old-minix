@@ -15,7 +15,7 @@
 #include <minix/com.h>
 #include <signal.h>
 #include <fcntl.h>
-#include <sys/ioctl.h>
+#include <sys/ioc_memory.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -49,7 +49,7 @@ PUBLIC void main()
 	}
 
 	/* Send the results back to the user to indicate completion. */
-	if (result != E_NO_MESSAGE) setreply(who, result);
+	if (result != SUSPEND) setreply(who, result);
 
 	swap_in();		/* maybe a process can be swapped in? */
 

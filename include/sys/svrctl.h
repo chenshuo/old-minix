@@ -12,7 +12,7 @@ Created:	Feb 15, 1994 by Philip Homburg <philip@cs.vu.nl>
 #endif
 
 /* Server control commands have the same encoding as the commands for ioctls. */
-#include <sys/ioctl.h>
+#include <minix/ioctl.h>
 
 /* MM controls. */
 #define MMSIGNON	_IO ('M',  4)

@@ -1,4 +1,4 @@
-/*	repartition 1.17 - Load a partition table	Author: Kees J. Bot
+/*	repartition 1.18 - Load a partition table	Author: Kees J. Bot
  *								30 Nov 1991
  */
 #define nil 0
@@ -133,7 +133,7 @@ void print_chs(unsigned long sector)
 
 	if (sector == -1) { sector= 0; delta= -1; }
 
-	printf("  %4d/%03d/%02d",
+	printf(" %5d/%03d/%02d",
 		(int) (sector / secspcyl),
 		(int) (sector % secspcyl) / geometry.sectors,
 		(int) (sector % geometry.sectors) + delta);
@@ -149,7 +149,7 @@ void show_part(char *name, unsigned long base, unsigned long size)
 		printf("device");
 		for (i = 6; i < len; i++) fputc(' ', stdout);
 		printf(
-		"      first         last        base      size       kb\n");
+	"      first         last        base      size        kb\n");
 	}
 
 	printf("%s", name);
@@ -157,7 +157,7 @@ void show_part(char *name, unsigned long base, unsigned long size)
 
 	print_chs(base);
 	print_chs(base + size - 1);
-	printf("  %8lu  %8lu  %7lu\n", base, size, size / (1024/SECTOR_SIZE));
+	printf(" %9lu %9lu %9lu\n", base, size, size / (1024/SECTOR_SIZE));
 }
 
 int main(int argc, char **argv)

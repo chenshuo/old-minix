@@ -65,8 +65,8 @@ void free( void* );
  * so it's got to be a K&R compiler, and therefore there's no standard
  * place from which to include these definitions
  */
-/* char *malloc();
-int free(); */
+char *malloc();
+int free();
 int read();
 #endif
 
@@ -725,26 +725,27 @@ case 28:
 	YY_BREAK
 case 29:
 # line 103 "scan.l"
-{ yylval.s_value = strcopyof(yytext); return(REL_OP); }
+{ yylval.s_value = strcopyof((char *) yytext);
+			 return(REL_OP); }
 	YY_BREAK
 case 30:
-# line 104 "scan.l"
+# line 105 "scan.l"
 { yylval.c_value = yytext[0]; return(INCR_DECR); }
 	YY_BREAK
 case 31:
-# line 105 "scan.l"
+# line 106 "scan.l"
 { line_no++; return(NEWLINE); }
 	YY_BREAK
 case 32:
-# line 106 "scan.l"
+# line 107 "scan.l"
 {  line_no++;  /* ignore a "quoted" newline */ }
 	YY_BREAK
 case 33:
-# line 107 "scan.l"
+# line 108 "scan.l"
 { /* ignore spaces and tabs */ }
 	YY_BREAK
 case 34:
-# line 108 "scan.l"
+# line 109 "scan.l"
 {
 	int c;
 
@@ -768,15 +769,15 @@ case 34:
       }
 	YY_BREAK
 case 35:
-# line 129 "scan.l"
-{ yylval.s_value = strcopyof(yytext); return(NAME); }
+# line 130 "scan.l"
+{ yylval.s_value = strcopyof((char *) yytext); return(NAME); }
 	YY_BREAK
 case 36:
-# line 130 "scan.l"
+# line 131 "scan.l"
 {
  	      unsigned char *look;
 	      int count = 0;
-	      yylval.s_value = strcopyof(yytext);
+	      yylval.s_value = strcopyof((char *) yytext);
 	      for (look = yytext; *look != 0; look++)
 		{
 		  if (*look == '\n') line_no++;
@@ -787,12 +788,12 @@ case 36:
 	    }
 	YY_BREAK
 case 37:
-# line 142 "scan.l"
+# line 143 "scan.l"
 {
 	      unsigned char *src, *dst;
 	      int len;
 	      /* remove a trailing decimal point. */
-	      len = strlen(yytext);
+	      len = strlen((char *) yytext);
 	      if (yytext[len-1] == '.')
 	        yytext[len-1] = 0;
 	      /* remove leading zeros. */
@@ -812,12 +813,12 @@ case 37:
 		    *dst++ = *src++;
 	        }
 	      *dst = 0;
-	      yylval.s_value = strcopyof(yytext); 
+	      yylval.s_value = strcopyof((char *) yytext); 
 	      return(NUMBER);
 	    }
 	YY_BREAK
 case 38:
-# line 169 "scan.l"
+# line 170 "scan.l"
 {
 	  if (yytext[0] < ' ')
 	    yyerror ("illegal character: ^%c",yytext[0] + '@');
@@ -829,7 +830,7 @@ case 38:
 	}
 	YY_BREAK
 case 39:
-# line 178 "scan.l"
+# line 179 "scan.l"
 ECHO;
 	YY_BREAK
 case YY_STATE_EOF(INITIAL):
@@ -1099,7 +1100,7 @@ register yy_state_type yy_current_state;
 	    yy_c = yy_meta[yy_c];
 	}
     yy_current_state = yy_nxt[yy_base[yy_current_state] + yy_c];
-    yy_is_jam = (yy_current_state == 143);
+    yy_is_jam = (yy_base[yy_current_state] == 194);
 
     return ( yy_is_jam ? 0 : yy_current_state );
     }
@@ -1353,7 +1354,7 @@ FILE *file;
 
     b->yy_eof_status = EOF_NOT_SEEN;
     }
-# line 178 "scan.l"
+# line 179 "scan.l"
 
 
 

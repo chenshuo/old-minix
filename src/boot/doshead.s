@@ -650,7 +650,13 @@ _readsectors:
 	push	bp
 	mov	bp, sp
 	movb	13(bp), 0x3F	! Code for a file read
-rwsec:	mov	dx, 8(bp)
+rwsec:
+	cmp	(vfd), -1	! Currently closed?
+	jne	0f
+	call	_dev_open	! Open file if needed
+	test	ax, ax
+	jnz	rwerr
+0:	mov	dx, 8(bp)
 	mov	bx, 10(bp)	! bx-dx = Sector number
 	mov	cx, 9
 mul512:	shl	dx, 1
@@ -1252,6 +1258,25 @@ A20ok:	inb	0x92		! Check port A
 	jne	A20ok		! If not then wait
 	ret
 
+! void int15(bios_env_t *ep)
+!	Do an "INT 15" call, primarily for APM (Power Management).
+.define _int15
+_int15:
+	push	si		! Save callee-save register si
+	mov	si, sp
+	mov	si, 4(si)	! ep
+	mov	ax, (si)	! ep->ax
+	mov	bx, 2(si)	! ep->bx
+	mov	cx, 4(si)	! ep->cx
+	int	0x15		! INT 0x15 BIOS call
+	pushf			! Save flags
+	mov	(si), ax	! ep->ax
+	mov	2(si), bx	! ep->bx
+	mov	4(si), cx	! ep->cx
+	pop	6(si)		! ep->flags
+	pop	si		! Restore
+	ret
+
 .sect	.rom
 	.align	4
 c60:	.data2	60		! Constants for MUL and DIV
@@ -1339,3 +1364,6 @@ vfd:		.data2  -1		! Virtual disk file handle
 	.comm	escape, 2	! Escape typed?
 	.comm	bus, 2		! Saved return value of _get_bus
 	.comm	unchar, 2	! Char returned by ungetch(c)
+
+!
+! $PchId: doshead.ack.s,v 1.7 2002/02/27 19:37:52 philip Exp $

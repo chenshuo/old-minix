@@ -19,16 +19,10 @@
 .define	__exit		! dummy for library routines
 .define	___exit		! dummy for library routines
 .define	___main		! dummy for GCC
-.define	_in_byte	! read a byte from a port and return it
-.define	_in_word	! read a word from a port and return it
-.define	_out_byte	! write a byte to a port
-.define	_out_word	! write a word to a port
-.define	_port_read	! transfer data from (disk controller) port to memory
-.define	_port_read_byte	! likewise byte by byte
-.define	_port_write	! transfer data from memory to (disk controller) port
-.define	_port_write_byte ! likewise byte by byte
-.define	_lock		! disable interrupts
-.define	_unlock		! enable interrupts
+.define	_phys_insw	! transfer data from (disk controller) port to memory
+.define	_phys_insb	! likewise byte by byte
+.define	_phys_outsw	! transfer data from memory to (disk controller) port
+.define	_phys_outsb	! likewise byte by byte
 .define	_enable_irq	! enable an irq at the 8259 controller
 .define	_disable_irq	! disable an irq
 .define	_phys_copy	! copy data from anywhere to anywhere in memory
@@ -219,262 +213,180 @@ ___main:
 
 
 !*===========================================================================*
-!*				in_byte					     *
+!*				phys_insw				     *
 !*===========================================================================*
-! PUBLIC unsigned in_byte(port_t port);
-! Read an (unsigned) byte from the i/o port  port  and return it.
+! PUBLIC void phys_insw(Port_t port, phys_bytes buf, size_t count);
+! Input an array from an I/O port.  Absolute address version of insw().
 
-	.align	16
-_in_byte:
-	mov	edx, 4(esp)		! port
-	sub	eax, eax
-	inb	dx			! read 1 byte
-	ret
-
-
-!*===========================================================================*
-!*				in_word					     *
-!*===========================================================================*
-! PUBLIC unsigned in_word(port_t port);
-! Read an (unsigned) word from the i/o port  port  and return it.
-
-	.align	16
-_in_word:
-	mov	edx, 4(esp)		! port
-	sub	eax, eax
-    o16	in	dx			! read 1 word
-	ret
-
-
-!*===========================================================================*
-!*				out_byte				     *
-!*===========================================================================*
-! PUBLIC void out_byte(port_t port, u8_t value);
-! Write  value  (cast to a byte)  to the I/O port  port.
-
-	.align	16
-_out_byte:
-	mov	edx, 4(esp)		! port
-	movb	al, 4+4(esp)		! value
-	outb	dx			! output 1 byte
-	ret
-
-
-!*===========================================================================*
-!*				out_word				     *
-!*===========================================================================*
-! PUBLIC void out_word(Port_t port, U16_t value);
-! Write  value  (cast to a word)  to the I/O port  port.
-
-	.align	16
-_out_word:
-	mov	edx, 4(esp)		! port
-	mov	eax, 4+4(esp)		! value
-    o16	out	dx			! output 1 word
-	ret
-
-
-!*===========================================================================*
-!*				port_read				     *
-!*===========================================================================*
-! PUBLIC void port_read(port_t port, phys_bytes destination, unsigned bytcount);
-! Transfer data from (hard disk controller) port to memory.
-
-PR_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port dst len
-
-	.align	16
-_port_read:
+_phys_insw:
+	push	ebp
+	mov	ebp, esp
 	cld
 	push	edi
 	push	es
 	mov	ecx, FLAT_DS_SELECTOR
 	mov	es, cx
-	mov	edx, PR_ARGS(esp)	! port to read from
-	mov	edi, PR_ARGS+4(esp)	! destination addr
-	mov	ecx, PR_ARGS+4+4(esp)	! byte count
+	mov	edx, 8(ebp)		! port to read from
+	mov	edi, 12(ebp)		! destination addr
+	mov	ecx, 16(ebp)		! byte count
 	shr	ecx, 1			! word count
-	rep				! (hardware cannot handle dwords)
-    o16	ins				! read everything
+rep o16	ins				! input many words
 	pop	es
 	pop	edi
+	pop	ebp
 	ret
 
 
 !*===========================================================================*
-!*				port_read_byte				     *
+!*				phys_insb				     *
 !*===========================================================================*
-! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
-!						unsigned bytcount);
-! Transfer data from port to memory.
+! PUBLIC void phys_insb(Port_t port, phys_bytes buf, size_t count);
+! Input an array from an I/O port.  Absolute address version of insb().
 
-PR_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port dst len
-
-_port_read_byte:
+_phys_insb:
+	push	ebp
+	mov	ebp, esp
 	cld
 	push	edi
 	push	es
 	mov	ecx, FLAT_DS_SELECTOR
 	mov	es, cx
-	mov	edx, PR_ARGS_B(esp)
-	mov	edi, PR_ARGS_B+4(esp)
-	mov	ecx, PR_ARGS_B+4+4(esp)
-	rep
-	insb
+	mov	edx, 8(ebp)		! port to read from
+	mov	edi, 12(ebp)		! destination addr
+	mov	ecx, 16(ebp)		! byte count
+	shr	ecx, 1			! word count
+   rep	insb				! input many bytes
 	pop	es
 	pop	edi
+	pop	ebp
 	ret
 
 
 !*===========================================================================*
-!*				port_write				     *
+!*				phys_outsw				     *
 !*===========================================================================*
-! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
-! Transfer data from memory to (hard disk controller) port.
-
-PW_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port src len
+! PUBLIC void phys_outsw(Port_t port, phys_bytes buf, size_t count);
+! Output an array to an I/O port.  Absolute address version of outsw().
 
 	.align	16
-_port_write:
+_phys_outsw:
+	push	ebp
+	mov	ebp, esp
 	cld
 	push	esi
 	push	ds
 	mov	ecx, FLAT_DS_SELECTOR
 	mov	ds, cx
-	mov	edx, PW_ARGS(esp)	! port to write to
-	mov	esi, PW_ARGS+4(esp)	! source addr
-	mov	ecx, PW_ARGS+4+4(esp)	! byte count
+	mov	edx, 8(ebp)		! port to write to
+	mov	esi, 12(ebp)		! source addr
+	mov	ecx, 16(ebp)		! byte count
 	shr	ecx, 1			! word count
-	rep				! (hardware cannot handle dwords)
-    o16	outs				! write everything
+rep o16	outs				! output many words
 	pop	ds
 	pop	esi
+	pop	ebp
 	ret
 
 
 !*===========================================================================*
-!*				port_write_byte				     *
+!*				phys_outsb				     *
 !*===========================================================================*
-! PUBLIC void port_write_byte(port_t port, phys_bytes source,
-!						unsigned bytcount);
-! Transfer data from memory to port.
+! PUBLIC void phys_outsb(Port_t port, phys_bytes buf, size_t count);
+! Output an array to an I/O port.  Absolute address version of outsb().
 
-PW_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port src len
-
-_port_write_byte:
+	.align	16
+_phys_outsb:
+	push	ebp
+	mov	ebp, esp
 	cld
 	push	esi
 	push	ds
 	mov	ecx, FLAT_DS_SELECTOR
 	mov	ds, cx
-	mov	edx, PW_ARGS_B(esp)
-	mov	esi, PW_ARGS_B+4(esp)
-	mov	ecx, PW_ARGS_B+4+4(esp)
-	rep
-	outsb
+	mov	edx, 8(ebp)		! port to write to
+	mov	esi, 12(ebp)		! source addr
+	mov	ecx, 16(ebp)		! byte count
+   rep	outsb				! output many bytes
 	pop	ds
 	pop	esi
-	ret
-
-
-!*===========================================================================*
-!*				lock					     *
-!*===========================================================================*
-! PUBLIC void lock();
-! Disable CPU interrupts.
-
-	.align	16
-_lock:
-	cli				! disable interrupts
-	ret
-
-
-!*===========================================================================*
-!*				unlock					     *
-!*===========================================================================*
-! PUBLIC void unlock();
-! Enable CPU interrupts.
-
-	.align	16
-_unlock:
-	sti
+	pop	ebp
 	ret
 
 
 !*==========================================================================*
 !*				enable_irq				    *
 !*==========================================================================*/
-! PUBLIC void enable_irq(unsigned irq)
+! PUBLIC void enable_irq(irq_hook_t *hook)
 ! Enable an interrupt request line by clearing an 8259 bit.
-! Equivalent code for irq < 8:
-!	out_byte(INT_CTLMASK, in_byte(INT_CTLMASK) & ~(1 << irq));
+! Equivalent C code for hook->irq < 8:
+!   if ((irq_actids[hook->irq] &= ~hook->id) == 0)
+!	outb(INT_CTLMASK, inb(INT_CTLMASK) & ~(1 << irq));
 
 	.align	16
 _enable_irq:
-	mov	ecx, 4(esp)		! irq
+	push	ebp
+	mov	ebp, esp
 	pushf
 	cli
+	mov	eax, 8(ebp)		! hook
+	mov	ecx, 8(eax)		! irq
+	mov	eax, 12(eax)		! id bit
+	not	eax
+	and	_irq_actids(ecx*4), eax	! clear this id bit
+	jnz	en_done			! still masked by other handlers?
 	movb	ah, ~1
 	rolb	ah, cl			! ah = ~(1 << (irq % 8))
+	mov	edx, INT_CTLMASK	! enable irq < 8 at the master 8259
 	cmpb	cl, 8
-	jae	enable_8		! enable irq >= 8 at the slave 8259
-enable_0:
-	inb	INT_CTLMASK
+	jb	0f
+	mov	edx, INT2_CTLMASK	! enable irq >= 8 at the slave 8259
+0:	inb	dx
 	andb	al, ah
-	outb	INT_CTLMASK		! clear bit at master 8259
-	popf
-	ret
-	.align	4
-enable_8:
-	inb	INT2_CTLMASK
-	andb	al, ah
-	outb	INT2_CTLMASK		! clear bit at slave 8259
-	popf
+	outb	dx			! clear bit at the 8259
+en_done:popf
+	leave
 	ret
 
 
 !*==========================================================================*
 !*				disable_irq				    *
 !*==========================================================================*/
-! PUBLIC int disable_irq(unsigned irq)
+! PUBLIC int disable_irq(irq_hook_t *hook)
 ! Disable an interrupt request line by setting an 8259 bit.
-! Equivalent code for irq < 8:
-!	out_byte(INT_CTLMASK, in_byte(INT_CTLMASK) | (1 << irq));
+! Equivalent C code for irq < 8:
+!   irq_actids[hook->irq] |= hook->id;
+!   outb(INT_CTLMASK, inb(INT_CTLMASK) | (1 << irq));
 ! Returns true iff the interrupt was not already disabled.
 
 	.align	16
 _disable_irq:
-	mov	ecx, 4(esp)		! irq
+	push	ebp
+	mov	ebp, esp
 	pushf
 	cli
+	mov	eax, 8(ebp)		! hook
+	mov	ecx, 8(eax)		! irq
+	mov	eax, 12(eax)		! id bit
+	or	_irq_actids(ecx*4), eax	! set this id bit
 	movb	ah, 1
 	rolb	ah, cl			! ah = (1 << (irq % 8))
+	mov	edx, INT_CTLMASK	! disable irq < 8 at the master 8259
 	cmpb	cl, 8
-	jae	disable_8		! disable irq >= 8 at the slave 8259
-disable_0:
-	inb	INT_CTLMASK
+	jb	0f
+	mov	edx, INT2_CTLMASK	! disable irq >= 8 at the slave 8259
+0:	inb	dx
 	testb	al, ah
 	jnz	dis_already		! already disabled?
 	orb	al, ah
-	outb	INT_CTLMASK		! set bit at master 8259
-	popf
+	outb	dx			! set bit at the 8259
 	mov	eax, 1			! disabled by this function
-	ret
-disable_8:
-	inb	INT2_CTLMASK
-	testb	al, ah
-	jnz	dis_already		! already disabled?
-	orb	al, ah
-	outb	INT2_CTLMASK		! set bit at slave 8259
 	popf
-	mov	eax, 1			! disabled by this function
+	leave
 	ret
 dis_already:
-	popf
 	xor	eax, eax		! already disabled
+	popf
+	leave
 	ret
 
 

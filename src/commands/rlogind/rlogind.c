@@ -1,5 +1,9 @@
 /*
-in.rld.c
+rlogind.c
+
+Created:	by Philip Homburg <philip@cs.vu.nl>
+Log:		Utmp improvement by Kees Bot <kjb@cs.vu.nl>
+		Split to compile easier on i86 by kjb
 */
 
 #include <sys/types.h>
@@ -17,7 +21,7 @@ in.rld.c
 #include <utmp.h>
 #include <net/hton.h>
 #define EXTERN
-#include "in.rld.h"
+#include "rlogind.h"
 
 char pty_str[]= "/dev/ptyXX";
 char tty_str[]= "/dev/ttyXX";

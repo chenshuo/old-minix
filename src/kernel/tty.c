@@ -49,7 +49,7 @@
 #if ENABLE_SRCCOMPAT || ENABLE_BINCOMPAT
 #include <sgtty.h>
 #endif
-#include <sys/ioctl.h>
+#include <sys/ioc_tty.h>
 #include <signal.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -157,6 +157,9 @@ PUBLIC void tty_task()
 #endif
 
   while (TRUE) {
+	/* Check if a timer expired. */
+	if (cproc_addr(TTY)->p_exptimers != NULL) tmr_exptimers();
+
 	/* Handle any events on any of the ttys. */
 	for (tp = FIRST_TTY; tp < END_TTY; tp++) {
 		if (tp->tty_events) handle_events(tp);

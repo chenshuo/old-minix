@@ -48,7 +48,7 @@ typedef short          dev_t;	   /* holds (major|minor) device pair */
 typedef char           gid_t;	   /* group id */
 typedef unsigned short ino_t; 	   /* i-node number */
 typedef unsigned short mode_t;	   /* file type and permissions bits */
-typedef char         nlink_t;	   /* number of links to a file */
+typedef short        nlink_t;	   /* number of links to a file */
 typedef unsigned long  off_t;	   /* offset within a file */
 typedef int            pid_t;	   /* process id (must be signed) */
 typedef short          uid_t;	   /* user id */

@@ -78,11 +78,13 @@ _PROTOTYPE( int do_exec, (void)						);
 _PROTOTYPE( int do_revive, (void)					);
 _PROTOTYPE( int do_set, (void)						);
 _PROTOTYPE( int do_sync, (void)						);
+_PROTOTYPE( int do_reboot, (void)					);
 _PROTOTYPE( int do_svrctl, (void)					);
 
 /* mount.c */
 _PROTOTYPE( int do_mount, (void)					);
 _PROTOTYPE( int do_umount, (void)					);
+_PROTOTYPE( int unmount, (Dev_t dev)					);
 
 /* open.c */
 _PROTOTYPE( int do_close, (void)					);

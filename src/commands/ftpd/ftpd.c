@@ -216,9 +216,13 @@ char *p;
 int readline(args)
 char **args;
 {
+   char *nl;
+
    if (fgets(line, sizeof(line), stdin) == (char *)NULL)
 	return(BAD);
-   *strchr(line, '\n') = '\0';
+   if ((nl = strchr(line, '\n')) == NULL)
+	return(BAD);
+   *nl = '\0';
 
    cvtline(args);
 

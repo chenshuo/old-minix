@@ -100,7 +100,8 @@ limits return(Limits);
 #endif
 			 return(ASSIGN_OP);
 		       }
-==|\<=|\>=|\!=|"<"|">" { yylval.s_value = strcopyof(yytext); return(REL_OP); }
+==|\<=|\>=|\!=|"<"|">" { yylval.s_value = strcopyof((char *) yytext);
+			 return(REL_OP); }
 \+\+|-- { yylval.c_value = yytext[0]; return(INCR_DECR); }
 "\n" { line_no++; return(NEWLINE); }
 \\\n {  line_no++;  /* ignore a "quoted" newline */ }
@@ -126,11 +127,11 @@ limits return(Limits);
 	      }
 	  }
       }
-[a-z][a-z0-9_]* { yylval.s_value = strcopyof(yytext); return(NAME); }
+[a-z][a-z0-9_]* { yylval.s_value = strcopyof((char *) yytext); return(NAME); }
 \"[^\"]*\"  {
  	      unsigned char *look;
 	      int count = 0;
-	      yylval.s_value = strcopyof(yytext);
+	      yylval.s_value = strcopyof((char *) yytext);
 	      for (look = yytext; *look != 0; look++)
 		{
 		  if (*look == '\n') line_no++;
@@ -143,7 +144,7 @@ limits return(Limits);
 	      unsigned char *src, *dst;
 	      int len;
 	      /* remove a trailing decimal point. */
-	      len = strlen(yytext);
+	      len = strlen((char *) yytext);
 	      if (yytext[len-1] == '.')
 	        yytext[len-1] = 0;
 	      /* remove leading zeros. */
@@ -163,7 +164,7 @@ limits return(Limits);
 		    *dst++ = *src++;
 	        }
 	      *dst = 0;
-	      yylval.s_value = strcopyof(yytext); 
+	      yylval.s_value = strcopyof((char *) yytext); 
 	      return(NUMBER);
 	    }
 .       {

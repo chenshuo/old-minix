@@ -55,6 +55,8 @@ typedef struct rarp46
 	char a46_padding[ETH_MIN_PACK_SIZE - (4*6 + 2*4 + 4*2 + 2*1)];
 } rarp46_t;
 
+#define ETH_RARP_PROTO	0x8035
+
 #define RARP_ETHERNET	1
 
 #define RARP_REQUEST	3

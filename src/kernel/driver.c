@@ -29,7 +29,7 @@
  */
 
 #include "kernel.h"
-#include <sys/ioctl.h>
+#include <sys/ioc_disk.h>
 #include "driver.h"
 
 #if (CHIP == INTEL)
@@ -77,7 +77,10 @@ struct driver *dp;	/* Device dependent entry points. */
    */
 
   while (TRUE) {
-	/* First wait for a request to read or write a disk block. */
+	/* Check if a timer expired. */
+	if (proc_ptr->p_exptimers != NULL) tmr_exptimers();
+
+	/* Wait for a request to read or write a disk block. */
 	receive(ANY, &mess);
 
 	caller = mess.m_source;
@@ -299,25 +302,6 @@ PUBLIC void nop_task()
 	NULL,
   };
   driver_task(&nop_tab);
-}
-
-
-/*===========================================================================*
- *				clock_mess				     *
- *===========================================================================*/
-PUBLIC void clock_mess(ticks, func)
-int ticks;			/* how many clock ticks to wait */
-watchdog_t func;		/* function to call upon time out */
-{
-/* Send the clock task a message. */
-
-  message mess;
-
-  mess.m_type = SET_ALARM;
-  mess.CLOCK_PROC_NR = proc_number(proc_ptr);
-  mess.DELTA_TICKS = (long) ticks;
-  mess.FUNC_TO_CALL = (sighandler_t) func;
-  sendrec(CLOCK, &mess);
 }
 
 

@@ -150,11 +150,11 @@ print_line:
 					Charput((int)' ');
 				if (Hdl)
 					LenprtHF(Hdl, Thispg, 1);
-				while (j--)
+				while (j-- > 0)
 					Charput((int)' ');
 				if (Hdc)
 					LenprtHF(Hdc, Thispg, 1);
-				while (n--)
+				while (n-- > 0)
 					Charput((int)' ');
 				if (Hdr)
 					LenprtHF(Hdr, Thispg, 1);
@@ -235,7 +235,7 @@ print_line:
 						j++;
 				} else if (i >= (Padx - xsp))
 					j++;
-				while (j--)
+				while (j-- > 0)
 					Charput((int)' ');
 			}
 			while (*s1)
@@ -278,11 +278,11 @@ print_line:
 				Charput((int)' ');
 			if (Ftl)
 				LenprtHF(Ftl, Thispg, 1);
-			while (j--)
+			while (j-- > 0)
 				Charput((int)' ');
 			if (Ftc)
 				LenprtHF(Ftc, Thispg, 1);
-			while (n--)
+			while (n-- > 0)
 				Charput((int)' ');
 			if (Ftr)
 				LenprtHF(Ftr, Thispg, 1);

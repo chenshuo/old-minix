@@ -94,19 +94,19 @@ int *canwrite;			/* return: number of bytes we can write */
  * pipe and no one is reading from it, give a broken pipe error.
  */
 
-  int r = 0;
-
   /* If reading, check for empty pipe. */
   if (rw_flag == READING) {
 	if (position >= rip->i_size) {
 		/* Process is reading from an empty pipe. */
+		int r = 0;
 		if (find_filp(rip, W_BIT) != NIL_FILP) {
 			/* Writer exists */
-			if (oflags & O_NONBLOCK) 
+			if (oflags & O_NONBLOCK) {
 				r = EAGAIN;
-			else 
+			} else {
 				suspend(XPIPE);	/* block reader */
-
+				r = SUSPEND;
+			}
 			/* If need be, activate sleeping writers. */
 			if (susp_count > 0) release(rip, WRITE, susp_count);
 		}
@@ -114,7 +114,6 @@ int *canwrite;			/* return: number of bytes we can write */
 	}
   } else {
 	/* Process is writing to a pipe. */
-/*	if (bytes > PIPE_SIZE) return(EFBIG); */
 	if (find_filp(rip, R_BIT) == NIL_FILP) {
 		/* Tell kernel to generate a SIGPIPE signal. */
 		sys_kill((int)(fp - fproc), SIGPIPE);
@@ -143,7 +142,7 @@ int *canwrite;			/* return: number of bytes we can write */
 			}
 		}
 		suspend(XPIPE);	/* stop writer -- pipe full */
-		return(0);
+		return(SUSPEND);
 	}
 
 	/* Writing to an empty pipe.  Search for suspended reader. */
@@ -165,6 +164,7 @@ int task;			/* who is proc waiting for? (PIPE = pipe) */
  * Store the parameters to be used upon resuming in the process table.
  * (Actually they are not used when a process is waiting for an I/O device,
  * but they are needed for pipes, and it is not worth making the distinction.)
+ * The SUSPEND pseudo error should be returned after calling suspend().
  */
 
   if (task == XPIPE || task == XPOPEN) susp_count++;/* #procs susp'ed on pipe*/
@@ -178,7 +178,6 @@ int task;			/* who is proc waiting for? (PIPE = pipe) */
 	fp->fp_buffer = buffer;		/* for reads and writes */
 	fp->fp_nbytes = nbytes;
   }
-  dont_reply = TRUE;		/* do not send caller a reply message now */
 }
 
 

@@ -18,10 +18,11 @@
  *		be misrepresented as being the original software.
  */
 
-#include <lib.h>
 #include <string.h>
-#include <regexp.h>
 #include <stdio.h>
+#define const		/* avoid "const poisoning" */
+#include <regexp.h>
+#undef const
 
 /* The first byte of the regexp internal "program" is actually this magic
  * number; the start node begins in the second byte.
@@ -83,3 +84,7 @@ char *dest;
   }
   *dst++ = '\0';
 }
+
+/*
+ * $PchId: regsub.c,v 1.3 1995/11/27 20:18:16 philip Exp $
+ */

@@ -590,7 +590,7 @@ ether_addr_t *ethaddr;
 		arp_port->ap_flags &= ~(APF_CLIENTREQ|APF_CLIENTWRITE);
 		clck_untimer(&arp_port->ap_timer);
 	}
-	(*arp_port->ap_arp_func)(arp_port->ap_eth_port, ipaddr, ethaddr);
+	(*arp_port->ap_arp_func)(arp_port->ap_ip_port, ipaddr, ethaddr);
 }
 
 PRIVATE arp_cache_t *find_cache_ent (arp_port, ipaddr)

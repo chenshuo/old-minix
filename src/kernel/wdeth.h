@@ -66,6 +66,7 @@ Created:	before Dec 28, 1992 by Philip Homburg
 #define E_TLB_EB	0x05		/* WD8013EB */
 #define E_TLB_E		0x27		/* WD8013 Elite */
 #define E_TLB_SMCE	0x29		/* SMC Elite 16 */
+#define E_TLB_SMC8216T	0x2A		/* SMC 8216 T */
 #define E_TLB_SMC8216C	0x2B		/* SMC 8216 C */
 
 #define E_TLB_REV	0x1F		/* revision mask */
@@ -84,11 +85,11 @@ Created:	before Dec 28, 1992 by Philip Homburg
 #define E_790_GCR_IR2	0x40		/* bit 2 of encoded IRQ */
 
 
-#define inb_we(dep, reg) (in_byte(dep->de_base_port+reg))
-#define outb_we(dep, reg, data) (out_byte(dep->de_base_port+reg, data))
+#define inb_we(dep, reg)	(inb(dep->de_base_port+reg))
+#define outb_we(dep, reg, data)	(outb(dep->de_base_port+reg, data))
 
 #endif /* WDETH_H */
 
 /*
- * $PchId: wdeth.h,v 1.4 1995/12/22 08:36:57 philip Exp $
+ * $PchId: wdeth.h,v 1.5 1997/03/06 20:17:11 philip Exp $
  */

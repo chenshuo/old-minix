@@ -1,6 +1,10 @@
 /*	boot.h - Info between different parts of boot.	Author: Kees J. Bot
  */
 
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
 /* Constants describing the metal: */
 
 #define SECTOR_SIZE	512
@@ -61,7 +65,17 @@ typedef struct {		/* One chunk of free memory. */
 } memory;
 
 EXTERN memory mem[3];		/* List of available memory. */
+EXTERN int mon_return;		/* Monitor stays in memory? */
 
+typedef struct bios_env
+{
+	u16_t ax;
+	u16_t bx;
+	u16_t cx;
+	u16_t flags;
+} bios_env_t;
+
+#define FL_CARRY	0x0001	/* carry flag */
 
 /* Functions defined by boothead.s: */
 
@@ -97,7 +111,9 @@ void putch(int c);
 			/* Send a character to the screen. */
 #if BIOS
 void pause(void);
-#endif			/* Wait for an interrupt. */
+			/* Wait for an interrupt. */
+void serial_init(int line);
+#endif			/* Enable copying console I/O to a serial line. */
 
 void set_mode(unsigned mode);
 void clear_screen(void);
@@ -115,6 +131,7 @@ void bootstrap(int device, struct part_entry *entry);
 void minix(u32_t koff, u32_t kcs, u32_t kds,
 				char *bootparams, size_t paramsize, u32_t aout);
 			/* Start Minix. */
+void int15(bios_env_t *);
 
 
 /* Shared between boot.c and bootimage.c: */
@@ -146,7 +163,7 @@ int b_setvar(int flags, char *name, char *value);
 
 void parse_code(char *code);	/* Parse boot monitor commands. */
 
-EXTERN int fsok;	/* True if the boot device contains an FS. */
+extern int fsok;	/* True if the boot device contains an FS. */
 EXTERN u32_t lowsec;	/* Offset to the file system on the boot device. */
 
 /* Called by boot.c: */
@@ -184,3 +201,7 @@ EXTERN char *drun;	/* Initial command from DOS command line. */
 /* The monitor uses only the BIOS. */
 #define DOS	0
 #endif
+
+/*
+ * $PchId: boot.h,v 1.12 2002/02/27 19:42:45 philip Exp $
+ */

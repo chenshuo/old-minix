@@ -1,7 +1,7 @@
-/*	partition 1.12 - Make a partition table		Author: Kees J. Bot
+/*	partition 1.13 - Make a partition table		Author: Kees J. Bot
  *								27 Apr 1992
  */
-#define nil 0
+#define nil ((void*)0)
 #include <stdio.h>
 #include <sys/types.h>
 #include <stdlib.h>
@@ -47,6 +47,7 @@ int aflag;			/* Add a new partition to the current table. */
 int mflag;			/* Minix rules, no need for alignment. */
 int rflag;			/* Report current partitions. */
 int fflag;			/* Force making a table even if too small. */
+int nflag;			/* Play-act, don't really do it. */
 
 int cylinders, heads, sectors;	/* Device's geometry */
 int pad;			/* Partitions must be padded. */
@@ -54,11 +55,89 @@ int pad;			/* Partitions must be padded. */
 /* Descriptions of the device to divide and the partitions to make, including
  * gaps between partitions.
  */
+char *device;
 struct part_entry primary, table[2 * NR_PARTITIONS + 1];
 int npart;
 
-/* Extra flag at construction time. */
+/* Extra flags at construction time. */
 #define EXPAND_FLAG	0x01	/* Add the remaining sectors to this one */
+#define EXIST_FLAG	0x02	/* Use existing partition */
+
+void find_exist(struct part_entry *exist, int sysind, int nr)
+{
+	int f;
+	u16_t signature;
+	struct part_entry oldtable[NR_PARTITIONS];
+	int n, i;
+	u32_t minlow, curlow;
+	struct part_entry *cur;
+	char *nr_s[] = { "", "second ", "third ", "fourth" };
+
+	if ((f= open(device, O_RDONLY)) < 0
+
+		|| lseek(f, (off_t) PART_TABLE_OFF, SEEK_SET) == -1
+
+		|| read(f, oldtable, sizeof(oldtable)) < 0
+
+		|| read(f, &signature, sizeof(signature)) < 0
+
+		|| close(f) < 0
+	) fatal(device);
+
+	minlow= 0;
+	n= 0;
+	for (;;) {
+		curlow= -1;
+		cur= nil;
+		for (i= 0; i < NR_PARTITIONS; i++) {
+			if (signature == 0xAA55
+				&& oldtable[i].sysind != NO_PART
+				&& oldtable[i].lowsec >= minlow
+				&& oldtable[i].lowsec < curlow
+			) {
+				cur= &oldtable[i];
+				curlow= oldtable[i].lowsec;
+			}
+		}
+		if (n == nr) break;
+		n++;
+		minlow= curlow+1;
+	}
+
+	if (cur == nil || cur->sysind != sysind) {
+		fprintf(stderr,
+		"%s: Can't find a %sexisting partition of type 0x%02X\n",
+			arg0, nr_s[nr], sysind);
+		exit(1);
+	}
+	*exist = *cur;
+}
+
+void write_table(void)
+{
+	int f;
+	u16_t signature= 0xAA55;
+	struct part_entry newtable[NR_PARTITIONS];
+	int i;
+
+	if (nflag) {
+		printf("(Table not written)\n");
+		return;
+	}
+
+	for (i= 0; i < NR_PARTITIONS; i++) newtable[i]= table[1 + 2*i];
+
+	if ((f= open(device, O_WRONLY)) < 0
+
+		|| lseek(f, (off_t) PART_TABLE_OFF, SEEK_SET) == -1
+
+		|| write(f, newtable, sizeof(newtable)) < 0
+
+		|| write(f, &signature, sizeof(signature)) < 0
+
+		|| close(f) < 0
+	) fatal(device);
+}
 
 void sec2dos(unsigned long sec, unsigned char *dos)
 /* Translate a sector number into the three bytes DOS uses. */
@@ -84,7 +163,7 @@ void show_chs(unsigned long pos)
 		head= (pos / sectors) - (cyl * heads);
 		sec= pos % sectors;
 	}
-	printf("  %4d/%02d/%02d", cyl, head, sec);
+	printf("  %4d/%03d/%02d", cyl, head, sec);
 }
 
 void show_part(struct part_entry *p)
@@ -97,7 +176,7 @@ void show_part(struct part_entry *p)
 
 	if (!banner) {
 		printf(
-		"Part     First        Last        Base      Size       Kb\n");
+	"Part     First         Last         Base      Size       Kb\n");
 		banner= 1;
 	}
 
@@ -110,7 +189,7 @@ void show_part(struct part_entry *p)
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: partition [-mf] device [type:]length[+*] ...\n");
+		"Usage: partition [-mfn] device [type:]length[+*] ...\n");
 	exit(1);
 }
 
@@ -119,7 +198,9 @@ void usage(void)
 void parse(char *descr)
 {
 	int seen= 0, sysind, flags, c;
-	unsigned long size;
+	unsigned long lowsec, size;
+
+	lowsec= 0;
 
 	if (strchr(descr, ':') == nil) {
 		/* A hole. */
@@ -159,23 +240,38 @@ void parse(char *descr)
 		if (c != ':') usage();
 	}
 
-	size= 0;
-	while (between('0', (c= *descr++), '9')) {
-		size= 10 * size + (c - '0');
+	flags= 0;
+
+	if (strncmp(descr, "exist", 5) == 0 && (npart % 2) == 1) {
+		struct part_entry exist;
+
+		find_exist(&exist, sysind, (npart - 1) / 2);
+		sysind= exist.sysind;
+		lowsec= exist.lowsec;
+		size= exist.size;
+		flags |= EXIST_FLAG;
+		descr += 5;
+		c= *descr++;
 		seen|= 2;
+	} else {
+		size= 0;
+		while (between('0', (c= *descr++), '9')) {
+			size= 10 * size + (c - '0');
+			seen|= 2;
+		}
 	}
 
-	flags= 0;
 	for (;;) {
 		if (c == '*')
 			flags|= ACTIVE_FLAG;
 		else
-		if (c == '+')
+		if (c == '+' && !(flags & EXIST_FLAG))
 			flags|= EXPAND_FLAG;
 		else
 			break;
 		c= *descr++;
 	}
+
 	if (seen != 3 || c != 0) usage();
 
 	if (npart == arraysize(table)) {
@@ -185,11 +281,12 @@ void parse(char *descr)
 	}
 	table[npart].bootind= flags;
 	table[npart].sysind= sysind;
+	table[npart].lowsec= lowsec;
 	table[npart].size= size;
 	npart++;
 }
 
-void geometry(char *device)
+void geometry(void)
 /* Get the geometry of the drive the device lives on, and the base and size
  * of the device.
  */
@@ -224,7 +321,7 @@ void boundary(struct part_entry *pe, int exp)
 	pe->size= ((pe->lowsec + pe->size) / n * n) - pe->lowsec;
 }
 
-void distribute(char *device)
+void distribute(void)
 /* Fit the partitions onto the device.  Try to start and end them on a
  * cylinder boundary if so required.  The first partition is to start on
  * track 1, not on cylinder 1.
@@ -232,7 +329,7 @@ void distribute(char *device)
 {
 	struct part_entry *pe, *exp;
 	long count;
-	unsigned long base, size;
+	unsigned long base, size, oldbase;
 
 	do {
 		exp= nil;
@@ -240,11 +337,22 @@ void distribute(char *device)
 		count= primary.size;
 
 		for (pe= table; pe < arraylimit(table); pe++) {
-			pe->lowsec= base;
-			boundary(pe, 1);
-			base+= pe->size;
-			count-= pe->size;
-			if (pe->bootind & EXPAND_FLAG) exp= pe;
+			oldbase= base;
+			if (pe->bootind & EXIST_FLAG) {
+				if (base > pe->lowsec) {
+					fprintf(stderr,
+	"%s: fixed partition %d is preceded by too big partitions/holes\n",
+						arg0, ((pe - table) - 1) / 2);
+					exit(1);
+				}
+				exp= nil;	/* XXX - Extend before? */
+			} else {
+				pe->lowsec= base;
+				boundary(pe, 1);
+				if (pe->bootind & EXPAND_FLAG) exp= pe;
+			}
+			base= pe->lowsec + pe->size;
+			count-= base - oldbase;
 		}
 		if (count < 0) {
 			if (fflag) break;
@@ -274,31 +382,9 @@ void distribute(char *device)
 	}
 }
 
-void write_table(char *device)
-{
-	int f;
-	short signature= 0xAA55;
-	struct part_entry newtable[NR_PARTITIONS];
-	int i;
-
-	for (i= 0; i < NR_PARTITIONS; i++) newtable[i]= table[1 + 2*i];
-
-	if ((f= open(device, O_WRONLY)) < 0
-
-		|| lseek(f, (off_t) PART_TABLE_OFF, SEEK_SET) == -1
-
-		|| write(f, newtable, sizeof(newtable)) < 0
-
-		|| write(f, &signature, sizeof(signature)) < 0
-
-		|| close(f) < 0
-	) fatal(device);
-}
-
 int main(int argc, char **argv)
 {
 	int i;
-	char *device;
 
 	if ((arg0= strrchr(argv[0], '/')) == nil) arg0= argv[0]; else arg0++;
 
@@ -313,6 +399,7 @@ int main(int argc, char **argv)
 		case 'm':	mflag= 1;	break;
 		case 'r':	rflag= 1;	break;
 		case 'f':	fflag= 1;	break;
+		case 'n':	nflag= 1;	break;
 		default:	usage();
 		}
 	}
@@ -327,12 +414,12 @@ int main(int argc, char **argv)
 		if (aflag) fprintf(stderr, "%s: -a is not yet implemented\n");
 
 		device= argv[i++];
-		geometry(device);
+		geometry();
 
 		while (i < argc) parse(argv[i++]);
 
-		distribute(device);
-		write_table(device);
+		distribute();
+		write_table();
 	}
 	exit(0);
 }

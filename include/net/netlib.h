@@ -9,8 +9,8 @@ net/netlib.h
 #include <ansi.h>
 #endif
 
-_PROTOTYPE (int ruserok, (const char *rhost, int superuser, const char *ruser,
-	const char *luser) );
+_PROTOTYPE (int iruserok, (unsigned long raddr, int superuser,
+		const char *ruser, const char *luser) );
 _PROTOTYPE (int rcmd, (char **ahost, int rport, const char *locuser, 
 		const char *remuser, const char *cmd, int *fd2p) );
 

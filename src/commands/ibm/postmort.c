@@ -246,7 +246,6 @@ struct proc *pt;
   printf("Sys time in ticks:			%ld\n", pt->sys_time);	/* time_t */
   printf("Cumulative user time of children:	%ld\n", pt->child_utime);	/* time_t */
   printf("Cumulative sys time of children:	%ld\n", pt->child_stime);	/* time_t */
-  printf("Time of next alarm in ticks or 0:	%ld\n", pt->p_alarm);	/* time_t */
 #if 0
   printf("Ticks used in current quantum:	%d\n", pt->quantum_time);	/* int */
   printf("Ticks used in last quantum:		%d\n", pt->quantum_last);	/* int */

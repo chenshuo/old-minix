@@ -189,7 +189,7 @@ unsigned nr_req;		/* length of request vector */
 	if (wn->int13ext) {
 		/* Set up an extended read or write BIOS call. */
 		reg86.b.intno = 0x13;
-		reg86.b.ah = opcode == DEV_SCATTER ? 0x43 : 0x42;
+		reg86.w.ax = opcode == DEV_SCATTER ? 0x4300 : 0x4200;
 		reg86.b.dl = 0x80 + w_drive;
 		reg86.w.si = vir2phys(&i13e_rw) % HCLICK_SIZE;
 		reg86.w.ds = vir2phys(&i13e_rw) / HCLICK_SIZE;

@@ -40,6 +40,7 @@ OBJECTS	= \
 	$(LIBRARY)(res_mkquery.o) \
 	$(LIBRARY)(res_query.o) \
 	$(LIBRARY)(res_send.o) \
+	$(LIBRARY)(ruserok.o) \
 	$(LIBRARY)(servxcheck.o) \
 	$(LIBRARY)(strcasecmp.o) \
 
@@ -139,6 +140,9 @@ $(LIBRARY)(res_query.o):	res_query.c
 
 $(LIBRARY)(res_send.o):	res_send.c
 	$(CC1) res_send.c
+
+$(LIBRARY)(ruserok.o):	ruserok.c
+	$(CC1) ruserok.c
 
 $(LIBRARY)(servxcheck.o):	servxcheck.c
 	$(CC1) servxcheck.c

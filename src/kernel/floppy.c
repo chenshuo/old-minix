@@ -17,6 +17,7 @@
  *	27 Mar  1992 by Kees J. Bot: last details on density checking
  *	04 Apr  1992 by Kees J. Bot: device dependent/independent split
  *	14 May  2000 by Kees J. Bot: d-d/i rewrite.
+ *	12 Aug  2003 by Mike Haertel: Null seek no interrupt fix
  */
 
 #include "kernel.h"
@@ -94,8 +95,8 @@
 #define MAX_SECTORS	  18	/* largest # sectors per track */
 #define DTL             0xFF	/* determines data length (sector size) */
 #define SPEC2           0x02	/* second parameter to SPECIFY */
-#define MOTOR_OFF       3*HZ	/* how long to wait before stopping motor */
-#define WAKEUP		2*HZ	/* timeout on I/O, FDC won't quit. */
+#define MOTOR_OFF      (3*HZ)	/* how long to wait before stopping motor */
+#define WAKEUP	       (2*HZ)	/* timeout on I/O, FDC won't quit. */
 
 /* Error codes */
 #define ERR_SEEK         (-1)	/* bad seek */
@@ -121,7 +122,7 @@
 #define NR_DRIVES          2	/* maximum number of drives */
 #define DIVISOR          128	/* used for sector size encoding */
 #define SECTOR_SIZE_CODE   2	/* code to say "512" to the controller */
-#define TIMEOUT		 500	/* milliseconds waiting for FDC */
+#define TIMEOUT	      500000L	/* microseconds waiting for FDC */
 #define NT                 7	/* number of diskette/drive combinations */
 #define UNCALIBRATED       0	/* drive needs to be calibrated at next use */
 #define CALIBRATED         1	/* no calibration needed */
@@ -159,13 +160,13 @@ PRIVATE struct density {
 	u8_t	gap;		/* gap size */
 	u8_t	spec1;		/* first specify byte (SRT/HUT) */
 } fdensity[NT] = {
-	{  9, 40, 1, 4*9, 2, 6*HZ/8, 0x2A, 0xDF },	/*  360K / 360K  */
-	{ 15, 80, 1,  14, 0, 4*HZ/8, 0x1B, 0xD1 },	/*  1.2M / 1.2M  */
-	{  9, 40, 2, 2*9, 2, 4*HZ/8, 0x2A, 0xE1 },	/*  360K / 720K  */
+	{  9, 40, 1, 4*9, 2, 4*HZ/8, 0x2A, 0xDF },	/*  360K / 360K  */
+	{ 15, 80, 1,  14, 0, 4*HZ/8, 0x1B, 0xDF },	/*  1.2M / 1.2M  */
+	{  9, 40, 2, 2*9, 2, 4*HZ/8, 0x2A, 0xDF },	/*  360K / 720K  */
 	{  9, 80, 1, 4*9, 2, 6*HZ/8, 0x2A, 0xDF },	/*  720K / 720K  */
-	{  9, 40, 2, 2*9, 1, 4*HZ/8, 0x23, 0xE1 },	/*  360K / 1.2M  */
-	{  9, 80, 1, 4*9, 1, 4*HZ/8, 0x23, 0xE1 },	/*  720K / 1.2M  */
-	{ 18, 80, 1,  17, 0, 4*HZ/8, 0x1B, 0xD1 },	/* 1.44M / 1.44M */
+	{  9, 40, 2, 2*9, 1, 4*HZ/8, 0x23, 0xDF },	/*  360K / 1.2M  */
+	{  9, 80, 1, 4*9, 1, 4*HZ/8, 0x23, 0xDF },	/*  720K / 1.2M  */
+	{ 18, 80, 1,  17, 0, 6*HZ/8, 0x1B, 0xCF },	/* 1.44M / 1.44M */
 };
 
 /* The following table is used with the test_sector array to recognize a
@@ -203,12 +204,12 @@ PRIVATE struct floppy {		/* main drive struct, one entry per drive */
   char fl_calibration;		/* CALIBRATED or UNCALIBRATED */
   u8_t fl_density;		/* NO_DENS = ?, 0 = 360K; 1 = 360K/1.2M; etc.*/
   u8_t fl_class;		/* bitmap for possible densities */
+  timer_t fl_tmr_stop;		/* timer to stop motor */
   struct device fl_geom;	/* Geometry of the drive */
   struct device fl_part[NR_PARTITIONS];  /* partition's base & size */
 } floppy[NR_DRIVES];
 
 PRIVATE int motor_status;	/* bitmap of current motor status */
-PRIVATE int motor_goal;		/* bitmap of desired motor status */
 PRIVATE int need_reset;		/* set to 1 when controller must be reset */
 PRIVATE unsigned f_drive;	/* selected drive */
 PRIVATE unsigned f_device;	/* selected minor device */
@@ -217,6 +218,8 @@ PRIVATE struct density *f_dp;	/* current density parameters */
 PRIVATE struct density *prev_dp;/* previous density parameters */
 PRIVATE unsigned f_sectors;	/* equal to f_dp->secpt (needed a lot) */
 PRIVATE int f_busy;		/* BSY_IDLE, BSY_IO, BSY_WAKEN */
+PRIVATE irq_hook_t f_hook;	/* interrupt hook */
+PRIVATE timer_t f_tmr_timeout;	/* timer for various timeouts */
 PRIVATE struct device *f_dv;	/* device's base and size */
 PRIVATE struct disk_parameter_s fmt_param; /* parameters for format */
 PRIVATE u8_t f_results[MAX_RESULTS];/* the controller can give lots of output */
@@ -229,18 +232,17 @@ FORWARD _PROTOTYPE( int f_transfer, (int proc_nr, int opcode, off_t position,
 					iovec_t *iov, unsigned nr_req) );
 FORWARD _PROTOTYPE( void dma_setup, (int opcode) );
 FORWARD _PROTOTYPE( void start_motor, (void) );
-FORWARD _PROTOTYPE( void stop_motor, (void) );
+FORWARD _PROTOTYPE( void stop_motor, (timer_t *tp) );
 FORWARD _PROTOTYPE( int seek, (void) );
 FORWARD _PROTOTYPE( int fdc_transfer, (int opcode) );
 FORWARD _PROTOTYPE( int fdc_results, (void) );
-FORWARD _PROTOTYPE( int f_handler, (int irq) );
+FORWARD _PROTOTYPE( int f_handler, (irq_hook_t *hook) );
 FORWARD _PROTOTYPE( int fdc_command, (u8_t *cmd, int len) );
 FORWARD _PROTOTYPE( void fdc_out, (int val) );
 FORWARD _PROTOTYPE( int recalibrate, (void) );
 FORWARD _PROTOTYPE( void f_reset, (void) );
-FORWARD _PROTOTYPE( void send_mess, (void) );
 FORWARD _PROTOTYPE( int f_intr_wait, (void) );
-FORWARD _PROTOTYPE( void f_timeout, (void) );
+FORWARD _PROTOTYPE( void f_timeout, (timer_t *tp) );
 FORWARD _PROTOTYPE( int read_id, (void) );
 FORWARD _PROTOTYPE( int f_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int test_read, (int density) );
@@ -275,8 +277,8 @@ PUBLIC void floppy_task()
 	fp->fl_class = ~0;
   }
 
-  put_irq_handler(FLOPPY_IRQ, f_handler);
-  enable_irq(FLOPPY_IRQ);	/* ready for floppy interrupts */
+  put_irq_handler(&f_hook, FLOPPY_IRQ, f_handler);
+  enable_irq(&f_hook);		/* ready for floppy interrupts */
 
   driver_task(&f_dtab);
 }
@@ -329,28 +331,12 @@ PRIVATE char *f_name()
  *===========================================================================*/
 PRIVATE void f_cleanup()
 {
-  /* Start watchdog timer to turn all motors off in a few seconds.
-   * There is a race here.  An old watchdog might bite before the
-   * new delay is installed, and turn of the motors prematurely.
-   * This cannot be solved simply by resetting motor_goal after
-   * sending the message, because the new watchdog might bite
-   * before motor_goal is reset.  Then the motors would stay on
-   * until after the next floppy access.  This could be fixed with
-   * extra code (call the clock task twice in some cases).  Or
-   * stop_motor() could be replaced by send_mess(), and send a
-   * STOP_MOTOR message to be accepted by the clock task.  This
-   * would be slower but have the advantage that this comment could
-   * be deleted!
-   *
-   * Since it is not likely and not serious for an old watchdog to
-   * bite, accept that possibility for now.  A full solution to the
-   * motor madness requires a lots of extra work anyway, such as
-   * a separate timer for each motor, and smaller delays for motors
-   * that have just been turned off or start faster than the spec.
-   * (is there a motor-ready bit?).
-   */
-  motor_goal = 0;
-  clock_mess(MOTOR_OFF, stop_motor);
+  /* Start a timer to turn the motor off in a few seconds. */
+  tmr_arg(&f_fp->fl_tmr_stop)->ta_int = f_drive;
+  tmr_settimer(&f_fp->fl_tmr_stop, FLOPPY, get_uptime()+MOTOR_OFF, stop_motor);
+
+  /* Exiting the floppy driver, so forget where we are. */
+  f_fp->fl_sector = NO_SECTOR;
 }
 
 
@@ -454,7 +440,7 @@ unsigned nr_req;		/* length of request vector */
 		cmd[1] = f_dp->spec1;
 		cmd[2] = SPEC2;
 		(void) fdc_command(cmd, 3);
-		out_byte(FDC_RATE, f_dp->rate);
+		outb(FDC_RATE, f_dp->rate);
 		prev_dp = f_dp;
 	}
 
@@ -560,15 +546,15 @@ int opcode;			/* DEV_GATHER or DEV_SCATTER */
   /* Set up the DMA registers.  (The comment on the reset is a bit strong,
    * it probably only resets the floppy channel.)
    */
-  out_byte(DMA_INIT, DMA_RESET_VAL);    /* reset the dma controller */
-  out_byte(DMA_FLIPFLOP, 0);		/* write anything to reset it */
-  out_byte(DMA_MODE, opcode == DEV_SCATTER ? DMA_WRITE : DMA_READ);
-  out_byte(DMA_ADDR, (unsigned) tmp_phys >>  0);
-  out_byte(DMA_ADDR, (unsigned) tmp_phys >>  8);
-  out_byte(DMA_TOP, (unsigned) (tmp_phys >> 16));
-  out_byte(DMA_COUNT, (SECTOR_SIZE - 1) >> 0);
-  out_byte(DMA_COUNT, (SECTOR_SIZE - 1) >> 8);
-  out_byte(DMA_INIT, 2);	/* some sort of enable */
+  outb(DMA_INIT, DMA_RESET_VAL);	/* reset the dma controller */
+  outb(DMA_FLIPFLOP, 0);		/* write anything to reset it */
+  outb(DMA_MODE, opcode == DEV_SCATTER ? DMA_WRITE : DMA_READ);
+  outb(DMA_ADDR, (unsigned) tmp_phys >>  0);
+  outb(DMA_ADDR, (unsigned) tmp_phys >>  8);
+  outb(DMA_TOP, (unsigned) (tmp_phys >> 16));
+  outb(DMA_COUNT, (SECTOR_SIZE - 1) >> 0);
+  outb(DMA_COUNT, (SECTOR_SIZE - 1) >> 8);
+  outb(DMA_INIT, 2);			/* some sort of enable */
 }
 
 
@@ -585,9 +571,6 @@ PRIVATE void start_motor()
  * operation.  If a new operation is started in that interval, it need not be
  * turned on again.  If no new operation is started, a timer goes off and the
  * motor is turned off.  I/O port DOR has bits to control each of 4 drives.
- * The timer cannot go off while we are changing with the bits, since the
- * clock task cannot run while another (this) task is active, so there is no
- * need to lock().
  */
 
   int motor_bit, running;
@@ -595,32 +578,32 @@ PRIVATE void start_motor()
 
   motor_bit = 1 << f_drive;		/* bit mask for this drive */
   running = motor_status & motor_bit;	/* nonzero if this motor is running */
-  motor_goal = motor_status | motor_bit;/* want this drive running too */
+  motor_status |= motor_bit;		/* want this drive running too */
 
-  out_byte(DOR, (motor_goal << MOTOR_SHIFT) | ENABLE_INT | f_drive);
-  motor_status = motor_goal;
+  outb(DOR, (motor_status << MOTOR_SHIFT) | ENABLE_INT | f_drive);
 
   /* If the motor was already running, we don't have to wait for it. */
   if (running) return;			/* motor was already running */
-  clock_mess(f_dp->start, send_mess);	/* motor was not running */
-  receive(CLOCK, &mess);		/* wait for clock interrupt */
+
+  tmr_settimer(&f_tmr_timeout, CLOCK, get_uptime() + f_dp->start, f_timeout);
+  f_busy = BSY_IO;
+  do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
+  f_fp->fl_sector = NO_SECTOR;
 }
 
 
 /*===========================================================================*
  *				stop_motor				     *
  *===========================================================================*/
-PRIVATE void stop_motor()
+PRIVATE void stop_motor(tp)
+timer_t *tp;
 {
 /* This routine is called by the clock interrupt after several seconds have
- * elapsed with no floppy disk activity.  It checks to see if any drives are
- * supposed to be turned off, and if so, turns them off.
+ * elapsed with no floppy disk activity.  It turns the drive motor off.
  */
 
-  if (motor_goal != motor_status) {
-	out_byte(DOR, (motor_goal << MOTOR_SHIFT) | ENABLE_INT);
-	motor_status = motor_goal;
-  }
+  motor_status &= ~(1 << tmr_arg(tp)->ta_int);
+  outb(DOR, (motor_status << MOTOR_SHIFT) | ENABLE_INT);
 }
 
 
@@ -631,8 +614,7 @@ PUBLIC void floppy_stop()
 {
 /* Stop all activity. */
 
-  motor_goal = 0;
-  stop_motor();
+  outb(DOR, ENABLE_INT);
 }
 
 
@@ -672,8 +654,9 @@ PRIVATE int seek()
   }
   /* Give head time to settle on a format, no retrying here! */
   if (f_device & FORMAT_DEV_BIT) {
-	clock_mess(2, send_mess);
-	receive(CLOCK, &mess);
+	tmr_settimer(&f_tmr_timeout, CLOCK, get_uptime() + HZ/30, f_timeout);
+	f_busy = BSY_IO;
+	do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
   }
   fp->fl_curcyl = fp->fl_hardcyl;
   fp->fl_sector = NO_SECTOR;
@@ -745,6 +728,9 @@ int opcode;			/* DEV_GATHER or DEV_SCATTER */
 
   /* This sector is next for I/O: */
   fp->fl_sector = f_results[ST_SEC] - BASE_SECTOR;
+#if 0
+  if (processor < 386) fp->fl_sector++;		/* Old CPU can't keep up. */
+#endif
   return(OK);
 }
 
@@ -759,31 +745,31 @@ PRIVATE int fdc_results()
  */
 
   int result_nr, status;
-  struct milli_state ms;
+  struct micro_state ms;
 
   /* Extract bytes from FDC until it says it has no more.  The loop is
    * really an outer loop on result_nr and an inner loop on status.
    */
   result_nr = 0;
-  milli_start(&ms);
+  micro_start(&ms);
   do {
 	/* Reading one byte is almost a mirror of fdc_out() - the DIRECTION
 	 * bit must be set instead of clear, but the CTL_BUSY bit destroys
 	 * the perfection of the mirror.
 	 */
-	status = in_byte(FDC_STATUS) & (MASTER | DIRECTION | CTL_BUSY);
+	status = inb(FDC_STATUS) & (MASTER | DIRECTION | CTL_BUSY);
 	if (status == (MASTER | DIRECTION | CTL_BUSY)) {
 		if (result_nr >= MAX_RESULTS) break;	/* too many results */
-		f_results[result_nr++] = in_byte(FDC_DATA);
+		f_results[result_nr++] = inb(FDC_DATA);
 		continue;
 	}
 	if (status == MASTER) {	/* all read */
-		enable_irq(FLOPPY_IRQ);
+		enable_irq(&f_hook);
 		return(OK);	/* only good exit */
 	}
-  } while (milli_elapsed(&ms) < TIMEOUT);
+  } while (micro_elapsed(&ms) < TIMEOUT);
   need_reset = TRUE;		/* controller chip must be reset */
-  enable_irq(FLOPPY_IRQ);
+  enable_irq(&f_hook);
   return(ERR_STATUS);
 }
 
@@ -791,8 +777,8 @@ PRIVATE int fdc_results()
 /*==========================================================================*
  *				f_handler				    *
  *==========================================================================*/
-PRIVATE int f_handler(irq)
-int irq;
+PRIVATE int f_handler(hook)
+irq_hook_t *hook;
 {
 /* FDC interrupt, send message to floppy task. */
 
@@ -812,7 +798,7 @@ int len;		/* command length */
 /* Output a command to the controller. */
 
   /* Schedule a wakeup call. */
-  clock_mess(WAKEUP, f_timeout);
+  tmr_settimer(&f_tmr_timeout, CLOCK, get_uptime() + WAKEUP, f_timeout);
 
   f_busy = BSY_IO;
   while (len > 0) {
@@ -834,20 +820,20 @@ int val;		/* write this byte to floppy disk controller */
  * If the controller refuses to listen, the FDC chip is given a hard reset.
  */
 
-  struct milli_state ms;
+  struct micro_state ms;
 
   if (need_reset) return;	/* if controller is not listening, return */
 
   /* It may take several tries to get the FDC to accept a command. */
-  milli_start(&ms);
-  while ((in_byte(FDC_STATUS) & (MASTER | DIRECTION)) != (MASTER | 0)) {
-	if (milli_elapsed(&ms) >= TIMEOUT) {
+  micro_start(&ms);
+  while ((inb(FDC_STATUS) & (MASTER | DIRECTION)) != (MASTER | 0)) {
+	if (micro_elapsed(&ms) >= TIMEOUT) {
 		/* Controller is not listening.  Hit it over the head. */
 		need_reset = TRUE;
 		return;
 	}
   }
-  out_byte(FDC_DATA, val);
+  outb(FDC_DATA, val);
 }
 
 
@@ -888,6 +874,7 @@ PRIVATE int recalibrate()
   } else {
 	/* Recalibration succeeded. */
 	fp->fl_calibration = CALIBRATED;
+	fp->fl_curcyl = f_results[ST_PCN];
 	return(OK);
   }
 }
@@ -917,12 +904,11 @@ PRIVATE void f_reset()
    *   3) the sense interrupt clears the interrupt (not clear which one).
    * and for some reason the reset does not work.
    */
-  (void) fdc_command((u8_t *) 0, 0);	/* need only the timer */
+  (void) fdc_command((u8_t *) 0, 0);   /* need only the timer */
   lock();
   motor_status = 0;
-  motor_goal = 0;
-  out_byte(DOR, 0);		/* strobe reset bit low */
-  out_byte(DOR, ENABLE_INT);	/* strobe it high again */
+  outb(DOR, 0);			/* strobe reset bit low */
+  outb(DOR, ENABLE_INT);	/* strobe it high again */
   unlock();
 				/* collect the RESET interrupt */
   do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
@@ -951,19 +937,6 @@ PRIVATE void f_reset()
 
 
 /*===========================================================================*
- *				send_mess				     *
- *===========================================================================*/
-PRIVATE void send_mess()
-{
-/* This routine is called when the clock task has timed out on motor startup.*/
-
-  message mess;
-
-  send(FLOPPY, &mess);
-}
-
-
-/*===========================================================================*
  *				f_intr_wait				     *
  *===========================================================================*/
 PRIVATE int f_intr_wait()
@@ -973,8 +946,6 @@ PRIVATE int f_intr_wait()
  */
   message mess;
 
-  f_busy = BSY_IO;
-  clock_mess(WAKEUP, f_timeout);
   do receive(HARDWARE, &mess); while (f_busy == BSY_IO);
 
   if (f_busy == BSY_WAKEN) {
@@ -991,11 +962,13 @@ PRIVATE int f_intr_wait()
 /*===========================================================================*
  *				f_timeout				     *
  *===========================================================================*/
-PRIVATE void f_timeout()
+PRIVATE void f_timeout(tp)
+timer_t *tp;
 {
-/* When it takes too long for the FDC to get an interrupt (no floppy in the
- * drive), this routine is called.  It sets a flag and fakes a hardware
- * interrupt.
+/* This routine is called when a timer expires.  Usually to tell that a
+ * motor has spun up, but also to forge an interrupt when it takes too long
+ * for the FDC to interrupt (no floppy in the drive).  It sets a flag to tell
+ * what has happened.
  */
   if (f_busy == BSY_IO) {
 	f_busy = BSY_WAKEN;

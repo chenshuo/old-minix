@@ -17,6 +17,7 @@
 #include "mm.h"
 #include <sys/wait.h>
 #include <minix/callnr.h>
+#include <minix/com.h>
 #include <signal.h>
 #include "mproc.h"
 #include "param.h"
@@ -118,7 +119,7 @@ PUBLIC int do_mm_exit()
  */
 
   mm_exit(mp, status);
-  return(E_NO_MESSAGE);		/* can't communicate from beyond the grave */
+  return(SUSPEND);		/* can't communicate from beyond the grave */
 }
 
 
@@ -232,7 +233,7 @@ PUBLIC int do_waitpid()
 		if (rp->mp_flags & ZOMBIE) {
 			/* This child meets the pid test and has exited. */
 			cleanup(rp);	/* this child has already exited */
-			return(E_NO_MESSAGE);
+			return(SUSPEND);
 		}
 		if ((rp->mp_flags & STOPPED) && rp->mp_sigstatus) {
 			/* This child meets the pid test and is being traced.*/
@@ -249,7 +250,7 @@ PUBLIC int do_waitpid()
 	if (options & WNOHANG) return(0);    /* parent does not want to wait */
 	mp->mp_flags |= WAITING;	     /* parent wants to wait */
 	mp->mp_wpid = (pid_t) pidarg;	     /* save pid for later */
-	return(E_NO_MESSAGE);		     /* do not reply, let it wait */
+	return(SUSPEND);		     /* do not reply, let it wait */
   } else {
 	/* No child even meets the pid test.  Return error immediately. */
 	return(ECHILD);			     /* no - parent has no children */

@@ -3,7 +3,7 @@
 
 /* Minix release and version numbers. */
 #define OS_RELEASE "2"
-#define OS_VERSION "0.3"
+#define OS_VERSION "0.4"
 
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
@@ -59,27 +59,32 @@
 /* Enable or disable the second level file system cache on the RAM disk. */
 #define ENABLE_CACHE2      1
 
+/* Enable or disable swapping processes to disk. */
+#define ENABLE_SWAP	   1
+
 /* Include or exclude device drivers.  Set to 1 to include, 0 to exclude. */
 #define ENABLE_AT_WINI     1	/* enable AT winchester driver */
-#define   ENABLE_ATAPI     1	/* add ATAPI support to AT driver */
+#define   ENABLE_ATAPI     1	/*   add ATAPI support to AT driver */
 #define ENABLE_BIOS_WINI   1	/* enable BIOS winchester driver */
-#define ENABLE_ESDI_WINI   1	/* enable ESDI winchester driver */
+#define ENABLE_ESDI_WINI   0	/* enable ESDI winchester driver */
 #define ENABLE_XT_WINI     0	/* enable XT winchester driver */
-#define ENABLE_AHA1540_SCSI 1	/* enable Adaptec 1540 SCSI driver */
+#define ENABLE_AHA1540_SCSI 0	/* enable Adaptec 1540 SCSI driver */
 #define ENABLE_FATFILE     1	/* enable FAT file virtual disk driver */
 #define ENABLE_DOSFILE     1	/* enable DOS file virtual disk driver */
 #define ENABLE_SB16        0	/* enable Soundblaster audio driver */
 #define ENABLE_PRINTER     0	/* enable printer driver */
 #define ENABLE_USERBIOS    0	/* enable user mode BIOS calls */
+#define ENABLE_PCI	   0	/* enable PCI device recognition */
 
 /* DMA_SECTORS may be increased to speed up DMA based drivers. */
 #define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
 
 /* Enable or disable networking drivers. */
-#define ENABLE_DP8390      0	/* enable DP8390 ethernet driver */
-#define   ENABLE_WDETH     1	/* add Western Digital WD80x3 to DP8390 */
-#define   ENABLE_NE2000    1	/* add Novell NE1000/NE2000 to DP8390 */
-#define   ENABLE_3C503     1	/* add 3Com Etherlink II (3C503) to DP8390 */
+#define ENABLE_DP8390	 0	/* enable DP8390 ethernet driver */
+#define   ENABLE_WDETH     1	/*   add Western Digital WD80x3 */
+#define   ENABLE_NE2000    1	/*   add Novell NE1000/NE2000 */
+#define   ENABLE_3C503     1	/*   add 3Com Etherlink II (3c503) */
+#define ENABLE_RTL8139	 0	/* enable Realtek 8139 (rtl8139) */
 
 /* Include or exclude backwards compatibility code. */
 #define ENABLE_BINCOMPAT   0	/* for binaries using obsolete calls */
@@ -89,7 +94,7 @@
  * system can handle.
  */
 #define NR_CONS            2	/* # system consoles (1 to 8) */
-#define	NR_RS_LINES	   0	/* # rs232 terminals (0, 1, or 2) */
+#define	NR_RS_LINES	   0	/* # rs232 terminals (0 to 4) */
 #define	NR_PTYS		   0	/* # pseudo terminals (0 to 64) */
 
 

@@ -52,14 +52,14 @@ struct ip_conf
 #define NETTYPE_PSIP	2
 
 /* To compute the minor device number for a device on an interface. */
-#define if2minor(ifno, dev)	((ifno) * 16 + (dev))
+#define if2minor(ifno, dev)	((ifno) * 8 + (dev))
 
 /* Offsets of the minor device numbers within a group per interface. */
-#define ETH_DEV_OFF	1
-#define PSIP_DEV_OFF	1
-#define IP_DEV_OFF	2
-#define TCP_DEV_OFF	3
-#define UDP_DEV_OFF	4
+#define ETH_DEV_OFF	0
+#define PSIP_DEV_OFF	0
+#define IP_DEV_OFF	1
+#define TCP_DEV_OFF	2
+#define UDP_DEV_OFF	3
 
 extern struct eth_conf eth_conf[IP_PORT_MAX];
 extern struct psip_conf psip_conf[IP_PORT_MAX];

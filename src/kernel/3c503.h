@@ -54,7 +54,11 @@
 #define EL2_BASE_0D8000	0x0D8000
 #define EL2_BASE_0DC000	0x0DC000
 
-#define inb_el2(dep,reg) (in_byte((dep)->de_base_port+(reg)))
-#define outb_el2(dep,reg,data) (out_byte((dep)->de_base_port+(reg),(data)))
+#define inb_el2(dep,reg)	(inb((dep)->de_base_port+(reg)))
+#define outb_el2(dep,reg,data)	(outb((dep)->de_base_port+(reg),(data)))
 
 /** 3c503.h **/
+
+/*
+ * $PchId: 3c503.h,v 1.2 1999/01/13 21:37:27 philip Exp $
+ */

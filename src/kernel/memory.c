@@ -15,7 +15,7 @@
 
 #include "kernel.h"
 #include "driver.h"
-#include <sys/ioctl.h>
+#include <sys/ioc_memory.h>
 #if (CHIP == INTEL) && ENABLE_USERBIOS
 #include "protect.h"
 #include <ibm/int86.h>

@@ -5,7 +5,6 @@ setup.c
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <errno.h>
-#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +16,7 @@ setup.c
 #include <net/gen/tcp_io.h>
 #include <net/gen/netdb.h>
 #include <net/gen/socket.h>
-#include "in.rld.h"
+#include "rlogind.h"
 
 static void getstr(char *buf, int cnt, char *errmsg);
 
@@ -26,6 +25,7 @@ void authenticate(void)
 	int result;
 	struct nwio_tcpconf tcpconf;
 	struct hostent *hostent;
+	char c;
 
 	/* Let's lookup the hostname for the connection. */
 	result= ioctl (0, NWIOGTCPCONF, &tcpconf);
@@ -37,21 +37,17 @@ void authenticate(void)
 	}
 	hostent= gethostbyaddr((char *)&tcpconf.nwtc_remaddr,
 		sizeof(tcpconf.nwtc_remaddr), AF_INET);
-	if (!hostent)
+	if (hostent)
 	{
-		printf("Host name for your adress (%s) unknown\r\n",
-			inet_ntoa(tcpconf.nwtc_remaddr));
-		exit(1);
+		strncpy(hostname, hostent->h_name, sizeof(hostname)-1);
+		hostname[sizeof(hostname)-1]= '\0';
 	}
-	strncpy(hostname, hostent->h_name, sizeof(hostname)-1);
-	hostname[sizeof(hostname)-1]= '\0';
-	authenticated = (do_rlogin() == 0);
-}
+	else
+	{
+		strcpy(hostname, inet_ntoa(tcpconf.nwtc_remaddr));
+	}
 
-int do_rlogin(void)
-{
-	char c;
-	struct passwd *pwd;
+	authenticated = 0;
 
 	getstr(&c, 1, "protocol violation");
 	getstr(rusername, sizeof(rusername), "remuser too long");
@@ -63,10 +59,8 @@ int do_rlogin(void)
 	fprintf(stderr, "got lu= %s, ru= %s, te= %s\r\n", lusername, rusername,
 		term);
 #endif
-	pwd= getpwnam(lusername);
-	if (pwd == NULL)
-		return -1;
-	return(ruserok(hostname, 0, rusername, lusername));
+	if (iruserok(tcpconf.nwtc_remaddr, 0, rusername, lusername) == 0)
+		authenticated = 1;
 }
 
 static void getstr(char *buf, int cnt, char *errmsg)

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 3.1 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 3.3 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -11,7 +11,7 @@ case $#:$1 in
 1:std)		# Standard devices.
     set -$- mem fd0 fd1 fd0p0 fd1p0 \
 	c0d0 c0d0p0 c0d0p0s0 c0d1 c0d1p0 c0d1p0s0 \
-	c1d0 c1d0p0 c1d0p0s0 c1d1 c1d1p0 c1d1p0s0 \
+	c0d2 c0d2p0 c0d2p0s0 c0d3 c0d3p0 c0d3p0s0 \
 	tty ttyc1 ttyc2 ttyc3 tty00 tty01 ttyp0 ttyp1 ttyp2 ttyp3 eth
     ;;
 0:|1:-\?)
@@ -195,10 +195,10 @@ do
     eth|ip|tcp|udp|eth0|ip0|tcp0|udp0)
 	# TCP/IP devices.
 	#
-	$e mknod eth0 c 7 1		# Network 0 (Ethernet)
-	$e mknod ip0 c 7 2
-	$e mknod tcp0 c 7 3
-	$e mknod udp0 c 7 4
+	$e mknod eth0 c 7 0		# Network 0 (Ethernet)
+	$e mknod ip0 c 7 1
+	$e mknod tcp0 c 7 2
+	$e mknod udp0 c 7 3
 	$e chmod 600 eth0 ip0
 	$e chmod 666 tcp0 udp0
 	$e ln -f eth0 eth		# Default interface

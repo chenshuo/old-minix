@@ -1,4 +1,4 @@
-/*	lpd 1.5 - Printer daemon			Author: Kees J. Bot
+/*	lpd 1.6 - Printer daemon			Author: Kees J. Bot
  *								3 Dec 1989
  */
 #define nil 0
@@ -134,8 +134,8 @@ int job(void)
  * 2 print.
  */
 char control[] = {
-	0, 1, 1, 1, 1, 1, 1, 0,		/* \0, ^G don't show.	*/
-	1, 2, 2, 1, 2, 2, 1, 1,		/* \t, \n, \f, \r	*/
+	0, 1, 1, 1, 1, 1, 1, 0,		/* \0, \a  don't show.	*/
+	2, 2, 2, 1, 2, 2, 1, 1,		/* \b, \t, \n, \f, \r	*/
 	1, 1, 1, 1, 1, 1, 1, 1,
 	1, 1, 1, 1, 1, 1, 1, 1
 };
@@ -179,23 +179,26 @@ int put(int c)
 {
 	buf[count++] = c;
 
-	if (c == '\f') {
+	switch (c) {
+	case '\f':
 		column = 0;
 		line = 0;
-	} else
-	if (c == '\r') {
+		break;
+	case '\r':
 		column = 0;
-	} else
-	if (c == '\n') {
+		break;
+	case '\n':
 		line++;
-	} else {
+		break;
+	case '\b':
+		column--;
+		break;
+	default:
 		if (++column > ncols) { line++; column= 1; }
 	}
 	if (line == nlines) line= 0;
 
-	if (count == BUFSIZ)  {
-		flush();
-	}
+	if (count == BUFSIZ) flush();
 }
 
 void print(FILE *f)
@@ -223,18 +226,26 @@ void print(FILE *f)
 
 				flush();
 				return;
+			case 2: /* fine */;
 			}
 		}
-		if (c == '\n') {
+
+		switch (c) {
+		case '\n':
 			put('\r');
 			put('\n');
-		} else
-		if (c == '\t') {
+			break;
+		case '\t':
 			do {
 				put(' ');
 			} while (column & 07);
-		} else
+			break;
+		case '\b':
+			if (column > 0) put(c);
+			break;
+		default:
 			put(c);
+		}
 	}
 	if (column > 0) { put('\r'); put('\n'); }
 	if (line > 0) put('\f');

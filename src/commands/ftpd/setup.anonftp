@@ -28,6 +28,7 @@ fi
 
 # ftp directory
 FTPDIR="`sed '/^ftp:/!d; s/^.*:\\([^:]*\\):[^:]*/\\1/' /etc/passwd`"
+test -n "$FTPDIR" || exit
 
 if [ `whoami` != root ]
 then
@@ -41,18 +42,17 @@ echo Making $FTPDIR and subdirectories
 install -d -m 755 -o root -g operator $FTPDIR
 install -d -m 751 -o root -g operator $FTPDIR/bin
 install -d -m 751 -o root -g operator $FTPDIR/dev
-install -d -m 751 -o root -g operator $FTPDIR/etc
 install -d -m 755 -o root -g operator $FTPDIR/pub
 incoming=
 if [ -d $FTPDIR/pub/incoming ]
 then
-	incoming=t
+  incoming=t
 elif [ -t 0 ]
 then
-	echo -n "Create \"incoming\" directory? [n] "; read yn
-	case "$yn" in
-	[yY]*|ok|sure)	incoming=t
-	esac
+  echo -n "Create \"incoming\" directory? [n] "; read yn
+  case "$yn" in
+  [yY]*|ok|sure)	incoming=t
+  esac
 fi
 test "$incoming" && install -d -m 777 -o root -g operator $FTPDIR/pub/incoming
 
@@ -63,12 +63,10 @@ do
 done
 cp -rp /dev/tcp $FTPDIR/dev/tcp
 
-echo Copying a minimum of the password and group files
-sed 's/^\([^:]*\):[^:]*:\([^:]*:[^:]*\):.*$/\1:*:\2:::/' \
-					/etc/passwd >$FTPDIR/etc/passwd
-sed 's/^\([^:]*\):[^:]*:\([^:]*\):.*$/\1:*:\2:/' \
-					/etc/group >$FTPDIR/etc/group
-chown root:operator $FTPDIR/etc/*
-chmod 444 $FTPDIR/etc/*
+if [ -d $FTPDIR/etc ]
+then
+  rm -rf $FTPDIR/etc
+  echo "$FTPDIR/etc has been removed, because spammers like it too much."
+fi
 
 echo "Anonymous ftp setup complete"

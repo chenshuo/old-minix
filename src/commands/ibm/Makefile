@@ -47,7 +47,7 @@ loadkeys:	loadkeys.c
 
 mixer:	mixer.c
 	$(CCLD) -o $@ $? -lcurses
-	install -S 4kw $@
+	install -S 16kw $@
 
 part:	part.c
 	$(CCLD) -o $@ $?
@@ -59,7 +59,7 @@ partition:	partition.c
 
 playwave:	playwave.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
+	install -S 16kw $@
 
 postmort:	postmort.c
 	$(CCLD) -o $@ $?
@@ -71,7 +71,7 @@ readclock:	readclock.c
 
 recwave:	recwave.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
+	install -S 16kw $@
 
 repartition:	repartition.c
 	$(CCLD) -o $@ $?

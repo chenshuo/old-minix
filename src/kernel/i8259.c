@@ -1,6 +1,6 @@
 /* This file contains routines for initializing the 8259 interrupt controller:
- *	get_irq_handler: address of handler for a given interrupt
  *	put_irq_handler: register an interrupt handler
+ *	intr_handle:	handle a hardware interrupt
  *	intr_init:	initialize the interrupt controller(s)
  */
 
@@ -11,8 +11,6 @@
 #define ICW1_PS         0x19	/* level triggered, cascade, need ICW4 */
 #define ICW4_AT         0x01	/* not SFNM, not buffered, normal EOI, 8086 */
 #define ICW4_PC         0x09	/* not SFNM, buffered, normal EOI, 8086 */
-
-FORWARD _PROTOTYPE( int spurious_irq, (int irq) );
 
 #if _WORD_SIZE == 2
 typedef _PROTOTYPE( void (*vecaddr_t), (void) );
@@ -52,18 +50,18 @@ int mine;
 	 * one slaved at IRQ 2.  (We don't have to deal with the PC that
 	 * has just one controller, because it must run in real mode.)
 	 */
-	out_byte(INT_CTL, ps_mca ? ICW1_PS : ICW1_AT);
-	out_byte(INT_CTLMASK, mine ? IRQ0_VECTOR : BIOS_IRQ0_VEC);
+	outb(INT_CTL, ps_mca ? ICW1_PS : ICW1_AT);
+	outb(INT_CTLMASK, mine ? IRQ0_VECTOR : BIOS_IRQ0_VEC);
 							/* ICW2 for master */
-	out_byte(INT_CTLMASK, (1 << CASCADE_IRQ));	/* ICW3 tells slaves */
-	out_byte(INT_CTLMASK, ICW4_AT);
-	out_byte(INT_CTLMASK, ~(1 << CASCADE_IRQ));	/* IRQ 0-7 mask */
-	out_byte(INT2_CTL, ps_mca ? ICW1_PS : ICW1_AT);
-	out_byte(INT2_CTLMASK, mine ? IRQ8_VECTOR : BIOS_IRQ8_VEC);
+	outb(INT_CTLMASK, (1 << CASCADE_IRQ));		/* ICW3 tells slaves */
+	outb(INT_CTLMASK, ICW4_AT);
+	outb(INT_CTLMASK, ~(1 << CASCADE_IRQ));		/* IRQ 0-7 mask */
+	outb(INT2_CTL, ps_mca ? ICW1_PS : ICW1_AT);
+	outb(INT2_CTLMASK, mine ? IRQ8_VECTOR : BIOS_IRQ8_VEC);
 							/* ICW2 for slave */
-	out_byte(INT2_CTLMASK, CASCADE_IRQ);		/* ICW3 is slave nr */
-	out_byte(INT2_CTLMASK, ICW4_AT);
-	out_byte(INT2_CTLMASK, ~0);			/* IRQ 8-15 mask */
+	outb(INT2_CTLMASK, CASCADE_IRQ);		/* ICW3 is slave nr */
+	outb(INT2_CTLMASK, ICW4_AT);
+	outb(INT2_CTLMASK, ~0);				/* IRQ 8-15 mask */
 
 	/* Copy the BIOS vectors from the BIOS to the Minix location, so we
 	 * can still make BIOS calls without reprogramming the i8259s.
@@ -82,46 +80,66 @@ int mine;
 	for (i = 0; i < 8; i++) set_vec(i, int_vec[i]);
 	set_vec(SYS_VECTOR, s_call);
   }
-
-  /* Initialize the table of interrupt handlers. */
-  for (i = 0; i < NR_IRQ_VECTORS; i++) irq_table[i] = spurious_irq;
-}
-
-/*=========================================================================*
- *				spurious_irq				   *
- *=========================================================================*/
-PRIVATE int spurious_irq(irq)
-int irq;
-{
-/* Default interrupt handler.  Should never be called... */
-
-  return 0;	/* Leave interrupt masked */
 }
 
 /*=========================================================================*
  *				put_irq_handler				   *
  *=========================================================================*/
-PUBLIC void put_irq_handler(irq, handler)
+PUBLIC void put_irq_handler(hook, irq, handler)
+irq_hook_t *hook;
 int irq;
 irq_handler_t handler;
 {
 /* Register an interrupt handler. */
+  int id;
+  irq_hook_t **line;
 
-  if (irq < 0 || irq >= NR_IRQ_VECTORS)
+  if ((unsigned) irq >= NR_IRQ_VECTORS)
 	panic("invalid call to put_irq_handler", irq);
 
-  if (irq_table[irq] == handler)
-	return;		/* extra initialization */
+  line = &irq_hooks[irq];
+  id = 1;
+  while (*line != NULL) {
+	if (hook == *line) return;	/* extra initialization */
+	line = &(*line)->next;
+	id <<= 1;
+  }
+  if (id == 0) panic("Too many handlers for irq", irq);
 
-  if (irq_table[irq] != spurious_irq)
-	panic("attempt to register second irq handler for irq", irq);
+  hook->next = NULL;
+  hook->handler = handler;
+  hook->irq = irq;
+  hook->id = id;
+  *line = hook;
 
-  disable_irq(irq);
-  if (!protected_mode) set_vec(BIOS_VECTOR(irq), irq_vec[irq]);
-  irq_table[irq]= handler;
   irq_use |= 1 << irq;
 }
 
+/*==========================================================================*
+ *				intr_handle				    *
+ *==========================================================================*/
+PUBLIC void intr_handle(hook)
+irq_hook_t *hook;
+{
+/* Call the interrupt handlers for an interrupt with the given hook list.
+ * The assembly part of the handler has already masked the IRQ, reenabled the
+ * controller(s) and enabled interrupts.
+ */
+
+  /* Call list of handlers for an IRQ. */
+  while (hook != NULL) {
+	/* For each handler in the list, mark it active by setting its ID bit,
+	 * call the function, and unmark it if the function returns true.
+	 */
+	irq_actids[hook->irq] |= hook->id;
+	if ((*hook->handler)(hook)) irq_actids[hook->irq] &= ~hook->id;
+	hook = hook->next;
+  }
+
+  /* The assembly code will now disable interrupts, unmask the IRQ if and only
+   * if all active ID bits are cleared, and restart a process.
+   */
+}
 
 #if _WORD_SIZE == 2
 /*===========================================================================*

@@ -123,11 +123,7 @@ PUBLIC int do_mount()
 PUBLIC int do_umount()
 {
 /* Perform the umount(name) system call. */
-
-  register struct inode *rip;
-  struct super_block *sp, *sp1;
   dev_t dev;
-  int count;
 
   /* Only the super-user may do UMOUNT. */
   if (!super_user) return(EPERM);
@@ -135,6 +131,21 @@ PUBLIC int do_umount()
   /* If 'name' is not for a block special file, return error. */
   if (fetch_name(name, name_length, M3) != OK) return(err_code);
   if ( (dev = name_to_dev(user_path)) == NO_DEV) return(err_code);
+
+  return(unmount(dev));
+}
+
+
+/*===========================================================================*
+ *				unmount					     *
+ *===========================================================================*/
+PUBLIC int unmount(dev)
+Dev_t dev;
+{
+/* Unmount a file system by device number. */
+  register struct inode *rip;
+  struct super_block *sp, *sp1;
+  int count;
 
   /* See if the mounted device is busy.  Only 1 inode using it should be
    * open -- the root inode -- and that inode only 1 time.
@@ -169,7 +180,6 @@ PUBLIC int do_umount()
   sp->s_dev = NO_DEV;
   return(OK);
 }
-
 
 /*===========================================================================*
  *				name_to_dev				     *

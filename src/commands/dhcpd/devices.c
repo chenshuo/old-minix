@@ -112,6 +112,13 @@ int opendev(network_t *np, fdtype_t fdtype, int compete)
     network_t **pqp;
     static char devbytype[][4] = { "", "eth", "ip", "udp", "udp" };
 
+    /* Don't attempt to open higher level devices if not bound. */
+    if (!(np->flags & NF_BOUND) && fdtype > FT_ETHERNET) {
+	errno= EAGAIN;
+	return 0;
+    }
+
+    /* Check if already open / Find the oldest descriptor. */
     fdold= nil;
     oldest= NEVER;
     for (fdp= fds; fdp < arraylimit(fds); fdp++) {
@@ -234,7 +241,9 @@ void closedev(network_t *np, fdtype_t fdtype)
     fd_t *fdp;
 
     for (fdp= fds; fdp < arraylimit(fds); fdp++) {
-	if (fdp->n == np->n && fdp->fdtype == fdtype) closefd(fdp);
+	if (fdp->n == np->n && (fdp->fdtype == fdtype || fdtype == FT_ALL)) {
+	    closefd(fdp);
+	}
     }
 }
 
@@ -245,34 +254,6 @@ char *ipdev(int n)
 
     sprintf(device, "/dev/ip%d", n);
     return device;
-}
-
-int get_ipconf(char *device, ipaddr_t *ip, ipaddr_t *mask)
-{
-    /* Get the current IP address and netmask of a given IP device.  Return
-     * ENOENT if the device doesn't exist, EAGAIN if it is unconfigured, and
-     * 0 with the address and mask if ok.
-     */
-    int fd, e;
-    nwio_ipconf_t ipconf;
-
-    if ((fd= open(device, O_RDWR|O_NONBLOCK)) < 0) {
-	if (errno == ENOENT || errno == ENODEV || errno == ENXIO) return ENOENT;
-	fatal(device);
-    }
-
-    if (test > 0) {
-	e= EAGAIN;
-    } else
-    if (ioctl(fd, NWIOGIPCONF, &ipconf) < 0) {
-	if ((e= errno) != EAGAIN) fatal(device);
-    } else {
-	*ip= ipconf.nwic_ipaddr;
-	*mask= ipconf.nwic_netmask;
-	e= 0;
-    }
-    close(fd);
-    return e;
 }
 
 void set_ipconf(char *device, ipaddr_t ip, ipaddr_t mask, unsigned mtu)

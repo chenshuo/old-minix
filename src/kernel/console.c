@@ -40,7 +40,6 @@
 /* Constants relating to the controller chips. */
 #define M_6845         0x3B4	/* port for 6845 mono */
 #define C_6845         0x3D4	/* port for 6845 color */
-#define EGA            0x3C4	/* port for EGA card */
 #define INDEX              0	/* 6845's index register */
 #define DATA               1	/* 6845's data register */
 #define VID_ORG           12	/* 6845's origin register */
@@ -121,7 +120,7 @@ FORWARD _PROTOTYPE( void flush, (console_t *cons)			);
 FORWARD _PROTOTYPE( void parse_escape, (console_t *cons, int c)		);
 FORWARD _PROTOTYPE( void scroll_screen, (console_t *cons, int dir)	);
 FORWARD _PROTOTYPE( void set_6845, (int reg, unsigned val)		);
-FORWARD _PROTOTYPE( void stop_beep, (void)				);
+FORWARD _PROTOTYPE( void stop_beep, (timer_t *tmrp)				);
 FORWARD _PROTOTYPE( void cons_org0, (void)				);
 FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq)		);
 FORWARD _PROTOTYPE( void cons_ioctl, (tty_t *tp)			);
@@ -699,10 +698,10 @@ unsigned val;			/* 16-bit value to set it to */
  * Registers 14-15 tell the 6845 where to put the cursor
  */
   lock();			/* try to stop h/w loading in-between value */
-  out_byte(vid_port + INDEX, reg);		/* set the index register */
-  out_byte(vid_port + DATA, (val>>8) & BYTE);	/* output high byte */
-  out_byte(vid_port + INDEX, reg + 1);		/* again */
-  out_byte(vid_port + DATA, val&BYTE);		/* output low byte */
+  outb(vid_port + INDEX, reg);			/* set the index register */
+  outb(vid_port + DATA, (val>>8) & BYTE);	/* output high byte */
+  outb(vid_port + INDEX, reg + 1);		/* again */
+  outb(vid_port + DATA, val&BYTE);		/* output low byte */
   unlock();
 }
 
@@ -717,34 +716,31 @@ PRIVATE void beep()
  * chip that drive the speaker.
  */
 
-  message mess;
+  static timer_t tmr_stop_beep;
 
-  if (beeping) return;
-  out_byte(TIMER_MODE, 0xB6);	/* set up timer channel 2 (square wave) */
-  out_byte(TIMER2, BEEP_FREQ & BYTE);	/* load low-order bits of frequency */
-  out_byte(TIMER2, (BEEP_FREQ >> 8) & BYTE);	/* now high-order bits */
-  lock();			/* guard PORT_B from keyboard intr handler */
-  out_byte(PORT_B, in_byte(PORT_B) | 3);	/* turn on beep bits */
-  unlock();
-  beeping = TRUE;
-
-  mess.m_type = SET_ALARM;
-  mess.CLOCK_PROC_NR = TTY;
-  mess.DELTA_TICKS = B_TIME;
-  mess.FUNC_TO_CALL = (sighandler_t) stop_beep;
-  sendrec(CLOCK, &mess);
+  if (!beeping) {
+	outb(TIMER_MODE, 0xB6);		/* timer channel 2, square wave */
+	outb(TIMER2, (BEEP_FREQ >> 0) & BYTE);	/* low freq byte */
+	outb(TIMER2, (BEEP_FREQ >> 8) & BYTE);	/* high freq byte */
+	lock();			/* guard PORT_B from keyboard intr handler */
+	outb(PORT_B, inb(PORT_B) | 3);		/* turn on beep bits */
+	unlock();
+	beeping = TRUE;
+  }
+  tmr_settimer(&tmr_stop_beep, TTY, get_uptime()+B_TIME, stop_beep);
 }
 
 
 /*===========================================================================*
  *				stop_beep				     *
  *===========================================================================*/
-PRIVATE void stop_beep()
+PRIVATE void stop_beep(tmrp)
+timer_t *tmrp;
 {
 /* Turn off the beeper by turning off bits 0 and 1 in PORT_B. */
 
   lock();			/* guard PORT_B from keyboard intr handler */
-  out_byte(PORT_B, in_byte(PORT_B) & ~3);
+  outb(PORT_B, inb(PORT_B) & ~3);
   beeping = FALSE;
   unlock();
 }
@@ -963,8 +959,8 @@ struct sequence *seq;
 {
   int len= 7;
   do {
-	out_byte(seq->index, seq->port);
-	out_byte(seq->index+1, seq->value);
+	outb(seq->index, seq->port);
+	outb(seq->index+1, seq->value);
 	seq++;
   } while (--len > 0);
 }

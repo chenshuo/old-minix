@@ -25,12 +25,12 @@
  *	Andy Tanenbaum also made some changes.
  */
 
-#include <minix/config.h>
-#include <minix/const.h>
 #include <stdlib.h>
 #include <string.h>
-#include <regexp.h>
 #include <stdio.h>
+#define const		/* avoid "const poisoning" */
+#include <regexp.h>
+#undef const
 
 /* The first byte of the regexp internal "program" is actually this magic
  * number; the start node begins in the second byte.
@@ -149,27 +149,24 @@
 
 /* Global work variables for regcomp().
  */
-PRIVATE char *regparse;		/* Input-scan pointer. */
-PRIVATE int regnpar;		/* () count. */
-PRIVATE char regdummy;
-PRIVATE char *regcode;		/* Code-emit pointer; &regdummy = don't. */
-PRIVATE long regsize;		/* Code size. */
+static char *regparse;		/* Input-scan pointer. */
+static int regnpar;		/* () count. */
+static char regdummy;
+static char *regcode;		/* Code-emit pointer; &regdummy = don't. */
+static long regsize;		/* Code size. */
 
 /* Forward declarations for regcomp()'s friends.
  */
-#ifndef STATIC
-#define	STATIC	PRIVATE
-#endif
-STATIC _PROTOTYPE( char *reg, (int paren, int *flagp)			);
-STATIC _PROTOTYPE( char *regbranch, (int *flagp)			);
-STATIC _PROTOTYPE( char *regpiece, (int *flagp)				);
-STATIC _PROTOTYPE( char *regatom, (int *flagp)				);
-STATIC _PROTOTYPE( char *regnode, (int op)				);
-STATIC _PROTOTYPE( char *regnext, (char *p)				);
-STATIC _PROTOTYPE( void regc, (int b)					);
-STATIC _PROTOTYPE( void reginsert, (int op, char *opnd)			);
-STATIC _PROTOTYPE( void regtail, (char *p, char *val)			);
-STATIC _PROTOTYPE( void regoptail, (char *p, char *val)			);
+static char *reg(int paren, int *flagp);
+static char *regbranch(int *flagp);
+static char *regpiece(int *flagp);
+static char *regatom(int *flagp);
+static char *regnode(int op);
+static char *regnext(char *p);
+static void regc(int b);
+static void reginsert(int op, char *opnd);
+static void regtail(char *p, char *val);
+static void regoptail(char *p, char *val);
 
 /*
  - regcomp - compile a regular expression into internal code
@@ -265,7 +262,7 @@ char *exp;
  * is a trifle forced, but the need to tie the tails of the branches to what
  * follows makes it hard to avoid.
  */
-PRIVATE char *reg(paren, flagp)
+static char *reg(paren, flagp)
 int paren;			/* Parenthesized? */
 int *flagp;
 {
@@ -331,7 +328,7 @@ int *flagp;
  *
  * Implements the concatenation operator.
  */
-PRIVATE char *regbranch(flagp)
+static char *regbranch(flagp)
 int *flagp;
 {
   register char *ret;
@@ -368,7 +365,7 @@ int *flagp;
  * It might seem that this node could be dispensed with entirely, but the
  * endmarker role is not redundant.
  */
-PRIVATE char *regpiece(flagp)
+static char *regpiece(flagp)
 int *flagp;
 {
   register char *ret;
@@ -427,7 +424,7 @@ int *flagp;
  * faster to run.  Backslashed characters are exceptions, each becoming a
  * separate node; the code is simpler that way and it's not worth fixing.
  */
-PRIVATE char *regatom(flagp)
+static char *regatom(flagp)
 int *flagp;
 {
   register char *ret;
@@ -523,7 +520,7 @@ int *flagp;
 /*
  - regnode - emit a node
  */
-PRIVATE char *regnode(op)
+static char *regnode(op)
 char op;
 {
   register char *ret;
@@ -546,7 +543,7 @@ char op;
 /*
  - regc - emit (if appropriate) a byte of code
  */
-PRIVATE void regc(b)
+static void regc(b)
 char b;
 {
   if (regcode != &regdummy)
@@ -560,7 +557,7 @@ char b;
  *
  * Means relocating the operand.
  */
-PRIVATE void reginsert(op, opnd)
+static void reginsert(op, opnd)
 char op;
 char *opnd;
 {
@@ -586,7 +583,7 @@ char *opnd;
 /*
  - regtail - set the next-pointer at the end of a node chain
  */
-PRIVATE void regtail(p, val)
+static void regtail(p, val)
 char *p;
 char *val;
 {
@@ -599,7 +596,7 @@ char *val;
   /* Find last node. */
   scan = p;
   for (;;) {
-	temp = regnext(scan);
+	temp = (char *)regnext(scan);
 	if (temp == (char *)NULL) break;
 	scan = temp;
   }
@@ -615,7 +612,7 @@ char *val;
 /*
  - regoptail - regtail on operand of first argument; nop if operandless
  */
-PRIVATE void regoptail(p, val)
+static void regoptail(p, val)
 char *p;
 char *val;
 {
@@ -629,21 +626,21 @@ char *val;
 
 /* Global work variables for regexec().
  */
-PRIVATE char *reginput;		/* String-input pointer. */
-PRIVATE char *regbol;		/* Beginning of input, for ^ check. */
-PRIVATE char **regstartp;	/* Pointer to startp array. */
-PRIVATE char **regendp;		/* Ditto for endp. */
+static char *reginput;		/* String-input pointer. */
+static char *regbol;		/* Beginning of input, for ^ check. */
+static char **regstartp;	/* Pointer to startp array. */
+static char **regendp;		/* Ditto for endp. */
 
 /* Forwards.
  */
-STATIC _PROTOTYPE( int regtry, (regexp *prog, char *string)		);
-STATIC _PROTOTYPE( int regmatch, (char *prog)				);
-STATIC _PROTOTYPE( int regrepeat, (char *p)				);
+static int regtry(regexp *prog, char *string);
+static int regmatch(char *prog);
+static int regrepeat(char *p);
 
 #ifdef DEBUG
 int regnarrate = 0;
 void regdump();
-STATIC _PROTOTYPE( char *regprop, (char *op)				);
+static char *regprop(char *op);
 #endif
 
 /*
@@ -709,7 +706,7 @@ int bolflag;
 /*
  - regtry - try match at specific point
  */
-PRIVATE int regtry(prog, string)   /* 0 failure, 1 success */
+static int regtry(prog, string)   /* 0 failure, 1 success */
 regexp *prog;
 char *string;
 {
@@ -745,7 +742,7 @@ char *string;
  * need to know whether the rest of the match failed) by a loop instead of
  * by recursion.
  */
-PRIVATE int regmatch(prog)	/* 0 failure, 1 success */ 
+static int regmatch(prog)	/* 0 failure, 1 success */ 
 char *prog;
 {
   register char *scan;		/* Current node. */
@@ -914,7 +911,7 @@ char *prog;
 /*
  - regrepeat - repeatedly match something simple, report how many
  */
-PRIVATE int regrepeat(p)
+static int regrepeat(p)
 char *p;
 {
   register int count = 0;
@@ -959,7 +956,7 @@ char *p;
 /*
  - regnext - dig the "next" pointer out of a node
  */
-PRIVATE char *regnext(p)
+static char *regnext(p)
 register char *p;
 {
   register int offset;
@@ -977,7 +974,7 @@ register char *p;
 
 #ifdef DEBUG
 
-STATIC char *regprop();
+static char *regprop();
 
 /*
  - regdump - dump a regexp onto stdout in vaguely comprehensible form
@@ -1020,11 +1017,11 @@ regexp *r;
 /*
  - regprop - printable representation of opcode
  */
-PRIVATE char *regprop(op)
+static char *regprop(op)
 char *op;
 {
   register char *p;
-  PRIVATE char buf[50];
+  static char buf[50];
 
   (void) strcpy(buf, ":");
 
@@ -1072,3 +1069,7 @@ char *op;
 }
 
 #endif
+
+/*
+ * $PchId: regexp.c,v 1.4 1996/02/22 09:03:07 philip Exp $
+ */

@@ -75,7 +75,7 @@ FORWARD _PROTOTYPE( int func_key, (int scode) );
 FORWARD _PROTOTYPE( int scan_keyboard, (void) );
 FORWARD _PROTOTYPE( unsigned make_break, (int scode) );
 FORWARD _PROTOTYPE( void set_leds, (void) );
-FORWARD _PROTOTYPE( int kbd_hw_int, (int irq) );
+FORWARD _PROTOTYPE( int kbd_hw_int, (irq_hook_t *hook) );
 FORWARD _PROTOTYPE( void kb_read, (struct tty *tp) );
 FORWARD _PROTOTYPE( unsigned map_key, (int scode) );
 
@@ -124,8 +124,8 @@ int scode;
 /*===========================================================================*
  *				kbd_hw_int				     *
  *===========================================================================*/
-PRIVATE int kbd_hw_int(irq)
-int irq;
+PRIVATE int kbd_hw_int(hook)
+irq_hook_t *hook;
 {
 /* A keyboard interrupt has occurred.  Process it. */
 
@@ -292,11 +292,11 @@ PRIVATE void set_leds()
   if (!pc_at) return;	/* PC/XT doesn't have LEDs */
 
   kb_wait();			/* wait for buffer empty  */
-  out_byte(KEYBD, LED_CODE);	/* prepare keyboard to accept LED values */
+  outb(KEYBD, LED_CODE);	/* prepare keyboard to accept LED values */
   kb_ack();			/* wait for ack response  */
 
   kb_wait();			/* wait for buffer empty  */
-  out_byte(KEYBD, locks[current]); /* give keyboard LED values */
+  outb(KEYBD, locks[current]);	/* give keyboard LED values */
   kb_ack();			/* wait for ack response  */
 }
 
@@ -312,8 +312,8 @@ PRIVATE int kb_wait()
 
   retries = MAX_KB_BUSY_RETRIES + 1;	/* wait until not busy */
   while (--retries != 0
-		&& (status = in_byte(KB_STATUS)) & (KB_IN_FULL|KB_OUT_FULL)) {
-	if (status & KB_OUT_FULL) (void) in_byte(KEYBD);	/* discard */
+		&& (status = inb(KB_STATUS)) & (KB_IN_FULL|KB_OUT_FULL)) {
+	if (status & KB_OUT_FULL) (void) inb(KEYBD);	/* discard */
   }
   return(retries);		/* nonzero if ready */
 }
@@ -329,7 +329,7 @@ PRIVATE int kb_ack()
   int retries;
 
   retries = MAX_KB_ACK_RETRIES + 1;
-  while (--retries != 0 && in_byte(KEYBD) != KB_ACK)
+  while (--retries != 0 && inb(KEYBD) != KB_ACK)
 	;			/* wait for ack */
   return(retries);		/* nonzero if ack received */
 }
@@ -341,6 +341,7 @@ PUBLIC void kb_init(tp)
 tty_t *tp;
 {
 /* Initialize the keyboard driver. */
+  static irq_hook_t kbd_hook;
 
   tp->tty_devread = kb_read;	/* Input function */
 
@@ -349,8 +350,8 @@ tty_t *tp;
   scan_keyboard();		/* Discard leftover keystroke */
 
   /* Set interrupt handler and enable keyboard IRQ. */
-  put_irq_handler(KEYBOARD_IRQ, kbd_hw_int);
-  enable_irq(KEYBOARD_IRQ);
+  put_irq_handler(&kbd_hook, KEYBOARD_IRQ, kbd_hw_int);
+  enable_irq(&kbd_hook);
 }
 
 
@@ -387,9 +388,14 @@ int scode;			/* scan code for a function key */
   case F2:	map_dmp(); break;	/* print memory map */
   case F3:	toggle_scroll(); break;	/* hardware vs. software scrolling */
 
+  case F5:				/* network statistics */
 #if ENABLE_DP8390
-  case F5:	dp_dump(); break;		/* network statistics */
+		dp8390_dump();
 #endif
+#if ENABLE_RTL8139
+		rtl8139_dump();
+#endif
+		break;
   case CF7:	sigchar(&tty_table[CONSOLE], SIGQUIT); break;
   case CF8:	sigchar(&tty_table[CONSOLE], SIGINT); break;
   case CF9:	sigchar(&tty_table[CONSOLE], SIGKILL); break;
@@ -409,10 +415,10 @@ PRIVATE int scan_keyboard()
   int code;
   int val;
 
-  code = in_byte(KEYBD);	/* get the scan code for the key struck */
-  val = in_byte(PORT_B);	/* strobe the keyboard to ack the char */
-  out_byte(PORT_B, val | KBIT);	/* strobe the bit high */
-  out_byte(PORT_B, val);	/* now strobe it low */
+  code = inb(KEYBD);		/* get the scan code for the key struck */
+  val = inb(PORT_B);		/* strobe the keyboard to ack the char */
+  outb(PORT_B, val | KBIT);	/* strobe the bit high */
+  outb(PORT_B, val);		/* now strobe it low */
   return code;
 }
 
@@ -430,12 +436,15 @@ int how;		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
   struct tasktab *ttp;
 
   /* Mask all interrupts. */
-  out_byte(INT_CTLMASK, ~0);
+  outb(INT_CTLMASK, ~0);
 
   /* Tell several tasks to stop. */
   cons_stop();
 #if ENABLE_DP8390
   dp8390_stop();
+#endif
+#if ENABLE_RTL8139
+  rtl8139_stop();
 #endif
   floppy_stop();
   clock_stop();
@@ -472,8 +481,8 @@ int how;		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
   if (mon_return && how != RBT_RESET) {
 	/* Reinitialize the interrupt controllers to the BIOS defaults. */
 	intr_init(0);
-	out_byte(INT_CTLMASK, 0);
-	out_byte(INT2_CTLMASK, 0);
+	outb(INT_CTLMASK, 0);
+	outb(INT2_CTLMASK, 0);
 
 	/* Return to the boot monitor. */
 	if (how == RBT_HALT) {

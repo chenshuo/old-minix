@@ -24,6 +24,7 @@ rl_ttyset(Reset)
 
 	new = old;
 	new.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
+	new.c_iflag &= ~(ICRNL);
 	new.c_cc[VMIN] = 1;
 	new.c_cc[VTIME] = 0;
 	(void)tcsetattr(0, TCSADRAIN, &new);

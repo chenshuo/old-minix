@@ -3,7 +3,7 @@
  * This routine does not encrypt anything, it uses the pwdauth
  * program to do the hard work.
  */
-#define nil 0
+#define nil ((void*)0)
 #define pipe _pipe
 #define fork _fork
 #define close _close
@@ -17,11 +17,27 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#include <errno.h>
+#include <stdarg.h>
 #include <sys/wait.h>
 
 /* Set-uid root program to read /etc/shadow or encrypt passwords. */
 static char PWDAUTH[] = "/usr/lib/pwdauth";
 #define LEN	1024
+
+static void tell(const char *s0, ...)
+{
+	va_list ap;
+	const char *s;
+
+	va_start(ap, s0);
+	s= s0;
+	while (s != nil) {
+		(void) write(2, s, strlen(s));
+		s= va_arg(ap, const char *);
+	}
+	va_end(ap);
+}
 
 char *crypt(const char *key, const char *salt)
 {
@@ -61,13 +77,17 @@ char *crypt(const char *key, const char *salt)
 
 		execl(PWDAUTH, PWDAUTH, (char *) nil);
 
+		tell("crypt(): ", PWDAUTH, ": ", strerror(errno), "\r\n",
+								(char *) nil);
 		/* No pwdauth?  Fail! */
 		(void) read(0, pwdata, LEN);
 		_exit(1);
 	}
 	close(pfd[1]);
 
-	if (waitpid(pid, &status, 0) < 0 || status != 0) {
+	status= -1;
+	while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {}
+	if (status != 0) {
 		close(pfd[0]);
 		goto fail;
 	}
@@ -91,5 +111,5 @@ fail:
 }
 
 /*
- * $PchHeader: /mount/hd2/minix/lib/misc/RCS/crypt.c,v 1.3 1994/12/22 13:51:49 philip Exp $
+ * $PchId: crypt.c,v 1.5 1996/04/11 07:46:11 philip Exp $
  */

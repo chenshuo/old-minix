@@ -85,7 +85,8 @@ static void check_ln(char *old, char *new)
 	if (stat(new, &st_new) < 0) {
 		if (errno != ENOENT) fatal(new);
 	} else {
-		if (st_new.st_dev == st_old.st_dev && st_new.st_ino == st_old.st_ino) {
+		if (st_new.st_dev == st_old.st_dev
+					&& st_new.st_ino == st_old.st_ino) {
 			return;
 		}
 		if (unlink(new) < 0) fatal(new);

@@ -1,6 +1,7 @@
 /* cat - concatenates files  		Author: Andy Tanenbaum */
 
-/* 30 March 90 - Slightly modified for efficiency by Norbert Schlenker. */
+/* 30 March 1990 - Slightly modified for efficiency by Norbert Schlenker. */
+/* 23 March 2002 - Proper error messages by Kees J. Bot. */
 
 
 #include <errno.h>
@@ -12,69 +13,79 @@
 #include <minix/minlib.h>
 #include <stdio.h>
 
-#define CHUNK_SIZE	4096
+#define CHUNK_SIZE	(2048 * sizeof(char *))
 
 static int unbuffered;
 static char ibuf[CHUNK_SIZE];
 static char obuf[CHUNK_SIZE];
 static char *op = obuf;
 
-_PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(void copyfile, (int ifd, int ofd));
-_PROTOTYPE(void flush, (void));
-_PROTOTYPE(void fatal, (void));
+int main(int argc, char **argv);
+static void copyout(char *file, int fd);
+static void output(char *buf, size_t count);
+static void report(char *label);
+static void fatal(char *label);
 
-int excode = 0;
+static char STDIN[] = "standard input";
+static char STDOUT[] = "standard output";
 
-int main(argc, argv)
-int argc;
-char *argv[];
+static int excode = 0;
+
+int main(int argc, char *argv[])
 {
   int i, fd;
 
   i = 1;
-  /* Check for the -u flag -- unbuffered operation. */
-  if (argc >= 2 && argv[1][0] == '-' && argv[1][1] == 'u' && argv[1][2] == 0) {
-	unbuffered = 1;
-	i = 2;
+  while (i < argc && argv[i][0] == '-') {
+	char *opt = argv[i] + 1;
+
+	if (opt[0] == 0) break;				/* - */
+	i++;
+	if (opt[0] == '-' && opt[1] == 0) break;	/* -- */
+
+	while (*opt != 0) switch (*opt++) {
+	case 'u':
+		unbuffered = 1;
+		break;
+	default:
+		std_err("Usage: cat [-u] [file ...]\n");
+		exit(1);
+	}
   }
+
   if (i >= argc) {
-	copyfile(STDIN_FILENO, STDOUT_FILENO);
+	copyout(STDIN, STDIN_FILENO);
   } else {
-	for ( ; i < argc; i++) {
-		if (argv[i][0] == '-' && argv[i][1] == 0) {
-			copyfile(STDIN_FILENO, STDOUT_FILENO);
+	while (i < argc) {
+		char *file = argv[i++];
+
+		if (file[0] == '-' && file[1] == 0) {
+			copyout(STDIN, STDIN_FILENO);
 		} else {
-			fd = open(argv[i], O_RDONLY);
+			fd = open(file, O_RDONLY);
 			if (fd < 0) {
-				std_err("cat: cannot open ");
-				std_err(argv[i]);
-				std_err(": ");
-				std_err(strerror (errno));
-				std_err("\n");
-				excode = 1;
+				report(file);
 			} else {
-				copyfile(fd, STDOUT_FILENO);
+				copyout(file, fd);
 				close(fd);
 			}
 		}
 	}
   }
-  flush();
+  output(obuf, (op - obuf));
   return(excode);
 }
 
-void copyfile(ifd, ofd)
-int ifd, ofd;
+static void copyout(char *file, int fd)
 {
   int n;
 
   while (1) {
-	n = read(ifd, ibuf, CHUNK_SIZE);
-	if (n < 0) fatal();
+	n = read(fd, ibuf, CHUNK_SIZE);
+	if (n < 0) fatal(file);
 	if (n == 0) return;
 	if (unbuffered || (op == obuf && n == CHUNK_SIZE)) {
-		if (write(ofd, ibuf, n) != n) fatal();
+		output(ibuf, n);
 	} else {
 		int bytes_left;
 
@@ -84,8 +95,7 @@ int ifd, ofd;
 			op += n;
 		} else {
 			memcpy(op, ibuf, (size_t)bytes_left);
-			if (write(ofd, obuf, CHUNK_SIZE) != CHUNK_SIZE)
-				fatal();
+			output(obuf, CHUNK_SIZE);
 			n -= bytes_left;
 			memcpy(obuf, ibuf + bytes_left, (size_t)n);
 			op = obuf + n;
@@ -94,14 +104,35 @@ int ifd, ofd;
   }
 }
 
-void flush()
+static void output(char *buf, size_t count)
 {
-  if (op != obuf)
-	if (write(STDOUT_FILENO, obuf, (size_t) (op - obuf)) <= 0) fatal();
+  ssize_t n;
+
+  while (count > 0) {
+	n = write(STDOUT_FILENO, buf, count);
+	if (n <= 0) {
+		if (n < 0) fatal(STDOUT);
+		std_err("cat: standard output: EOF\n");
+		exit(1);
+	}
+	buf += n;
+	count -= n;
+  }
 }
 
-void fatal()
+static void report(char *label)
 {
-  perror("cat");
+  int e = errno;
+  std_err("cat: ");
+  std_err(label);
+  std_err(": ");
+  std_err(strerror(e));
+  std_err("\n");
+  excode = 1;
+}
+
+static void fatal(char *label)
+{
+  report(label);
   exit(1);
 }

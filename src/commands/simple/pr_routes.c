@@ -8,6 +8,7 @@ vmd/cmd/simple/pr_routes.c
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,11 +22,18 @@ vmd/cmd/simple/pr_routes.c
 #include <net/gen/netdb.h>
 #include <net/gen/inet.h>
 
+#define N_IF	64	/* More than enough? */
+
 char *prog_name;
 int all_devices;
+char *ifname;
+ipaddr_t iftab[N_IF];
 
 static void print_header(void);
 static void print_route(nwio_route_t *route);
+static void fill_iftab(void);
+static char *get_ifname(ipaddr_t addr);
+static void fatal(char *fmt, ...);
 static void usage(void);
 
 int main(int argc, char *argv[])
@@ -37,7 +45,7 @@ int main(int argc, char *argv[])
 	int ip_fd;
 	int result;
 	int c;
-	char *ip_device;
+	char *ip_device, *cp;
 	int a_flag, i_flag, o_flag;
 	char *I_arg;
 
@@ -92,6 +100,7 @@ int main(int argc, char *argv[])
 
 	if (ip_device == NULL)
 		ip_device= getenv("IP_DEVICE");
+	ifname= ip_device;
 	if (ip_device == NULL)
 		ip_device= IP_DEVICE;
 		
@@ -101,6 +110,18 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "%s: unable to open %s: %s\n", prog_name,
 			ip_device, strerror(errno));
 		exit(1);
+	}
+
+	if (!all_devices && ifname)
+	{
+		cp= strrchr(ip_device, '/');
+		if (cp)
+			ifname= cp+1;
+	}
+	else
+	{
+		ifname= NULL;
+		fill_iftab();
 	}
 
 	result= ioctl(ip_fd, NWIOGIPCONF, &ip_conf);
@@ -138,7 +159,7 @@ int main(int argc, char *argv[])
 }
 
 int ent_width= 5;
-int if_width= 15;
+int if_width= 4;
 int dest_width= 18;
 int gateway_width= 15;
 int dist_width= 4;
@@ -183,17 +204,95 @@ static void print_route(nwio_route_t *route)
 		return;
 
 	printf("%*lu ", ent_width, (unsigned long) route->nwr_ent_no);
-	printf("%*s ", if_width, inet_ntoa(route->nwr_ifaddr));
+	printf("%*s ", if_width,
+		ifname ?  ifname : get_ifname(route->nwr_ifaddr));
 	printf("%*s ", dest_width, cidr2a(route->nwr_dest, route->nwr_netmask));
 	printf("%*s ", gateway_width, inet_ntoa(route->nwr_gateway));
 	printf("%*lu ", dist_width, (unsigned long) route->nwr_dist);
-	printf("%*ld", pref_width, (long) route->nwr_pref);
+	printf("%*ld ", pref_width, (long) route->nwr_pref);
 	printf("%*lu", mtu_width, (long) route->nwr_mtu);
 	if (route->nwr_flags & NWRF_STATIC)
 		printf(" static");
 	if (route->nwr_flags & NWRF_UNREACHABLE)
 		printf(" dead");
 	printf("\n");
+}
+
+static void fill_iftab(void)
+{
+	int i, j, r, fd;
+	nwio_ipconf_t ip_conf;
+	char dev_name[12];	/* /dev/ipXXXX */
+
+	for (i= 0; i<N_IF; i++)
+	{
+		iftab[i]= 0;
+
+		sprintf(dev_name, "/dev/ip%d", i);
+		fd= open(dev_name, O_RDWR);
+		if (fd == -1)
+		{
+			if (errno == EACCES || errno == ENOENT || errno == ENXIO)
+				continue;
+			fatal("unable to open '%s': %s",
+				dev_name, strerror(errno));
+		}
+		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+		r= ioctl(fd, NWIOGIPCONF, &ip_conf);
+		if (r == -1 && errno == EAGAIN)
+		{
+			/* interface is down */
+			close(fd);
+			continue;
+		}
+		if (r == -1)
+		{
+			fatal("NWIOGIPCONF failed on %s: %s",
+				dev_name, strerror(errno));
+		}
+
+		iftab[i]= ip_conf.nwic_ipaddr;
+		close(fd);
+
+		for (j= 0; j<i; j++)
+		{
+			if (iftab[j] == iftab[i])
+			{
+				fatal("duplicate address in ip%d and ip%d: %s",
+					i, j, inet_ntoa(iftab[i]));
+			}
+		}
+
+	}
+}
+
+static char *get_ifname(ipaddr_t addr)
+{
+	static char name[7];	/* ipXXXX */
+
+	int i;
+
+	for (i= 0; i<N_IF; i++)
+	{
+		if (iftab[i] != addr)
+			continue;
+		sprintf(name, "ip%d", i);
+		return name;
+	}
+
+	return inet_ntoa(addr);
+}
+
+static void fatal(char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	fprintf(stderr, "%s: ", prog_name);
+	vfprintf(stderr, fmt, ap);
+	fprintf(stderr, "\n");
+	va_end(ap);
+	exit(1);
 }
 
 static void usage(void)
@@ -204,5 +303,5 @@ static void usage(void)
 }
 
 /*
- * $PchId: pr_routes.c,v 1.7 2001/04/20 10:44:27 philip Exp $
+ * $PchId: pr_routes.c,v 1.8 2002/04/11 10:58:58 philip Exp $
  */

@@ -46,7 +46,7 @@ Copyright 1995 Philip Homburg
 #include <net/gen/udp.h>
 #include <net/gen/udp_hdr.h>
 #include <net/gen/udp_io.h>
-#include <sys/ioctl.h>
+#include <net/ioctl.h>
 
 #include "const.h"
 #include "inet_config.h"

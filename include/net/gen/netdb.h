@@ -120,7 +120,7 @@ void		setnetent _ARGS((int));
 void		setprotoent _ARGS((int));
 void		setservent _ARGS((int));
 #ifdef _MINIX
-int		servxcheck _ARGS((int _fd, const char *_service,
+int		servxcheck _ARGS((unsigned long _peer, const char *_service,
 			void (*_logf) _ARGS((int _pass, const char *_name))));
 char		*servxfile _ARGS((const char *_file));
 #endif

@@ -1,4 +1,4 @@
-Short list of differences between 2.0 and 2.0.3:
+Short list of differences between 2.0 and 2.0.4:
 
   - The ability to run Minix under DOS.
 
@@ -24,8 +24,8 @@ Short list of differences between 2.0 and 2.0.3:
 
   - A simple form of swapping that may make life on really old crates
     bearable.  (Alas it isn't good enough to counter the memory need of
-    the BSD shell, so 2.0.3 needs more than 640K in 16-bit mode.  This
-    will be fixed in a next version, promise.)
+    the BSD shell, so 2.0.3 and 2.0.4 need more than 640K in 16-bit mode.
+    This will be fixed in a next version, really.)
 
   - Console driver lines/columns is no longer fixed at 80x25.  (See boot
     monitor's 'console' variable.)
@@ -49,6 +49,9 @@ Short list of differences between 2.0 and 2.0.3:
     reboot.  Minix can now run continuously.  (Ignoring the little fact
     that the clock tick counter will overflow in 414 days.)
 
+  - The monitor has a new 'off' command that turns ATX machines off.  (Try
+    'shutdown -x off'.)
+
 Short list of changes in commands:
 
   - pc, m2: Pascal and Modula-2 compilers.
@@ -61,12 +64,107 @@ Short list of changes in commands:
 Short list of changes in manual pages:
 
   - New:	pc(1), m2(1), env(1), uptime(1), xargs(1), crontab(1),
-		dosd(4), ACK(7), cron(8), config(8), dosminix(8),
-		serial-ip(8), slip(8).
+		rdate(1), rget(1), regex(3), dosd(4), ACK(7), cron(8),
+		config(8), dosminix(8), serial-ip(8), slip(8).
 
-  - Changed:	cc(1), installation manuals.
+  - Changed:	cc(1), rhosts(5), installation manuals.
 
-Long list of differences between 2.0 and 2.0.3:
+Important kernel changes in 2.0.4 needing clarification:
+
+    Two changes in the kernel may be a stumbling block for the innocent
+    reader trying to make sense of the 2.0.4 code with the 2.0 based book
+    in hand.  One change is the share interrupt code needed for PCI, and
+    the other change is the more sophisticated timer code that makes life
+    easier within a driver.
+
+    The interrupt handlers used to be a simple array of function pointers
+    indexed by the IRQ.  PCI requires shared interrupts, which means that
+    more than one handler may be called on an interrupt.  So we have to
+    keep a list of several handlers, and we have to keep track of which
+    handler declares the interrupt to be "handled".  Only if all handlers
+    say that the interrupt has been fully serviced can the IRQ be reenabled.
+
+    Each IRQ now has a list of little "IRQ hooks".  An IRQ hook is a small
+    struct containing the following data:  A pointer to the next hook to
+    form a list of handlers for the IRQ, a pointer to the function that
+    handles the interrupt, the IRQ number, and an ID bit.
+
+    When a hook is registered for an IRQ it gets a unique ID bit.  An array
+    irq_actids[] contains the set of ID bits per IRQ that are still active,
+    i.e.  the handler has not yet declared the interrupt to be fully
+    handled.  Only if irq_actids[irq] == 0 is the IRQ reenabled.  The
+    functions enable_irq() and disable_irq() now work on hooks instead of
+    IRQs, clear or set the ID bit of that hook, and make sure that the IRQ
+    is masked if irq_actids[irq] is nonzero.
+
+    The interrupt handler functions withing the drivers haven't changed
+    much, they still return true if the interrupt has been fully handled.
+    The only difference is that they must allow to be called when there's
+    nothing going on, because another device using the same IRQ has
+    triggered an interrupt.
+
+    The other big change is the timer code.  There used to be one kind of
+    timer:  You send a message to the clock task asking for a handler to be
+    called by the clock task (!) at a certain time.  This setup is a bit
+    odd, because to start a timer you have to send a high level message,
+    but calling the handler was done using a low level function call from
+    the clock task.
+
+    Timers happen to be started very often, some drivers start one on any
+    operation if the device may choke on it.  Most of the time the handlers
+    have nothing to do, because devices usually do as they're told.  Also a
+    driver may handle more than one device, so it needs more than one timer.
+
+    The new timer code makes starting timers cheap, allows a task to have as
+    many timers as it wants, allows handlers to be run by the clock task
+    (asynchronous), or allows the handlers to be run by any other task
+    (synchronous).
+
+    The technique used for these timers is the same as for the shared IRQs.
+    A timer is a small lump of data that can be linked in lists, and
+    functions for starting, stopping and handling timers all work on this
+    bit of data.  In this case the function interface is a better
+    description than the contents of timer.h (see kernel/type.h for that).
+
+    void tmr_settimer(timer_t *tp, int task, clock_t exp_time, tmr_func_t fp);
+	Activates a timer to run function 'fp' at time 'exp_time'.  The
+	timer is owned and handled by the given task.  The timer is added to
+	a list maintained by the clock.  If it expires then it is added to a
+	list of expired timers for the task that owns it.  If that task is
+	the clock then the handlers are immediately run, otherwise an
+	interrupt message is sent to the owning task.
+
+    void tmr_clrtimer(timer_t *tp)
+	Remove the timer from the active and expired timer lists, disabling
+	it.  This is done if the timer is no longer needed, or more often
+	by tmr_settimer if a timer is set to a different time.  (One often
+	doesn't bother to stop a timer if the handler can tell that its no
+	longer needed.)
+
+    void tmr_exptimers(void)
+	Runs the handlers of all the expired timers of the current task.
+	The clock task runs this function if any timer expires, and a task
+	should call it on an interrupt message if it owns timers.  This
+	call is often prefixed by a quick test to see if there are any
+	expired timers, but that's only an optimization to avoid a call.
+
+    Each timer structure may carry a int or a pointer that can be used later
+    by the handler.  A good example of the use of these timers is the floppy
+    driver.  It has one timer per floppy to turn the motor off, and a global
+    timer for floppy spinup or to time out an operation.  Search for 'tmr_'
+    in the code to find the uses.  (The floppy is also a good example for why
+    the new timers were needed.  After adding timeouts on any operation the
+    messages to the clock task took so much time that slower machines could
+    no longer keep up with the floppy and degraded to one sector per
+    revolution...)
+
+    The timers for the alarm() system call and the timers for the
+    asynchronous task have also been changed into using the new timer
+    code.  The old code had separate code for these two that had to be
+    tested separately on any clock tick.  Now it's all one type of timer.
+    (The synchronous alarm task is now more comment than code.)
+
+Long list of differences between 2.0 and 2.0.4:
 
     (Warning: This list is riddled with lame jokes and other silly things that
     happen to sneak in when doing something as boring as compiling this list.)
@@ -85,12 +183,17 @@ Long list of differences between 2.0 and 2.0.3:
 	Many other standard include files also do this, but I won't bore
 	you by mentioning them here.
 
+    include/errno.h
+	Unused internal errors E_BAD_SRC and E_NO_MESSAGE removed.
+
     include/ibm/cmos.h
     include/ibm/portio.h
-	Definitions for the CMOS clock and IBM port I/O routines.
-
-    include/minix/com.h
-	Appearance of the DOSDSK task.
+	Definitions for the CMOS clock and IBM port I/O routines.  The I/O
+	routines should have the same names as those used within the Linux
+	kernel and most of them are also seen in *BSD if I'm not mistaken.
+	The kernel now uses these routines instead of in_byte() etc.  The
+	new naming is more regular instead of that of the old "add em when
+	we need em" routines.
 
     include/ibm/int86.h
 	Defines 'union reg86', a type used to carry register values for
@@ -114,7 +217,8 @@ Long list of differences between 2.0 and 2.0.3:
 	names (CDROM, SCSI, WINCHESTER) to a generic controller name
 	(CTRLR(n)).  The OPTIONAL_IO attribute is replaced by DEV_SCATTER
 	and DEV_GATHER device codes to write to or read from an array of
-	blocks.
+	blocks.  Appearance of the DOSDSK and RTL8139 tasks.  FUNC_TO_CALL
+	removed with the old timer code.
 
     include/minix/config.h
 	Release and version number changed from 3 digits to just 2.  With
@@ -132,6 +236,13 @@ Long list of differences between 2.0 and 2.0.3:
 	ENABLE_WDETH, ENABLE_NE2000, and ENABLE_3C503.
 	Atari and shadowing code removed.  It's not used, so I can't maintain
 	it working with respect to other changes.
+	Release and version numbering changed back to 3 digits.  ENABLE_SWAP
+	added to turn the swapping code on.  (Not that you want it off,
+	because memory starved machines need it and memory rich machines
+	don't care.  It's just something to label the swapping code with.)
+	Added ENABLE_PCI to enable PCI support for drivers that need it.
+	Added ENABLE_RTL8139 for the new Realtek 8139 100 Mbit ethernet card.
+	NR_RS_LINES can now go to 4.  (Shared IRQs made that possible.)
 
     include/minix/const.h
 	Copyright changed to tell you that /usr/src/LICENSE contains the new
@@ -143,6 +254,10 @@ Long list of differences between 2.0 and 2.0.3:
 	memory in 16-bit protected mode to 64 MB.  (You need 512 processes
 	of 128K to reach that amount.  The process tables can't possibly
 	be that big.)
+
+    include/minix/ioctl.h
+	Contains helper macros and the definition of ioctl().  Used by the
+	many <*/ioc_*.h> include files that <sys/ioctl.h> has split into.
 
     include/minix/partition.h
 	Partition base and size are now u64_t, a structure posing as a 64
@@ -158,6 +273,13 @@ Long list of differences between 2.0 and 2.0.3:
     include/net/
 	Complete overhaul for the new network task.
 
+    include/regex.h
+	POSIX regex library header file.
+
+    include/regexp.h
+	Names prefixed by _v8_ to keep them from clashing with the POSIX
+	version.
+
     include/signal.h
 	SIGCHLD signal (child terminated) added to the supported set.  _NSIG
 	raised from 16 to 17.
@@ -169,18 +291,34 @@ Long list of differences between 2.0 and 2.0.3:
     include/string.h
 	Added strncasecmp() and strnlen().
 
+    include/sys/ioc_disk.h
+    include/sys/ioc_memory.h
+    include/sys/ioc_scsi.h
+    include/sys/ioc_sound.h
+    include/sys/ioc_tape.h
+    include/sys/ioc_tty.h
+	What <sys/ioctl.h> has been split into.
+
     include/sys/ioctl.h
 	Some new calls for the network task.
 	New calls for user mode BIOS calls and manipulating LDT entries
 	(memory mapping.)
 	Mitsumi CD-ROM ioctls removed.
+	Changed to include <minix/ioctl.h> and all <*/ioc_*.h>.  Code using
+	<sys/ioctl.h> sees no difference.  Minix specific code may choose to
+	only include those among <*/ioc_*.h> that it really needs.  Mostly
+	to reduce memory needed by the preprocessor, but also for data
+	hiding reasons.  (Only use the minimum you need.)
 
     include/sys/svrctl.h
 	New svrctl for odd system calls: Calls for a program to sign on as
 	a server (inet), swapon/off, get boot parameter.
 
     include/sys/types.h
-	New u64_t type defined as a struct of two u32_t's.
+	New u64_t type defined as a struct of two u32_t's.  Number of links
+	type nlink_t changed to a short so that more than 127 links can be
+	made on a V2 file system, something it supported all along, but FS
+	didn't offer it.
 
     src/LICENSE
 	Removed: "Free for educational use" license.
@@ -206,6 +344,9 @@ Long list of differences between 2.0 and 2.0.3:
 	Extboot code replaced by more generic jumpboot bootstrap.
 	Knowledge of controller style devices added, while remaining
 	backwards compatible to I don't know when.
+	New 'off' command to turn machines that can do power management off.
+	New 'ctty n' command to duplicate the monitor I/O on serial line <n>.
+	More console modes supported, like 80x34 for instance.
 
     src/commands/aal/
 	Added 'u' flag to make aal more ar compatible.
@@ -222,6 +363,13 @@ Long list of differences between 2.0 and 2.0.3:
 
     src/commands/dhcpd/
 	New DHCP client/server program.  See dhcpd(8) and dhcp.conf(5).
+	Since 2.0.4: Server code has seen and supports more weird clients,
+	client code more resilient against buggy servers.
+
+    src/commands/ftpd/
+	Allows clients without reverse DNS.  Given up on trying to improve
+	the world on this point.  There are worse things.  Leave passwd and
+	group file out of chrooted environment to give spammers no names.
 
     src/commands/i386/asmconv/
 	GNU assembly parser added by R. Veldema, but still buggy.  Fixes
@@ -253,9 +401,17 @@ Long list of differences between 2.0 and 2.0.3:
 	file, a file that contains 8x8, 8x14, and 8x16 dot fonts.  Font
 	files in /usr/lib/fonts/ replaced by combined fonts.
 
+    src/commands/ibm/loadkeys.c
+	Work on /dev/console instead of standard input, which made no sense.
+
     src/commands/ibm/part.c
 	Changed to know about controller devices and 64 bit disk offsets.
+	Larger list of major device numbers to know disks from other stuff.
 	Still user-hostile/expert-friendly.
+
+    src/commands/ibm/partition.c
+	Now able to add a partition to an existing table.  Not easy to use
+	alas.
 
     src/commands/ibm/readclock.c
 	Revamped to properly set the clock (Philip read a data sheet), and
@@ -275,6 +431,10 @@ Long list of differences between 2.0 and 2.0.3:
 	Log shutdown messages in /usr/adm/log instead of authlog.  (Reduces
 	the number of logfiles to one.)
 
+    src/commands/rlogind/
+	Renamed 'rld' to 'rlogind'.  Changed for the new .rhosts that allow
+	wildcards and CIDR notation.  More secure against DNS trickery.
+
     src/commands/scripts/DESCRIBE.sh
     src/commands/scripts/MAKEDEV.sh
 	Code to describe/create new ethernet and controller devices added.
@@ -288,6 +448,10 @@ Long list of differences between 2.0 and 2.0.3:
     src/commands/scripts/clear.sh
 	Short for 'tget -str cl'.  Replaces clr.c thanks to #!.
 
+    commands/scripts/mkdist.sh
+	Changed a bit so that Minix-vmd can call it.  Can now build
+	distributions under Minix-vmd of a Minix system mounted by it.
+
     src/commands/sh/
 	Old Minix shell.  Now installed as /usr/bin/msh.
 
@@ -295,12 +459,19 @@ Long list of differences between 2.0 and 2.0.3:
 	Still puts an at job in /usr/spool/at/, but alerts cron to this
 	instead of letting the now dead atrun command run the job.
 
+    src/commands/simple/atrun.c
+	Removed.  Cron now keeps track of and runs at jobs.
+
+    src/commands/simple/cat.c
+	Proper option processing, proper error messages.
+
     src/commands/simple/cleantmp.c
 	New command to carefully clean out /tmp directories.
 
     src/commands/simple/cp.c
 	Uses a temp file for hard link administration so that it no longer
-	blows up trying to keep track of too many hard links.
+	blows up trying to keep track of too many hard links.  Some mistakes
+	in 'clone -s' fixed.
 
     src/commands/simple/crc.c
 	Use strerror() to print a meaningful error message instead of just
@@ -327,14 +498,21 @@ Long list of differences between 2.0 and 2.0.3:
 
     src/commands/simple/env.c
 	New environment manipulation command.  Not very useful, but POSIX
-	mandates it.
+	mandates it.  Useful for one thing though, #!/usr/bin/env perl
+	at the top of a script does a PATH search for perl!
 
     src/commands/simple/fsck.c
 	"Huge directory" warnings removed.  Directories really can get big.
 	Errors with overflows on filesystems with exactly 65535 inodes fixed.
+	LINK_MAX changed to SHRT_MAX to allow for more links on a V2 file
+	system.  (LINK_MAX has to advertise the smaller V1 maximum.)
+
+    src/commands/simple/fsck1.c
+	LINK_MAX replaced by CHAR_MAX just in case...
 
     src/commands/simple/getty.c
-	Run a shell on the console if you can't execute login.
+	Run a shell on the console if you can't execute login.  Shrunk to
+	the bare minimum by removing the useless suspend/resume signals.
 
     src/commands/simple/grep.c
 	Grep fix to work properly as grep and also as egrep.  I believe
@@ -348,12 +526,21 @@ Long list of differences between 2.0 and 2.0.3:
 	/etc/rc is now run completely disconnected to keep programs from
 	having a process group and dying when /etc/rc is done.
 
+    src/commands/simple/id.c
+	Merged with the Minix-vmd version, no difference in function.
+
+    src/commands/simple/in.rshd.c
+	Like in.rlogind changed for the improved .rhosts.
+
     src/commands/simple/irdpd.c
 	Old "look for a router" daemon.  Still available for odd cases, but
 	replaced by DHCP normally.
 
     src/commands/simple/isoread.c
-	Fixed by Al Woodhull so that it now actually works.
+	Fixed by Al Woodhull so that it now actually works.  Added a new -B
+	command to print byte offsets and lengths of a file on a CD.  Useful
+	to build a Minix partition table on an ISO image that points into
+	disk images on that CD.  Helpful to create a bootable CD.
 
     src/commands/simple/kill.c
 	You can now use 'kill -HUP' instead of 'kill -1'.  See signal list
@@ -362,10 +549,28 @@ Long list of differences between 2.0 and 2.0.3:
     src/commands/simple/last.c
 	Show time since boot if called as "uptime".
 
+    src/commands/simple/login.c
+	Can now print a welcome banner for in.telnetd.
+
+    src/commands/simple/look.c
+	Replaced by the Minix-vmd version, same function.
+
+    src/commands/simple/lpd.c
+	Small changes in special character handling.  Still too stupid to be
+	useful.
+
     src/commands/simple/ls.c
 	The -T option shows time to the second.  -D (formerly -T) sorts by
-	file type.  This is a halfbaked ls, whole alfabet still far from
-	fully used as option letters.
+	file type.  -h shows sizes abbreviated.  This is a halfbaked ls,
+	whole alphabet still far from fully used as option letters.
+
+    src/commands/simple/mail.c
+	Added -s option by Al Woodhull.  Cron needs it send send mail to a
+	user if a cron job produces output.
+
+    src/commands/simple/man.c
+	Aren't you happy to know that it now also handles Solaris 8 manual
+	pages?
 
     src/commands/simple/mkdir.c
 	Allows you to write 'mkdir -m 755' too.  The -m option used to only
@@ -382,6 +587,10 @@ Long list of differences between 2.0 and 2.0.3:
 	Use the name daemons found by DHCP for information.
 	Added a cache to make it useful for offline use.
 
+    src/commands/simple/pr_routes.c
+	Shows interface device names instead of their IP addresses, and shows 
+	destinations in CIDR notation.  One route fits on one line now.
+
     src/commands/simple/printf.c
 	New command that is works like the printf() library function.  It's
 	a new echo that doesn't suffer from BSD vs SystemV incompatibilities.
@@ -390,6 +599,13 @@ Long list of differences between 2.0 and 2.0.3:
     src/commands/simple/rarpd.c
 	Dumbed down to be a pure RARP daemon.  It used to configure the
 	network devices, but that is now dhcpd's job.
+
+    src/commands/simple/rdate.c
+	Gets the time from a remote machine and sets the local clock.
+
+    src/commands/simple/rget.c
+	The rget and rput command pair implement a kind of pipe across a
+	network.  Used a lot by yours truly.
 
     src/commands/simple/slip.c
 	Implementation of the SLIP protocol, but no header compression.
@@ -411,6 +627,7 @@ Long list of differences between 2.0 and 2.0.3:
     src/commands/simple/tcpd.c
 	Has a normal and a paranoid version.  The latter is run if
 	/etc/serv.access exists to enable network access restrictions.
+	No longer wrongly masks SIGCHLD under 2.0.4.
 
     src/commands/simple/xargs.c
 	New xargs command obtained from BSD.
@@ -423,6 +640,7 @@ Long list of differences between 2.0 and 2.0.3:
 
     src/etc/inet.conf
 	New configuration file for inet.
+	Changed under 2.0.4 to use /dev/psip0 as the default.
 
     src/etc/profile
 	Timezone now by default GMT instead of CET.  (I happen to be in
@@ -433,6 +651,13 @@ Long list of differences between 2.0 and 2.0.3:
 	Large changes in system startup.  /etc/rc now knows a single user
 	mode (boot -s) and calls /usr/etc/rc to do the hard work.  (Inspired
 	by Minix-vmd.)
+
+    src/fs/
+	The 'dont_reply' variable has been removed.  The code now passes the
+	error code "SUSPEND" back up to the main loop, which is treated by
+	FS as "don't send a reply message now, the process is suspended".
+	It's not always mentioned below if { dont_reply = 1; return(0); }
+	is replaced by { return(SUSPEND) };
 
     src/fs/Makefile
 	FS is now needs the -lsys library for calls to the system task.
@@ -496,6 +721,17 @@ Long list of differences between 2.0 and 2.0.3:
 	at a given point in the code.  Dev_io() builds a message and chooses
 	the proper dmap[] entry, something one may have already done.)
 
+    src/fs/glo.h
+	Definition of 'dont_reply' removed.
+
+    src/fs/inode.c
+	Some casts and masks on i_nlinks removed to allow i_nlinks to have a
+	larger value for V2 file systems.
+
+    src/fs/link.c
+	Links maximum now depends on the file system type.  CHAR_MAX or
+	SHRT_MAX is used instead of LINK_MAX.
+
     src/fs/main.c
 	Main now uses the new sys_sysctl() call to get boot parameters out
 	of the kernel.  (Sys_sysctl() is the kernel interface of the new
@@ -508,6 +744,8 @@ Long list of differences between 2.0 and 2.0.3:
 
 	Many examples of the new dev_open() and dev_close() found here.
 
+	Don't send a reply if the message return code is SUSPEND.
+
     src/fs/misc.c
 	Addition of the FS side of the new svrctl() system call.  It
 	implements the FSSIGNON call that allows a process to tell FS that
@@ -517,13 +755,25 @@ Long list of differences between 2.0 and 2.0.3:
 	TCP/IP devices causes a new device inode to spring to life for the
 	new TCP/IP connection.
 
+	Do_reboot() now carefully exits all processes and unmounts all
+	filesystems.  This should take care of mysterious bitmap errors
+	that plagued 2.0.3.
+
+    src/fs/mount.c
+	Unmount code put in an unmount() function that both the umount
+	and reboot system calls can use.
+
     src/fs/open.c
 	Pipe administration moved to the proper first two different zone
 	number slots in the in-core inode.  Leave last zone number free.
+	Named pipe open code allows for a SUSPEND code out of pipe_open().
+	This is the only place where removal of dont_reply was a bit tricky,
+	although the result is no less readable.
 
     src/fs/pipe.c
 	The totally unused XOPEN code removed.  There is a dmap[] call
 	here that I dare not replace by dev_io().  Too strange.
+	Return a SUSPEND code if suspend(XPIPE) is done.
 
     src/fs/read.c
 	Unneeded check of rw position against MAX_FILE_POS removed.  It
@@ -531,12 +781,18 @@ Long list of differences between 2.0 and 2.0.3:
 	(Many character devices don't even care about the position.)
 	(Found by people doing I/O speed tests.  Today's hardware is so
 	ridiculously fast that they ran into the limit in no time.)
+	Follow suspend(XPIPE) with a return(SUSPEND).
 
     src/fs/table.c
 	Svrctl call added.  Dosdisk table entry added.  Open and close dmap[]
 	entries merged into a single opcl field.  (They mostly contained
 	the same value already.)  The /dev/ip entry is now always unused,
 	but can be claimed by INET later.
+	Reboot system call added, only to be called by MM.
+
+    src/fs/type.h
+	Types of d1_nlinks and d1_gid changed to u8_t, because they're
+	smaller than the new default set by the V2 file system.
 
     src/inet/
 	Replaced by a much newer version.  Stable, two ethernets and two
@@ -545,10 +801,18 @@ Long list of differences between 2.0 and 2.0.3:
 	ordinary program, to configure itself from /etc/inet.conf and to
 	become a server with a few svrctl() calls.
 
+    src/kernel/
+	I/O functions like in_byte, out_byte, in_word, etc, replaced by inb,
+	outb, inw, etc.  Use of <sys/ioctl.h> replaced by as few <*/ioc_*.h>
+	as possible.  Milli_{delay,start,elapsed} replaced by micro_*
+	versions that allow more precise polling.  These simple changes
+	aren't always noted below.  The timer code changes are not always
+	mentioned except for their first occurrence.
+
     src/kernel/3c503.[ch]
 	Code and definitions for the 3C503 network adapter by G. Falzoni.
 
-    2.0.0/src/kernel/aha1540.c
+    src/kernel/aha1540.c
 	The file aha_scsi.c is renamed to aha1540.c to better reflect the
 	type of card.  Useful if someone with lots of time writes a 2940
 	driver, so they won't clash in name.
@@ -585,15 +849,75 @@ Long list of differences between 2.0 and 2.0.3:
 	Addition of ATAPI CD-ROM code by Michael Temari.  (His changes were
 	fairly benign.  Blame me for the huge differences.)
 
+	The port_read() and _write() functions are renamed to phys_insw()
+	and _outsw().  There are also plain insw() and outsw() that move
+	data to the local address space, the phys_*() are special versions
+	for kernel use that move data to or from absolute memory addresses.
+	Sort of like the difference between memcpy() and phys_copy().
+
+	Timer code changed from:
+	  clock_mess(WAKEUP, w_timeout);
+	To:
+	  tmr_settimer(&w_tmr_timeout, CLOCK, get_uptime() + WAKEUP, w_timeout);
+
+	(Start an asynchronous timer with data in w_tmr_timeout, WAKEUP
+	ticks from now to call function w_timeout().)
+
     src/kernel/bios_wini.c
 	Old bios13 calls removed in favour of the newer, more generic,
 	int86 call.  (Drivers can now make any BIOS call they want.)
 	This driver is still the most easily understood of all drivers.
 	Read it first if you want to study disk drivers.
+	2.0.4 fixes an obscure bug in the use of 'al'.
 
     src/kernel/clock.c
 	Old timer value returned by alarm(2) rounded up to the nearest second.
 	Alarm should never return 0 if the timer is still running.
+
+	Next_alarm, watch_dog[], sys_table[] all gone in favour of a single
+	list of timers under 'timers' and a single list of user process
+	alarms in tmr_alarm[].
+
+	The one global message 'mc' is moved to clock_task() as a local
+	variable and the do_xxx functions that need it now take a message
+	pointer.  Data hiding, limited scope, and all that.
+
+	Do_clocktick() only cares about one list of timers now, sees which
+	ones have expired, moves those to p_exptimers of the owning process
+	and runs tmr_exptimers on the timers that are owned by CLOCK itself.
+
+	Tmr_inittimer(), a macro, initializes a new timer variable, but
+	this is not necessary on a timer in global storage, so it's
+	hardy ever used.  Tmr_settimer() clears a timer if running and
+	then starts it to expire at a certain time.  Tmr_clrtimer()
+	stops a timer.  Tmr_exptimers() runs all functions of the
+	expired timers on the p_exptimers list of the current process.
+
+	A common variable in the timer code is 'atp', or "alias to a timer
+	pointer" that is set so that '*atp' aliases the first pointer in a
+	timer list {atp = &p->p_exptimers;}, moved to alias the next timer
+	in the list {atp = &(*atp)->tmr_next;}, used to cut out a timer
+	{*atp = (*atp)->tmr_next;}, or to insert a timer
+	{tp->tmr_next = *atp; *atp = tp;}.  That's easier than walking a
+	list with a prev_ptr in tow.  Really.
+
+	The do_setalarm and do_setsynalarm functions have been merged into
+	one function that schedules the cause_alarm or cause_synalarm to be
+	called by either the CLOCK or the SYN_ALRM_TASK.  The timers used
+	for this are found in the tmr_alarm[] array for each process.
+	Cause_alarm() uses cause_sig() to have a SIGALRM be sent to the
+	process that wants it.  Cause_synalarm() sends a CLOCK_INT message
+	to the calling process, which is usually a server like INET.  The
+	syn_alrm_task()'s only job is to expire timers.
+
+	All the milli_xxx functions have been replaced by micro_xxx
+	functions that only differ in the factor 1000 implied by the name.
+	Some drivers need more precise timing.  A milli_delay(n) macro that
+	calls micro_delay(1000*(n)) keeps us from having to update too
+	much code.  Note the last few lines at the end of micro_elapsed(),
+	avoiding overflow in computations with large numbers can be tricky.
+	These changes cause a few timing constants to be 1000 times bigger
+	in several drivers.
 
     src/kernel/console.c
 	Screen dimensions (rows/columns) now variable and obtained from the
@@ -605,13 +929,36 @@ Long list of differences between 2.0 and 2.0.3:
 	IRQ vectors renumbered to 0x50 (more or less free) and 0x70 (same
 	as BIOS).  This does not upset DOS.
 
+	Unused INIT_SP macro removed.  A leftover from the time when MM, FS
+	and init had to set up their own stack.
+
+	Lock() and unlock() changed to macros that call intr_disable() and
+	intr_enable() found in <ibm/portio.h>.  They are mostly used to
+	guard an area of code against interrupts, so the lock/unlock names
+	better describe what they're doing.  Or are we hiding their true
+	nature here?
+
+	A new macro structof() can be used to compute the address of a
+	structure given a pointer to a field within that structure.  Used
+	in functions that have a struct with information per device and a
+	timer per device.  With structof() we can go from timer pointer
+	to a pointer for the struct with information.  Don't worry, it's
+	only used in a few drivers.
+
     src/kernel/dosfile.c
 	New driver to see a big DOS file as a Minix disk using DOS file I/O.
+
+    src/kernel/dp8390.c
+	Allow the DPETHn variables to specify a PCI device, namely the
+	RTL8029 NE2000 clone.
 
     src/kernel/driver.c
 	Changes to allow one task to make I/O calls to another task, like
 	dosdisk to at_wini.  The do_rdwt and do_vrdwt rewritten to use
 	transfer instead of schedule/finish.
+
+	The main loop calls tmr_exptimers() and the clock_mess() function
+	is gone.
 
     src/kernel/fatfile.c
 	New driver to see a big file on a FAT file system by interpreting
@@ -623,6 +970,41 @@ Long list of differences between 2.0 and 2.0.3:
 	increased a bit after observing reference manual.  (Not that the
 	old parameters ever seemed to be a problem.)  Series of fdc_out()
 	calls replaced by a single fdc_command() with better checking.
+
+	After changing the floppy parameters to "better" number for 2.0.3
+	that came directly out of some spec sheet the numbers are now back
+	to what they were and what actually works.  If it works, don't fix it.
+
+	Thanks to Mike Haertel the floppy driver works again on an original
+	IBM PC/AT.  It's floppy controller didn't like to seek to a cylinder
+	it was already sitting on.
+
+	Floppy motors are now independently stopped thanks to the new timers.
+	Before there was only one timer, so motors, once started, were kept
+	running until all could be stopped.  (This at a time when many PCs
+	don't even have a floppy anymore, let alone more than one.)
+
+    src/kernel/glo.h
+	The old irq_table[] for one handler per IRQ is replaced by a list
+	of interrupt hook pointers in irq_hooks[] and bitmaps for the active
+	handlers in irq_actids[].
+
+    src/kernel/i8259.c
+	As the file with code that interfaces with the i8259 interrupt
+	controller you can expect a few changes for shared interrupts.
+
+	Get_irq_handler() was never used and spurious_irq() no longer needed,
+	so they're gone.
+
+	Put_irq_handler() now takes the address of an interrupt hook and
+	chains that hook into a list of hooks for an IRQ.  It computes a
+	unique ID bit for that hook, so that the different hooks for the
+	same IRQ can be told apart.
+
+	A new function intr_handle() is called by the assembly code in
+	mpx*86.s to call each of the handlers in a list of interrupt hooks.
+	It also sets the ID bits in irq_actids[] to show that a handler is
+	busy, and clears an ID bit if the handler returns true.
 
     src/kernel/keyboard.c
 	Left and right versions of shift-type keys better kept apart.  (One
@@ -646,11 +1028,22 @@ Long list of differences between 2.0 and 2.0.3:
 	BIOS disk I/O function bios13 replaced by more generic int86
 	interrupt call.  A20 enable/disable code in klib88 has special
 	code for PS/2 machines.
+
 	Video memory code changed to address video memory at vid_seg:vid_off
 	instead of vid_seg:0 to support different ways of handling segments.
 	16-bit p_cp_mess changed to handle any click size instead of just
 	256.  Both p_cp_mess and p_phys_copy compute full 32 bit physical
 	addresses.
+
+	All the wrappers for I/O instructions (in_byte, out_byte, etc) are
+	removed in favour of the new ones in the library.  Only port_read(),
+	port_write() and their byte versions are still around, but renamed
+	to phys_insb(), etc, that mirror functions like insb() that only
+	work within the address space of one process.  There are no 32 bit
+	versions yet.
+
+	Enable_irq() and disable_irq() now work on hooks and use the active
+	ID bits in irq_actids[] to decide if an interrupt must be masked.
 
     src/kernel/main.c
 	Kernel, MM, FS, etc. information now comes from an array of a.out
@@ -678,6 +1071,13 @@ Long list of differences between 2.0 and 2.0.3:
 	feature removed, current machines don't have shadow RAM under 16M
 	anymore.
 
+	Env_parse() now allows :,;. as separators, and allows a prefix word
+	if the pattern starts with a *.  A prefix word can be tested with the
+	new env_prefix() function, and env_panic() is used when it's all bad.
+	Now one can use DPETH0=pci:0.6.1 to tell the DP8390 driver that one
+	particular RTL8029 card is to be the first ethernet card.  (One would
+	normally use DPETH0=pci to select the first available RTL8029.)
+
     src/kernel/mpx386.s
     src/kernel/mpx88.s
 	New feature flag bits: Don't patch any sizes into the kernel, offer
@@ -687,8 +1087,29 @@ Long list of differences between 2.0 and 2.0.3:
 	new notebook from turning its fan on.  There is nothing like a
 	personal reason to add a feature.  It also makes VMWare happy.)
 
+	The hwint_master() and hwint_slave() macros are changed to support
+	shared interrupts.  Instead of calling the single interrupt handler
+	directly they now call intr_handle() that will run through a list
+	of interrupt hooks to call all the handlers for an IRQ.
+
+    src/kernel/pci.c
+    src/kernel/pci.h
+    src/kernel/pci_amd.h
+    src/kernel/pci_intel.h
+    src/kernel/pci_sis.h
+    src/kernel/pci_table.c
+    src/kernel/pci_via.h
+	Code to walk the PCI device tree.  Used to answer this question:
+	Do you have a device with vendor ID <vid> and device ID <did>?
+	Most of the device strings in pci_table() will eventually be removed,
+	once we have a system call that allows a user mode program to query
+	this information.
+
     src/kernel/printer.c
 	Printer driver is made optional with an ENABLE_PRINTER switch.
+	Only initialize the printer on the first open(), so that IRQ 7 isn't
+	claimed unless needed.  So even when enabled the driver won't mess
+	anything up as long as you don't go near /dev/lp.
 
     src/kernel/proc.c
     src/kernel/proc.h
@@ -700,6 +1121,10 @@ Long list of differences between 2.0 and 2.0.3:
 	Almost forgot to mention this detail:  All the shadowing code has
 	been removed.  It got too difficult to maintain something that is
 	not currently used.  In such cases one should not hesitate.
+	A call to ready() was inlined for speed, it has been uninlined,
+	because one little call isn't that expensive.
+	A new field p_exptimers added to struct proc for a list of expired
+	timers.
 
     src/kernel/protect.c
     src/kernel/protect.h
@@ -722,7 +1147,21 @@ Long list of differences between 2.0 and 2.0.3:
 	Window size changes aren't automatic yet.  Needs SIGWINCH.)
 
     src/kernel/rs232.c
-	Thanks to XXX the CLOCAL mode now works properly.
+	Thanks to X the CLOCAL mode now works properly.
+	The first thing that was done with the new shared interrupts was to
+	raise the allowed number of interrupt lines to 4.  (The odd and even
+	numbered COM lines use the same IRQ.)
+	(Still haven't figured out who X is.)
+
+    src/kernel/rtl8029.c
+	New driver for the Realtek 8029 chipset that implements a 10 Mbit
+	NE2000 clone on a itty bitty PCI card.
+
+    src/kernel/rtl8139.c
+    src/kernel/rtl8139.h
+	New driver for the 100 Mbit Realtek 8139.  Needs to be whacked every
+	now and then when it freezes up, but dirt cheap which is always a
+	good point for people giving an old PC a new life with Minix.
 
     src/kernel/start.c
 	Changes to allow for the variable placement of the kernel in memory.
@@ -754,12 +1193,21 @@ Long list of differences between 2.0 and 2.0.3:
 	to be able to access 8086/386 registers in many different ways, i.e.
 	reg86.b.al, reg86.w.al, reg86.l.eax.
 
+	Struct milli_state renamed to micro_state.  New timer and IRQ hook
+	structures defined.
+
     src/kernel/wini.c
 	Removed.  The disk driver selection code has been generalized and
 	moved to table.c
 
+    src/lib/Makefile
+	Only make the new regex library if the system isn't a lowly 8086.
+
     src/lib/ansi/atoi.c
 	Changed to simply call strtol().
+
+    src/lib/ansi/clock.c
+	A lovely bit of portable code brought back to just a call to times(2).
 
     src/lib/ansi/malloc.c
 	Malloc changed so that it no longer sets errno to ENOMEM if it
@@ -785,6 +1233,13 @@ Long list of differences between 2.0 and 2.0.3:
     src/lib/i386/int64/
     src/lib/i86/int64/
 	Assembly routines for 64-bit integers.
+
+    src/lib/i386/misc/io_*.s
+    src/lib/i86/misc/io_*.s
+	A set of I/O instruction wrappers from io_inb.s to io_outw.s that
+	implement the functions in <ibm/portio.h>.  Old iolib.s that offered
+	a subset removed.  (Why so many little files?  So that only the
+	routines you need are compiled into your program.)
 
     src/lib/i386/misc/oneC_sum.s
     src/lib/i86/misc/oneC_sum.s
@@ -835,9 +1290,21 @@ Long list of differences between 2.0 and 2.0.3:
     src/lib/other/configfile.c
 	New "common config file" interpretation routine.
 
+    src/lib/other/reg*.c
+    src/lib/other/v8reg*.c
+	Old nonstandard V8 regexp routines files prefixed by v8 to keep them
+	apart from the regex(3) routines.
+
     src/lib/posix/_exec*.c
 	New group of exec*() functions all interfacing to the execve()
 	system call.
+
+    src/lib/posix/_sleep.c
+	A zero second sleep never woke up, now it does nothing as it should.
+
+    src/lib/regex/
+	POSIX regular expression routines regex(3).  Only available under
+	32-bit Minix.
 
     src/lib/rts/
 	New machine independent runtime system stuff, currently containing
@@ -860,6 +1327,13 @@ Long list of differences between 2.0 and 2.0.3:
 	SYS_PUTS call to the SYSTEM task.  If that fails then a write()
 	system call is used.  The TCP/IP task needs this to be able to print
 	messages before and after it becomes a server.
+
+    src/mm/
+	<sys/ioctl.h> replaced by the appropriate <sys/ioc_*.h>.  Swapping
+	code enclosed by ENABLE_SWAP to make the swapping code easily visible.
+	Eventually either the swapping code should be totally removed, or
+	the ENABLE_SWAP should be permanently enabled and the #ifs removed.
+	E_NO_MESSAGE return code to indicate "no answer" replaced by SUSPEND.
 
     src/mm/alloc.c
 	Swapping code added.  It works by treating swap space as memory that
@@ -910,6 +1384,9 @@ Long list of differences between 2.0 and 2.0.3:
 	Load_seg() function changed to rw_seg() that can both read and write
 	a segment for use by exec and the swapping code.
 
+	Returns the proper ENOMEM error code if not enough memory instead
+	of EAGAIN.
+
     src/mm/main.c
 	Changes in the memory summary code to accomodate the no longer
 	fixed position of the Minix kernel in memory and the memory list.
@@ -938,6 +1415,8 @@ Long list of differences between 2.0 and 2.0.3:
 	New file for miscellaneous system calls, reboot() and svrctl().
 	Svrctl() allows a process to do a semi-exit to become a server,
 	or to add or remove swapspace.
+	Reboot code now uses a single tell_fs(REBOOT, ...) to tell FS that
+	the end is near instead of EXIT(INIT), EXIT(MM), SYNC.
 
     src/mm/mproc.h
 	The flag name "HANGING" has been renamed to "ZOMBIE", because that
@@ -956,6 +1435,10 @@ Long list of differences between 2.0 and 2.0.3:
 	Open a file in nonblocking mode in allowed().  Like above, to not
 	hang on an execve of a named pipe.
 
+    src/test/
+	Test code removed due to lack of maintenance.  They're more likely
+	now to trigger bugs in their own code than to find bugs in Minix.
+
     src/tools/init.c
 	Query 'bootopts' from the boot environments, the flags given on the
 	boot command of the monitor (e.g. 'boot -s'.)  These flags are passed
@@ -964,5 +1447,6 @@ Long list of differences between 2.0 and 2.0.3:
     src/tools/ps.c
 	Changed to allow 'ps -ef' to do the same as 'ps alx'.  (System V
 	vs. BSD syntax.)
+	Doubled stack allocation of 'ps'.
 
 Kees J. Bot <kjb@cs.vu.nl>

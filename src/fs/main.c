@@ -13,7 +13,7 @@ struct super_block;		/* proto.h needs to know this */
 #include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
-#include <sys/ioctl.h>
+#include <sys/ioc_memory.h>
 #include <sys/svrctl.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -52,7 +52,6 @@ PUBLIC void main()
 
 	fp = &fproc[who];	/* pointer to proc table struct */
 	super_user = (fp->fp_effuid == SU_UID ? TRUE : FALSE);   /* su? */
-	dont_reply = FALSE;	/* in other words, do reply is default */
 
 	/* Call the internal function that does the work. */
 	if (fs_call < 0 || fs_call >= NCALLS)
@@ -61,8 +60,7 @@ PUBLIC void main()
 		error = (*call_vec[fs_call])();
 
 	/* Copy the results back to the user and send reply. */
-	if (dont_reply) continue;
-	reply(who, error);
+	if (error != SUSPEND) reply(who, error);
 	if (rdahed_inode != NIL_INODE) read_ahead(); /* do block read ahead */
   }
 }

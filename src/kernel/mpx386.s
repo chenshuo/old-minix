@@ -214,7 +214,7 @@ csinit:
 !*===========================================================================*
 !*				hwint00 - 07				     *
 !*===========================================================================*
-! Note this is a macro, it looks like a subroutine.
+! Note this is a macro, it just looks like a subroutine.
 #define hwint_master(irq)	\
 	call	save			/* save interrupted process state */;\
 	inb	INT_CTLMASK						    ;\
@@ -222,13 +222,13 @@ csinit:
 	outb	INT_CTLMASK		/* disable the irq		  */;\
 	movb	al, ENABLE						    ;\
 	outb	INT_CTL			/* reenable master 8259		  */;\
+	push	(_irq_hooks+4*irq)	/* irq_hooks[irq]		  */;\
 	sti				/* enable interrupts		  */;\
-	push	irq			/* irq				  */;\
-	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
-	pop	ecx							    ;\
+	call	_intr_handle		/* intr_handle(irq_hooks[irq])	  */;\
 	cli				/* disable interrupts		  */;\
-	test	eax, eax		/* need to reenable irq?	  */;\
-	jz	0f							    ;\
+	pop	ecx							    ;\
+	cmp	(_irq_actids+4*irq), 0	/* interrupt still active?	  */;\
+	jnz	0f							    ;\
 	inb	INT_CTLMASK						    ;\
 	andb	al, ~[1<<irq]						    ;\
 	outb	INT_CTLMASK		/* enable the irq		  */;\
@@ -270,7 +270,7 @@ _hwint07:		! Interrupt routine for irq 7 (printer)
 !*===========================================================================*
 !*				hwint08 - 15				     *
 !*===========================================================================*
-! Note this is a macro, it looks like a subroutine.
+! Note this is a macro, it just looks like a subroutine.
 #define hwint_slave(irq)	\
 	call	save			/* save interrupted process state */;\
 	inb	INT2_CTLMASK						    ;\
@@ -278,15 +278,14 @@ _hwint07:		! Interrupt routine for irq 7 (printer)
 	outb	INT2_CTLMASK		/* disable the irq		  */;\
 	movb	al, ENABLE						    ;\
 	outb	INT_CTL			/* reenable master 8259		  */;\
-	jmp	.+2			/* delay			  */;\
+	push	(_irq_hooks+4*irq)	/* irq_hooks[irq]		  */;\
 	outb	INT2_CTL		/* reenable slave 8259		  */;\
 	sti				/* enable interrupts		  */;\
-	push	irq			/* irq				  */;\
-	call	(_irq_table + 4*irq)	/* eax = (*irq_table[irq])(irq)   */;\
-	pop	ecx							    ;\
+	call	_intr_handle		/* intr_handle(irq_hooks[irq])	  */;\
 	cli				/* disable interrupts		  */;\
-	test	eax, eax		/* need to reenable irq?	  */;\
-	jz	0f							    ;\
+	pop	ecx							    ;\
+	cmp	(_irq_actids+4*irq), 0	/* interrupt still active?	  */;\
+	jnz	0f							    ;\
 	inb	INT2_CTLMASK						    ;\
 	andb	al, ~[1<<[irq-8]]					    ;\
 	outb	INT2_CTLMASK		/* enable the irq		  */;\

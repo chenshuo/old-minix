@@ -169,8 +169,8 @@ BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
           is  found.   See  controller(4)  for  names  and  numbers.  The file
           argument is the path to the file from the root directory down.   The
           driver  named  must also be tied to a controller with a cn variable,
-          so that the FAT file driver can find it.
-
+          so that the FAT file driver can find it.  A handy way  to  find  the
+          proper  minor number is to run ls -l on the device where the file is
 
 
                                                                              3
@@ -179,6 +179,14 @@ BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
 
 BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
 
+
+          found.  As a example, we assume the most common situation of a  disk
+          file  on  the  first  partition  of  the first drive on an ATA (IDE)
+          controller:
+
+               c0 = fatfile
+               c1 = at
+               fatfile-d0 = at:1:/minix/minix.mnx
 
      TZ = GMT0
           This sets the time zone the hardware clock is running in.  Readclock
@@ -195,7 +203,10 @@ TCP/IP CONFIGURATION
      DPETHn boot variables above.  The driver supports these  ethernet  cards:
      Western  Digital  8003,  Western Digital 8013, SMC Elite Ultra 16, Novell
      NE1000 and NE2000, 3Com Etherlink II (3c503).  Many newer variants of the
-     WD8013, now under the SMC brand, may also work.
+     WD8013,   now  under  the  SMC  brand,  may  also  work.   A  common  PCI
+     reimplementation of the NE2000 using  the  Realtek  80  chipset  is  also
+     supported.   Make  sure it's just a 10 mbit device and that it has a chip
+     marked "RTL 8029".
 
      You are likely to use TCP/IP in one of three situations:
 
@@ -214,21 +225,10 @@ TCP/IP CONFIGURATION
 
           192.168.0.1   flotsam
 
-     And this in /etc/dhcpd.conf:
+     And this in /etc/dhcp.conf:
 
           host 192.168.0.0/24 {};
           interface ip0 flotsam;
-
-  Small Network
-     In a network where the Minix machine can't obtain its IP address and name
-     from  a  different  host  you  need  specify the ethernet address of your
-     machine  and  host  names  of  all  machines  in  the  hosts   and   DHCP
-     configuration  files.  Suppose your machine is to be named "flotsam", and
-     another machine in the network is named "jetsam", and let's  use  network
-     192.168.0.0/24 again.  The file /etc/hosts now looks like this:
-
-          192.168.0.1   flotsam
-          192.168.0.2   jetsam
 
 
 
@@ -238,6 +238,27 @@ TCP/IP CONFIGURATION
 
 BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
 
+
+  Small Network
+     A network requires an  ethernet  driver.   You  need  to  enable  one  in
+     <minix/config.h> and you need to tell inet that it should use that driver
+     by making /etc/inet.conf look like this:
+
+          eth0 DP8390 0 { default; };
+
+     The second word (DP8390) must the name  of  the  ethernet  driver  you've
+     enabled.   It  can also be seen among the drivers in the output of ps ax.
+     See also inet(8).
+
+     In a small network there may not be a DHCP server for Minix to obtain its
+     IP  address  and  name  from, so you need specify the ethernet address of
+     your machine and host names  of  all  machines  in  the  hosts  and  DHCP
+     configuration  files.  Suppose your machine is to be named "flotsam", and
+     another machine in the network is named "jetsam", and let's  use  network
+     192.168.0.0/24 again.  The file /etc/hosts now looks like this:
+
+          192.168.0.1   flotsam
+          192.168.0.2   jetsam
 
      And /etc/dhcp.conf like this:
 
@@ -263,11 +284,26 @@ BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
           client 0:1:1b:a:68:ce flotsam { option server; };
           client 0:0:c0:3a:12:10 jetsam;
 
+
+
+
+
+
+
+
+                                                                             5
+
+
+
+BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
+
+
   Large Network
      In a network with a central  network  administration  your  machine's  IP
      address  and  name  are  given  by  the  DHCP server.  You don't need any
      configuration files.  If you want your machine to do more, like  being  a
-     router or something, then see inet(8) on setting up more networks.
+     router or something, then see inet(8) on setting up more than one network
+     interface.
 
   Simpler configuration tools
      The dhcpd and nonamed daemons are complex little  programs  that  try  to
@@ -286,17 +322,6 @@ BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
 
      The name daemon, nonamed, can be replaced by an entry in /etc/resolv.conf
      that specifies an external name daemon:
-
-
-
-
-
-                                                                             5
-
-
-
-BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
-
 
           nameserver nameserver-IP-address
 
@@ -321,6 +346,16 @@ FILES
      /usr/etc/rc         Complete system initialization.
 
      /etc/rc.net         Specialized network initialization.
+
+
+
+
+                                                                             6
+
+
+
+BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
+
 
      /usr/local/etc/rc   Per site initialization.
 
@@ -348,15 +383,6 @@ DIAGNOSTICS
           has  not  been  set  in /etc/fstab.  You can type a device name, say
           fd0.
 
-
-
-                                                                             6
-
-
-
-BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
-
-
      Unable to obtain an IP address after 10 seconds.
           TCP/IP misconfiguration.  The DHCP daemon may  have  failed  because
           the ethernet address of the machine is not known to the DHCP server,
@@ -376,6 +402,19 @@ NOTES
      and the number of bits in the network number.  So 172.16.0.0/12  includes
      all addresses from 172.16.0.0 to 172.31.255.255.)  RFC-1597 will tell you
      why private networks are good, and RFC-1627 why they are bad.
+
+
+
+
+
+
+
+                                                                             7
+
+
+
+BOOT(8)                   Minix Programmer's Manual                    BOOT(8)
+
 
 BUGS
      Indefinite hangs are possible if I/O addresses or  IRQ's  are  wrong.   A
@@ -409,5 +448,25 @@ AUTHOR
 
 
 
-                                                                             7
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                                                             8
 

@@ -132,3 +132,6 @@ _lseek:
 	mov	bx, 2(bx)
 	movb	ah, 0x42		! "LSEEK"
 	jmp	dos
+
+!
+! $PchId: mkfhead.ack.s,v 1.3 1999/01/14 21:17:06 philip Exp $

@@ -192,8 +192,8 @@ int rw_flag;			/* READING or WRITING */
 			/* O_NONBLOCK, return write count */
 		if (!(oflags & O_NONBLOCK)) {
 			fp->fp_cum_io_partial = cum_io;
-			suspend(XPIPE); /* partial write on pipe with */
-			return(0);	/* nbyte > PIPE_SIZE - non-atomic */
+			suspend(XPIPE);   /* partial write on pipe with */
+			return(SUSPEND);  /* nbyte > PIPE_SIZE - non-atomic */
 		}
 	}
 	fp->fp_cum_io_partial = 0;

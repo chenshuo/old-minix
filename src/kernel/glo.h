@@ -50,7 +50,8 @@ EXTERN int ega;			/* nonzero if console is EGA */
 EXTERN int vga;			/* nonzero if console is VGA */
 
 /* Miscellaneous. */
-EXTERN irq_handler_t irq_table[NR_IRQ_VECTORS];
+EXTERN irq_hook_t *irq_hooks[NR_IRQ_VECTORS];	/* list of IRQ handlers */
+EXTERN int irq_actids[NR_IRQ_VECTORS];		/* IRQ ID bits active */
 EXTERN int irq_use;		/* bit map of all in-use irq's */
 EXTERN reg_t mon_ss, mon_sp;	/* monitor stack */
 EXTERN int mon_return;		/* true if return to the monitor possible */

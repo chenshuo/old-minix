@@ -292,6 +292,9 @@ int flags;
 	print_flags(c_lflag, ECHOK, TLOCAL_DEF, "-echok", all);
 	print_flags(c_lflag, ECHONL, TLOCAL_DEF, "-echonl", all);
 	print_flags(c_lflag, NOFLSH, TLOCAL_DEF, "-noflsh", all);
+#ifdef TOSTOP
+	print_flags(c_lflag, TOSTOP, TLOCAL_DEF, "-tostop", all);
+#endif
 #ifdef __minix
 	print_flags(c_lflag, LFLUSHO, TLOCAL_DEF, "-lflusho", all);
 #endif
@@ -1017,6 +1020,15 @@ struct s2s {
 #ifdef __minix
 	{ B57600,	 57600 },
 	{ B115200,	115200 },
+#ifdef B230400
+	{ B230400,	230400 },
+#endif
+#ifdef B460800
+	{ B460800,	460800 },
+#endif
+#ifdef B921600
+	{ B921600,	921600 },
+#endif
 #endif
 };
 
@@ -1261,5 +1273,5 @@ char *value;
 }
 
 /*
- * $PchHeader: /mount/hd2/minix/cmd/simple/RCS/stty.c,v 1.4 1995/05/23 08:23:16 philip Exp $
+ * $PchId: stty.c,v 1.7 2001/05/02 15:04:42 philip Exp $
  */

@@ -7,7 +7,6 @@
 /* File System global variables */
 EXTERN struct fproc *fp;	/* pointer to caller's fproc struct */
 EXTERN int super_user;		/* 1 if caller is super_user, else 0 */
-EXTERN int dont_reply;		/* normally 0; set to 1 to inhibit reply */
 EXTERN int susp_count;		/* number of procs suspended on pipe */
 EXTERN int nr_locks;		/* number of locks currently in place */
 EXTERN int reviving;		/* number of pipe processes to be revived */

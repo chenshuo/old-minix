@@ -383,7 +383,7 @@ message *m_ptr;			/* pointer to request message */
   rp->child_utime += rc->user_time + rc->child_utime;	/* accum child times */
   rp->child_stime += rc->sys_time + rc->child_stime;
   unlock();
-  rc->p_alarm = 0;		/* turn off alarm timer */
+  cancel_alarm(proc_nr);		/* turn off alarm timer */
   if (rc->p_flags == 0) lock_unready(rc);
 
   strcpy(rc->p_name, "<noname>");	/* process no longer has a name */

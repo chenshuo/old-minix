@@ -9,10 +9,13 @@ Created:	March 14, 1994 by Philip Homburg
 #include <net/gen/eth_io.h>
 #include "assert.h"
 INIT_ASSERT
+#if __minix_vmd
+#include "config.h"
+#endif
 #include "dp8390.h"
 #include "wdeth.h"
 
-#if (ENABLE_DP8390 && ENABLE_WDETH) || __minix_vmd
+#if ENABLE_DP8390 && ENABLE_WDETH
 
 #define WET_ETHERNET	0x01		/* Ethernet transceiver */
 #define WET_STARLAN	0x02		/* Starlan transceiver */
@@ -328,10 +331,11 @@ dpeth_t *dep;
 		printf("%s: tlb= 0x%x\n", dep->de_name, tlb);
 #endif
 		return tlb == E_TLB_EB || tlb == E_TLB_E ||
-			tlb == E_TLB_SMCE || tlb == E_TLB_SMC8216C;
+			tlb == E_TLB_SMCE || tlb == E_TLB_SMC8216T ||
+			tlb == E_TLB_SMC8216C;
 	}
 	outb_we(dep, EPL_ICR, icr);
-	return 1;
+	return (icr & E_ICR_16BIT);
 }
 
 
@@ -356,11 +360,11 @@ dpeth_t *dep;
 	u8_t tlb;
 
 	tlb= inb_we(dep, EPL_TLB);
-	return tlb == E_TLB_SMC8216C;
+	return tlb == E_TLB_SMC8216T || tlb == E_TLB_SMC8216C;
 }
 
 #endif /* ENABLE_DP8390 && ENABLE_WDETH */
 
 /*
- * $PchId: wdeth.c,v 1.6 1996/01/19 22:51:37 philip Exp $
+ * $PchId: wdeth.c,v 1.9 1999/01/13 09:46:09 philip Exp $
  */

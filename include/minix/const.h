@@ -50,8 +50,8 @@
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
 /* Number of tasks. */
-#define NR_TASKS	(8 + NR_CTRLRS + ENABLE_DP8390 + ENABLE_PRINTER \
-				+ 2 * ENABLE_SB16)
+#define NR_TASKS	(8 + NR_CTRLRS + ENABLE_DP8390 + ENABLE_RTL8139 \
+				+ ENABLE_PRINTER + 2 * ENABLE_SB16)
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)

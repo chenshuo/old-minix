@@ -45,7 +45,8 @@ struct proc {
   clock_t sys_time;		/* sys time in ticks */
   clock_t child_utime;		/* cumulative user time of children */
   clock_t child_stime;		/* cumulative sys time of children */
-  clock_t p_alarm;		/* time of next alarm in ticks, or 0 */
+
+  timer_t *p_exptimers;		/* list of expired timers */
 
   struct proc *p_callerq;	/* head of list of procs wishing to send */
   struct proc *p_sendlink;	/* link to next proc wishing to send */

@@ -25,7 +25,7 @@ ps:	ps.c /usr/include/minix/config.h /usr/include/minix/const.h \
 		../kernel/proc.h ../mm/mproc.h \
 		../fs/fproc.h ../fs/const.h
 	$(CC) -i $(CFLAGS) -o $@ ps.c
-	install -S 16kw $@
+	install -S 32kw $@
 
 /usr/bin/ps:	ps
 	install -cs -o bin -g kmem -m 2755 $? $@

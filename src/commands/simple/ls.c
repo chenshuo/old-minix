@@ -1,4 +1,4 @@
-/*	ls 5.2 - List files.				Author: Kees J. Bot
+/*	ls 5.4 - List files.				Author: Kees J. Bot
  *								25 Apr 1989
  *
  * About the amount of bytes for heap + stack under Minix:
@@ -101,7 +101,7 @@ void *reallocate(void *a, size_t n)
 	return a;
 }
 
-char allowed[] = "acdfgilnpqrstu1ACDFLMRTX";
+char allowed[] = "acdfghilnpqrstu1ACDFLMRTX";
 char flags[sizeof(allowed)];
 
 char arg0flag[] = "cdfmrtx";	/* These in argv[0] go to upper case. */
@@ -244,6 +244,7 @@ int field = 0;	/* (used to be) Fields that must be printed. */
 #define L_TYPE		0x0800	/* -D */
 #define L_LONGTIME	0x1000	/* -T */
 #define L_DIR		0x2000	/* -d */
+#define L_KMG		0x4000	/* -h */
 
 struct file {		/* A file plus stat(2) information. */
 	struct file	*next;	/* Lists are made of them. */
@@ -643,7 +644,7 @@ void printname(char *name)
 	int c, q= present('q');
 
 	while ((c= (unsigned char) *name++) != 0) {
-		if (q && (c <= ' ' || c == 0177)) c= '?';
+		if (q && (c < ' ' || c == 0177)) c= '?';
 		putchar(c);
 	}
 }
@@ -817,12 +818,26 @@ void print1(struct file *f, int col, int doit)
 #endif /* !__minix */
 			break;
 		default:
-			if (doit) {
-				printf("%*lu ", f1width[W_SIZE],
-						(unsigned long) f->size);
+			if (field & L_KMG) {
+				p= cxsize(f);
+				n= strlen(p)+1;
+
+				if (doit) {
+					n= f1width[W_SIZE] - n;
+					while (n > 0) { putchar(' '); --n; }
+					printf("%s ", p);
+				} else {
+					maxise(&f1width[W_SIZE], n);
+				}
 			} else {
-				maxise(&f1width[W_SIZE], numwidth(f->size));
-				width++;
+				if (doit) {
+					printf("%*lu ", f1width[W_SIZE],
+						(unsigned long) f->size);
+				} else {
+					maxise(&f1width[W_SIZE],
+						numwidth(f->size));
+					width++;
+				}
 			}
 		}
 
@@ -1100,6 +1115,7 @@ int main(int argc, char **argv)
 	if (present('D')) field|= L_TYPE;
 	if (present('T')) field|= L_MODE | L_LONG | L_LONGTIME;
 	if (present('d')) field|= L_DIR;
+	if (present('h')) field|= L_KMG;
 	if (field & L_LONG) field&= ~L_EXTRA;
 
 #ifdef S_IFLNK

@@ -174,3 +174,7 @@ int main(int argc, char **argv)
 	}
 	return 0;
 }
+
+/*
+ * $PchId: mkfile.c,v 1.4 2000/08/13 22:06:40 philip Exp $
+ */

@@ -589,9 +589,8 @@ void exec_image(char *image)
 	}
 	parse_code(params);
 
-	/* Return from Minix; boot file system still around? */
-	(void) dev_open();
-	fsok= r_super() != 0;
+	/* Return from Minix.  Things may have changed, so assume nothing. */
+	fsok= -1;
 	errno= 0;
 }
 
@@ -632,6 +631,7 @@ char *select_image(char *image)
 	image= strcpy(malloc((strlen(image) + 1 + NAME_MAX + 1)
 						 * sizeof(char)), image);
 
+	if (fsok == -1) fsok= r_super() != 0;
 	if (!fsok || (image_ino= r_lookup(ROOT_INO, image)) == 0) {
 		char *size;
 
@@ -702,3 +702,7 @@ void bootminix(void)
 	}
 	free(image);
 }
+
+/*
+ * $PchId: bootimage.c,v 1.10 2002/02/27 19:39:09 philip Exp $
+ */

@@ -19,6 +19,7 @@
 #include "mm.h"
 #include <sys/stat.h>
 #include <minix/callnr.h>
+#include <minix/com.h>
 #include <a.out.h>
 #include <signal.h>
 #include <string.h>
@@ -176,7 +177,7 @@ PUBLIC int do_exec()
   if (basename == NULL) basename = name; else basename++;
   sys_exec(who, new_sp, rmp->mp_flags & TRACED, basename, pc);
 
-  return(E_NO_MESSAGE);		/* no reply, new program just runs */
+  return(SUSPEND);		/* no reply, new program just runs */
 }
 
 
@@ -319,7 +320,7 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
 
   /* Try to allocate memory for the new process. */
   new_base = alloc_mem(text_clicks + tot_clicks);
-  if (new_base == NO_MEM) return(EAGAIN);
+  if (new_base == NO_MEM) return(ENOMEM);
 
   /* We've got memory for the new core image.  Release the old one. */
   rmp = mp;

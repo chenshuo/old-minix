@@ -1,4 +1,4 @@
-/*	slip 1.0 - Serial line IP			Author: Kees J. Bot
+/*	slip 1.1 - Serial line IP			Author: Kees J. Bot
  *								19 Jul 1997
  */
 #define nil 0
@@ -59,8 +59,6 @@ int main(int argc, char **argv)
 	    ps_device, strerror(errno));
 	exit(1);
     }
-
-    fprintf(stderr, "slip: Connecting input/output to %s\n", ps_device);
 
     doing[0]= 1;	/* We're doing serial -> psip. */
     discard= 0;		/* No input error. */

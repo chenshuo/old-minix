@@ -13,6 +13,12 @@
  *                                             : block of directory
  *                                             : stack overflow in recurse_dir
  *                                             : and various other bugs
+ * Apr 14 2002    Michael A. Temari  -- bug fix: fixed recursing directories
+ *                                             : and printing dates 2000 and 
+ *                                             : later
+ * May 14 2002    Kees J. Bot        -- bug fix: fixed error messages
+ * Mar 14 2003    Kees J. Bot        -- added  : iso{dir,read} -B option
+ * Jul 24 2003    Michael A. Temari  -- bug fix: bytes to blocks roundup fix
  */
 
 #include <ctype.h>
@@ -175,6 +181,7 @@ int Read_Dir = 0;	/* 1 = Read directory entry */
 int Read_Info = 0;      /* 1 = Read volume descriptor */
 int Recurse = 0;        /* 1 = Recursively descend directories */
 int Verbose = 0;        /* 1 = Print all info on directories */
+int ByteOffset = 0;     /* 1 = Print byte offset and length of files */
 int Aflag = 0;          /* 1 = Suppress output of \r  */
 
 int iso_cmp(name, dir_ptr, dir_flag)
@@ -211,7 +218,7 @@ int dir_flag;
 void usage()
 {
   if (Read_Dir)
-   fprintf (STDERR, "Usage: isodir [-lr] inputfile [dir]\n");
+   fprintf (STDERR, "Usage: isodir [-lrB] inputfile [dir]\n");
   else if (Read_Info)
    fprintf (STDERR, "Usage: isoinfo inputfile\n");
   else
@@ -259,12 +266,14 @@ char **argv;
       {
 	case 'r':	Recurse = 1; break;  
 	case 'l':	Verbose = 1; break;
+	case 'B':	ByteOffset = 1; break;
 	default:	usage();
       }
       if (Read_File)
       switch (*opt++)
       {
 	case 'a':	Aflag = 1; break;    
+	case 'B':	ByteOffset = 1; break;
 	default:	usage();
       }
     }
@@ -300,7 +309,7 @@ char **argv;
   /* Open file system (file or device) */
   if ((Device = open(input_file, O_RDONLY)) < 0) 
   {
-    fprintf (STDERR, "cannot open %s\n", input_file);
+    fprintf (STDERR, "cannot open %s: %s\n", input_file, strerror(errno));
     exit(-1);
   }
 
@@ -385,7 +394,7 @@ char *path;
    
     /* Get block of next directory */
     block = iso_733(dir_ptr->first_block) + iso_711(dir_ptr->ext_attr_length);
-    nr_of_blocks = (int) (iso_733(dir_ptr->size) >> BLOCK_SHIFT);
+    nr_of_blocks = (iso_733(dir_ptr->size) + (BLOCK_SIZE-1)) >> BLOCK_SHIFT;
 
     /* Search for file in dir entry */
     found = 0;
@@ -426,7 +435,7 @@ struct dir_entry *dir_ptr;
 
   char tmp_path[MAX_PATH_LENGTH];
   int i,j, path_length;
-  long block, saveblock;
+  long block, saveblock, dblock;
   int nr_of_blocks;
   int offset = 0; 
 
@@ -435,7 +444,7 @@ struct dir_entry *dir_ptr;
    * list_dir changes dir_ptr 
    */
   block = iso_733(dir_ptr->first_block) + iso_711(dir_ptr->ext_attr_length);
-  nr_of_blocks = (int) (iso_733(dir_ptr->size) >> BLOCK_SHIFT);
+  nr_of_blocks = (iso_733(dir_ptr->size) + (BLOCK_SIZE-1)) >> BLOCK_SHIFT;
 
   /* Add a trailing / to path if necessary */
   path_length = strlen(path);
@@ -475,8 +484,8 @@ struct dir_entry *dir_ptr;
         tmp_path[i+1+path_length] = '\0';
   
         /* Read block of directory we found */
-        block = iso_733(dir_ptr->first_block);
-        read_device(block*BLOCK_SIZE, BLOCK_SIZE, Buffer);
+        dblock = iso_733(dir_ptr->first_block);
+        read_device(dblock*BLOCK_SIZE, BLOCK_SIZE, Buffer);
   
         /* And start all over again with this entry */
         recurse_dir(tmp_path, (struct dir_entry *) Buffer);
@@ -509,7 +518,7 @@ struct dir_entry *dir_ptr;
 
   /* Get first block of directory */
   block = iso_733(dir_ptr->first_block) + iso_711(dir_ptr->ext_attr_length);
-  nr_of_blocks = (int) (iso_733(dir_ptr->size) >> BLOCK_SHIFT);
+  nr_of_blocks = (iso_733(dir_ptr->size) + (BLOCK_SIZE-1)) >> BLOCK_SHIFT;
 
   /* Read all directory blocks and display their contents */
   for (j=0; j < nr_of_blocks; j++) 
@@ -548,16 +557,25 @@ struct dir_entry *dir_ptr;
       }
       if (!skip)
       {
+        if (ByteOffset)
+        {
+          fprintf (STDOUT, "%10ld ",
+            (iso_733(dir_ptr->first_block) + iso_711(dir_ptr->ext_attr_length))
+              * BLOCK_SIZE);
+        }
+        if (Verbose || ByteOffset)
+        {
+          fprintf (STDOUT, "%10ld ",  iso_733(dir_ptr->size));
+        }
         if (Verbose)
         {
-          fprintf (STDOUT, "%8ld ",  iso_733(dir_ptr->size));
           print_dir_date(dir_ptr->date);
           fprintf (STDOUT, " ");
         }
         for(i=name_len; i<(NR_OF_CHARS+NR_OF_BLANKS); i++) name[i] = ' ';
         name[NR_OF_CHARS+NR_OF_BLANKS] = '\0';
         fprintf(STDOUT, "%s", name);
-        if (!Verbose)
+        if (!(Verbose || ByteOffset))
         {
           column++;
           if (column >= NR_OF_COLS) 
@@ -590,9 +608,9 @@ char *date;
   else
 	fprintf(STDOUT,"%.3s",&months[m*3]);
 
-  fprintf (STDOUT, " %02d 19%02d %02d:%02d:%02d",
+  fprintf (STDOUT, " %02d %04d %02d:%02d:%02d",
            date[2],
-           date[0],
+           1900+date[0],
            date[3],
            date[4],
            date[5]);
@@ -611,6 +629,11 @@ struct dir_entry *dir_ptr;
 
   block = iso_733(dir_ptr->first_block);
   size = iso_733(dir_ptr->size);
+
+  if (ByteOffset) {
+    fprintf(STDOUT, "%ld %ld\n", block*BLOCK_SIZE, size);
+    return;
+  }
 
   while (size > 0)
   if (Aflag == 1) {
@@ -742,17 +765,18 @@ char *buffer;
 {
   int bytes_read;
 
-  if (lseek(Device, offset, SEEK_SET) < 0L) 
+  if (lseek(Device, offset, SEEK_SET) == -1) 
   {
 	fflush (stdout);
-	fprintf (STDERR, "seek error\n");
+	fprintf (STDERR, "seek error: %s\n", strerror(errno));
 	exit(1);
   }
 
   bytes_read = read(Device, buffer, nr_of_bytes);
   if (bytes_read != nr_of_bytes) 
   {
-  	fprintf (STDERR, "read error\n");
+  	fprintf (STDERR, "read error: %s\n",
+	    bytes_read >= 0 ? "Short read" : strerror(errno));
   	exit (1);
   }
 }

@@ -30,7 +30,6 @@ PUBLIC void main()
   phys_clicks text_base;
   vir_clicks text_clicks;
   vir_clicks data_clicks;
-  phys_bytes phys_b;
   reg_t ktsb;			/* kernel task stack base */
   struct memory *memp;
   struct tasktab *ttp;

@@ -1,4 +1,4 @@
-/*	cleantmp 1.4 - clean out a tmp dir.		Author: Kees J. Bot
+/*	cleantmp 1.6 - clean out a tmp dir.		Author: Kees J. Bot
  *								11 Apr 1991
  */
 #define nil 0
@@ -259,7 +259,7 @@ void cleandir(enum level level, time_t retired)
 		} else
 		if (S_ISDIR(st.st_mode)) {
 			cleandir(DOWN, ret);
-			if (st.st_mtime < ret || force) {
+			if (force || st.st_mtime < ret) {
 				if (debug < 3 && rmdir(path) < 0) {
 					if (errno != ENOTEMPTY
 							&& errno != EEXIST) {
@@ -273,7 +273,10 @@ void cleandir(enum level level, time_t retired)
 				}
 			}
 		} else {
-			if (st.st_atime < ret || force) {
+			if (force || (st.st_atime < ret
+					&& st.st_mtime < ret
+					&& st.st_ctime < ret)
+			) {
 				if (debug < 3 && unlink(path) < 0) {
 					if (errno != ENOENT) {
 						report(path);

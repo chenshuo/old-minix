@@ -164,26 +164,31 @@ nosw:
 !*===========================================================================*
 !*				hwint00 - 07				     *
 !*===========================================================================*
-! Note this is a macro, it looks like a subroutine.
+! Note that the first few lines are a macro
 #define hwint_master(irq)	\
 	call	save			/* save interrupted process state */;\
-	inb	INT_CTLMASK						    ;\
-	orb	al, *[1<<irq]						    ;\
-	outb	INT_CTLMASK		/* disable the irq		  */;\
-	movb	al, *ENABLE						    ;\
-	outb	INT_CTL			/* reenable master 8259		  */;\
-	sti				/* enable interrupts		  */;\
-	mov	ax, *irq						    ;\
-	push	ax			/* irq				  */;\
-	call	@_irq_table + 2*irq	/* ax = (*irq_table[irq])(irq)	  */;\
-	pop	cx							    ;\
-	cli				/* disable interrupts		  */;\
-	test	ax, ax			/* need to reenable irq?	  */;\
-	jz	0f							    ;\
-	inb	INT_CTLMASK						    ;\
-	andb	al, *~[1<<irq]						    ;\
-	outb	INT_CTLMASK		/* enable the irq		  */;\
-0:	ret				/* restart (another) process      */
+	mov	si, *[2*irq]		/* load array index offset 	  */;\
+	mov	di, *[1<<irq]		/* irq mask bit			  */;\
+	jmp	hwint_master		/* continue with common code	  */
+hwint_master:
+	inb	INT_CTLMASK
+	or	ax, di			! al |= (1 << irq)
+	outb	INT_CTLMASK		! disable the irq
+	movb	al, *ENABLE
+	outb	INT_CTL			! reenable master 8259
+	mov	cx, _irq_hooks(si)	! irq_hooks[irq]
+	push	cx
+	sti				! enable interrupts
+	call	_intr_handle		! intr_handle(irq_hooks[irq])
+	cli				! disable interrupts
+	pop	cx
+	cmp	_irq_actids(si), *0	! interrupt still active?
+	jnz	0f
+	inb	INT_CTLMASK
+	not	di
+	and	ax, di			! al &= ~(1 << irq)
+	outb	INT_CTLMASK		! enable the irq
+0:	ret				! restart (another) process
 
 ! Each of these entry points is an expansion of the hwint_master macro
 
@@ -222,28 +227,32 @@ _hwint07:		! Interrupt routine for irq 7 (printer)
 !*===========================================================================*
 !*				hwint08 - 15				     *
 !*===========================================================================*
-! Note this is a macro, it looks like a subroutine.
+! Note that the first few lines are a macro
 #define hwint_slave(irq)	\
 	call	save			/* save interrupted process state */;\
-	inb	INT2_CTLMASK						    ;\
-	orb	al, *[1<<[irq-8]]					    ;\
-	outb	INT2_CTLMASK		/* disable the irq		  */;\
-	movb	al, *ENABLE						    ;\
-	outb	INT_CTL			/* reenable master 8259		  */;\
-	jmp	.+2			/* delay			  */;\
-	outb	INT2_CTL		/* reenable slave 8259		  */;\
-	sti				/* enable interrupts		  */;\
-	mov	ax, *irq						    ;\
-	push	ax			/* irq				  */;\
-	call	@_irq_table + 2*irq	/* eax = (*irq_table[irq])(irq)   */;\
-	pop	cx							    ;\
-	cli				/* disable interrupts		  */;\
-	test	ax, ax			/* need to reenable irq?	  */;\
-	jz	0f							    ;\
-	inb	INT2_CTLMASK						    ;\
-	andb	al, *~[1<<[irq-8]]					    ;\
-	outb	INT2_CTLMASK		/* enable the irq		  */;\
-0:	ret				/* restart (another) process      */
+	mov	si, *[2*irq]		/* load array index offset 	  */;\
+	mov	di, *[1<<[irq-8]]	/* irq mask bit			  */;\
+	jmp	hwint_slave		/* continue with common code	  */
+hwint_slave:
+	inb	INT2_CTLMASK
+	or	ax, di			! al |= (1 << (irq-8))
+	outb	INT2_CTLMASK		! disable the irq
+	movb	al, *ENABLE
+	outb	INT_CTL			! reenable master 8259
+	mov	cx, _irq_hooks(si)	! irq_hooks[irq]
+	outb	INT2_CTL		! reenable slave 8259
+	push	cx
+	sti				! enable interrupts
+	call	_intr_handle		! intr_handle(irq_hooks[irq])
+	cli				! disable interrupts
+	pop	cx
+	cmp	_irq_actids(si), *0	! interrupt still active?
+	jnz	0f
+	inb	INT2_CTLMASK
+	not	di
+	and	ax, di			! al &= ~(1 << (irq-8))
+	outb	INT2_CTLMASK		! enable the irq
+0:	ret				! restart (another) process
 
 ! Each of these entry points is an expansion of the hwint_slave macro
 

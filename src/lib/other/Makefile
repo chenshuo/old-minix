@@ -45,8 +45,6 @@ OBJECTS	= \
 	$(LIBRARY)(popen.o) \
 	$(LIBRARY)(putenv.o) \
 	$(LIBRARY)(putw.o) \
-	$(LIBRARY)(regexp.o) \
-	$(LIBRARY)(regsub.o) \
 	$(LIBRARY)(stderr.o) \
 	$(LIBRARY)(swab.o) \
 	$(LIBRARY)(syscall.o) \
@@ -55,6 +53,8 @@ OBJECTS	= \
 	$(LIBRARY)(termcap.o) \
 	$(LIBRARY)(ttyname.o) \
 	$(LIBRARY)(ttyslot.o) \
+	$(LIBRARY)(v8regexp.o) \
+	$(LIBRARY)(v8regsub.o) \
 
 $(LIBRARY):	$(OBJECTS)
 	aal cr $@ *.o
@@ -177,12 +177,6 @@ $(LIBRARY)(putenv.o):	putenv.c
 $(LIBRARY)(putw.o):	putw.c
 	$(CC1) putw.c
 
-$(LIBRARY)(regexp.o):	regexp.c
-	$(CC1) regexp.c
-
-$(LIBRARY)(regsub.o):	regsub.c
-	$(CC1) regsub.c
-
 $(LIBRARY)(rindex.o):	rindex.c
 	$(CC1) rindex.c
 
@@ -212,3 +206,9 @@ $(LIBRARY)(ttyname.o):	ttyname.c
 
 $(LIBRARY)(ttyslot.o):	ttyslot.c
 	$(CC1) ttyslot.c
+
+$(LIBRARY)(v8regexp.o):	v8regexp.c
+	$(CC1) v8regexp.c
+
+$(LIBRARY)(v8regsub.o):	v8regsub.c
+	$(CC1) v8regsub.c

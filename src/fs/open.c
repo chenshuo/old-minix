@@ -22,6 +22,7 @@
 #include "inode.h"
 #include "lock.h"
 #include "param.h"
+#include "super.h"
 
 PRIVATE char mode_map[] = {R_BIT, W_BIT, R_BIT|W_BIT, 0};
 
@@ -148,7 +149,7 @@ mode_t omode;
 			oflags |= O_APPEND;	/* force append mode */
 			fil_ptr->filp_flags = oflags;
 			r = pipe_open(rip, bits, oflags);
-			if (r == OK) {
+			if (r != ENXIO) {
 				/* See if someone else is doing a rd or wt on
 				 * the FIFO.  If so, use its filp entry so the
 				 * file position will be automatically shared.
@@ -185,6 +186,7 @@ mode_t omode;
 
   /* If error, release inode. */
   if (r != OK) {
+	if (r == SUSPEND) return(r);		/* Oops, just suspended */
 	fp->fp_filp[fd] = NIL_FILP;
 	fil_ptr->filp_count= 0;
 	put_inode(rip);
@@ -274,17 +276,18 @@ register int oflags;
  *  processes hanging on the pipe.
  */
 
+  rip->i_pipe = I_PIPE; 
   if (find_filp(rip, bits & W_BIT ? R_BIT : W_BIT) == NIL_FILP) { 
 	if (oflags & O_NONBLOCK) {
 		if (bits & W_BIT) return(ENXIO);
-	} else
+	} else {
 		suspend(XPOPEN);	/* suspend caller */
+		return(SUSPEND);
+	}
   } else if (susp_count > 0) {/* revive blocked processes */
 	release(rip, OPEN, susp_count);
 	release(rip, CREAT, susp_count);
   }
-  rip->i_pipe = I_PIPE; 
-
   return(OK);
 }
 
@@ -327,7 +330,7 @@ PUBLIC int do_mkdir()
   if (fetch_name(name1, name1_length, M1) != OK) return(err_code);
   ldirp = last_dir(user_path, string);	/* pointer to new dir's parent */
   if (ldirp == NIL_INODE) return(err_code);
-  if ( (ldirp->i_nlinks & BYTE) >= LINK_MAX) {
+  if (ldirp->i_nlinks >= (ldirp->i_sp->s_version == V1 ? CHAR_MAX : SHRT_MAX)) {
 	put_inode(ldirp);	/* return parent */
 	return(EMLINK);
   }

@@ -3,21 +3,21 @@
 CFLAGS	= $(OPT) -D_MINIX
 LDFLAGS	=
 
-all:	in.rld
+all:	rlogind
 
-OBJ=	in.rld.o setup.o
+OBJ=	rlogind.o setup.o
 
-in.rld:	$(OBJ)
+rlogind:	$(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
 	install -S 4kw $@
 
-install:	/usr/bin/in.rld
+install:	/usr/bin/in.rlogind
 
-/usr/bin/in.rld:	in.rld
+/usr/bin/in.rlogind:	rlogind
 	install -c $? $@
 
 clean:
-	rm -f *.o in.rld core a.out
+	rm -f *.o rlogind core a.out
 
 # Dependencies.
-$(OBJ):		in.rld.h
+$(OBJ):		rlogind.h

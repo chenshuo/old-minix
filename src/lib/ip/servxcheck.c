@@ -74,16 +74,16 @@ static int netspec(char *word, ipaddr_t *addr, ipaddr_t *mask)
     if ((slash= strchr(word, '/')) == NULL) slash= S32;
 
     *slash= 0;
-    *addr= inet_addr(word);
+    r= inet_aton(word, addr);
     *slash++= '/';
-    if (*addr == -1) return 0;
+    if (!r) return 0;
 
     r= 0;
     while ((*slash - '0') < 10u) {
 	r= 10*r + (*slash++ - '0');
 	if (r > 32) return 0;
     }
-    if (*slash != 0 || r == 0) return 0;
+    if (*slash != 0 || slash[-1] == '/') return 0;
     *mask= htonl(r == 0 ? 0L : (0xFFFFFFFFUL >> (32 - r)) << (32 - r));
     return 1;
 }
@@ -130,9 +130,8 @@ static int get_name(ipaddr_t addr, char *name)
  */
 {
     struct hostent *he;
-    int ok, i;
+    int i;
 
-    ok= 0;
     he= gethostbyaddr((char *) &addr, sizeof(addr), AF_INET);
     if (he != NULL) {
 	strcpy(name, he->h_name);
@@ -141,14 +140,14 @@ static int get_name(ipaddr_t addr, char *name)
 	if (he != NULL && he->h_addrtype == AF_INET) {
 	    for (i= 0; he->h_addr_list[i] != NULL; i++) {
 		if (memcmp(he->h_addr_list[i], &addr, sizeof(addr)) == 0) {
-		    ok= 1;
-		    break;
+		    strcpy(name, he->h_name);
+		    return 1;
 		}
 	    }
 	}
     }
-    strcpy(name, ok ? he->h_name : inet_ntoa(addr));
-    return ok;
+    strcpy(name, inet_ntoa(addr));
+    return 0;
 }
 
 /* "state" and "log" flags, made to be bitwise comparable. */
@@ -156,10 +155,9 @@ static int get_name(ipaddr_t addr, char *name)
 #define FAIL		(0x02 | DEFFAIL)
 #define PASS		 0x04
 
-int servxcheck(int fd, const char *service,
+int servxcheck(ipaddr_t peer, const char *service,
 		void (*logf)(int pass, const char *name))
 {
-    nwio_tcpconf_t tcpconf;
     FILE *fp;
     char word[WLEN];
     char name[WLEN];
@@ -167,15 +165,8 @@ int servxcheck(int fd, const char *service,
     int got_name, slist, seen, explicit, state, log;
     ipaddr_t addr, mask;
 
-    /* Get addresses and port numbers. */
-    if (ioctl(fd, NWIOGTCPCONF, &tcpconf) < 0) return 1;	/* ? */
-
-    /* Accept local connections without comment. */
-    if ((tcpconf.nwtc_remaddr & HTONL(0xFF000000)) == HTONL(0x7F000000)
-	|| tcpconf.nwtc_remaddr == tcpconf.nwtc_locaddr
-    ) {
-	return 1;
-    }
+    /* Localhost? */
+    if ((peer & HTONL(0xFF000000)) == HTONL(0x7F000000)) return 1;
 
     if ((fp= fopen(path_servacces, "r")) == nil) {
 	/* Succeed on error, fail if simply nonexistent. */
@@ -244,13 +235,13 @@ int servxcheck(int fd, const char *service,
 		} else
 		if (netspec(word+1, &addr, &mask)) {
 		    /* Remote host is on the specified network? */
-		    if (((tcpconf.nwtc_remaddr ^ addr) & mask) == 0) {
+		    if (((peer ^ addr) & mask) == 0) {
 			state= c == '-' ? FAIL : PASS;
 		    }
 		} else {
 		    /* Name check. */
 		    if (got_name == -1) {
-			got_name= get_name(tcpconf.nwtc_remaddr, name);
+			got_name= get_name(peer, name);
 		    }
 
 		    /* Remote host name matches the word? */
@@ -268,7 +259,7 @@ int servxcheck(int fd, const char *service,
 
     if ((log & state) != 0) {
 	/* Log the result of the check. */
-	if (got_name == -1) (void) get_name(tcpconf.nwtc_remaddr, name);
+	if (got_name == -1) (void) get_name(peer, name);
 
 	if (logf != nil) {
 	    (*logf)(state == PASS, name);

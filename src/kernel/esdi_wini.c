@@ -117,7 +117,7 @@ FORWARD _PROTOTYPE( int w_1rdwt, (int opcode, unsigned long block,
 					phys_bytes address, unsigned count) );
 FORWARD _PROTOTYPE( int w_att_write, (int value) );
 FORWARD _PROTOTYPE( void w_interrupt, (int dma) );
-FORWARD _PROTOTYPE( int w_handler, (int irq) );
+FORWARD _PROTOTYPE( int w_handler, (irq_hook_t *hook) );
 FORWARD _PROTOTYPE( void w_dma_setup, (int opcode, phys_bytes address,
 							unsigned count) );
 FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
@@ -244,14 +244,15 @@ PRIVATE void w_init()
  */
   unsigned int drive;		/* hard disk drive number                */
   unsigned long size;		/* hard disk size			 */
+  static irq_hook_t hook;	/* interrupt hook			 */
 
   /* get the number of drives from the bios */
   phys_copy(0x475L, tmp_phys, 1L);
   nr_drives = tmp_buf[0];
   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
-  put_irq_handler(AT_WINI_IRQ, w_handler);
-  enable_irq(AT_WINI_IRQ);	/* ready for winchester interrupts */
+  put_irq_handler(&hook, AT_WINI_IRQ, w_handler);
+  enable_irq(&hook);		/* ready for winchester interrupts */
 
   for (drive = 0; drive < nr_drives; ++drive) {
 	(void) w_prepare(drive * DEV_PER_DRIVE);
@@ -313,11 +314,11 @@ int num_words;			/* i expected size of status block       */
   w_att_write(device | ATT_CMD);
 
   for (ki = 0; ki < 2; ++ki) {
-	out_word(CMD_REG, command[ki]);
+	outw(CMD_REG, command[ki]);
 	unlock();
 	while (TRUE) {
 		lock();
-		status = in_byte(BST_REG);
+		status = inb(BST_REG);
 		if (!(status & CMD_FUL)) break;
 		unlock();
 	}
@@ -333,11 +334,11 @@ int num_words;			/* i expected size of status block       */
   for (ki = 0; ki < num_words; ++ki) {
 	while (TRUE) {
 		lock();
-		status = in_byte(BST_REG);
+		status = inb(BST_REG);
 		if (status & STR_FUL) break;
 		unlock();
 	}
-	status_block[ki] = in_word(STAT_REG);
+	status_block[ki] = inw(STAT_REG);
 	unlock();
   }
   w_att_write(device | ATT_EOI);
@@ -417,13 +418,13 @@ unsigned nr_req;		/* length of request vector */
 	}
 
 	/* Turn on the disk activity light. */
-	out_byte(SYS_PORTA, in_byte(SYS_PORTA) | LIGHT_ON);
+	outb(SYS_PORTA, inb(SYS_PORTA) | LIGHT_ON);
 
 	/* Perform the transfer. */
 	r = w_1rdwt(opcode, block, dma_phys, nbytes);
 
 	/* Turn off the disk activity light. */
-	out_byte(SYS_PORTA, in_byte(SYS_PORTA) & ~LIGHT_ON);
+	outb(SYS_PORTA, inb(SYS_PORTA) & ~LIGHT_ON);
 
 	if (r != OK) {
 		/* An error occurred, try again sector by sector unless */
@@ -506,11 +507,11 @@ unsigned int count;		/* bytes to transfer */
   w_att_write(device | ATT_CMD);
 
   for (ki = 0; ki < 4; ++ki) {
-	out_word(CMD_REG, command[ki]);
+	outw(CMD_REG, command[ki]);
 	unlock();
 	while (TRUE) {
 		lock();
-		status = in_byte(BST_REG);
+		status = inb(BST_REG);
 		if (!(status & CMD_FUL)) break;
 		unlock();
 	}
@@ -552,11 +553,11 @@ register int value;
 
   while (TRUE) {
 	lock();
-	status = in_byte(BST_REG);
+	status = inb(BST_REG);
 	if (!(status & (INT_PND | BUSY))) break;
 	unlock();
   }
-  out_byte(ATT_REG, value);
+  outb(ATT_REG, value);
   unlock();
 
   return(OK);
@@ -583,12 +584,12 @@ int dma;			/* i dma transfer is underway            */
  */
   message dummy;		/* -- scratch --                         */
 
-  out_byte(BCTL_REG, dma ? 0x03 : 0x01);
+  outb(BCTL_REG, dma ? 0x03 : 0x01);
 
   receive(HARDWARE, &dummy);
 
-  out_byte(BCTL_REG, 0);
-  if (dma) out_byte(DMA_EXTCMD, 0x90 + dma_channel);
+  outb(BCTL_REG, 0);
+  if (dma) outb(DMA_EXTCMD, 0x90 + dma_channel);
 }
 
 
@@ -596,12 +597,12 @@ int dma;			/* i dma transfer is underway            */
 /*==========================================================================*
  *				w_handler				    *
  *==========================================================================*/
-PRIVATE int w_handler(irq)
-int irq;
+PRIVATE int w_handler(hook)
+irq_hook_t *hook;
 {
 /* Disk interrupt, send message to winchester task and reenable interrupts. */
 
-  w_istat = in_byte(INT_REG);
+  w_istat = inb(INT_REG);
   interrupt(win_tasknr);
   return 1;
 }
@@ -623,21 +624,21 @@ unsigned int count;
  */
 
   lock();
-  out_byte(DMA_EXTCMD, 0x90 + dma_channel);
+  outb(DMA_EXTCMD, 0x90 + dma_channel);
   /* Disable access to dma channel 5     */
-  out_byte(DMA_EXTCMD, 0x20 + dma_channel);
+  outb(DMA_EXTCMD, 0x20 + dma_channel);
   /* Clear the address byte pointer      */
-  out_byte(DMA_EXEC, (int)  address >>  0);	/* address bits 0..7   */
-  out_byte(DMA_EXEC, (int)  address >>  8);	/* address bits 8..15  */
-  out_byte(DMA_EXEC, (int) (address >> 16));	/* address bits 16..19 */
-  out_byte(DMA_EXTCMD, 0x40 + dma_channel);
+  outb(DMA_EXEC, (int)  address >>  0);		/* address bits 0..7   */
+  outb(DMA_EXEC, (int)  address >>  8);		/* address bits 8..15  */
+  outb(DMA_EXEC, (int) (address >> 16));	/* address bits 16..19 */
+  outb(DMA_EXTCMD, 0x40 + dma_channel);
   /* Clear the count byte pointer        */
-  out_byte(DMA_EXEC, (count - 1) >> 0);		/* count bits 0..7     */
-  out_byte(DMA_EXEC, (count - 1) >> 8);		/* count bits 8..15    */
-  out_byte(DMA_EXTCMD, 0x70 + dma_channel);
+  outb(DMA_EXEC, (count - 1) >> 0);		/* count bits 0..7     */
+  outb(DMA_EXEC, (count - 1) >> 8);		/* count bits 8..15    */
+  outb(DMA_EXTCMD, 0x70 + dma_channel);
   /* Set the transfer mode               */
-  out_byte(DMA_EXEC, opcode == DEV_SCATTER ? 0x44 : 0x4C);
-  out_byte(DMA_EXTCMD, 0xA0 + dma_channel);
+  outb(DMA_EXEC, opcode == DEV_SCATTER ? 0x44 : 0x4C);
+  outb(DMA_EXTCMD, 0xA0 + dma_channel);
   /* Enable access to dma channel 5      */
   unlock();
 }

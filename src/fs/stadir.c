@@ -169,9 +169,9 @@ char *user_addr;		/* user space address where stat buf goes */
   statbuf.st_dev = rip->i_dev;
   statbuf.st_ino = rip->i_num;
   statbuf.st_mode = rip->i_mode;
-  statbuf.st_nlink = rip->i_nlinks & BYTE;
+  statbuf.st_nlink = rip->i_nlinks;
   statbuf.st_uid = rip->i_uid;
-  statbuf.st_gid = rip->i_gid & BYTE;
+  statbuf.st_gid = rip->i_gid;
   statbuf.st_rdev = (dev_t) (s ? rip->i_zone[0] : NO_DEV);
   statbuf.st_size = rip->i_size;
 

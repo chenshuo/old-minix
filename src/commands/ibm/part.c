@@ -1,4 +1,4 @@
-/*	part 1.56 - Partition table editor		Author: Kees J. Bot
+/*	part 1.57 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 22k heap+stack.
  */
@@ -233,16 +233,21 @@ void newdevice(char *name, int scanning)
 		if (stat(name, &st) < 0 || !S_ISBLK(st.st_mode)) return;
 
 		switch (major(st.st_rdev)) {
-		case 0:
-		case 1:
-		case 15:
-			return;
 		case 2:
+			/* Floppy */
 			if (minor(st.st_rdev) >= 4) return;
 			break;
-		default:
+		case 3:
+		case 8:
+		case 10:
+		case 12:
+		case 16:
+			/* Disk controller */
 			if (minor(st.st_rdev) >= 0x80
 					|| minor(st.st_rdev) % 5 != 0) return;
+			break;
+		default:
+			return;
 		}
 		/* Interesting device found. */
 	} else {

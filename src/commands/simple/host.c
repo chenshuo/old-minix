@@ -446,17 +446,7 @@ static int
 getdomaininfo(name, domain)
 	char *name, *domain;
 {
-  int val1, val2;
-
-  if (gettype)
-    return getinfo(name, domain, gettype);
-  else {
-    val1 = getinfo(name, domain, getdeftype);
-    if (cname || verbose || getdeftype != T_A)
-      return val1;
-    val2 = getinfo(name, domain, T_MX);
-    return val1 || val2;
-  }
+  return getinfo(name, domain, gettype ? gettype : getdeftype);
 }
 
 static int

@@ -2,7 +2,7 @@
  *							Author: Kees J. Bot
  *								29 Nov 1994
  */
-static const char version[] = "2.5";
+static const char version[] = "2.7";
 
 /* Use the file reading gethostent() family of functions. */
 #define sethostent	_sethostent
@@ -349,7 +349,10 @@ static void dns_tell(int indent, dns_t *dp, size_t size)
     if (dp->hdr.dh_flag1 & DHF_TC) printf(" TC");
     if (dp->hdr.dh_flag1 & DHF_RD) printf(" RD");
     if (dp->hdr.dh_flag2 & DHF_RA) printf(" RA");
-    if (dp->hdr.dh_flag2 & DHF_PR) printf(" PR");
+#ifdef DHF_AD
+    if (dp->hdr.dh_flag2 & DHF_AD) printf(" AD");
+    if (dp->hdr.dh_flag2 & DHF_CD) printf(" CD");
+#endif
     fputc('\n', stdout);
 
     count[0]= ntohs(dp->hdr.dh_qdcount);
@@ -925,8 +928,8 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 		    dnvec, arraylimit(dnvec));
 		if (r == -1) return 0;
 		cp += r;
-		if (cp + 3 * sizeof(u16_t)
-		    + 2 * sizeof(u32_t) > arraylimit(dns.data)) return 0;
+		if (cp + 3 * sizeof(u16_t) + 2 * sizeof(u32_t)
+		    > arraylimit(dns.data)) { r= -1; break; }
 		pack16(cp, HTONS(T_A));
 		cp += sizeof(u16_t);
 		pack16(cp, HTONS(C_IN));
@@ -951,7 +954,7 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 		if (namecmp(qname, name) == 0) {
 		    r= dn_comp(name, cp, arraylimit(dns.data) - cp,
 			dnvec, arraylimit(dnvec));
-		    if (r == -1) return 0;
+		    if (r == -1) break;
 		    cp += r;
 		    if (cp + 3 * sizeof(u16_t)
 			+ 1 * sizeof(u32_t) > arraylimit(dns.data)) return 0;
@@ -966,7 +969,7 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 		    r= dn_comp((u8_t *) he->h_name, cp,
 			arraylimit(dns.data) - cp,
 			dnvec, arraylimit(dnvec));
-		    if (r == -1) return 0;
+		    if (r == -1) break;
 		    pack16(cp - sizeof(u16_t), htons(r));
 		    cp += r;
 		    ancount++;
@@ -976,6 +979,7 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 	    }
 	    break;
 	case HTONS(T_PTR):
+	    if (ancount > 0) break;
 	    if (he->h_name[0] == '%') break;
 	    sprintf((char *) name, "%d.%d.%d.%d.in-addr.arpa",
 		    ((u8_t *) he->h_addr)[3],
@@ -985,10 +989,10 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 	    if (namecmp(qname, name) == 0) {
 		r= dn_comp(name, cp, arraylimit(dns.data) - cp,
 		    dnvec, arraylimit(dnvec));
-		if (r == -1) return 0;
+		if (r == -1) break;
 		cp += r;
-		if (cp + 3 * sizeof(u16_t)
-		    + 1 * sizeof(u32_t) > arraylimit(dns.data)) return 0;
+		if (cp + 3 * sizeof(u16_t) + 1 * sizeof(u32_t)
+		    > arraylimit(dns.data)) { r= -1; break; }
 		pack16(cp, HTONS(T_PTR));
 		cp += sizeof(u16_t);
 		pack16(cp, HTONS(C_IN));
@@ -1006,10 +1010,10 @@ static int query_hosts(u8_t *qname, unsigned type, dns_t *dp, size_t *pdlen)
 	    }
 	    break;
 	}
-    } while ((he= gethostent()) != nil);
+    } while (r != -1 && (he= gethostent()) != nil);
     endhostent();
 
-    if (ancount == 0) return 0;
+    if (r == -1 || ancount == 0) return 0;
 
     dns.hdr.dh_ancount= htons(ancount);
     memcpy(dp, &dns, *pdlen= cp - dns2oct(&dns));
@@ -1184,7 +1188,7 @@ static int compose_reply(dns_t *dp, size_t *pdlen)
 	/* Malformed query, reply "FORMERR". */
 	dp->hdr.dh_flag1 &= ~(DHF_TC);
 	dp->hdr.dh_flag1 |= DHF_QR | DHF_AA;
-	dp->hdr.dh_flag2 &= ~(DHF_PR | DHF_UNUSED | DHF_RCODE);
+	dp->hdr.dh_flag2 &= ~(DHF_UNUSED | DHF_RCODE);
 	dp->hdr.dh_flag2 |= DHF_RA | FORMERR;
     } else
     if (class == HTONS(C_IN) && query_hosts(name, type, dp, pdlen)) {
@@ -1215,14 +1219,14 @@ static int compose_reply(dns_t *dp, size_t *pdlen)
 	 */
 	dp->hdr.dh_flag1 &= ~(DHF_TC);
 	dp->hdr.dh_flag1 |= DHF_QR | DHF_AA;
-	dp->hdr.dh_flag2 &= ~(DHF_PR | DHF_UNUSED | DHF_RCODE);
+	dp->hdr.dh_flag2 &= ~(DHF_UNUSED | DHF_RCODE);
 	dp->hdr.dh_flag2 |= DHF_RA | NXDOMAIN;
     } else
     if (!rd) {
 	/* "Recursion Desired" is off, so don't bother to relay. */
 	dp->hdr.dh_flag1 &= ~(DHF_TC);
 	dp->hdr.dh_flag1 |= DHF_QR;
-	dp->hdr.dh_flag2 &= ~(DHF_PR | DHF_UNUSED | DHF_RCODE);
+	dp->hdr.dh_flag2 &= ~(DHF_UNUSED | DHF_RCODE);
 	dp->hdr.dh_flag2 |= DHF_RA | NOERROR;
     } else {
 	/* Caller needs to consult with a real name daemon. */
@@ -2143,6 +2147,7 @@ int main(int argc, char **argv)
 	}
     }
     cache2file();
+    (void) unlink(PIDFILE);
     if (debug >= 2) printf("sbrk(0) = %u\n", (unsigned) sbrk(0));
     return 0;
 }

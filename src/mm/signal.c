@@ -151,7 +151,7 @@ PUBLIC int do_sigsuspend()
   sigdelset(&mp->mp_sigmask, SIGKILL);
   mp->mp_flags |= SIGSUSPENDED;
   check_pending(mp);
-  return(E_NO_MESSAGE);
+  return(SUSPEND);
 }
 
 
@@ -206,7 +206,7 @@ PUBLIC int do_ksig()
   if (who != HARDWARE) return(EPERM);
   proc_nr = mm_in.SIG_PROC;
   rmp = &mproc[proc_nr];
-  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(E_NO_MESSAGE);
+  if ((rmp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(SUSPEND);
   proc_id = rmp->mp_pid;
   sig_map = (sigset_t) mm_in.SIG_MAP;
   mp = &mproc[0];		/* pretend kernel signals are from MM */
@@ -242,7 +242,7 @@ PUBLIC int do_ksig()
 	check_sig(id, i);
 	sys_endsig(proc_nr);	/* tell kernel it's done */
   }
-  return(E_NO_MESSAGE);
+  return(SUSPEND);
 }
 
 
@@ -313,7 +313,7 @@ PUBLIC int do_pause()
 /* Perform the pause() system call. */
 
   mp->mp_flags |= PAUSED;
-  return(E_NO_MESSAGE);
+  return(SUSPEND);
 }
 
 
@@ -484,7 +484,7 @@ int signo;			/* signal to send to process (0 to _NSIG) */
   }
 
   /* If the calling process has killed itself, don't reply. */
-  if ((mp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(E_NO_MESSAGE);
+  if ((mp->mp_flags & (IN_USE | ZOMBIE)) != IN_USE) return(SUSPEND);
   return(count > 0 ? OK : error_code);
 }
 

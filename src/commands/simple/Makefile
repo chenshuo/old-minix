@@ -40,7 +40,6 @@ CCLD	= $(CC) -i $(CFLAGS)
 ALL	= \
 	add_route \
 	at \
-	atrun \
 	backup \
 	badblocks \
 	banner \
@@ -138,9 +137,11 @@ ALL	= \
 	pwdauth \
 	rarpd \
 	rcp \
+	rdate \
 	readall \
 	readfs \
 	remsync \
+	rget \
 	rlogin \
 	rmdir \
 	rsh \
@@ -199,10 +200,6 @@ add_route:	add_route.c
 	install -S 4kw $@
 
 at:	at.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-atrun:	atrun.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -594,6 +591,10 @@ rcp:	rcp.c
 	$(CCLD) -o $@ rcp.c
 	install -S 8kw $@
 
+rdate:	rdate.c
+	$(CCLD) -o $@ rdate.c
+	install -S 8kw $@
+
 readall:	readall.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -605,6 +606,10 @@ readfs:	readfs.c
 remsync:	remsync.c
 	$(CCLD) -o $@ $?
 	install -S 256k $@
+
+rget:	rget.c
+	$(CCLD) -o $@ $?
+	install -S 8kw $@
 
 rlogin:	rlogin.c
 	$(CCLD) -o $@ $?
@@ -805,7 +810,6 @@ install:	\
 	/usr/bin/add_route \
 		/usr/bin/del_route \
 	/usr/bin/at \
-	/usr/bin/atrun \
 	/usr/bin/backup \
 		/usr/bin/restore \
 	/usr/bin/badblocks \
@@ -918,9 +922,12 @@ install:	\
 	/usr/lib/pwdauth \
 	/usr/bin/rarpd \
 	/usr/bin/rcp \
+	/usr/bin/rdate \
 	/usr/bin/readall \
 	/usr/bin/readfs \
 	/usr/bin/remsync \
+	/usr/bin/rget \
+		/usr/bin/rput \
 	/usr/bin/rlogin \
 	/usr/bin/rmdir \
 	/usr/bin/rsh \
@@ -993,9 +1000,6 @@ install:	\
 
 /usr/bin/at:	at
 	install -cs -o root -m 4755 $? $@
-
-/usr/bin/atrun:	atrun
-	install -cs -o bin $? $@
 
 /usr/bin/backup:	backup
 	install -cs -o bin $? $@
@@ -1313,6 +1317,9 @@ install:	\
 /usr/bin/rcp:	rcp
 	install -cs -o bin $? $@
 
+/usr/bin/rdate:	rdate
+	install -cs -o bin $? $@
+
 /usr/bin/readall:	readall
 	install -cs -o bin $? $@
 
@@ -1321,6 +1328,12 @@ install:	\
 
 /usr/bin/remsync:	remsync
 	install -cs -o bin $? $@
+
+/usr/bin/rget:	rget
+	install -cs -o bin $? $@
+
+/usr/bin/rput:	/usr/bin/rget
+	install -l $? $@
 
 /usr/bin/rlogin:	rlogin
 	install -cs -o bin $? $@

@@ -55,22 +55,19 @@
 #include "assert.h"
 INIT_ASSERT
 #if __minix_vmd
+#include "config.h"
 #include "i386/protect.h"
 #else
 #include "protect.h"
 #endif
 #include "dp8390.h"
 #include "proc.h"
-#if __minix_vmd
-#include "config.h"
-#endif
 
-#if ENABLE_DP8390 || __minix_vmd
+#if ENABLE_DP8390
 
 #define DE_PORT_NR	2
 
 static dpeth_t de_table[DE_PORT_NR];
-static int int_pending[NR_IRQ_VECTORS];
 static int dpeth_tasknr= ANY;
 static u16_t eth_ign_proto;
 
@@ -108,6 +105,9 @@ extern int ___dummy[DE_PORT_NR == sizeof(dp_conf)/sizeof(dp_conf[0]) ? 1 : -1];
 #endif
 
 
+#if ENABLE_PCI
+_PROTOTYPE( static void pci_conf, (void)				);
+#endif
 _PROTOTYPE( static void do_vwrite, (message *mp, int from_int,
 							int vectored)	);
 _PROTOTYPE( static void do_vread, (message *mp, int vectored)		);
@@ -145,7 +145,7 @@ _PROTOTYPE( static void dp_pio8_nic2user, (dpeth_t *dep, int nic_addr,
 _PROTOTYPE( static void dp_pio16_nic2user, (dpeth_t *dep, int nic_addr, 
 		iovec_dat_t *iovp, vir_bytes offset, vir_bytes count)	);
 _PROTOTYPE( static void dp_next_iovec, (iovec_dat_t *iovp)		);
-_PROTOTYPE( static int dp_handler, (int irq)				);
+_PROTOTYPE( static int dp_handler, (irq_hook_t *hook)			);
 _PROTOTYPE( static void conf_hw, (dpeth_t *dep)				);
 _PROTOTYPE( static void update_conf, (dpeth_t *dep, dp_conf_t *dcp)	);
 _PROTOTYPE( static int calc_iovec_size, (iovec_dat_t *iovp)		);
@@ -167,6 +167,12 @@ void dp8390_task()
 	long v;
 
 	dpeth_tasknr= proc_number(proc_ptr);
+
+	for (i= 0, dep= de_table; i<DE_PORT_NR; i++, dep++)
+	{
+		strcpy(dep->de_name, "dp8390#0");
+		dep->de_name[7] += i;
+	}
 
 	v= 0;
 	(void) env_parse("ETH_IGN_PROTO", "x", 0, &v, 0x0000L, 0xFFFFL);
@@ -194,12 +200,12 @@ void dp8390_task()
 				assert(dep->de_flags & DEF_ENABLED);
 				irq= dep->de_irq;
 				assert(irq >= 0 && irq < NR_IRQ_VECTORS);
-				if (int_pending[irq])
+				if (dep->de_int_pending)
 				{
-					int_pending[irq]= 0;
+					dep->de_int_pending= 0;
 					dp_check_ints(dep);
 					do_int(dep);
-					enable_irq(irq);
+					enable_irq(&dep->de_hook);
 				}
 			}
 			break;
@@ -211,9 +217,9 @@ void dp8390_task()
 
 
 /*===========================================================================*
- *				dp_dump					     *
+ *				dp8390_dump				     *
  *===========================================================================*/
-void dp_dump()
+void dp8390_dump()
 {
 	dpeth_t *dep;
 	int i, isr;
@@ -221,10 +227,12 @@ void dp_dump()
 	printf("\n");
 	for (i= 0, dep = &de_table[0]; i<DE_PORT_NR; i++, dep++)
 	{
+#if XXX
 		if (dep->de_mode == DEM_DISABLED)
 			printf("dp8390 port %d is disabled\n", i);
 		else if (dep->de_mode == DEM_SINK)
 			printf("dp8390 port %d is in sink mode\n", i);
+#endif
 
 		if (dep->de_mode != DEM_ENABLED)
 			continue;
@@ -259,7 +267,7 @@ void dp_dump()
 
 		if (debug)
 		{
-			int_pending[dep->de_irq]= 1;
+			dep->de_int_pending= 1;
 			interrupt(dpeth_tasknr);
 		}
 	}
@@ -284,6 +292,55 @@ void dp8390_stop()
 	}
 }
 
+#if ENABLE_PCI
+/*===========================================================================*
+ *				pci_conf				     *
+ *===========================================================================*/
+static void pci_conf()
+{
+	int i, h;
+	char *envvar, *p;
+	struct dpeth *dep;
+	static char envfmt[] = "*:d.d.d";
+	long v;
+	static int first_time= 1;
+
+	if (!first_time)
+		return;
+	first_time= 0;
+
+	for (i= 0, dep= de_table; i<DE_PORT_NR; i++, dep++)
+	{
+		envvar= dp_conf[i].dpc_envvar;
+		if (!(dep->de_pci= env_prefix(envvar, "pci")))
+			continue;	/* no PCI config */
+		v= 0;
+		(void) env_parse(envvar, envfmt, 1, &v, 0, 255);
+		dep->de_pcibus= v;
+		v= 0;
+		(void) env_parse(envvar, envfmt, 2, &v, 0, 255);
+		dep->de_pcidev= v;
+		v= 0;
+		(void) env_parse(envvar, envfmt, 3, &v, 0, 255);
+		dep->de_pcifunc= v;
+	}
+
+	for (h= TRUE; h >= FALSE; h--) {
+		for (i= 0, dep= de_table; i<DE_PORT_NR; i++, dep++)
+		{
+			if (!dep->de_pci)
+				continue;
+			if (((dep->de_pcibus | dep->de_pcidev |
+				dep->de_pcifunc) != 0) != h)
+			{
+				continue;
+			}
+			if (!rtl_probe(dep))
+				dep->de_pci= -1;
+		}
+	}
+}
+#endif /* ENABLE_PCI */
 
 /*===========================================================================*
  *				do_vwrite				     *
@@ -467,6 +524,10 @@ message *mp;
 	dpeth_t *dep;
 	message reply_mess;
 
+#if ENABLE_PCI
+	pci_conf(); /* Configure PCI devices. */
+#endif
+
 	port = mp->DL_PORT;
 	if (port < 0 || port >= DE_PORT_NR)
 	{
@@ -476,8 +537,6 @@ message *mp;
 		return;
 	}
 	dep= &de_table[port];
-	strcpy(dep->de_name, "dp8390#0");
-	dep->de_name[7] += port;
 	if (dep->de_mode == DEM_DISABLED)
 	{
 		/* This is the default, try to (re)locate the device. */
@@ -703,8 +762,8 @@ dpeth_t *dep;
 	}
 
 	/* set the interrupt handler */
-	put_irq_handler(dep->de_irq, dp_handler);
-	enable_irq(dep->de_irq);
+	put_irq_handler(&dep->de_hook, dep->de_irq, dp_handler);
+	enable_irq(&dep->de_hook);
 }
 
 
@@ -899,8 +958,9 @@ dpeth_t *dep;
 		if (isr & ISR_OVW)
 		{
 			dep->de_stat.ets_OVW++;
-#if DEBUG
- { printW(); printf("%s: got overwrite warning\n", dep->de_name); }
+#if 0
+			{ printW(); printf(
+				"%s: got overwrite warning\n", dep->de_name); }
 #endif
 			if (dep->de_flags & DEF_READING)
 			{
@@ -920,8 +980,9 @@ dpeth_t *dep;
 			 * and continue processing arrived packets. When the
 			 * receive buffer is empty, we reset the dp8390.
 			 */
-#if DEBUG
- { printW(); printf("%s: NIC stopped\n", dep->de_name); }
+#if 0
+			 { printW(); printf(
+				"%s: NIC stopped\n", dep->de_name); }
 #endif
 			dep->de_flags |= DEF_STOPPED;
 			break;
@@ -970,7 +1031,8 @@ dpeth_t *dep;
 		length = (header.dr_rbcl | (header.dr_rbch << 8)) -
 			sizeof(dp_rcvhdr_t);
 		next = header.dr_next;
-		if (length < ETH_MIN_PACK_SIZE || length > ETH_MAX_PACK_SIZE)
+		if (length < ETH_MIN_PACK_SIZE ||
+			length > ETH_MAX_PACK_SIZE)
 		{
 			printf("%s: packet with strange length arrived: %d\n",
 				dep->de_name, (int) length);
@@ -1082,10 +1144,6 @@ size_t offset;
 size_t size;
 void *dst;
 {
-	u8_t *ha;
-	int i;
-
-	ha = (u8_t *) dst;
 	offset = page * DP_PAGESIZE + offset;
 	outb_reg0(dep, DP_RBCR0, size & 0xFF);
 	outb_reg0(dep, DP_RBCR1, size >> 8);
@@ -1093,8 +1151,7 @@ void *dst;
 	outb_reg0(dep, DP_RSAR1, offset >> 8);
 	outb_reg0(dep, DP_CR, CR_DM_RR | CR_PS_P0 | CR_STA);
 
-	for (i= 0; i<size; i++)
-		ha[i]= in_byte(dep->de_data_port);
+	insb(dep->de_data_port, dst, size);
 }
 
 
@@ -1108,10 +1165,6 @@ size_t offset;
 size_t size;
 void *dst;
 {
-	u16_t *ha;
-	int i;
-
-	ha = (u16_t *) dst;
 	offset = page * DP_PAGESIZE + offset;
 	outb_reg0(dep, DP_RBCR0, size & 0xFF);
 	outb_reg0(dep, DP_RBCR1, size >> 8);
@@ -1120,9 +1173,7 @@ void *dst;
 	outb_reg0(dep, DP_CR, CR_DM_RR | CR_PS_P0 | CR_STA);
 
 	assert (!(size & 1));
-	size /= 2;
-	for (i= 0; i<size; i++)
-		ha[i]= in_word(dep->de_data_port);
+	insw(dep->de_data_port, dst, size);
 }
 
 
@@ -1258,7 +1309,7 @@ vir_bytes count;
 			iovp->iod_iovec[i].iov_addr + offset, bytes);
 		if (!phys_user)
 			panic("dp8390: umap failed\n", NO_NUM);
-		port_write_byte(dep->de_data_port, phys_user, bytes);
+		phys_outsb(dep->de_data_port, phys_user, bytes);
 		count -= bytes;
 		offset += bytes;
 	}
@@ -1330,9 +1381,8 @@ vir_bytes count;
 			panic("dp8390: umap failed\n", NO_NUM);
 		if (odd_byte)
 		{
-			phys_copy(phys_user, phys_2bytes+1,
-				(phys_bytes) 1);
-			out_word(dep->de_data_port, *(u16_t *)two_bytes);
+			phys_copy(phys_user, phys_2bytes+1, (phys_bytes) 1);
+			outw(dep->de_data_port, *(u16_t *)two_bytes);
 			count--;
 			offset++;
 			bytes--;
@@ -1344,7 +1394,7 @@ vir_bytes count;
 		ecount= bytes & ~1;
 		if (ecount != 0)
 		{
-			port_write(dep->de_data_port, phys_user, ecount);
+			phys_outsw(dep->de_data_port, phys_user, ecount);
 			count -= ecount;
 			offset += ecount;
 			bytes -= ecount;
@@ -1364,7 +1414,7 @@ vir_bytes count;
 	assert(count == 0);
 
 	if (odd_byte)
-		out_word(dep->de_data_port, *(u16_t *)two_bytes);
+		outw(dep->de_data_port, *(u16_t *)two_bytes);
 
 	for (i= 0; i<100; i++)
 	{
@@ -1469,7 +1519,7 @@ vir_bytes count;
 			iovp->iod_iovec[i].iov_addr + offset, bytes);
 		if (!phys_user)
 			panic("dp8390: umap failed\n", NO_NUM);
-		port_read_byte(dep->de_data_port, phys_user, bytes);
+		phys_insb(dep->de_data_port, phys_user, bytes);
 		count -= bytes;
 		offset += bytes;
 	}
@@ -1542,7 +1592,7 @@ vir_bytes count;
 		ecount= bytes & ~1;
 		if (ecount != 0)
 		{
-			port_read(dep->de_data_port, phys_user, ecount);
+			phys_insw(dep->de_data_port, phys_user, ecount);
 			count -= ecount;
 			offset += ecount;
 			bytes -= ecount;
@@ -1551,7 +1601,7 @@ vir_bytes count;
 		if (bytes)
 		{
 			assert(bytes == 1);
-			*(u16_t *)two_bytes= in_word(dep->de_data_port);
+			*(u16_t *)two_bytes= inw(dep->de_data_port);
 			phys_copy(phys_2bytes, phys_user, (phys_bytes) 1);
 			count--;
 			offset++;
@@ -1585,13 +1635,12 @@ iovec_dat_t *iovp;
 /*===========================================================================*
  *				dp_handler				     *
  *===========================================================================*/
-static int dp_handler(irq)
-int irq;
+static int dp_handler(hook)
+irq_hook_t *hook;
 {
 /* DP8390 interrupt, send message and keep interrupts disabled. */
 
-	assert(irq >= 0 && irq < NR_IRQ_VECTORS);
-	int_pending[irq]= 1;
+	structof(dpeth_t, de_hook, hook)->de_int_pending= 1;
 	interrupt(dpeth_tasknr);
 
 	return 0;
@@ -1647,6 +1696,18 @@ dp_conf_t *dcp;
 {
 	long v;
 	static char dpc_fmt[] = "x:d:x:x";
+
+#if ENABLE_PCI
+	if (dep->de_pci)
+	{
+		if (dep->de_pci == 1)
+		{
+			/* PCI device is present */
+			dep->de_mode= DEM_ENABLED;
+		}
+		return;		/* Already configured */
+	}
+#endif
 
 	/* Get the default settings and modify them from the environment. */
 	dep->de_mode= DEM_SINK;
@@ -1735,7 +1796,7 @@ int may_block;
 
 	if (r == ELOCKED && may_block)
 	{
-#if DEBUG
+#if 0
 		printW(); printf("send locked\n");
 #endif
 		return;
@@ -1801,5 +1862,5 @@ void *loc_addr;
 #endif /* ENABLE_DP8390 */
 
 /*
- * $PchId: dp8390.c,v 1.5 1996/01/19 22:56:35 philip Exp $
+ * $PchId: dp8390.c,v 1.19 2001/11/09 19:50:12 philip Exp $
  */

@@ -43,10 +43,7 @@ PUBLIC int do_reboot()
   /* Kill all processes except init. */
   check_sig(-1, SIGKILL);
 
-  tell_fs(EXIT, INIT_PROC_NR, 0, 0);	/* cleanup init */
-  tell_fs(EXIT, MM_PROC_NR, 0, 0);	/* cleanup for myself */
-
-  tell_fs(SYNC,0,0,0);
+  tell_fs(REBOOT,0,0,0);		/* tell FS to prepare for shutdown */
 
   sys_abort(reboot_flag, MM_PROC_NR, monitor_code, reboot_size);
   /* NOTREACHED */
@@ -103,6 +100,7 @@ PUBLIC int do_svrctl()
 	mp->mp_parent = 0;
 	return(OK); }
 
+#if ENABLE_SWAP
   case MMSWAPON: {
 	struct mmswapon swapon;
 
@@ -118,6 +116,7 @@ PUBLIC int do_svrctl()
 	if (mp->mp_effuid != SUPER_USER) return(EPERM);
 
 	return(swap_off()); }
+#endif /* SWAP */
 
   default:
 	return(EINVAL);

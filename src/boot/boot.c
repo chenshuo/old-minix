@@ -2,7 +2,7 @@
  *								27 Dec 1991
  */
 
-char version[]=		"2.16";
+char version[]=		"2.19";
 
 #define BIOS	(!UNIX)		/* Either uses BIOS or UNIX syscalls. */
 
@@ -42,6 +42,8 @@ char version[]=		"2.16";
 #define arraysize(a)		(sizeof(a) / sizeof((a)[0]))
 #define arraylimit(a)		((a) + arraysize(a))
 #define between(a, c, z)	((unsigned) ((c) - (a)) <= ((z) - (a)))
+
+int fsok= -1;		/* File system state.  Initially unknown. */
 
 #if BIOS
 char *bios_err(int err)
@@ -216,7 +218,7 @@ void readblock(off_t blk, char *buf)
 	}
 }
 
-int trapsig;
+sig_atomic_t trapsig;
 
 void trap(int sig)
 {
@@ -268,7 +270,9 @@ int getch(void)
 #define get_tick()		((u32_t) time(nil))
 #define clear_screen()		printf("[clear]")
 #define boot_device(device)	printf("[boot %s]\n", device)
+#define ctty(line)		printf("[ctty %s]\n", line)
 #define bootminix()		(run_trailer() && printf("[boot]\n"))
+#define off()			printf("[off]")
 
 #endif /* UNIX */
 
@@ -495,12 +499,9 @@ void initialize(void)
 	 * and also keep the BIOS data area safe (1.5K), plus a bit extra for
 	 * where we may have to put a.out headers for older kernels.
 	 */
-	if (mem[1].size > 0) mem[0].size = newaddr;
+	if (mon_return = (mem[1].size > 512*1024L)) mem[0].size = newaddr;
 	mem[0].base += 2048;
 	mem[0].size -= 2048;
-
-	/* Set the parameters for the BIOS boot device. */
-	(void) dev_open();
 
 	/* Find out what the boot device and partition was. */
 	bootdev.name[0]= 0;
@@ -614,13 +615,13 @@ void initialize(void)
 
 /* Reserved names: */
 enum resnames {
-	R_NULL, R_BOOT, R_DELAY, R_ECHO, R_EXIT, R_HELP,
-	R_LS, R_MENU, R_SAVE, R_SET, R_TRAP, R_UNSET
+ 	R_NULL, R_BOOT, R_CTTY, R_DELAY, R_ECHO, R_EXIT, R_HELP,
+	R_LS, R_MENU, R_OFF, R_SAVE, R_SET, R_TRAP, R_UNSET
 };
 
 char resnames[][6] = {
-	"", "boot", "delay", "echo", "exit", "help",
-	"ls", "menu", "save", "set", "trap", "unset",
+	"", "boot", "ctty", "delay", "echo", "exit", "help",
+	"ls", "menu", "off", "save", "set", "trap", "unset",
 };
 
 /* Using this for all null strings saves a lot of memory. */
@@ -1093,6 +1094,7 @@ dev_t name2dev(char *name)
 	}
 
 	/* Look the name up on the boot device for the UNIX device number. */
+	if (fsok == -1) fsok= r_super() != 0;
 	if (fsok) {
 		/* The current working directory is "/dev". */
 		ino= r_lookup(r_lookup(ROOT_INO, "dev"), name);
@@ -1116,6 +1118,145 @@ dev_t name2dev(char *name)
 		errno= 0;
 	}
 	return dev;
+}
+
+#if DEBUG
+static void apm_perror(char *label, u16_t ax)
+{
+	unsigned ah;
+	char *str;
+
+	ah= (ax >> 8);
+	switch(ah)
+	{
+	case 0x01: str= "APM functionality disabled"; break;
+	case 0x03: str= "interface not connected"; break;
+	case 0x09: str= "unrecognized device ID"; break;
+	case 0x0A: str= "parameter value out of range"; break;
+	case 0x0B: str= "interface not engaged"; break;
+	case 0x60: str= "unable to enter requested state"; break;
+	case 0x86: str= "APM not present"; break;
+	default: printf("%s: error 0x%02x\n", label, ah); return;
+	}
+	printf("%s: %s\n", label, str);
+}
+
+#define apm_printf printf
+#else
+#define apm_perror(label, ax) ((void)0)
+#define apm_printf
+#endif
+
+static void off(void)
+{
+	bios_env_t be;
+	unsigned al, ah;
+
+	/* Try to switch off the system. Print diagnostic information
+	 * that can be useful if the operation fails.
+	 */
+
+	be.ax= 0x5300;	/* APM, Installation check */
+	be.bx= 0;	/* Device, APM BIOS */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("APM installation check failed", be.ax);
+		return;
+	}
+	if (be.bx != (('P' << 8) | 'M'))
+	{
+		apm_printf("APM signature not found (got 0x%04x)\n", be.bx);
+		return;
+	}
+
+	ah= be.ax >> 8;
+	if (ah > 9)
+		ah= (ah >> 4)*10 + (ah & 0xf);
+	al= be.ax & 0xff;
+	if (al > 9)
+		al= (al >> 4)*10 + (al & 0xf);
+	apm_printf("APM version %u.%u%s%s%s%s%s\n",
+		ah, al,
+		(be.cx & 0x1) ? ", 16-bit PM" : "",
+		(be.cx & 0x2) ? ", 32-bit PM" : "",
+		(be.cx & 0x4) ? ", CPU-Idle" : "",
+		(be.cx & 0x8) ? ", APM-disabled" : "",
+		(be.cx & 0x10) ? ", APM-disengaged" : "");
+
+	/* Connect */
+	be.ax= 0x5301;	/* APM, Real mode interface connect */
+	be.bx= 0x0000;	/* APM BIOS */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("APM real mode connect failed", be.ax);
+		return;
+	}
+
+	/* Ask for a seat upgrade */
+	be.ax= 0x530e;	/* APM, Driver Version */
+	be.bx= 0x0000;	/* BIOS */
+	be.cx= 0x0102;	/* version 1.2 */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("Set driver version failed", be.ax);
+		goto disco;
+	}
+
+	/* Is this version really worth reporting. Well, if the system
+	 * does switch off, you won't see it anyway.
+	 */
+	ah= be.ax >> 8;
+	if (ah > 9)
+		ah= (ah >> 4)*10 + (ah & 0xf);
+	al= be.ax & 0xff;
+	if (al > 9)
+		al= (al >> 4)*10 + (al & 0xf);
+	apm_printf("Got APM connection version %u.%u\n", ah, al);
+
+	/* Enable */
+	be.ax= 0x5308;	/* APM, Enable/disable power management */
+	be.bx= 0x0001;	/* All device managed by APM BIOS */
+#if 0
+	/* For old APM 1.0 systems, we need 0xffff. Assume that those
+	 * systems do not exist.
+	 */
+	be.bx= 0xffff;	/* All device managed by APM BIOS (compat) */
+#endif
+	be.cx= 0x0001;	/* Enable power management */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("Enable power management failed", be.ax);
+		goto disco;
+	}
+
+	/* Off */
+	be.ax= 0x5307;	/* APM, Set Power State */
+	be.bx= 0x0001;	/* All devices managed by APM */
+	be.cx= 0x0003;	/* Off */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("Set power state failed", be.ax);
+		goto disco;
+	}
+
+	apm_printf("Power off sequence successfully completed.\n\n");
+	apm_printf("Ha, ha, just kidding!\n");
+
+disco:
+	/* Disconnect */
+	be.ax= 0x5304;	/* APM, interface disconnect */
+	be.bx= 0x0000;	/* APM BIOS */
+	int15(&be);
+	if (be.flags & FL_CARRY)
+	{
+		apm_perror("APM interface disconnect failed", be.ax);
+		return;
+	}
 }
 
 #if !DOS
@@ -1192,12 +1333,27 @@ void boot_device(char *devname)
 	(void) dev_open();
 }
 
+void ctty(char *line)
+{
+	if (between('0', line[0], '3') && line[1] == 0) {
+		serial_init(line[0] - '0');
+	} else {
+		printf("Bad serial line number: %s\n", line);
+	}
+}
+
 #else /* DOS */
 
 void boot_device(char *devname)
-/* No booting of other devices under DOS */
+/* No booting of other devices under DOS. */
 {
-	printf("Can't boot devices under MS-DOS\n");
+	printf("Can't boot devices under DOS\n");
+}
+
+void ctty(char *line)
+/* Don't know how to handle serial lines under DOS. */
+{
+	printf("No serial line support under DOS\n");
 }
 
 #endif /* DOS */
@@ -1210,6 +1366,7 @@ void ls(char *dir)
 	struct stat st;
 	char name[NAME_MAX+1];
 
+	if (fsok == -1) fsok= r_super() != 0;
 	if (!fsok) return;
 
 	if ((ino= r_lookup(ROOT_INO, dir)) == 0
@@ -1364,15 +1521,15 @@ void help(void)
 			"A menu function like: minix(=,Start Minix) {boot}" },
 		{ "name",		"Call function" },
 		{ "boot [device]",	"Boot Minix or another O.S." },
+		{ "ctty [line]",	"Duplicate to serial line" },
 		{ "delay [msec]",	"Delay (500 msec default)" },
 		{ "echo word ...",	"Print the words" },
 		{ "ls [directory]",	"List contents of directory" },
 		{ "menu",		"Choose a menu function" },
-		{ "save",		"Save environment" },
-		{ "set",		"Show environment" },
+		{ "save / set",		"Save or show environment" },
 		{ "trap msec command",	"Schedule command" },
 		{ "unset name ...",	"Unset variable or set to default" },
-		{ "exit",		"Exit the Monitor" },
+		{ "exit / off",		"Exit the Monitor / Power off" },
 	};
 
 	for (pi= info; pi < arraylimit(info); pi++) {
@@ -1563,8 +1720,11 @@ void execute(void)
 		return;
 	} else
 		/* boot device, ls dir, delay msec? */
-	if (n == 2 && (res == R_BOOT || res == R_DELAY || res == R_LS)) {
+	if (n == 2 && (res == R_BOOT || res == R_CTTY
+			|| res == R_DELAY || res == R_LS)
+	) {
 		if (res == R_BOOT) boot_device(second->token);
+		if (res == R_CTTY) ctty(second->token);
 		if (res == R_DELAY) delay(second->token);
 		if (res == R_LS) ls(second->token);
 		voidtoken();
@@ -1596,6 +1756,7 @@ void execute(void)
 		case R_SET:	show_env();	ok= 1;	break;
 		case R_HELP:	help();		ok= 1;	break;
 		case R_EXIT:	exit(0);
+		case R_OFF:	off();		ok= 1;	break;
 		}
 
 		/* Command to check bootparams: */
@@ -1662,9 +1823,6 @@ void boot(void)
 	/* Get environment variables from the parameter sector. */
 	get_parameters();
 
-	/* Read and check the superblock. */
-	fsok= r_super() != 0;
-
 	while (1) {
 		/* While there are commands, execute them! */
 		while (cmds != nil) execute();
@@ -1729,9 +1887,6 @@ void main(int argc, char **argv)
 	/* Get environment variables from the parameter sector. */
 	get_parameters();
 
-	/* Read and check the superblock. */
-	fsok= r_super() != 0;
-
 	i= 2;
 	for (;;) {
 		/* While there are commands, execute them! */
@@ -1755,3 +1910,7 @@ void main(int argc, char **argv)
 	exit(0);
 }
 #endif /* UNIX */
+
+/*
+ * $PchId: boot.c,v 1.14 2002/02/27 19:46:14 philip Exp $
+ */

@@ -836,6 +836,8 @@ int oldwanted, newwanted;
 char *oldhunk, *newhunk;
 size_t oldsize, oldalloc, newsize, newalloc;
 
+int oldline, newline; /* Jose */
+
 void cdiff(old, new, file1, file2)
 char *old, *new;		/* The names of the two files to be compared */
 FILE *file1, *file2;		/* The corresponding file-pointers	 */
@@ -873,6 +875,7 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
   }
   preoldend = -1000;
   firstoutput = 1;
+  oldline = newline = 0;
   while (fgets(buff, sizeof buff, inputfp) != Nullch) {
 	if (firstoutput) {
 		if (recursive_dir == SET) {
@@ -1061,8 +1064,6 @@ void dumphunk()
 char *getold(targ)
 int targ;
 {
-  static int oldline = 0;
-
   while (fgets(buff, sizeof buff, oldfp) != Nullch) {
 	oldline++;
 	if (oldline == targ) return buff;
@@ -1073,8 +1074,6 @@ int targ;
 char *getnew(targ)
 int targ;
 {
-  static int newline = 0;
-
   while (fgets(buff, sizeof buff, newfp) != Nullch) {
 	newline++;
 	if (newline == targ) return buff;

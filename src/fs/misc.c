@@ -6,6 +6,7 @@
  *   do_dup:	  perform the DUP system call
  *   do_fcntl:	  perform the FCNTL system call
  *   do_sync:	  perform the SYNC system call
+ *   do_reboot:	  sync disks and prepare for shutdown
  *   do_fork:	  adjust the tables after MM has performed a FORK system call
  *   do_exec:	  handle files with FD_CLOEXEC on after MM has done an EXEC
  *   do_exit:	  a process has exited; note that in the tables
@@ -26,6 +27,7 @@
 #include "inode.h"
 #include "dev.h"
 #include "param.h"
+#include "super.h"
 
 
 /*===========================================================================*
@@ -83,31 +85,31 @@ PUBLIC int do_fcntl()
   if ((f = get_filp(fd)) == NIL_FILP) return(err_code);
 
   switch (request) {
-     case F_DUPFD: 
+     case F_DUPFD:
 	/* This replaces the old dup() system call. */
 	if (addr < 0 || addr >= OPEN_MAX) return(EINVAL);
 	if ((r = get_fd(addr, 0, &new_fd, &dummy)) != OK) return(r);
-   	f->filp_count++;
-  	fp->fp_filp[new_fd] = f;
-  	return(new_fd);
+	f->filp_count++;
+	fp->fp_filp[new_fd] = f;
+	return(new_fd);
 
-     case F_GETFD: 
+     case F_GETFD:
 	/* Get close-on-exec flag (FD_CLOEXEC in POSIX Table 6-2). */
 	return( ((fp->fp_cloexec >> fd) & 01) ? FD_CLOEXEC : 0);
 
-     case F_SETFD: 
+     case F_SETFD:
 	/* Set close-on-exec flag (FD_CLOEXEC in POSIX Table 6-2). */
 	cloexec_mask = 1L << fd;	/* singleton set position ok */
 	clo_value = (addr & FD_CLOEXEC ? cloexec_mask : 0L);
 	fp->fp_cloexec = (fp->fp_cloexec & ~cloexec_mask) | clo_value;
 	return(OK);
 
-     case F_GETFL: 
+     case F_GETFL:
 	/* Get file status flags (O_NONBLOCK and O_APPEND). */
 	fl = f->filp_flags & (O_NONBLOCK | O_APPEND | O_ACCMODE);
 	return(fl);	
 
-     case F_SETFL: 
+     case F_SETFL:
 	/* Set file status flags (O_NONBLOCK and O_APPEND). */
 	fl = O_NONBLOCK | O_APPEND;
 	f->filp_flags = (f->filp_flags & ~fl) | (addr & fl);
@@ -150,6 +152,43 @@ PUBLIC int do_sync()
 	if (bp->b_dev != NO_DEV && bp->b_dirt == DIRTY) flushall(bp->b_dev);
 
   return(OK);		/* sync() can't fail */
+}
+
+
+/*===========================================================================*
+ *				do_reboot				     *
+ *===========================================================================*/
+PUBLIC int do_reboot()
+{
+  /* Perform the FS side of the reboot call. */
+  int i;
+  struct super_block *sp;
+  struct inode dummy;
+
+  /* Only MM may make this call directly. */
+  if (who != MM_PROC_NR) return(EGENERIC);
+
+  /* Do exit processing for all leftover processes and servers. */
+  for (i = 0; i < NR_PROCS; i++) { slot1 = i; do_exit(); }
+
+  /* The root file system is mounted onto itself, which keeps it from being
+   * unmounted.  Pull an inode out of thin air and put the root on it.
+   */
+  put_inode(super_block[0].s_imount);
+  super_block[0].s_imount= &dummy;
+  dummy.i_count = 2;			/* expect one "put" */
+
+  /* Unmount all filesystems.  File systems are mounted on other file systems,
+   * so you have to pull off the loose bits repeatedly to get it all undone.
+   */
+  for (i= 0; i < NR_SUPERS; i++) {
+	/* Unmount at least one. */
+	for (sp= &super_block[0]; sp < &super_block[NR_SUPERS]; sp++) {
+		if (sp->s_dev != NO_DEV) (void) unmount(sp->s_dev);
+	}
+  }
+
+  return(OK);
 }
 
 
@@ -324,16 +363,15 @@ PUBLIC int do_revive()
  * Instead it was suspended.  Now we can send the reply to wake it up.  This
  * business has to be done carefully, since the incoming message is from
  * a task (to which no reply can be sent), and the reply must go to a process
- * that blocked earlier.  The reply to the caller is inhibited by setting the
- * 'dont_reply' flag, and the reply to the blocked process is done explicitly
- * in revive().
+ * that blocked earlier.  The reply to the caller is inhibited by returning the
+ * 'SUSPEND' pseudo error, and the reply to the blocked process is done
+ * explicitly in revive().
  */
 
   if (who >= LOW_USER && fp->fp_pid != PID_SERVER) return(EPERM);
 
   revive(m.REP_PROC_NR, m.REP_STATUS);
-  dont_reply = TRUE;		/* don't reply to the TTY task */
-  return(OK);
+  return(SUSPEND);		/* don't reply to the TTY task */
 }
 
 /*===========================================================================*

@@ -15,7 +15,7 @@ bool NONL;
 char termcap[1024];		/* termcap buffer */
 char tc[200];			/* area to hold string capabilities */
 char *ttytype;			/* terminal type from env */
-char *arp;			/* pointer for use in tgetstr */
+static char *arp;		/* pointer for use in tgetstr */
 char *cp;			/* character pointer */
 
 char *cl;			/* clear screen capability */

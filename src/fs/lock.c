@@ -6,6 +6,7 @@
  */
 
 #include "fs.h"
+#include <minix/com.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "file.h"
@@ -87,7 +88,7 @@ int req;			/* either F_SETLK or F_SETLKW */
 		} else {
 			/* For F_SETLKW, suspend the process. */
 			suspend(XLOCK);
-			return(0);
+			return(SUSPEND);
 		}
 	}
 

@@ -103,9 +103,9 @@ int flags;			/* special flags, like O_NONBLOCK */
 	} else {
 		/* Suspend user. */
 		suspend(dp->dmap_task);
+		return(SUSPEND);
 	}
   }
-
   return(dev_mess.REP_STATUS);
 }
 

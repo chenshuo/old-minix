@@ -72,7 +72,8 @@ clean:
 .all:	$n/gen/udp_hdr.h
 .all:	$n/gen/udp_io.h
 .all:	$n/hton.h
-.all:	$s/ioctl.h
+.all:	$h/ioctl.h
+.all:	$n/ioctl.h
 .all:	$s/types.h
 .all:	const.h
 .all:	inet_config.h

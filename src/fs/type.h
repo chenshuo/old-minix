@@ -4,8 +4,8 @@ typedef struct {		/* V1.x disk inode */
   uid_t d1_uid;			/* user id of the file's owner */
   off_t d1_size;		/* current file size in bytes */
   time_t d1_mtime;		/* when was file data last changed */
-  gid_t d1_gid;			/* group number */
-  nlink_t d1_nlinks;		/* how many links to this file */
+  u8_t d1_gid;			/* group number */
+  u8_t d1_nlinks;		/* how many links to this file */
   u16_t d1_zone[V1_NR_TZONES];	/* block nums for direct, ind, and dbl ind */
 } d1_inode;
 

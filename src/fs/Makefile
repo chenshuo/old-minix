@@ -14,7 +14,7 @@ LDFLAGS = -i
 OBJ =	main.o open.o read.o write.o pipe.o \
 	device.o path.o mount.o link.o super.o inode.o \
 	cache.o cache2.o filedes.o stadir.o protect.o time.o \
-	lock.c misc.o utility.o table.o putk.o
+	lock.o misc.o utility.o table.o
 
 fs:	$(OBJ)
 	$(CC) -o $@ $(LDFLAGS) $(OBJ) -lsys
@@ -75,6 +75,7 @@ link.o:	param.h
 link.o:	super.h
 
 lock.o:	$a
+lock.o:	$h/com.h
 lock.o:	$i/fcntl.h
 lock.o:	$i/unistd.h
 lock.o:	file.h
@@ -87,7 +88,8 @@ main.o:	$a
 main.o:	$i/fcntl.h
 main.o:	$i/string.h
 main.o:	$i/stdlib.h
-main.o:	$s/ioctl.h
+main.o:	$h/ioctl.h
+main.o:	$s/ioc_memory.h
 main.o:	$s/svrctl.h
 main.o:	$h/callnr.h
 main.o:	$h/com.h
@@ -111,6 +113,7 @@ misc.o:	fproc.h
 misc.o:	inode.h
 misc.o:	dev.h
 misc.o:	param.h
+misc.o:	super.h
 
 mount.o:	$a
 mount.o:	$i/fcntl.h
@@ -136,6 +139,7 @@ open.o:	fproc.h
 open.o:	inode.h
 open.o:	lock.h
 open.o:	param.h
+open.o:	super.h
 
 path.o:	$a
 path.o:	$i/string.h
@@ -166,9 +170,6 @@ protect.o:	fproc.h
 protect.o:	inode.h
 protect.o:	param.h
 protect.o:	super.h
-
-putk.o:	$a
-putk.o:	$h/com.h
 
 read.o:	$a
 read.o:	$i/fcntl.h

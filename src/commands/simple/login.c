@@ -56,9 +56,12 @@
  *  - ported back to standard Minix.
  */
 
+#define _MINIX_SOURCE
+#define _POSIX_C_SOURCE	2
+
 #include <sys/types.h>
-#include <sys/stat.h>
 #include <ttyent.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pwd.h>
@@ -70,6 +73,7 @@
 #include <unistd.h>
 #include <utmp.h>
 #include <time.h>
+#include <sys/utsname.h>
 #include <minix/minlib.h>
 
 char PATH_UTMP[] = "/etc/utmp";			/* current logins */
@@ -199,19 +203,20 @@ char *argv[];
 {
   char name[30];
   char *password, *cryptedpwd;
-  char *tty_name;
-  int n, ap, check_pw, bad, secure, i, envsiz;
+  char *tty_name, *p;
+  int n, ap, check_pw, bad, secure, i, envsiz, do_banner;
   struct passwd *pwd;
   char *bp, *argx[8], **ep;	/* pw_shell arguments */
   char argx0[64];		/* argv[0] of the shell */
   char *sh = "/bin/sh";		/* sh/pw_shell field value */
   char *initialname;
-  int c, f_flag, p_flag;
+  int c, b_flag, f_flag, p_flag;
   char *h_arg;
   int authorized, preserv_env;
   struct ttyent *ttyp;
   struct stat ttystat;
   struct sigaction sa;
+  struct utsname uts;
 
   /* Don't let QUIT dump core. */
   sigemptyset(&sa.sa_mask);
@@ -220,29 +225,23 @@ char *argv[];
   sigaction(SIGQUIT, &sa, NULL);
 
   /* Parse options.  */
+  b_flag= 0;
   f_flag= 0;
   p_flag= 0;
   h_arg= NULL;
-  while ((c= getopt(argc, argv, "?fh:p")) != -1)
+  while ((c= getopt(argc, argv, "?bfh:p")) != -1)
   {
 	switch(c)
 	{
-	case 'f':
-		if (f_flag)
-			usage();
-		f_flag= 1;
-		break;
+	case 'b': b_flag= 1;	break;
+	case 'f': f_flag= 1;	break;
 	case 'h':
 		if (h_arg)
 			usage();
 		if (getuid() == 0)
 			h_arg= optarg;
 		break;
-	case 'p':
-		if (p_flag)
-			usage();
-		p_flag= 1;
-		break;
+	case 'p': p_flag= 1;	break;
 	case '?':
 		usage();
 	default:
@@ -260,6 +259,7 @@ char *argv[];
   authorized= f_flag;
   hostname= h_arg;
   preserv_env= p_flag;
+  do_banner= b_flag;
 
   /* Look up /dev/tty number. */
   tty_name= ttyname(0);
@@ -267,6 +267,29 @@ char *argv[];
   {
 	write(1, "Unable to lookup tty name\n", 26);
 	exit(1);
+  }
+
+  if (do_banner)
+  {
+	uname(&uts);
+	write(1, "\n", 1);
+	write(1, uts.sysname, strlen(uts.sysname));
+	write(1, "/", 1);
+	write(1, uts.machine, strlen(uts.machine));
+	write(1, " Release ", 9);
+	write(1, uts.release, strlen(uts.release));
+	write(1, " Version ", 9);
+	write(1, uts.version, strlen(uts.version));
+	write(1, " (", 2);
+	p= strrchr(tty_name, '/');
+	if (!p)
+		p= tty_name;
+	else
+		p++;
+	write(1, p, strlen(p));
+	write(1, ")\n\n", 3);
+	write(1, uts.nodename, strlen(uts.nodename));
+	write(1, " ", 1);
   }
 
   /* Get login name and passwd. */
@@ -450,7 +473,8 @@ int dummy; /* to keep the compiler happy */
 
 void usage()
 {
-	fprintf(stderr, "Usage: login [-h hostname] [-f] [-p] [username]\n");
+	fprintf(stderr,
+		"Usage: login [-h hostname] [-b] [-f] [-p] [username]\n");
 	exit(1);
 }
 
@@ -477,3 +501,7 @@ int replace;
 	}
 	*env= entry;
 }
+
+/*
+ * $PchId: login.c,v 1.6 2001/07/31 14:23:28 philip Exp $
+ */

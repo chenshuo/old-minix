@@ -32,16 +32,24 @@ PRIVATE struct hole {
 
 PRIVATE struct hole *hole_head;	/* pointer to first hole */
 PRIVATE struct hole *free_slots;/* ptr to list of unused table slots */
+#if ENABLE_SWAP
 PRIVATE int swap_fd = -1;	/* file descriptor of open swap file/device */
 PRIVATE u32_t swap_offset;	/* offset to start of swap area on swap file */
 PRIVATE phys_clicks swap_base;	/* memory offset chosen as swap base */
 PRIVATE phys_clicks swap_maxsize;/* maximum amount of swap "memory" possible */
 PRIVATE struct mproc *in_queue;	/* queue of processes wanting to swap in */
 PRIVATE struct mproc *outswap = &mproc[LOW_USER];  /* outswap candidate? */
+#else /* !SWAP */
+#define swap_base ((phys_clicks) -1)
+#endif /* !SWAP */
 
 FORWARD _PROTOTYPE( void del_slot, (struct hole *prev_ptr, struct hole *hp) );
 FORWARD _PROTOTYPE( void merge, (struct hole *hp)			    );
+#if ENABLE_SWAP
 FORWARD _PROTOTYPE( int swap_out, (void)				    );
+#else
+#define swap_out()	(0)
+#endif
 
 /*===========================================================================*
  *				alloc_mem				     *
@@ -227,16 +235,21 @@ phys_clicks *total, *free;		/* memory size summaries */
 	free_mem(base, size);
 	*total = mess.m1_i3;
 	*free += size;
+#if ENABLE_SWAP
 	if (swap_base < base + size) swap_base = base+size;
+#endif
   }
 
+#if ENABLE_SWAP
   /* The swap area is represented as a hole above and separate of regular
    * memory.  A hole at the size of the swap file is allocated on "swapon".
    */
   swap_base++;				/* make separate */
   swap_maxsize = 0 - swap_base;		/* maximum we can possibly use */
+#endif
 }
 
+#if ENABLE_SWAP
 /*===========================================================================*
  *				swap_on					     *
  *===========================================================================*/
@@ -412,3 +425,4 @@ PRIVATE int swap_out()
 
   return(FALSE);	/* no candidate found */
 }
+#endif /* SWAP */

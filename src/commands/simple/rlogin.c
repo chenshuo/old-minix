@@ -100,13 +100,6 @@ extern char *krb_realmofhost();
 #define	SIGUSR1	30
 #endif
 
-/* Standard Minix' SIGCHLD doesn't seem to work properly yet. */
-#if __minix && !__minix_vmd
-#define BUGCHLD
-#undef SIGCHLD
-#define SIGCHLD SIGTERM
-#endif
-
 extern int errno;
 int eight, litout, rem;
 
@@ -426,16 +419,10 @@ doit()
 		r = reader();
 		if (r == 0) {
 			msg("connection closed.");
-#ifdef BUGCHLD
-			kill(getppid(), SIGCHLD);
-#endif
 			exit(0);
 		}
 		sleep(1);
 		msg("\007connection closed.");
-#ifdef BUGCHLD
-		kill(getppid(), SIGCHLD);
-#endif
 		exit(1);
 	}
 

@@ -306,3 +306,7 @@ ino_t r_lookup(Ino_t cwd, char *path)
 					&& strcmp(name, r_name) != 0) {}
 	}
 }
+
+/*
+ * $PchId: rawfs.c,v 1.8 1999/11/05 23:14:15 philip Exp $
+ */

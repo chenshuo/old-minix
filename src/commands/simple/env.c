@@ -1,4 +1,4 @@
-/*	env 1.0 - Set environment for command		Author: Kees J. Bot
+/*	env 1.1 - Set environment for command		Author: Kees J. Bot
  *								17 Dec 1997
  */
 #define nil 0
@@ -50,6 +50,11 @@ int main(int argc, char **argv)
 		}
 		i++;
 	}
+
+	/* Environment settings and command may be separated with '--'.
+	 * This is for compatibility with other envs, we don't advertise it.
+	 */
+	if (i < argc && strcmp(argv[i], "--") == 0) i++;
 
 	if (i >= argc) {
 		/* No utility given; print environment. */

@@ -161,10 +161,10 @@ typedef struct dp_rcvhdr
 #define DP_PAGESIZE	256
 
 /* Some macros to simplify accessing the dp8390 */
-#define inb_reg0(dep, reg)	(in_byte(dep->de_dp8390_port+reg))
-#define outb_reg0(dep, reg, data) (out_byte(dep->de_dp8390_port+reg, data))
-#define inb_reg1(dep, reg)	(in_byte (dep->de_dp8390_port+reg))
-#define outb_reg1(dep, reg, data) (out_byte(dep->de_dp8390_port+reg, data))
+#define inb_reg0(dep, reg)		(inb(dep->de_dp8390_port+reg))
+#define outb_reg0(dep, reg, data)	(outb(dep->de_dp8390_port+reg, data))
+#define inb_reg1(dep, reg)		(inb(dep->de_dp8390_port+reg))
+#define outb_reg1(dep, reg, data)	(outb(dep->de_dp8390_port+reg, data))
 
 /* Software interface to the dp8390 driver */
 
@@ -212,6 +212,8 @@ typedef struct dpeth
 	port_t de_base_port;
 	phys_bytes de_linmem;
 	int de_irq;
+	int de_int_pending;
+	irq_hook_t de_hook;
 	dp_initf_t de_initf; 
 	dp_stopf_t de_stopf; 
 	int de_prog_IO;
@@ -230,6 +232,14 @@ typedef struct dpeth
 	int de_offset_page;
 	int de_startpage;
 	int de_stoppage;
+
+#if ENABLE_PCI
+	/* PCI config */
+	char de_pci;			/* TRUE iff PCI device */
+	u8_t de_pcibus;	
+	u8_t de_pcidev;	
+	u8_t de_pcifunc;	
+#endif
 
 	/* Do it yourself send queue */
 	struct sendq
@@ -283,5 +293,5 @@ typedef struct dpeth
 #endif
 
 /*
- * $PchId: dp8390.h,v 1.5 1995/12/22 08:53:00 philip Exp $
+ * $PchId: dp8390.h,v 1.8 2000/08/12 12:11:22 philip Exp $
  */

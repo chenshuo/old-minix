@@ -1,39 +1,46 @@
-/* rmdir - remove a directory		Author: Bruce Evans */
-
-#include <minix/minlib.h>
+/*	rmdir - remove directory.		Author:  Kees J. Bot
+ */
+#define nil 0
 #include <sys/types.h>
-#include <errno.h>
+#include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
-#include <stdio.h>
+#include <errno.h>
 
-_PROTOTYPE(int main, (int argc, char **argv));
-
-int main(argc, argv)
-int argc;
-char **argv;
+void tell(char *what)
 {
-  int error;
-  char *prog_name;
-  int save_errno;
-
-  prog_name = argv[0];
-  if (argc < 2) {
-	std_err("Usage: ");
-	std_err(prog_name);
-	std_err(" dir...\n");
-	exit(1);
-  }
-  error = 0;
-  while (--argc != 0) {
-	if (rmdir(*++argv) != 0) {
-		save_errno = errno;
-		std_err(prog_name);
-		std_err(": ");
-		errno = save_errno;
-		perror(*argv);
-		error = 1;
-	}
-  }
-  return(error);
+	write(2, what, strlen(what));
 }
+
+void report(char *label)
+{
+	char *err= strerror(errno);
+
+	tell("rmdir: ");
+	tell(label);
+	tell(": ");
+	tell(err);
+	tell("\n");
+}
+
+int main(int argc, char **argv)
+{
+	int i, ex= 0;
+
+	if (argc < 2) {
+		tell("Usage: rmdir directory ...\n");
+		exit(1);
+	}
+
+	i=1;
+	do {
+		if (rmdir(argv[i]) < 0) {
+			report(argv[i]);
+			ex= 1;
+		}
+	} while (++i < argc);
+
+	exit(ex);
+}
+/* Kees J. Bot  27-12-90. */

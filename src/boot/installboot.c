@@ -823,3 +823,7 @@ int main(int argc, char **argv)
 	}
 	exit(0);
 }
+
+/*
+ * $PchId: installboot.c,v 1.10 2000/08/13 22:07:50 philip Exp $
+ */

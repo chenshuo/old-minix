@@ -137,7 +137,7 @@ PUBLIC int do_sigaction()
   mp->mp_sigact[sig_nr].sa_handler = svec.sa_handler;
   sigdelset(&svec.sa_mask, SIGKILL);
   mp->mp_sigact[sig_nr].sa_mask = svec.sa_mask;
-  mp->mp_sigact[sig_nr].sa_flags = svec.sa_flags & ~SA_COMPAT;
+  mp->mp_sigact[sig_nr].sa_flags = svec.sa_flags;
   mp->mp_sigreturn = (vir_bytes) sig_ret;
   return(OK);
 }
@@ -211,12 +211,14 @@ PUBLIC int do_sigreturn()
  * pending unblocked signals.
  */
 
+  int r;
+
   mp->mp_sigmask = (sigset_t) sig_set;
   sigdelset(&mp->mp_sigmask, SIGKILL);
 
-  sys_sigreturn(who, (vir_bytes)sig_context, sig_flags);
+  r = sys_sigreturn(who, (vir_bytes)sig_context, sig_flags);
   check_pending();
-  return OK;
+  return(r);
 }
 
 /*===========================================================================*
@@ -683,4 +685,26 @@ register struct mproc *rmp;	/* whose core is to be dumped */
 	}
   }
   close(fd);
+}
+
+
+/*=====================================================================*
+ *  			    do_reboot				       *
+ *=====================================================================*/
+PUBLIC int do_reboot()
+{
+  register struct mproc *rmp = mp;
+
+  if (rmp->mp_effuid != SUPER_USER)   return EPERM;
+  if (reboot_flag != 0 && reboot_flag != 1)   return EINVAL;
+
+  /* Kill all processes except init. */
+  check_sig(-1, SIGKILL);
+
+  tell_fs(EXIT, INIT_PROC_NR, 0, 0);	/* cleanup init */
+
+  tell_fs(SYNC,0,0,0);
+
+  sys_abort(reboot_flag);
+  /* NOTREACHED */
 }

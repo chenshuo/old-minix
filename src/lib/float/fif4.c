@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: fif4.c,v 1.6 89/07/31 15:10:42 ceriel Exp $ */
+/* $Header: fif4.c,v 1.7 93/01/05 12:05:24 ceriel Exp $ */
 
 /*
 	MULTIPLY AND DISMEMBER PARTS (FIF 4)
@@ -39,5 +39,8 @@ struct fif4_returns *p;
 	b64_sft(&e1.mantissa, 63 - e1.exp);
 	b64_sft(&e1.mantissa, e1.exp - 63);	/* "loose" low order bits */
 	compact(&e1,&(p->ipart),sizeof(SINGLE));
-	p->fpart = sbf4(p->ipart, y);
+	extend(&(p->ipart), &e2, sizeof(SINGLE));
+	extend(&y, &e1, sizeof(SINGLE));
+	sub_ext(&e1, &e2);
+	compact(&e1, &(p->fpart), sizeof(SINGLE));
 }

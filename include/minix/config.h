@@ -1,6 +1,10 @@
 #ifndef _CONFIG_H
 #define _CONFIG_H
 
+/* Minix release and version numbers. */
+#define OS_RELEASE "1.7"
+#define OS_VERSION "0"
+
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
  * user-settable parameters.  In the second section, various internal system
@@ -20,6 +24,11 @@
 #define AMIGA             61	/* Commodore Amiga (68000) */
 #define MACINTOSH         62	/* Apple Macintosh (68000) */
 
+/* Word size in bytes (a constant equal to sizeof(int)). */
+#if __ACK__
+#define _WORD_SIZE	_EM_WSIZE
+#endif
+
 
 /* If ROBUST is set to 1, writes of i-node, directory, and indirect blocks
  * from the cache happen as soon as the blocks are modified.  This gives a more
@@ -28,13 +37,18 @@
  */
 #define ROBUST             0	/* 0 for speed, 1 for robustness */
 
-/* if SCREEN is set to 1 graphical screen operations are possible */
-#define SCREEN             1	
+/* Number of slots in the process table for user processes. */
+#define NR_PROCS          32
 
 /* The buffer cache should be made as large as you can afford. */
-#if INTEL_32BITS
-#define NR_BUFS          320	/* # blocks in the buffer cache */
-#define NR_BUF_HASH      512	/* size of buf hash table; MUST BE POWER OF 2*/
+#if (MACHINE == IBM_PC && _WORD_SIZE == 2)
+#define NR_BUFS           40	/* # blocks in the buffer cache */
+#define NR_BUF_HASH       64	/* size of buf hash table; MUST BE POWER OF 2*/
+#endif
+
+#if (MACHINE == IBM_PC && _WORD_SIZE == 4)
+#define NR_BUFS          200	/* # blocks in the buffer cache */
+#define NR_BUF_HASH      256	/* size of buf hash table; MUST BE POWER OF 2*/
 #endif
 
 #if (MACHINE == SUN_4_60)
@@ -47,11 +61,6 @@
 #define NR_BUF_HASH	2048	/* size of buf hash table; MUST BE POWER OF 2*/
 #endif
 
-#ifndef NR_BUFS
-#define NR_BUFS           40	/* # blocks in the buffer cache */
-#define NR_BUF_HASH       64	/* size of buf hash table; MUST BE POWER OF 2*/
-#endif
-
 /* The number of map slots determines how big a disk partition can be.
  * Each I_MAP_SLOT allows 8K files; each Z_MAP_SLOT allows 8M of data.
  */
@@ -62,24 +71,25 @@
 #define AUTO_BIOS          0	/* xt_wini.c - use Western's autoconfig BIOS */
 #define C_RS232_INT_HANDLERS 0	/* rs232.c - use slower C int handlers */
 #define DEFAULT_CLASS      0	/* floppy.c - 3 or 5 to get only that size */
-#define LINEWRAP           0	/* console.c - wrap lines at column 80 */
+#define LINEWRAP           1	/* console.c - wrap lines at column 80 */
 #define NO_HANDSHAKE       1	/* rs232.c - don't use CTS/RTS handshaking */
-#define KEYBOARD_84        1	/* set to 1 to swap CTRL & CAPSLOCK keys */
-#define ENABLE_NETWORKING  0	/* enable TCP/IP code */
 #define ALLOW_GAP_MESSAGES 1	/* proc.c - allow messages in the gap between
 				 * the end of bss and lowest stack address */
 
+/* Include or exclude device drivers.  Set to 1 to include, 0 to exclude. */
+#define ENABLE_NETWORKING  0	/* enable TCP/IP code */
+#define ENABLE_AT_WINI     1	/* enable AT winchester driver */
+#define ENABLE_BIOS_WINI   0	/* enable BIOS winchester driver */
+#define ENABLE_PS_WINI     1	/* enable PS/2 winchester driver */
+#define ENABLE_ESDI_WINI   1	/* enable ESDI winchester driver */
+#define ENABLE_XT_WINI     1	/* enable XT winchester driver */
+#define ENABLE_ADAPTEC_SCSI 1	/* enable ADAPTEC SCSI driver */
+
+/* DMA_SECTORS may be increased to speed up DMA based drivers. */
+#define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
+
 /* Determine which device to use for pipes. */
 #define PIPE_DEV    ROOT_DEV	/* put pipes on root device */
-
-/* These configuration defines control debugging and unfinished code. */
-#define FLOPPY_TIMING      0	/* floppy.c - for fine tuning floppy driver */
-#define MONITOR		   0	/* xt_wini.c - monitor loop in w_wait_int */
-#define RECORD_FLOPPY_SKEW 0	/* floppy.c - for deciding nr_sectors */
-
-/* These configuration defines control worthless code. */
-#define SPARE_VIDEO_MEMORY 0	/* misc.c - use memory from any 2nd vid card */
-#define SPLIMITS           0	/* mpx*.x - set stack limits (never checked) */
 
 /* NR_CONS and NR_RS_LINES determine number of consoles and RS232 lines. */
 #define NR_CONS            1	/* how many consoles can system handle */
@@ -91,6 +101,9 @@
 #define ST		   1	/* all ST's and Mega ST's */
 #define STE		   2	/* all STe and Mega STe's */
 #define TT		   3
+
+/* if SCREEN is set to 1 graphical screen operations are possible */
+#define SCREEN             1	
 
 /* This define says whether the keyboard generates VT100 or IBM_PC escapes. */
 #define KEYBOARD       VT100	/* either VT100 or IBM_PC */

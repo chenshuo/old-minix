@@ -14,18 +14,21 @@
  * The following flags exist:
  *
  *	-d  At the top level, only back up directories (not loose files)
- *	-j  Don't copy junk: *.o, *.Z, *.bak, *.log, a.out, and core
+ *	-j  Don't copy junk: *.Z, *.bak, *.log, a.out, and core
  *	-m  If ENOSPC encountered, ask for another diskette
  *	-n  No directories, only loose files are backed up
  *	-o  Don't copy *.o files
- *	-r  Restore filenames (ie. uncompress if necessary)
+ *	-r  Restore files (ie. uncompress if necessary)
  *	-s  Don't copy *.s files
- *      -t  set creation date of target-file equal to cdate of source-file
+ *	-t  Set creation date of target-file equal to cdate of source-file
  *	-v  Verbose (announce what is being done)
- *	-z  Compress the backed up files
+ *	-z  Compress on backup/uncompress on restore
  *
  * Patches:
- *	30 Mar 91.  Added restore option.  cwr. 
+ *	30 Mar 91.	Added restore option.  cwr. 
+ *	 9 Sep 91.	Changed user interface.  cwr.
+ *	21 Jan 93.	Revised error messages.  cwr.
+ *	29 Mar 95.	Added -o, NARROW define.  cwr.
  */
 
 #include <sys/types.h>
@@ -39,6 +42,7 @@
 #include <sys/wait.h>
 #include <stdio.h>
 
+#undef NARROW			/* Width of verbose output */
 #define COPY_SIZE 4096
 #define MAX_ENTRIES 512
 #define DIR_ENT_SIZE 16
@@ -88,10 +92,15 @@ char *argv[];
 {
   int ct, n, m, fd;
   char *dir1, *dir2, *cp, c;
+  struct stat s;
 
-  /* Get the flags. */
-  sync();
-  pname = argv[0];
+  (void) sync();
+
+  /* Get the flags */
+  if ((pname = strrchr(argv[0], '/')) == (char *)NULL)
+	pname = argv[0];
+  else
+	pname++;
   if (argc < 3 || argc > 4) usage();
   if (argc == 4) {
 	cp = argv[1];
@@ -119,8 +128,11 @@ char *argv[];
   }
   if (!strcmp(pname, "restore") && !rflag) rflag++;
 
-  /* Read in the source directory */
+  /* Check for a valid source */
+  if (stat(dir1, &s) < 0) error(FATAL, "cannot stat ", dir1, "");
+  if ((s.st_mode & S_IFMT) != S_IFDIR) error(FATAL, "non-directory ", dir1, "");
 
+  /* Read in the source directory */
   fd = open(dir1, O_RDONLY);
   if (fd < 0) error(FATAL, "cannot open ", dir1, "");
   ct = read(fd, (char *)&dir_buf[0], MAX_ENTRIES * DIR_ENT_SIZE);
@@ -225,7 +237,7 @@ int n;
 	sorted[i].namep = dir_buf[i].name;
   }
 
-  /* Squeeze out all the entries who ino field is 0. */
+  /* Squeeze out all the entries whose ino field is 0. */
   j = 0;
   for (i = 0; i < n; i++) {
 	if (dir_buf[i].ino != 0) {
@@ -275,6 +287,8 @@ char *dir1, *dir2;
 		strncat(cbuf, "/", (size_t)1);
 		strncat(cbuf, sp->namep, (size_t)NAME_SIZE);
 		namlen = strlen(sp->namep);
+		if (namlen > NAME_SIZE)
+			namlen = NAME_SIZE; /* no terminating null here */
 		/* Switch between compressed and uncompressed file names */
 		if (zflag && !rflag && strncmp((sp->namep + namlen - 2), ".Z", (size_t)2)
 				&& (namlen <= (NAME_SIZE - 2)))
@@ -293,7 +307,7 @@ char *dir1, *dir2;
 			printf("Out of space while copying to %s\n", cbuf);
 			/* We ran out of space copying a regular file. */
 			if (mflag == 0)
-				error(FATAL,"Disk full. Backup aborted","","");
+				error(FATAL, "Quitting, disk full", "", "");
 
 			/* If -m, ask for new diskette and continue. */
 			newdisk(dir2);
@@ -333,18 +347,16 @@ char *dir1, *cbuf2;
 {
 /* Copy a regular file. */
 
-  int fd1, fd2, nr, nw, res, n, namlen;
-  char cbuf1[MAX_PATH], *p, msg[20];
+  int fd1, fd2, nr, nw, res, n;
+  char cbuf1[MAX_PATH], *p;
+#ifdef NARROW
+  char *msg = (rflag || strcmp(pname, "backup")) ? "Restored" : "Backing up";
+#endif
 
-  /* The message changes with the program name */
-  if (!strcmp(pname, "restore"))
-	strcpy(msg, "Restored");
-  else
-	strcpy(msg, "Backed up");
-
-  /* If the -j or -s flags were given, suppress certain files. */
+  /* If the -j or -o or -s flags were given, suppress certain files. */
   p = sp->namep;
   n = strlen(p);
+  if (n > NAME_SIZE) n = NAME_SIZE;
   if (jflag) {
 	if (strcmp(p, "a.out") == 0) return(0);
 	if (strcmp(p, "core") == 0) return (0);
@@ -382,19 +394,28 @@ char *dir1, *cbuf2;
   }
 
   /* Both files are now open.  Do the copying. */
-  namlen = strlen(sp->namep);
-  if ((!rflag && strncmp((sp->namep + namlen - 2), ".Z", (size_t)2)) ||
-		(rflag && !strncmp((sp->namep + namlen - 2), ".Z", (size_t)2)))
-	if (zflag && (rflag || (namlen <= (NAME_SIZE - 2)))) {
+  if (!rflag && strncmp((sp->namep + n - 2), ".Z", (size_t)2) ||
+		rflag && !strncmp((sp->namep + n - 2), ".Z", (size_t)2)) {
+	if (zflag && (rflag || (n <= (NAME_SIZE - 2)))) {
 		close(fd1);
 		close(fd2);
 		res = zcopy(cbuf1, cbuf2);
 		if (tflag) utime(cbuf2, (struct utimbuf *) & (sp->acctime));
-		if (res != 0) unlink(cbuf2);	/* if error, get rid of the
-					 * corpse */
+		if (res != 0) unlink(cbuf2); /* if error, get rid of the corpse */
+#ifdef NARROW
 		if (vflag && res == 0) printf("%s %s\n", msg, cbuf1);
+#else
+		if (vflag && res == 0) {
+			printf("%-37.37s -> %-37.37s\n", cbuf1, cbuf2);
+			if (strlen(cbuf1) > 37 || strlen(cbuf2) > 37)
+				printf("%37.37s    %37.37s\n",
+				(strlen(cbuf1) > 37) ? (cbuf1 + 37) : "",
+				(strlen(cbuf2) > 37) ? (cbuf2 + 37) : "");
+		}
+#endif
 		return(res);
 	}
+  }
   while (1) {
 	nr = read(fd1, copybuf, COPY_SIZE);
 	if (nr == 0) break;
@@ -418,7 +439,17 @@ char *dir1, *cbuf2;
 	}
   }
   if (res == 0) {
-	if (vflag) printf("%s %s\n", msg, cbuf1);
+#ifdef NARROW
+ 	if (vflag) printf("%s %s\n", msg, cbuf1);
+#else
+	if (vflag) {
+		printf("%-37.37s -> %-37.37s\n", cbuf1, cbuf2);
+		if (strlen(cbuf1) > 37 || strlen(cbuf2) > 37)
+			printf("%37.37s    %37.37s\n",
+			(strlen(cbuf1) > 37) ? (cbuf1 + 37) : "",
+			(strlen(cbuf2) > 37) ? (cbuf2 + 37) : "");
+	}
+#endif
   } else {
 	unlink(cbuf2);
   }
@@ -475,10 +506,11 @@ char *dir1, *dir2, *namep;
   fbuf[0] = '\0';
 
   /* Handle directory copy by forking off 'backup' ! */
-  if (jflag || mflag || rflag || sflag || tflag || vflag || zflag)
+  if (jflag || mflag || oflag || rflag || sflag || tflag || vflag || zflag)
 	strcpy(fbuf, "-");
   if (jflag) strcat(fbuf, "j");
   if (mflag) strcat(fbuf, "m");
+  if (oflag) strcat(fbuf, "o");
   if (rflag) strcat(fbuf, "r");
   if (sflag) strcat(fbuf, "s");
   if (tflag) strcat(fbuf, "t");
@@ -499,12 +531,12 @@ char *dir1, *dir2, *namep;
   }
 
   if (fbuf[0] == '-') {
-	execle("backup", "backup", fbuf, d1buf, d2buf, (char *) 0, environ);
+	execle(pname, pname, fbuf, d1buf, d2buf, (char *) 0, environ);
 	execle("/bin/backup", "backup", fbuf, d1buf, d2buf, (char *)0,environ);
 	execle("/usr/bin/backup","backup",fbuf,d1buf,d2buf,(char *)0,environ);
 	error(FATAL, "cannot recursively exec backup", "", "");
   } else {
-	execle("backup", "backup", d1buf, d2buf, (char *) 0, environ);
+	execle(pname, pname, d1buf, d2buf, (char *) 0, environ);
 	execle("/bin/backup", "backup", d1buf, d2buf, (char *)0,environ);
 	execle("/usr/bin/backup","backup", d1buf, d2buf, (char *)0,environ);
 	error(FATAL, "cannot recursively exec backup", "", "");
@@ -540,7 +572,7 @@ char *dir;
 
 void usage()
 {
-  fprintf(stderr, "Usage: backup [-djmnorstvz] dir1 dir2\n");
+  fprintf(stderr, "Usage: %s [-djmnorstvz] dir1 dir2\n", pname);
   exit(2);
 }
 

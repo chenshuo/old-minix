@@ -39,7 +39,7 @@ PUBLIC int do_trace()
 	return(ESRCH);
   }
   if (request == T_EXIT) {	/* exit */
-	mm_exit(child, data);
+	mm_exit(child, (int)data);
 	mm_out.m2_l2 = 0;
 	return(OK);
   }

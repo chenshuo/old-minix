@@ -8,10 +8,18 @@ struct proc;
 struct tty_struct;
 
 /* at_wini.c, bios_wini.c, esdi_wini.c, ps_wini.c, xt_wini.c, stacsi.c */
+_PROTOTYPE( task_t *sel_wini_task, (void)				);
 _PROTOTYPE( void winchester_task, (void)				);
+_PROTOTYPE( void at_winchester_task, (void)				);
+_PROTOTYPE( void bios_winchester_task, (void)				);
+_PROTOTYPE( void esdi_winchester_task, (void)				);
+_PROTOTYPE( void ps_winchester_task, (void)				);
+_PROTOTYPE( void xt_winchester_task, (void)				);
+
+/* aha_scsi.c */
+_PROTOTYPE( void scsi_task, (void)					);
 
 /* clock.c */
-_PROTOTYPE( void clock_handler, (void)					);
 _PROTOTYPE( void clock_task, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( void syn_alrm_task, (void)					);
@@ -23,7 +31,9 @@ _PROTOTYPE( void mem_dmp, (char *adr, int len)				);
 _PROTOTYPE( void p_dmp, (void)						);
 _PROTOTYPE( void reg_dmp, (struct proc *rp)				);
 _PROTOTYPE( void set_name, (int source_nr, int proc_nr, char *ptr)	);
-_PROTOTYPE( void tty_dmp, (void)					);
+
+/* driver.c */
+_PROTOTYPE( void nop_task, (void)					);
 
 /* floppy.c, stfloppy.c */
 _PROTOTYPE( void floppy_task, (void)					);
@@ -36,7 +46,8 @@ _PROTOTYPE( void panic, (const char *s, int n)				);
 _PROTOTYPE( void mem_task, (void)					);
 
 /* misc.c */
-_PROTOTYPE( int do_vrdwt, (message *m_ptr, rdwt_t do_rdwt)		);
+_PROTOTYPE( int env_parse, (char *env, char *fmt, int field,
+			long *param, long min, long max)		);
 
 /* printer.c, stprint.c */
 _PROTOTYPE( void printer_task, (void)					);
@@ -103,37 +114,37 @@ _PROTOTYPE( void toggle_scroll, (void)					);
 /* cstart.c */
 _PROTOTYPE( void cstart, (U16_t cs, U16_t ds,
 		char *parmoff, U16_t parmseg, size_t parmsize)		);
+_PROTOTYPE( char *k_getenv, (char *name)				);
 
 /* ether.c */
 _PROTOTYPE( void ehw_task, (void)					);
 _PROTOTYPE( void ehw_dump, (void)					);
+_PROTOTYPE( void ehw_stop, (void)					);
 
 /* exception.c */
 _PROTOTYPE( void exception, (unsigned vec_nr)				);
 
 /* i8259.c */
-_PROTOTYPE( void enable_irq, (unsigned irq_nr)				);
+_PROTOTYPE( irq_handler_t get_irq_handler, (int irq)			);
+_PROTOTYPE( void put_irq_handler, (int irq, irq_handler_t handler)	);
 _PROTOTYPE( void init_8259, (unsigned master_base, unsigned slave_base)	);
 _PROTOTYPE( void soon_reboot, (void)					);
 
 /* keyboard.c */
 _PROTOTYPE( int func_key, (int ch)					);
 _PROTOTYPE( void kb_init, (int minor)					);
+_PROTOTYPE( int kbd_loadmap, (int proc_nr, vir_bytes map_vir)		);
 _PROTOTYPE( int kb_read, (int minor, char **bufindirect,
 		unsigned char *odoneindirect)				);
-_PROTOTYPE( void keyboard, (void)					);
 _PROTOTYPE( int letter_code, (int scode)				);
 _PROTOTYPE( int make_break, (int ch)					);
+_PROTOTYPE( void reboot, (void)						);
 _PROTOTYPE( void wreboot, (void)					);
 
 /* klib*.x */
 _PROTOTYPE( void bios13, (void)						);
 _PROTOTYPE( void build_sig, (char *sig_stuff, struct proc *rp, int sig)	);
 _PROTOTYPE( phys_bytes check_mem, (phys_bytes base, phys_bytes size)	);
-_PROTOTYPE( void cim_at_wini, (void)					);
-_PROTOTYPE( void cim_floppy, (void)					);
-_PROTOTYPE( void cim_printer, (void)					);
-_PROTOTYPE( void cim_xt_wini, (void)					);
 _PROTOTYPE( void cp_mess, (int src,phys_clicks src_clicks,vir_bytes src_offset,
 		phys_clicks dst_clicks, vir_bytes dst_offset)		);
 _PROTOTYPE( int in_byte, (port_t port)					);
@@ -141,6 +152,9 @@ _PROTOTYPE( int in_word, (port_t port)					);
 _PROTOTYPE( void klib_1hook, (void)					);
 _PROTOTYPE( void klib_2hook, (void)					);
 _PROTOTYPE( void lock, (void)						);
+_PROTOTYPE( void unlock, (void)						);
+_PROTOTYPE( void enable_irq, (unsigned irq)				);
+_PROTOTYPE( int disable_irq, (unsigned irq)				);
 _PROTOTYPE( u16_t mem_rdw, (segm_t segm, vir_bytes offset)		);
 _PROTOTYPE( void mpx_1hook, (void)					);
 _PROTOTYPE( void mpx_2hook, (void)					);
@@ -155,13 +169,11 @@ _PROTOTYPE( void port_write, (unsigned port, phys_bytes source,
 _PROTOTYPE( void reset, (void)						);
 _PROTOTYPE( void scr_down, (unsigned videoseg, int source,int dest,int count));
 _PROTOTYPE( void scr_up, (unsigned videoseg, int source, int dest, int count));
-_PROTOTYPE( void sim_printer, (void)					);
-_PROTOTYPE( unsigned tasim_printer, (void)				);
 _PROTOTYPE( int test_and_set, (int *flag)				);
-_PROTOTYPE( void unlock, (void)						);
 _PROTOTYPE( void vid_copy, (char *buffer, unsigned videobase,
 		int offset, int words)					);
 _PROTOTYPE( void wait_retrace, (void)					);
+_PROTOTYPE( void level0, (void (*func)(void))				);
 
 /* misc.c */
 _PROTOTYPE( void mem_init, (void)					);
@@ -194,22 +206,30 @@ _PROTOTYPE( void int14, (void) ), _PROTOTYPE( page_fault, (void) );
 _PROTOTYPE( void int15, (void) );
 _PROTOTYPE( void int16, (void) ), _PROTOTYPE( copr_error, (void) );
 
-/* Hardware interrupt handlers, in numerical order. */
-_PROTOTYPE( void clock_int, (void) );
-_PROTOTYPE( void tty_int, (void) );
-_PROTOTYPE( void secondary_int, (void) ), _PROTOTYPE( psecondary_int, (void) );
-_PROTOTYPE( void eth_int, (void) );
-_PROTOTYPE( void rs232_int, (void) ), _PROTOTYPE( prs232_int, (void) );
-_PROTOTYPE( void disk_int, (void) );
-_PROTOTYPE( void lpr_int, (void) );
-_PROTOTYPE( void wini_int, (void) );
+/* Hardware interrupt handlers. */
+_PROTOTYPE( void hwint00, (void) );
+_PROTOTYPE( void hwint01, (void) );
+_PROTOTYPE( void hwint02, (void) );
+_PROTOTYPE( void hwint03, (void) );
+_PROTOTYPE( void hwint04, (void) );
+_PROTOTYPE( void hwint05, (void) );
+_PROTOTYPE( void hwint06, (void) );
+_PROTOTYPE( void hwint07, (void) );
+_PROTOTYPE( void hwint08, (void) );
+_PROTOTYPE( void hwint09, (void) );
+_PROTOTYPE( void hwint10, (void) );
+_PROTOTYPE( void hwint11, (void) );
+_PROTOTYPE( void hwint12, (void) );
+_PROTOTYPE( void hwint13, (void) );
+_PROTOTYPE( void hwint14, (void) );
+_PROTOTYPE( void hwint15, (void) );
 
 /* Software interrupt handlers, in numerical order. */
 _PROTOTYPE( void trp, (void) );
 _PROTOTYPE( void s_call, (void) ), _PROTOTYPE( p_s_call, (void) );
+_PROTOTYPE( void level0_call, (void) );
 
 /* printer.c */
-_PROTOTYPE( void pr_char, (void)					);
 _PROTOTYPE( void pr_restart, (void)					);
 
 /* protect.c */
@@ -219,10 +239,7 @@ _PROTOTYPE( void init_codeseg, (struct segdesc_s *segdp, phys_bytes base,
 _PROTOTYPE( void init_dataseg, (struct segdesc_s *segdp, phys_bytes base,
 		phys_bytes size, int privilege)				);
 _PROTOTYPE( void ldt_init, (void)					);
-
-/* rs232.c */
-_PROTOTYPE( void rs232_1handler, (void)					);
-_PROTOTYPE( void rs232_2handler, (void)					);
+_PROTOTYPE( void enable_iop, (struct proc *pp)				);
 
 /* system.c */
 _PROTOTYPE( void alloc_segments, (struct proc *rp)			);

@@ -214,9 +214,83 @@ EXTERN RULE *Rules,             /* rule structures linked list head */
 #define ACT_ERROR       4       /* bad C action stmt */
 #define MEM_ERROR       5       /* out of memory errors */
 /*
- * Functions that return something special:
+ * Function  prototypes
  */
-extern char *str_compile(), *getmem(), *cclass(), *pmatch(), *fetchptr();
-extern VARIABLE *findvar(), *addvar(), *decl();
-extern char *newfile();
-extern INT pop(), popint(), dopattern();
+
+/* bawk.c */
+
+_PROTOTYPE(int main , (int argc , char **argv ));
+_PROTOTYPE(int compile , (void));
+_PROTOTYPE(int process , (void));
+_PROTOTYPE(int parse , (char *str , char *wrdlst [], char *delim ));
+_PROTOTYPE(int unparse , (char *wrdlst [], int wrdcnt , char *str , char *delim ));
+_PROTOTYPE(int instr , (int c , char *s ));
+_PROTOTYPE(char *getmem , (unsigned len ));
+_PROTOTYPE(char *newfile , (char *s ));
+_PROTOTYPE(int strfile , (char *s ));
+_PROTOTYPE(int getline , (void));
+_PROTOTYPE(int getcharacter , (void));
+_PROTOTYPE(int ungetcharacter , (int c ));
+_PROTOTYPE(int endfile , (void));
+_PROTOTYPE(int error , (char *s , int severe ));
+_PROTOTYPE(int usage , (void));
+_PROTOTYPE(int movemem , (char *from , char *to , int count ));
+_PROTOTYPE(int fillmem , (char *array , int count , int value ));
+_PROTOTYPE(int num , (int c ));
+_PROTOTYPE(int alpha , (int c ));
+_PROTOTYPE(int alphanum , (int c ));
+
+/* bawkact.c */
+
+_PROTOTYPE(int act_compile , (char *actbuf ));
+_PROTOTYPE(int pat_compile , (char *actbuf ));
+_PROTOTYPE(int stmt_compile , (char *actbuf ));
+_PROTOTYPE(char *str_compile , (char *str , int delim ));
+_PROTOTYPE(int getoken , (void));
+
+/* bawkdo.c */
+
+_PROTOTYPE(INT dopattern , (char *pat ));
+_PROTOTYPE(int doaction , (char *act ));
+_PROTOTYPE(int expression , (void));
+_PROTOTYPE(int expr1 , (void));
+_PROTOTYPE(int expr2 , (void));
+_PROTOTYPE(int expr3 , (void));
+_PROTOTYPE(int expr4 , (void));
+_PROTOTYPE(int expr5 , (void));
+_PROTOTYPE(int expr6 , (void));
+_PROTOTYPE(int expr7 , (void));
+_PROTOTYPE(int expr8 , (void));
+_PROTOTYPE(int expr9 , (void));
+_PROTOTYPE(int expr10 , (void));
+_PROTOTYPE(int primary , (void));
+_PROTOTYPE(int preincdec , (void));
+_PROTOTYPE(int postincdec , (void));
+_PROTOTYPE(int statement , (void));
+_PROTOTYPE(int skipstatement , (void));
+_PROTOTYPE(int skip , (int left , int right ));
+_PROTOTYPE(int syntaxerror , (void));
+
+/* bawkpat.c */
+
+_PROTOTYPE(int re_compile , (char *patbuf ));
+_PROTOTYPE(char *cclass , (char *patbuf ));
+_PROTOTYPE(int match , (char *line , char *pattern ));
+_PROTOTYPE(char *pmatch , (char *linestart , char *line , char *pattern ));
+
+/* bawksym.c */
+
+_PROTOTYPE(int isfunction , (char *s ));
+_PROTOTYPE(int iskeyword , (char *s ));
+_PROTOTYPE(int function , (int funcnum ));
+_PROTOTYPE(VARIABLE *findvar , (char *s ));
+_PROTOTYPE(VARIABLE *addvar , (char *name ));
+_PROTOTYPE(int declist , (void));
+_PROTOTYPE(VARIABLE *decl , (int type ));
+_PROTOTYPE(int assignment , (void));
+_PROTOTYPE(INT pop , (void));
+_PROTOTYPE(int push , (int pclass , int plvalue , int psize , DATUM *pdatum ));
+_PROTOTYPE(int pushint , (INT intvalue ));
+_PROTOTYPE(INT popint , (void));
+_PROTOTYPE(int pprint , (DATUM args []));
+_PROTOTYPE(int pprntf , (char *fmt , DATUM args []));

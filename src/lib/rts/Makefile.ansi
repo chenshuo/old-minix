@@ -1,9 +1,0 @@
-CC=exec cc
-CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE
-SRC=fphook.c
-all:
-	$(CC) $(CFLAGS) $(SRC)
-
-clean:	
-	@rm -rf *.o *.bak
-

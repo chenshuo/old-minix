@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: div_ext.c,v 1.8 89/07/25 14:19:11 ceriel Exp $ */
+/* $Header: div_ext.c,v 1.10 93/01/05 12:04:47 ceriel Exp $ */
 
 /*
 	DIVIDE EXTENDED FORMAT

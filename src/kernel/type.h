@@ -1,14 +1,20 @@
 #ifndef TYPE_H
 #define TYPE_H
 
+typedef _PROTOTYPE( void task_t, (void) );
+typedef _PROTOTYPE( int (*rdwt_t), (message *m_ptr) );
+typedef _PROTOTYPE( void (*watchdog_t), (void) );
+
 struct tasktab {
-  _PROTOTYPE( void (*initial_pc), (void) );
+  task_t *initial_pc;
   int stksize;
   char name[8];
 };
 
-typedef _PROTOTYPE( int (*rdwt_t), (message *m_ptr) );
-typedef _PROTOTYPE( void (*watchdog_t), (void) );
+struct memory {
+  phys_clicks base;
+  phys_clicks size;
+};
 
 #if (CHIP == INTEL)
 typedef unsigned port_t;
@@ -17,7 +23,7 @@ typedef unsigned segm_t;
 /* The register type is usually the natural 'unsigned', but not during 386
  * initialization, when it has to be unsigned long!
  */
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
 typedef u32_t reg_t;		/* machine register */
 #else
 typedef u16_t reg_t;
@@ -32,7 +38,7 @@ typedef u16_t reg_t;
  * used for the larger registers to avoid differences in the code.
  */
 struct stackframe_s {
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   u16_t gs;
   u16_t fs;
 #endif
@@ -59,7 +65,7 @@ struct segdesc_s {		/* segment descriptor for protected mode */
   u16_t base_low;
   u8_t base_middle;
   u8_t access;			/* |P|DL|1|X|E|R|A| */
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   u8_t granularity;		/* |G|X|0|A|LIMT| */
   u8_t base_high;
 #else
@@ -70,10 +76,13 @@ struct segdesc_s {		/* segment descriptor for protected mode */
 struct farptr_s {		/* far pointer for debugger hooks */
   reg_t offset;
   u16_t selector;
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   u16_t pad;
 #endif
 };
+
+typedef _PROTOTYPE( int (*irq_handler_t), (int irq) );
+
 #endif /* (CHIP == INTEL) */
 
 #if (CHIP == M68000)

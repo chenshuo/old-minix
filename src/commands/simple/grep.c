@@ -9,6 +9,8 @@
  *
  * Flags:
  *	-e pattern	useful when pattern begins with '-'
+ *	-c		print a count of lines matched
+ *	-i		ignore case
  *	-l		prints just file names, no lines (quietly overrides -n)
  *	-n		printed lines are preceded by relative line numbers
  *	-s		prints errors only (quietly overrides -l and -n)
@@ -30,10 +32,12 @@
 
 
 /* External interfaces */
+#include <sys/types.h>
 #include <regexp.h>		/* Thanks to Henry Spencer */
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 /* Internal constants */
 #define MATCH		0	/* exit code: some match somewhere */
@@ -43,6 +47,9 @@
 /* Macros */
 #define SET_FLAG(c)	(flags[(c)-'a'] = 1)
 #define FLAG(c)		(flags[(c)-'a'] != 0)
+
+#define uppercase(c)	(((unsigned) ((c) - 'A')) <= ('Z' - 'A'))
+#define downcase(c)	((c) - 'A' + 'a')
 
 /* Private storage */
 static char *program;		/* program name */
@@ -57,6 +64,7 @@ extern char *optarg;
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(static int match, (FILE *input, char *label, char *filename));
 _PROTOTYPE(static char *get_line, (FILE *input));
+_PROTOTYPE(static char *map_nocase, (char *line));
 _PROTOTYPE(static void error_exit, (char *msg));
 _PROTOTYPE(void regerror , (char *s ) );
 
@@ -76,7 +84,7 @@ char *argv[];
   pattern = NULL;
 
 /* Process any command line flags. */
-  while ((opt = getopt(argc, argv, "e:lnsv")) != EOF) {
+  while ((opt = getopt(argc, argv, "e:cilnsv")) != EOF) {
 	if (opt == '?')
 		exit_status = FAILURE;
 	else
@@ -88,11 +96,21 @@ char *argv[];
 
 /* Detect a few problems. */
   if ((exit_status == FAILURE) || (optind == argc && pattern == NULL))
-	error_exit("Usage: %s [-lnsv] [-e] expression [file ...]\n");
+	error_exit("Usage: %s [-cilnsv] [-e] expression [file ...]\n");
 
 /* Ensure we have a usable pattern. */
   if (pattern == NULL)
 	pattern = argv[optind++];
+
+/* Map pattern to lowercase if -i given. */
+  if (FLAG('i')) {
+	char *p;
+	for (p = pattern; *p != '\0'; p++) {
+		if (uppercase(*p))
+			*p = downcase(*p);
+	}
+  }
+
   if ((expression = regcomp(pattern)) == NULL)
 	error_exit("%s: bad regular expression\n");
 
@@ -147,16 +165,19 @@ FILE *input;
 char *label;
 char *filename;
 {
-  char *line;			/* pointer to input line */
+  char *line, *testline;	/* pointers to input line */
   long int lineno = 0;		/* line number */
+  long int matchcount = 0;	/* lines matched */
   int status = NO_MATCH;	/* summary of what was found in this file */
 
   if (FLAG('s') || FLAG('l')) {
-	while ((line = get_line(input)) != NULL)
-		if (regexec(expression, line, 1)) {
+	while ((line = get_line(input)) != NULL) {
+		testline = FLAG('i') ? map_nocase(line) : line;
+		if (regexec(expression, testline, 1)) {
 			status = MATCH;
 			break;
 		}
+	}
 	if (FLAG('l'))
 		if ((!FLAG('v') && status == MATCH) ||
 		    ( FLAG('v') && status == NO_MATCH))
@@ -166,14 +187,16 @@ char *filename;
 
   while ((line = get_line(input)) != NULL) {
 	++lineno;
-	if (regexec(expression, line, 1)) {
+	testline = FLAG('i') ? map_nocase(line) : line;
+	if (regexec(expression, testline, 1)) {
 		status = MATCH;
 		if (!FLAG('v')) {
 			if (label != NULL)
 				printf("%s:", label);
 			if (FLAG('n'))
 				printf("%ld:", lineno);
-			puts(line);
+			if (!FLAG('c')) puts(line);
+			matchcount++;
 		}
 	} else {
 		if (FLAG('v')) {
@@ -181,10 +204,12 @@ char *filename;
 				printf("%s:", label);
 			if (FLAG('n'))
 				printf("%ld:", lineno);
-			puts(line);
+			if (!FLAG('c')) puts(line);
+			matchcount++;
 		}
 	}
   }
+  if (FLAG('c')) printf("%ld\n", matchcount);
   return status;
 }
 
@@ -241,6 +266,38 @@ FILE *input;
 		buf_size = new_size;
 	}
   }
+}
+
+
+/* map_nocase - map a line down to lowercase letters only.
+ * bad points:	assumes line gotten from get_line.
+ *		there is more than A-Z you say?
+ */
+
+static char *map_nocase(line)
+char *line;
+{
+  static char *mapped;
+  static size_t map_size = 0;
+  char *mp;
+
+  if (map_size < buf_size) {
+	if (map_size == 0) {
+		mapped = (char *) malloc(buf_size);
+	} else {
+		mapped = (char *) realloc(mapped, buf_size);
+	}
+	if (mapped == NULL)
+		error_exit("%s: not enough memory\n");
+	map_size = buf_size;
+  }
+
+  mp = mapped;
+  do {
+	*mp++ = uppercase(*line) ? downcase(*line) : *line;
+  } while (*line++ != '\0');
+
+  return mapped;
 }
 
 

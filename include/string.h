@@ -49,7 +49,8 @@ _PROTOTYPE( int bcmp, (const char *_s1, const char *_s2, int _length)	);
 _PROTOTYPE( void bzero, (char *_dst, int _length)			);
 _PROTOTYPE( void *memccpy, (char *_dst, const char *_src, int _ucharstop,
 						    size_t _size)	);
-
+/* BSD functions */
+_PROTOTYPE( int strcasecmp, (const char *_s1, const char *_s2)		);
 #endif
 
 #endif /* _STRING_H */

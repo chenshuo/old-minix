@@ -19,6 +19,7 @@ char **av;
   char prog[400];
   char patbuf[512];
   int quit, none;
+  int excode = 0;
 
   if (ac < 2) {
 	fprintf(stderr, "Usage: %s cmd [cmd, ..]\n", *av);
@@ -73,11 +74,13 @@ char **av;
 			none = 0;
 		}
 		if (quit) {
-			if (none)
-				printf("No %s in %s\n", *av, getenv("PATH"));
+			if (none) {
+				fprintf(stderr, "No %s in %s\n", *av, getenv("PATH"));
+				excode = 1;
+			}
 			break;
 		}
 	}
   }
-  return(0);
+  return(excode);
 }

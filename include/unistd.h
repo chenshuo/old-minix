@@ -79,7 +79,7 @@ typedef int ssize_t;
 #endif
 
 _PROTOTYPE( void _exit, (int _status)					);
-_PROTOTYPE( int access, (const char *_path, Mode_t _amode)		);
+_PROTOTYPE( int access, (const char *_path, int _amode)			);
 _PROTOTYPE( unsigned int alarm, (unsigned int _seconds)			);
 _PROTOTYPE( int chdir, (const char *_path)				);
 _PROTOTYPE( int chown, (const char *_path, Uid_t _owner, Gid_t _group)	);
@@ -139,6 +139,9 @@ _PROTOTYPE( long ptrace, (int _req, pid_t _pid, long _addr, long _data)	);
 _PROTOTYPE( char *sbrk, (int _incr)					);
 _PROTOTYPE( int sync, (void)						);
 _PROTOTYPE( int umount, (const char *_name)				);
+_PROTOTYPE( int reboot, (int _how)					);
+_PROTOTYPE( int gethostname, (char *_hostname, size_t _len)		);
+_PROTOTYPE( int getdomainname, (char *_domain, size_t _len)		);
 #endif
 
 #endif /* _UNISTD_H */

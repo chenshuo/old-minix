@@ -1,17 +1,21 @@
 # Makefile for ic
 
 CFLAGS	= -O -D_POSIX_SOURCE -D_MINIX
-O=o
 
-OBJ   = ic.$O ic_input.$O ic_output.$O 
+all:	ic
+
+OBJ   = ic.o ic_input.o ic_output.o 
 
 ic:	$(OBJ)
-	@rm -rf ic
-	@echo Start linking ic
-	@cc  $(OBJ) -o ic >/dev/null
-	@chmem =8192 ic
+	cc  $(OBJ) -i -o ic
+	install -S 4kw ic
+
+install:	/usr/bin/ic
+
+/usr/bin/ic:	ic
+	install -cs -o bin ic $@
 
 $(ICOBJ): ic.h
 
 clean:
-	@rm -f *.o *.s ic *.bak core
+	rm -f *.o ic *.bak core

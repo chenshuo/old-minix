@@ -25,22 +25,25 @@
 # be necessary to alter the formats of the tables.
 
 CFLAGS =-O -wo
-O=o
-OBJ = disrel.$O dismain.$O distabs.$O dishand.$O disfp.$O
+OBJ = disrel.o dismain.o distabs.o dishand.o disfp.o
+
+all:	dis88
 
 dis88:	$(OBJ)
-	@rm -rf dis88
-	@echo Start linking dis88
-	@cc -o dis88 $(OBJ) >/dev/null
-	@chmem =10000 dis88
+	cc -i -o dis88 $(OBJ)
+	install -S 5kw dis88
 
+install:	/usr/bin/dis88
 
-disrel.$O:	disrel.c
-dismain.$O:	dismain.c dis.h
-distabs.$O:	distabs.c dis.h
-dishand.$O:	dishand.c dis.h
-disfp.$O:	disfp.c dis.h
+/usr/bin/dis88:	dis88
+	install -cs -o bin dis88 $@
+
+disrel.o:	disrel.c
+dismain.o:	dismain.c dis.h
+distabs.o:	distabs.c dis.h
+dishand.o:	dishand.c dis.h
+disfp.o:	disfp.c dis.h
 
 
 clean:	
-	@rm -f *.bak *.o *.s core dis88
+	rm -f *.bak *.o core dis88

@@ -6,6 +6,7 @@
 
 #include	<stdlib.h>
 #include	<string.h>
+#include	<errno.h>
 
 #ifdef DEBUG
 #define	ASSERT(b)	if (!(b)) assert_failed();
@@ -52,6 +53,7 @@ static int grow(size_t len)
   register char *p;
 
   ASSERT(NextSlot((char *)_top) == 0);
+  errno = ENOMEM;
   if ((char *) _top + len < (char *) _top
       || (p = (char *)Align((ptrint)_top + len, BRKSIZE)) < (char *) _top 
       || _brk(p) != 0)
@@ -70,6 +72,7 @@ malloc(size_t size)
   register unsigned len, ntries;
 
   if (size == 0) return NULL;
+  errno = ENOMEM;
   for (ntries = 0; ntries < 2; ntries++) {
 	if ((len = Align(size, PTRSIZE) + PTRSIZE) < 2 * PTRSIZE)
 		return NULL;

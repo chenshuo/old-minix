@@ -1,17 +1,21 @@
-# Makefile for make
+# Makefile for make (!)
 
-CFLAGS = -O -Dunix -DMINIXPC -Dprintf=printk -Dfprintf=fprintk
-O=o
+CFLAGS = -O -Dunix -D_MINIX -D_POSIX_SOURCE
 
-OBJ =	check.$O input.$O macro.$O main.$O make.$O reader.$O rules.$O
+OBJ =	check.o input.o macro.o main.o make.o reader.o rules.o archive.o
+
+all:	make
 
 make :	$(OBJ)
-	@rm -rf make
-	@echo Start linking make
-	@$(CC) -o make $(OBJ) >/dev/null
-	@chmem =35000 make
+	$(CC) -i -o make $(OBJ)
+	install -S 32kw make
+
+install:	/usr/bin/make
+
+/usr/bin/make:	make
+	install -cs -o bin make $@
  
 $(OBJ): h.h
 
 clean:
-	@rm -f *.o *.s *.bak core make
+	rm -f *.o *.bak core make

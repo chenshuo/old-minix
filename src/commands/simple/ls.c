@@ -1,1942 +1,1049 @@
-/* ls - list directory			Author: C. E. Chew */
-
-/*			List Directory Entries
+/*	ls 3.2 - List files.				Author: Kees J. Bot
  *
- * (C) Copyright C E Chew
- *
- * Feel free to copy and use this software provided:
- *
- *	1. you do not pretend that you wrote it
- *	2. you leave this copyright notice intact.
- *
- * This is an implementation of a BSD style ls(1) for Minix. This
- * implementation is faster than the original ls(1) for Minix. There
- * are no restrictions with regard to the size of the directory file
- * since memory is allocated dynamically.
+ * About the amount of bytes for heap + stack under Minix:
+ * Ls needs a average amount of 42 bytes per unserviced directory entry, so
+ * scanning 10 directory levels deep in an ls -R with 100 entries per directory
+ * takes 42000 bytes of heap.  So giving ls 10000 bytes is tight, 20000 is
+ * usually enough, 40000 is pessimistic.
  */
 
-#ifndef		PASS1		/* hack for small compilers */
-# ifndef	PASS2
-#   define	PASS1
-#   define	PASS2
-# endif
-#endif
-
-#ifdef	PASS1
-char Version_[] = "@(#)els 3.17a 03-Jan-1993 (C) C E Chew";
-#endif
-
-/* Edit History:
- * 03-Jan-1993  Merged Minix 1.6.23 changes (-DAST, larger field width for
- *		file lengths, and silly parens for && within ||).
- * 17-May-1992	Accommodated Minix 1.6.16 hacks and Bruce's minor patches.
- * 02-May-1992	Bug with -f flag following null pointer.
- *		Fix typo in blank padding calculation.
- * 11-Jul-1991	Could not follow relative symlinks when invoked with
- *		ls -l /usr/local/lib/mushtool.
- * 14-Apr-1991	Incorporated mntent library source.
- * 06-Apr-1991	Fix `ls -ld' problem.
- * 30-Mar-1991	Fix uninitialised cw pointer in acrosspage().
- * 12-Mar-1991	Strip out non-Minix conditional code into ls.h
- * 08-Mar-1991	Need const qualifier in stringlength().
- *		Fix for Mips gcc complaint about wrong printf format.
- *		Don't initialise blanks[] at runtime.
- * 06-Mar-1991	Fix date initialisation.
- * 05-Mar-1991	Fix typos and avoid getcwd() and time() if possible.
- * 03-Mar-1991	Add -0 option to reset options (to unset LSOPTS).
- *		Add usage information.
- * 22-Feb-1991	Add -S option to squeeze column widths.
- * 21-Feb-1991	Use STDC locally to avoid __STDC__ brain damage.
- *		Change order of dolsopts() and docmdname() scan.
- * 20-Feb-1991	Some Coherent port problems.
- * 15-Feb-1991	Coherent port included.
- * 27-Dec-1990	Upgrade for Minix 2.0 filesystem.
- * 30-Nov-1990	Fix nil dereference problem.
- * 21-Nov-1990	Use lstat() on target of symlink so that multilevel
- *		links are visible. Don't give up on failed readlink().
- * 23-Jul-1990	POSIXfication.
- * 10-May-1990	Miscellaneous patches.
- * 23-Apr-1989	Reorder includes for 1.5.8. Support sticky and locking
- *		bits. Support st_ctime and st_atime. Support for name
- *		aliases.
- * 20-Oct-1989	Change suffix for failed symbolic links.
- * 21-Sep-1989	Changed names to _BSD and _MINIX. Use #ifdef for
- *		portability.
- * 19-Sep-1989	Sizes in kb rather than `blocks'.
- * 14-Sep-1989	No longer need to define MINIX. Get rid of itoa().
- *		Pyramid BSD coercions. Symbolic links and sockets.
- * 27-Aug-1989	Added declaration of errno for old errno.h and
- *		char *malloc() for old include files. Added
- *		support for named FIFO's. Changed user and group
- *		name format to %-6.6s so that long names won't
- *		muck up columns. Later will have to add
- *		symbolic link support for -l and -L.
- * 16-May-1989	Option -n shouldn't look in /etc/passwd. Use new
- *		strerror in string.h, add prototype for itoa().
- * 30-Apr-1989	Changed stat failure message to not found. Include
- *		dirent.h after stdio.h so that NULL is defined.
- * 22-Mar-1989	Incompatible options processing, long sizes instead
- *		of int and removed TURBOC conditional.
- * 02-Mar-1989	Sort command line arguments.
- * 22-Feb-1989	Fixed up bug regarding device number printing.
- * 10-Sep-1988	Cleaned up for lint.
- * 05-Sep-1988	Tidied up for network release.
+/* Compile with the proper -D flag for your system:
+ *
+ *	_MINIX		Minix (1.5 or later)
+ *	BSD		BSD derived (has st_blocks)
+ *	AMOEBA		Amoeba's emulation of UNIX
  */
 
-#ifndef		_SYSV
-# ifndef	_BSD
-#   ifndef	COHERENT
-#     ifndef	_MINIX
-#       define 	_MINIX
-#     endif
-#   endif
-# endif
-#endif
+/* The array _ifmt[] is used in an 'ls -l' to map the type of a file to a
+ * letter.  This is done so that ls can list any future file or device type
+ * other than symlinks, without recompilation.  (Yes it's dirty.)
+ */
+char _ifmt[] = "0pcCd?bB-?l?s???";
 
-#define		TERMCAP		/* consult termcap for columns */
-/*efine		USESTDLIB*/	/* stdlib.h available for use */
-/*efine		USESTDDEF*/	/* stddef.h available for use */
+#define ifmt(mode)	_ifmt[((mode) >> 12) & 0xF]
 
-#ifdef __STDC__			/* fix brain damage */
-# if __STDC__ != 0
-#   define STDC
-# endif
-#endif
-#ifdef	STDC
-# define CONST		const
-# define P(x)		x
-# define F4(t1,n1,t2,n2,t3,n3,t4,n4)	(t1 n1,t2 n2,t3 n3,t4 n4)
-# define F3(t1,n1,t2,n2,t3,n3)		(t1 n1,t2 n2,t3 n3)
-# define F2(t1,n1,t2,n2)		(t1 n1,t2 n2)
-# define F1(t1,n1)			(t1 n1)
-# define F0()				(void)
-#else
-# define CONST
-# define P(x)		()
-# define F4(t1,n1,t2,n2,t3,n3,t4,n4)	(n1,n2,n3,n4)t1 n1;t2 n2;t3 n3;t4 n4;
-# define F3(t1,n1,t2,n2,t3,n3)		(n1,n2,n3)t1 n1;t2 n2;t3 n3;
-# define F2(t1,n1,t2,n2)		(n1,n2)t1 n1;t2 n2;
-# define F1(t1,n1)			(n1)t1 n1;
-# define F0()				()
-#endif
-
+#define nil 0
+#include <stdio.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <unistd.h>
+#ifdef AMOEBA
+#undef S_IFLNK	/* Liars */
+#endif
+#include <dirent.h>
+#include <time.h>
+#include <pwd.h>
+#include <grp.h>
+#include <errno.h>
+#include <fcntl.h>
+#if BSD || __minix_vmd
+#include <termios.h>
+#endif
+#if __minix_vmd
+#include <sys/ioctl.h>
+#endif
 
-#ifndef		_MINIX
-# include "ls.h"
+#ifndef major
+#define major(dev)	((int) (((dev) >> 8) & 0xFF))
+#define minor(dev)	((int) (((dev) >> 0) & 0xFF))
+#endif
+
+#if !_MINIX
+#define SUPER_ID	uid	/* Let -A flag be default for SUPER_ID == 0. */
 #else
-# ifndef	_POSIX_SOURCE
-#   define	_POSIX_SOURCE
-#   define	_POSIX_1_SOURCE 2
-# endif
-# include <stdlib.h>
-# define FREE_T void *
-# include <limits.h>
-# ifdef	PASS1
-#   include <ctype.h>
-#   include <grp.h>
-#   include <pwd.h>
-#   include <errno.h>
-#   include <dirent.h>
-#   include <string.h>
-#   include <time.h>
-#   include <stddef.h>
-#   define OFFSETOF(t,n)	offsetof(t,n)
-#   define USRGRPOTH(m)		(m)
-# endif
-# ifdef	PASS2
-#   include <limits.h>
-#   include <minix/config.h>
-#   include <minix/const.h>
-#   include <minix/type.h>
-#   include "../fs/const.h"
-#   include "../fs/type.h"
-#   undef printf
-#   define STD_BLK	BLOCK_SIZE
-#   define BYTESPERBLK	512
-#   ifndef V1_NR_DZONES
-#     define V1_NR_TZONES NR_ZONE_NUMS
-#     define V1_NR_DZONES NR_DZONE_NUM
-#     define V1_INDIRECTS NR_INDIRECTS
-#   else
-#     define USEMTAB
-#     ifdef USEMNTENTLIB
-#	include <mntent.h>
-#     else
-#	define MTAB		"/etc/mtab"
-struct mntent {
-  char *mnt_fsname;			/* device */
-  char *mnt_dir;			/* mount point */
-  char *mnt_type;			/* filesystem type */
-  char *mnt_opts;			/* options */
-};
-#   include <stdio.h>			/* we were trying to include this last
-					 * to avoid Minix header braindamage
-					 * (multiple definitions of NULL), but
-					 * FILE * is needed now */
-#   undef NULL				/* fix the header braindamage */
-FILE *setmntent P((char *_file, char *));
-struct mntent *getmntent P((FILE *_mf));
-void endmntent P((FILE *_mf));
-#	define setmntent(n,t)	(fopen((n),(t)))
-#	define endmntent(f)	((void) fclose(f))
-#     endif
-#   endif
-# endif
-# include <unistd.h>
-# include <stdio.h>
+#define SUPER_ID	gid
 #endif
 
-#ifdef PASS2
-# ifdef	_POSIX_SOURCE
-#   undef BYTESPERBLK
-#   define BYTESPERBLK	512
-# endif
-#endif
-
-/***********************************************************************\
- *                            Common Definitions                       *
-\***********************************************************************/
-
-#define NIL		(0)	/* nil pointer */
-
-/* Mounted file system parameter table */
-
-typedef struct filesystem {
-  struct filesystem *next;		/* link to next */
-  dev_t dev;				/* mounted device */
-  unsigned long *fs;			/* structure */
-} FILESYSTEM;
-
-/***********************************************************************\
- *                             Portable Code                           *
-\***********************************************************************/
-#ifdef		PASS1
-
-#ifndef		SUPER_USER
-# define SUPER_USER	(0)
-#endif
-
-#define DEFAULTDIR	"."	/* default for ls without args */
-#define ENVNAME		"LSOPTS"/* ls options */
-#define COLNAME		"COLUMNS"/* columns option */
-#define TERMNAME	"TERM"	/* name of terminal */
-#define LINKPOINTER	" -> "	/* symlink pointer indicator */
-#define COLUMNS		80	/* columns on terminal */
-#define INTERSPACE	2	/* spacing between columns */
-#define INODEWIDTH	5	/* width of field for inode */
-#define BLOCKWIDTH	6	/* width of field for blocks */
-
-#define HALFYEAR	((long) 60*60*24*365/2)	/* half year in seconds */
-#define BASEYEAR	1900	/* struct tm.tm_year base */
-
-/* Flags are maintained in a bitmap. */
-#define BPC		CHAR_BIT/* bits per character */
-#define BITTEST(m,b)	(m[b/BPC] & (1<<(b%BPC)))
-#define BITSET(m,b)	(m[b/BPC] |= (1<<(b%BPC)))
-#define BITCLEAR(m,b)	(m[b/BPC] &= ~(1<<(b%BPC)))
-#define BITCHARS(b)	((b+BPC-1)/BPC)
-
-#define TEST(b)		BITTEST(flags,b)
-#define SET(b)		BITSET(flags,b)
-#define CLEAR(b)	BITCLEAR(flags,b)
-#define FLAGS		(1<<BPC)
-
-/* These macros permit the shortens the short circuiting of
- * complicated boolean expressions. This is particularly
- * useful when working with the flags since these are
- * read-only.
- */
-#define BOOL(b)		static char b = 0
-#define EVAL(b,a)	((b ? b : (b = (a)+1)) > 1)
-
-/* A descriptor is kept for each file in the directory. The
- * descriptors are linked together in a linked list.
- */
-struct direntry {
-  struct direntry *next;	/* link list */
-  char *name;			/* name of entry */
-  char *suffix;			/* entry suffix */
-  int length;			/* length of name and suffix */
-  struct direntry *parent;	/* pointer to parent */
-  struct stat *status;		/* pointer to status */
-};
-
-typedef struct direntry DIRENTRY;	/* entry */
-typedef struct {
-  DIRENTRY *head;		/* head of list */
-  DIRENTRY **tail;		/* insertion point at tail */
-} DIRLIST;			/* list of entries */
-
-#define EMPTY_dl(d)	((d).head=(DIRENTRY *)NIL,(d).tail=(&(d).head))
-#define APPEND_dl(d,p)	(*(d).tail=(p),(d).tail=(&(p)->next))
-#define TIE_dl(d,p)	APPEND_dl(d,p); \
-		while (*(d).tail) (d).tail=(&(*(d).tail)->next)
-#define HEAD_dl(d)	(d).head
-#define LINKOFFSET	(OFFSETOF(DIRENTRY, next))
-
-/* Name statistics are required to support multi-column output.
- * The statistics are used to compute the optimal number of
- * columns required for output.
- */
-typedef struct namestats {
-  int n;		/* number of entries */
-  int minwidth;		/* minimum width seen */
-  int maxwidth;		/* maximum width seen */
-} NAMESTATS;
-
-#define INIT_NS(x)	((x).n = 0, (x).minwidth = INT_MAX, (x).maxwidth = 0)
-#define MAX_NS(x,y)	((x)>(y)?(x):(y))
-#define MIN_NS(x,y)	((x)<(y)?(x):(y))
-#define UPDATE_NS(x,w)	((x).n++, \
-			 (x).minwidth = MIN_NS((x).minwidth, (w)), \
-                         (x).maxwidth = MAX_NS((x).maxwidth, (w)))
-
-/* These status bits are to help compute the correct suffix to append
- * to a file name listing. The current working directory is required
- * when following relative symbolic links.
- */
-#define LF_NORMAL	0x00		/* Normal unknown disposition */
-#define LF_SYMLINK	0x01		/* Known to be a symbolic link */
-#define LF_BADCWD	0x02		/* Current directory wrong */
-
-/* Function Pointers */
-
-typedef int (*statfunc) P((const char *, struct stat *));
-typedef int (*cmpfunc) P((void *, void *));
-typedef int (*strlenfunc) P((CONST char *));
-typedef void (*putstrfunc) P((char *));
-
-/* External Functions */
-
-int getopt P((int, char **, char *));	/* parse the options */
-
-#ifdef	TERMCAP
-int tgetent P((char *, char *));/* get entry from termcap database */
-int tgetnum P((char *));	/* get numeric capability */
-#endif
-
-/* Symbolic Links. */
-
-#ifdef		S_IFLNK
-# define OPAQUESTAT	((statfunc) lstat)
+#ifdef S_IFLNK
+int (*status)(const char *file, struct stat *stp);
 #else
-# define OPAQUESTAT	((statfunc) stat)
-#endif
-#define TRANSPARENTSTAT	((statfunc) stat)
-
-/* Permission Classes */
-
-#define	PERMCLASSES	3	/* Number of permission classes */
-#define	PERMUSR		2
-#define	PERMGRP		1
-#define	PERMOTH		0
-
-#define	PERMBITS	3	/* Number of bits per class */
-
-/* Permission Strings */
-
-#define PERM_NORMAL	(0 * (1 << PERMBITS) * sizeof(permstrings[0]))
-#define PERM_SUID	(1 * (1 << PERMBITS) * sizeof(permstrings[0]))
-#define PERM_STICKY	(2 * (1 << PERMBITS) * sizeof(permstrings[0]))
-#ifdef	_SYSV
-# define PERM_LOCK	(3 * (1 << PERMBITS) * sizeof(permstrings[0]))
+#define status	stat
 #endif
 
-static char permstrings[][PERMBITS + 1] = {	/* permission strings */
-	      "---", "--x", "-w-", "-wx", "r--", "r-x", "rw-", "rwx"
-	     ,"--S", "--s", "-wS", "-ws", "r-S", "r-s", "rwS", "rws"
-	     ,"--T", "--t", "-wT", "-wt", "r-T", "r-t", "rwT", "rwt"
-#ifdef	_SYSV
-	     ,"--l", "--s", "-wl", "-ws", "r-l", "r-s", "rwl", "rws"
-#endif
-};
-
-/* Symbolic link indicator. */
-
-char linkpointer[] = LINKPOINTER;/* common link pointer string */
-#define ARROW		(linkpointer)
-#define ARROWLENGTH	(sizeof(ARROW)-1)
-
-/* External Variables. */
-
-extern int optind;		/* next argument */
-extern int errno;		/* error code */
-extern int sys_nerr;		/* errors */
-extern char *sys_errlist[];	/* errors by name */
-
-/* Forward declarations. */
-
-void acrosspage P((DIRENTRY *, DIRLIST *, NAMESTATS *));/* list across */
-void downpage P((DIRENTRY *, DIRLIST *, NAMESTATS *));	/* list down */
-void streamoutput P((DIRENTRY *, DIRLIST *));	/* stream output */
-void dolsopts P((void));	/* do environment variable */
-void docmdname P((char *));	/* do command name aliasing */
-void parse P((int, char **));	/* parse argument list */
-void setflag P((int));		/* set flag */
-void checkflag P((int, char *));/* check flag for incompatibilies */
-void init P((void));		/* initialise globals */
-void initpath P((DIRENTRY *));	/* initialise pathname */
-void initcols P((void));	/* initialise columns */
-int stringlength P((CONST char *));/* length of string with feeling */
-void printstring P((char *));	/* print string without feeling */
-void bprintstring P((char *));	/* print string with feeling */
-void qprintstring P((char *));	/* print string with feeling */
-unsigned long bytestoblk P((struct stat *));	/* convert bytes to blks */
-void error P((char *));		/* error message with prefix */
-FILESYSTEM *scanmtab P((void));	/* create file system database */
-void date P((time_t));		/* make date readable */
-char *makepath P((DIRENTRY *));	/* form the path */
-void longprint P((struct stat *));	/* long format */
-void printentry P((DIRENTRY *, DIRENTRY *, int, int));	/* print this entry */
-int optcols P((DIRLIST *, NAMESTATS *, DIRENTRY **, int **));
-				/* optimise number of columns */
-DIRENTRY *newentry P((char *));	/* malloc a new entry */
-void freelist P((DIRLIST *));	/* free entries */
-void freeentry P((DIRENTRY *));	/* free an entry */
-int alphacmp P((DIRENTRY *, DIRENTRY *));/* alphabetic comparison */
-int mtimecmp P((DIRENTRY *, DIRENTRY *));/* compare by modification time */
-int ctimecmp P((DIRENTRY *, DIRENTRY *));/* compare by change time */
-int atimecmp P((DIRENTRY *, DIRENTRY *));/* compare by access time */
-void list P((DIRENTRY *, DIRLIST *, NAMESTATS *));/* file listing routine */
-void suffix P((DIRENTRY *, int));	/* do suffixes */
-int filestat P((int, statfunc, char *, struct stat *));	/* get status of file */
-void *safemalloc P((size_t));	/* malloc with feeling */
-DIRENTRY *makelist P((char *, NAMESTATS *,
-	       unsigned long *));	/* create list of entries */
-void *lsort P((void *, int, cmpfunc));	/* linked list sort */
-
-#ifdef	S_IFLNK
-char *followlink P((char *, int *));	/* follow symbolic link */
+/* Basic disk block size is 512 except for one niche O.S. */
+#if _MINIX
+#define BLOCK	1024
+#else
+#define BLOCK	 512
 #endif
 
-/* Uninitialised Globals. */
-
-DIRLIST rlist;			/* temporary recursive list */
-DIRLIST dlist;			/* list of directories */
-time_t today;			/* today's date */
-cmpfunc compare;		/* sort criteria */
-strlenfunc strlength;		/* (visible) string length */
-putstrfunc putstring;		/* (visible) string output */
-int columns;			/* number of columns */
-char *pathname;			/* current path name */
-FILESYSTEM *filesystems;	/* file system data base */
-FILESYSTEM *cfs;		/* current file system */
-
-/* Initialised Globals. */
-
-unsigned char flags[BITCHARS(FLAGS)] = { 0 }; /* switches */
-int exitstatus = EXIT_SUCCESS;                /* exit status */
-char cwd[2 * PATH_MAX + 1] = {0};             /* cwd and current pathname */
-int extrawidth = INTERSPACE;	/* implied extra space to add */
-char blanks[] =			/* blanks for quick padding */
-"                                                               ";
-char *incompatible[] = {	/* mutually exclusive flags */
-		"aA", "mx1Cglno", "bq", "pF", "cu", (char *) NIL
-};
-char optlist[] = "abcdfgilmnopqrstux01ACFLRS";/* list of options */
-char *summary[] = {		/* summary of options */
-"",
-"a  All files             A  All except . and ..   R  Recursive",
-"d  No directory scan     f  Force directory scan  L  Opaque symlink",
-"0  Reset options",
-"",
-"l  Long format           g  Print group only      o  Print owner only",
-"x  Multicolumn across    C  Multicolumn down      S  Squeeze columns",
-"1  Single column         m  Stream format",
-"",
-"t  Sort by time          r  Reverse sort",
-"c  Status change time    u  Last access time",
-"",
-"i  Print inode number    s  Print size in blocks  n  Numeric uid and gid",
-"p  Suffix /              F  Suffix / @ = | *",
-"",
-"b  Non-graphic \\ddd      q  Non-graphic ?",
-(char *) NIL
-};
-
-int main F2(int, argc, char **, argv)
-{
-  DIRENTRY *dp;			/* directory scanner */
-  DIRLIST nlist;		/* list of files */
-  int showdir;			/* print directory name */
-  int notfirst;			/* printing first directory */
-  BOOL(dototal);		/* show totals */
-  BOOL(dostat);			/* need to do a stat */
-  int isdir;			/* current argument is a directory name */
-  int symlinked;		/* file a symbolic link */
-  char *absname;		/* absolute current path name */
-  NAMESTATS ns;			/* statistics */
-
-  unsigned long blk;		/* blks in total */
-#ifdef	S_IFLNK
-  struct stat lsb;		/* stat of link */
+/* Some terminals ignore more than 80 characters on a line.  Dumb ones wrap
+ * when the cursor hits the side.  Nice terminals don't wrap until they have
+ * to print the 81st character.  Wether we like it or not, no column 80.
+ */
+#ifdef TIOCGWINSZ
+int ncols= 79;
+#else
+#define ncols	79
 #endif
 
-/* Initialise by emptying the directory lists */
-  EMPTY_dl(dlist), EMPTY_dl(nlist);
-  showdir = 0;
-  notfirst = 0;
+#define NSEP	2	/* # spaces between columns. */
 
-/* Parse the command line */
-  dolsopts();
-  docmdname(argv[0]);
-  parse(argc, argv);
-  init();
-  if (TEST('C') || TEST('x') || TEST('m')) initcols();
-
-/* Insert arguments into the current list */
-  INIT_NS(ns);
-  do {
-
-	dp = newentry((optind >= argc) ? DEFAULTDIR : argv[optind]);
-	symlinked = LF_NORMAL;
-
-	if (EVAL(dostat, (!TEST('f') && !TEST('d')) ||
-			  TEST('t') ||  TEST('g') ||
-			  TEST('o') ||  TEST('s') ||
-			  TEST('F') ||  TEST('p') ||
-			  TEST('R') ||  TEST('i'))) {
-		dp->status = (struct stat *)
-			     safemalloc(sizeof(*dp->status));
-		if (filestat(0, OPAQUESTAT, dp->name, dp->status)) {
-			freeentry(dp);
-			continue;
-		}
-	}
-
-/* Determine if this argument is a directory */
-	if (TEST('f'))
-		isdir = 1;
-
-	else if (TEST('d'))
-		isdir = 0;
-
-	else {
-
-#ifdef	S_IFLNK
-		if (!TEST('L') && S_ISLNK(dp->status->st_mode) &&
-		    !filestat(1, TRANSPARENTSTAT, dp->name, &lsb) &&
-		    S_ISDIR(lsb.st_mode)) {
-			symlinked = LF_SYMLINK;
-			*dp->status = lsb;
-		}
+#ifdef TIOCGWINSZ
+#define MAXCOLS	150
+#else
+#define MAXCOLS	(1 + (ncols / (1+NSEP)))	/* Max # of files per line. */
 #endif
 
-		if (!S_ISDIR(dp->status->st_mode))
-			isdir = 0;
-		else {
-			if (compare == (cmpfunc) alphacmp) {
-				free((FREE_T) dp->status);
-				dp->status = NIL;
-			}
-			isdir = 1;
-		}
+char *arg0;	/* Last component of argv[0]. */
+int uid, gid;	/* callers id. */
+int ex= 0;	/* Exit status to be. */
+int istty;	/* Output is on a terminal. */
 
+/* Safer versions of malloc and realloc: */
+
+void heaperr(void)
+{
+	fprintf(stderr, "%s: Out of memory\n", arg0);
+	exit(-1);
+}
+
+void *allocate(size_t n)
+/* Deliver or die. */
+{
+	void *a;
+
+	if ((a= malloc(n)) == nil) heaperr();
+	return a;
+}
+
+#define reallocate	rllct	/* Same as realloc under some compilers. */
+
+void *reallocate(void *a, size_t n)
+{
+	if ((a= realloc(a, n)) == nil) heaperr();
+	return a;
+}
+
+char allowed[] = "acdfgilnqrstu1ACFLMRTX";
+char flags[sizeof(allowed)];
+
+char arg0flag[] = "cfmrtx";	/* These in argv[0] go to upper case. */
+
+void setflags(char *flgs)
+{
+	int c;
+
+	while ((c= *flgs++) != 0) {
+		if (strchr(allowed, c) == nil) {
+			fprintf(stderr, "Usage: %s -[%s] [file ...]\n",
+				arg0, allowed);
+			exit(1);
+		} else
+		if (strchr(flags, c) == nil)
+			flags[strlen(flags)] = c;
 	}
-	if (isdir) {
-		if (HEAD_dl(dlist)) showdir = 1;
-		APPEND_dl(dlist, dp);
-
-		continue;
-	}
-
-/* This argument is not a directory */
-	suffix(dp, symlinked | LF_BADCWD);
-	UPDATE_NS(ns, dp->length);
-	APPEND_dl(nlist, dp);
-
-  } while (++optind < argc);
-
-/* List all the non-directory files */
-  if (ns.n) {
-	showdir = 1;
-	notfirst = 1;
-  }
-  HEAD_dl(nlist) = (DIRENTRY *) lsort((void *) HEAD_dl(nlist),
-				      LINKOFFSET, compare);
-  list((DIRENTRY *) NIL, &nlist, &ns);
-
-/* List all directories */
-  if (!TEST('f'))
-	HEAD_dl(dlist) = (DIRENTRY *) lsort((void *) HEAD_dl(dlist),
-					    LINKOFFSET, compare);
-
-  dp = HEAD_dl(dlist);
-  initpath(dp);
-  while (dp) {
-	freelist(&nlist);
-	absname = makepath(dp);
-
-	if (showdir) {
-		if (notfirst) (void) putchar('\n');
-		(void) printf("%s:\n", pathname);
-	}
-	HEAD_dl(nlist) = makelist(absname, &ns, &blk);
-
-	if (EVAL(dototal, TEST('g') || TEST('o') || TEST('s')))
-		(void) printf("total %lu\n", blk);
-
-	list(dp, &nlist, &ns);
-
-	notfirst = showdir = 1;
-	dp = dp->next;
-  }
-
-  return exitstatus;
 }
 
-/* Scan the options from the environment variable. This is
- * done in a similar fashion to the command line option
- * scan but no errors are flagged.
- */
-
-void dolsopts F0()
+int present(int f)
 {
-  register char *env;		/* environment options */
-  register int sw;		/* switch from environment */
-
-/* Output to tty allows environment settable options */
-  if (isatty(fileno(stdout))) {
-	setflag('q');
-	if ((env = getenv(ENVNAME)) != NIL) {
-		while ((sw = *env) > 0 && sw < FLAGS) {
-			setflag(sw);
-			env++;
-		}
-	}
-  }
+	return f == 0 || strchr(flags, f) != nil;
 }
 
-/* Look at the command name. The following options are set
- * according to the name:
- *
- *	Name		Option
- *	ls		NONE
- *	l		-m
- *	ll		-l
- *	lx		-x
- *	lc		-C
- *	lf		-F
- *	lr		-R
- */
-
-void docmdname F1(char *, name)
+void report(char *f)
+/* Like perror(3), but in the style: "ls: junk: No such file or directory. */
 {
-  register char *bp;		/* point to basename */
-
-  if ((bp = strrchr(name, '/')) == NIL)
-	bp = name;
-  else
-	bp++;
-
-  if (bp[0] != 0) {
-	switch (bp[1]) {
-	    case '\0':	setflag('m');	break;
-	    case 'l':	setflag('l');	break;
-	    case 'x':	setflag('x');	break;
-	    case 'c':	setflag('C');	break;
-	    case 'f':	setflag('F');	break;
-	    case 'r':	setflag('R');	break;
-	}
-  }
+	fprintf(stderr, "%s: %s: %s\n", arg0, f, strerror(errno));
+	ex= 1;
 }
 
-/* Determine the number of columns on the output terminal.
- * The environment variable COLUMNS is preferred. If this
- * is not set, and output is to a terminal, the termcap database
- * is consulted. Failing this, a default assumed.
+/* Two functions, uidname and gidname, translate id's to readable names.
+ * All names are remembered to avoid searching the password file.
  */
-void initcols F0()
+#define NNAMES	(1 << (sizeof(int) + sizeof(char *)))
+enum whatmap { PASSWD, GROUP };
+
+struct idname {		/* Hash list of names. */
+	struct idname	*next;
+	char		*name;
+	uid_t		id;
+} *uids[NNAMES], *gids[NNAMES];
+
+char *idname(unsigned id, enum whatmap map)
+/* Return name for a given user/group id. */
 {
-  register char *env;		/* environment variable */
-  register int cols;		/* columns */
-#ifdef	TERMCAP
-  char tspace[1024];		/* termcap work space */
-#endif
+	struct idname *i;
+	struct idname **ids= &(map == PASSWD ? uids : gids)[id % NNAMES];
 
-/* Check environment first */
-  if ((env = getenv(COLNAME)) != NIL && (cols = atoi(env)) > 0)
-	columns = cols;
+	while ((i= *ids) != nil && id < i->id) ids= &i->next;
 
-#ifdef	TERMCAP
-/* Try termcap library */
-  else if ((env = getenv(TERMNAME)) != NIL &&
-	 tgetent(tspace, env) > 0 &&
-	 (cols = tgetnum("co")) > 0)
-	columns = cols;
-#endif
+	if (i == nil || id != i->id) {
+		/* Not found, go look in the password or group map. */
+		char *name= nil;
+		char noname[3 * sizeof(uid_t)];
 
-  else
-	columns = COLUMNS;
-}
+		if (!present('n')) {
+			if (map == PASSWD) {
+				struct passwd *pw= getpwuid(id);
 
-/* Parse the command line arguments. This function will set
- * the switches in the global variable flags. No interpretation
- * of the switches is performed at this point.
- */
+				if (pw != nil) name= pw->pw_name;
+			} else {
+				struct group *gr= getgrgid(id);
 
-void parse F2(int, argc, char **, argv)
-{
-  register int swch;		/* switch character */
-  register int i;		/* index */
-
-  while ((swch = getopt(argc, argv, optlist)) != EOF) {
-  	if (swch == '0') {
-  		for (i = 0; i < sizeof(flags)/sizeof(flags[0]); i++)
-  			flags[i] = 0;
-  	} else if (swch != '?')
-		setflag(swch);
-	else {
-		fprintf(stderr, "Usage: %s [-%s] [names]\n", argv[0], optlist);
-		for (i = 0; summary[i] != NIL; i++)
-			fprintf(stderr, "%s\n", summary[i]);
-		exit(EXIT_FAILURE);
-	}
-  }
-}
-
-/* Set the specified option switch. This function knows about
- * mutually exclusive options and will turn off options which
- * are not compatible with the current one.
- */
-
-void setflag F1(int, ch)
-{
-  register char **p;		/* scanner */
-
-  for (p = incompatible; *p != NIL; p++) checkflag(ch, *p);
-  SET(ch);
-}
-
-/* Check the specified flag against the list of mutually exclusive
- * flags. If the flag appears, then all other flags in the list are
- * turned off. If not, then nothing is done.
- */
-
-void checkflag F2(int, ch, register char *, p)
-{
-  if (strchr(p, ch) != NIL) {
-	while (*p != 0) {
-		if (*p++ != ch) CLEAR(p[-1]);
-	}
-  }
-}
-
-/* Scan the switches and initialise globals. This function will
- * do some preliminary work on the switches to determine which
- * globals will be needed and also which switches need to be
- * set or cleared in addition to the current settings.
- */
-
-void init F0()
-{
-/* Turn on -A if we're the super user */
-  if (!TEST('a') && getuid() == SUPER_USER) SET('A');
-
-/* Visible string length */
-  strlength = TEST('b') ? stringlength : (strlenfunc) strlen;
-
-/* Visible string output */
-  putstring = TEST('q') ? qprintstring : TEST('b') ? bprintstring : printstring;
-
-/* Force raw directory listing */
-  if (TEST('f')) {
-	CLEAR('l');
-	CLEAR('n');
-	CLEAR('o');
-	CLEAR('g');
-	CLEAR('t');
-	CLEAR('s');
-	CLEAR('r');
-	CLEAR('F');
-	CLEAR('p');
-	CLEAR('A');
-	SET('a');
-  }
-
-/* Sort criterion */
-  compare = (cmpfunc) (TEST('t') ? TEST('u') ? atimecmp
-		                             : TEST('c') ? ctimecmp : mtimecmp
-		                 : alphacmp);
-
-/* Open the password and group files if required */
-  if (TEST('l') || TEST('n')) {
-	SET('o');
-/* Use -DAST to suppress groups on ls -l  (V7 style). */
-#ifndef AST
-	SET('g');
-#endif
-  }
-
-/* Accumulate extra width if required */
-  if (TEST('i')) extrawidth += INODEWIDTH + 1;
-  if (TEST('s')) extrawidth += BLOCKWIDTH + 1;
-
-/* Get today's date */
-  if (TEST('o') || TEST('g')) today = time((time_t *) 0);
-
-/* Initialise file system data base */
-  if (TEST('g') || TEST('o') || TEST('s'))
-	cfs = filesystems = scanmtab();
-}
-
-/* Form the name of the current directory. Before each directory
- * is scanned, its absolute name is formed. The name of the
- * current directory is prefixed to relative names to obtain
- * this.
- */
-void initpath F1(DIRENTRY *, dp)
-{
-  if (dp == NIL || (dp->next == NIL && !TEST('R')))
-	pathname = cwd;
-  else {
-	if (getcwd(cwd, sizeof(cwd)) == NIL) {
-	      error("cannot locate cwd");
-	      exit(EXIT_FAILURE);
-	}
-	pathname = strchr(cwd, 0);
-	pathname[0] = '/';
-	pathname[1] = 0;
-	pathname++;
-  }
-}
-
-/* Make a linked list of entries using specified directory. The
- * directory is rewound before being scanned. The function
- * returns a pointer to the head of the list of entries. The
- * function gathers two important statistics as the list
- * is created. It will return the width required to print
- * the files, and also the number of files in the list.
- *
- * The list will be sorted according to the current sorting
- * criteria.
- */
-
-DIRENTRY *makelist F3(char *, dirname, NAMESTATS *, np, unsigned long *, blk)
-{
-  DIR *dirp;			/* directory to scan */
-  register struct dirent *cp;	/* current entry */
-  DIRLIST nlist;		/* files in directory */
-  register DIRENTRY *p;		/* new entry */
-  BOOL(dostat);			/* perform a stat */
-  BOOL(doblock);		/* check block sizes */
-
-  EMPTY_dl(nlist);
-  INIT_NS(*np);
-  *blk = 0;
-
-  if ((dirp = opendir(dirname)) == NIL || chdir(dirname)) {
-	error(dirname);
-	return NIL;
-  }
-  while ((cp = readdir(dirp)) != NIL) {
-	if (cp->d_name[0] != '.' || TEST('a') ||
-	    (cp->d_name[1] != 0 && (cp->d_name[1] != '.' || cp->d_name[2] != 0)
-	     && TEST('A'))) {
-
-		p = newentry(cp->d_name);
-
-		if (EVAL(dostat, TEST('t') || TEST('g') ||
-				 TEST('o') || TEST('s') ||
-				 TEST('F') || TEST('p') ||
-				 TEST('R') || TEST('i'))) {
-			p->status = (struct stat *)
-				    safemalloc(sizeof(*p->status));
-			if (filestat(0, OPAQUESTAT, p->name, p->status)) {
-				freeentry(p);
-				continue;
+				if (gr != nil) name= gr->gr_name;
 			}
 		}
-		suffix(p, LF_NORMAL);
-
-		UPDATE_NS(*np, p->length);
-
-		if (EVAL(doblock, TEST('g') || TEST('o') || TEST('s')))
-			*blk += bytestoblk(p->status);
-
-		APPEND_dl(nlist, p);
-	}
-  }
-
-#ifndef		_MINIX
-  (void) closedir(dirp);
-#else
-  if (closedir(dirp)) error(dirname);
-#endif
-
-  return TEST('f') ? HEAD_dl(nlist)
-	: (DIRENTRY *) lsort((void *) HEAD_dl(nlist),
-			     LINKOFFSET, compare);
-}
-
-/* This function performs does the formatting and output for ls(1).
- * The function is passed a list of files (not necessarily sorted)
- * to list. All files will be listed. . and .. removal should have
- * been done BEFORE calling this function.
- */
-
-void list F3(DIRENTRY *, parent, DIRLIST *, lp, NAMESTATS *, np)
-{
-  if (np->n) {
-
-/* Empty recursive directory list */
-	EMPTY_dl(rlist);
-
-/* Select the correct output format */
-	if (TEST('m'))
-		streamoutput(parent, lp);
-	else if (!TEST('C'))
-		acrosspage(parent, lp, np);
-	else
-		downpage(parent, lp, np);
-
-	(void) putchar('\n');
-
-/* Check recursive list */
-	if (HEAD_dl(rlist)) {
-		if (!TEST('f'))
-			HEAD_dl(rlist) = (DIRENTRY *)
-					 lsort((void *) HEAD_dl(rlist),
-					       LINKOFFSET, compare);
-		TIE_dl(dlist, HEAD_dl(rlist));
-	}
-  }
-}
-
-/* List the entries across the page. Single column output is
- * treated as a special case of this. This is the easiest
- * since the list of files can be scanned and dumped.
- */
-
-void acrosspage F3(DIRENTRY *, parent, DIRLIST *, lp, NAMESTATS *, np)
-{
-  register DIRENTRY *p;		/* entries to print */
-  int cols;			/* columns to print in */
-  int *cw;			/* column widths */
-  register int colno;		/* which column we're printing */
-
-  if (!TEST('x')) {
-    cols = 1;
-    cw = NIL;
-  } else {
-    cols = optcols(lp, np, (DIRENTRY **) NIL, &cw);
-  }
-
-  for (colno = 0, p = HEAD_dl(*lp); p; p = p->next) {
-	if (++colno > cols) {
-		colno = 1;
-		(void) putchar('\n');
-	}
-	printentry(parent, p, cw ? cw[colno-1] : np->maxwidth, colno != cols);
-  }
-}
-
-/* Print the entries down the page. This is the default format
- * for multicolumn listings. It's unfortunate that this is
- * the most acceptable to the user, but it causes the program
- * a little grief since the list of files is not in the
- * most convenient order. Most of this code is taken up
- * with rearranging the list to suit the output format.
- */
-
-void downpage F3(DIRENTRY *, parent, DIRLIST *, lp, NAMESTATS *, np)
-{
-  static DIRENTRY **c = NIL;	/* column pointers */
-  int *cw;			/* column width vector */
-  int cols;			/* columns to print in */
-  int rows;			/* number of rows per column */
-  register int i, j;		/* general counters */
-
-  if (c == NIL) {
-	cols = (columns+INTERSPACE-1) / INTERSPACE;
-	c = (DIRENTRY **) safemalloc(sizeof(*c) * cols);
-  }
-
-  cols = optcols(lp, np, c, &cw);
-  rows = (np->n + cols - 1) / cols;
-
-/* Scan and print the listing */
-  for (i = 0; i < rows; i++) {
-	if (i) (void) putchar('\n');
-
-	for (j = 0; j < cols; j++) {
-		if (c[j]) {
-			printentry(parent, c[j],
-				   cw ? cw[j] : np->maxwidth, j != cols - 1);
-			c[j] = c[j]->next;
+		if (name == nil) {
+			/* Can't find it, weird.  Use numerical "name." */
+			sprintf(noname, "%u", id);
+			name= noname;
 		}
+
+		/* Add a new id-to-name cell. */
+		i= allocate(sizeof(*i));
+		i->id= id;
+		i->name= allocate(strlen(name) + 1);
+		strcpy(i->name, name);
+		i->next= *ids;
+		*ids= i;
 	}
-  }
+	return i->name;
 }
 
-/* List the files using stream format. This code looks a bit
- * kludgy because it is necessary to KNOW how wide the next
- * entry is going to be. If the width would case the printout
- * to exceed the width of the display, the entry must be printed
- * on the next line.
+#define uidname(uid)	idname((uid), PASSWD)
+#define gidname(gid)	idname((gid), GROUP)
+
+/* Path name construction, addpath adds a component, delpath removes it.
+ * The string path is used throughout the program as the file under examination.
  */
 
-void streamoutput F2(DIRENTRY *, parent, DIRLIST *, lp)
-{
-  register DIRENTRY *p;		/* entries to print */
-  int colno;			/* current column */
-  int midline;			/* in middle of line */
-  register int tw;		/* width of this entry */
-  int x;			/* inode calculation */
-  BOOL(dopretty);		/* pretty print */
-  unsigned long blk;		/* size in blks */
+char *path;	/* Path name constructed in path[]. */
+int plen= 0, pidx= 0;	/* Lenght/index for path[]. */
 
-  for (midline = colno = 0, p = HEAD_dl(*lp); p; p = p->next) {
-
-/* Nominal length of the name */
-	tw = p->length;
-
-/* Pretty printing adds an extra character */
-	if (EVAL(dopretty, TEST('F') || TEST('p')) &&
-	    (S_ISDIR(p->status->st_mode) ||
-	     (TEST('F') && (
-#ifdef	S_IFLNK
-			   S_ISLNK(p->status->st_mode) ||
-#endif
-#ifdef	S_IFIFO
-			   S_ISFIFO(p->status->st_mode) ||
-#endif
-#ifdef	S_IFSOCK
-			   S_ISSOCK(p->status->st_mode) ||
-#endif
-			   (p->status->st_mode & 0111) != 0))))
-		tw++;
-
-/* Size will add to the length */
-	if (TEST('s')) {
-		blk = bytestoblk(p->status);
-		do {
-			tw++;
-		} while ((blk /= 10) != 0);
-		tw++;
-	}
-
-/* Inode number adds to the length (plus the separating space) */
-	if (TEST('i')) {
-		x = p->status->st_ino;
-		tw++;
-		do
-			tw++;
-		while ((x /= 10) != 0);
-	}
-
-/* There will be a separating comma */
-	if (p->next) tw++;
-
-/* There will be a separating space */
-	if (midline) tw++;
-
-/* Begin a new line if necessary in which case there is no separating space */
-	if (colno + tw >= columns) {
-		(void) putchar('\n');
-		midline = 0;
-		colno = 0;
-		tw--;
-	}
-
-/* Separate entries if required */
-	if (midline) (void) putchar(' ');
-
-/* Now the entry proper */
-	printentry(parent, p, 0, 0);
-
-/* Now the separating comma */
-	if (p->next) (void) putchar(',');
-
-	midline = 1;
-	colno += tw;
-  }
-}
-
-/* Optimise the number of columns taken to print listing.
- * Attempt to squeeze as many columns across the page as
- * possible. Return a pointer to a width vector and also
- * the number of columns to print. If the -S option is
- * not in effect, the number of columns returned might
- * be overoptimistic.
+void addpath(int *didx, char *name)
+/* Add a component to path. (name may also be a full path at the first call)
+ * The index where the current path ends is stored in *pdi.
  */
-
-int optcols F4(DIRLIST *, lp, NAMESTATS *, np, DIRENTRY **, c, int **, cwp)
 {
-  static int *cw = NIL;		/* column widths */
-  int ccw;			/* width of current column */
-  int scw;			/* sum of column widths */
-  int cols;			/* column count */
-  int rows;			/* row count */
-  register DIRENTRY *p;		/* list scanner */
-  register int i, j;
+	if (plen == 0) path= (char *) allocate((plen= 32) * sizeof(path[0]));
 
-  if (! TEST('S')) {
+	if (pidx == 1 && path[0] == '.') pidx= 0;	/* Remove "." */
 
-/* Nominal number of columns */
-	if ((cols = columns / (np->maxwidth + extrawidth)) == 0)
-		cols = 1;
-	*cwp = NIL;
+	*didx= pidx;	/* Record point to go back to for delpath. */
 
-  } else {
+	if (pidx > 0 && path[pidx-1] != '/') path[pidx++]= '/';
 
-/* Allocate space for column widths */
-	if (cw == NIL) {
-		cols = (columns+INTERSPACE-1) / INTERSPACE;
-		cw = (int *) safemalloc(sizeof(*cw) * cols);
-	}
-
-/* Allocate maximum number of columns */
-	if ((cols = columns / (np->minwidth + extrawidth)) == 0)
-		cols = 1;
-	*cwp = cw;
-  }
-
-  if (cols > np->n) cols = np->n;
-
-/* Distribute the names and compute the column widths */
-  if (c) {
-	while (1) {
-		rows = (np->n + cols - 1) / cols;
-		cols = (np->n + rows - 1) / rows;
-
-		scw = cols * extrawidth;
-		for (i = 0, p = HEAD_dl(*lp); p; i++) {
-			c[i] = p;
-			ccw = p->length;
-			for (j = rows; j-- && p; p = p->next)
-				if (ccw < p->length) ccw = p->length;
-			if ((scw += ccw) > columns)
-				if (cols > 1) break;
-			if (cw) cw[i] = ccw;
-		}
-		if (cols <= 1 || scw <= columns) break;
-		cols--;
-	}
-  } else if (TEST('S')) {
-	while (1) {
-		for (i = cols; i--; )
-			cw[i] = 0;
-		scw = cols * extrawidth;
-		for (i = 0, p = HEAD_dl(*lp); p; p = p->next) {
-			if (cw[i] < p->length) {
-				scw -= cw[i];
-				cw[i] = p->length;
-				if ((scw += cw[i]) > columns)
-					if (cols > 1) break;
-			}
-			if (++i == cols) i = 0;
-		}
-		if (cols <= 1 || scw <= columns) break;
-		cols--;
-	}
-  }
-
-  return cols;
-}
-
-/* Print this entry on stdout. No newline is appended to the
- * output. This function localises all the transformations
- * which have to be carried out to make the output readable.
- * Columnar magic is done elsewhere.
- */
-
-void printentry F4(DIRENTRY *, parent,
-	    register DIRENTRY *, p,
-	    int, w,
-	    register int, padout)
-{
-  int pad;			/* pad count */
-  BOOL(dolong);			/* long print */
-  DIRENTRY *ep;			/* new entry for recursion */
-
-  if (TEST('i')) {
-	if (sizeof(p->status->st_ino) == sizeof(unsigned int))
-	       printf("%*u ",  w ? INODEWIDTH : 0,
-			         (unsigned int)  p->status->st_ino);
-	else
-	       printf("%*lu ", w ? INODEWIDTH : 0,
-			         (unsigned long) p->status->st_ino);
-  }
-  if (TEST('s'))
-	(void) printf("%*lu ", w ? BLOCKWIDTH : 0, bytestoblk(p->status));
-
-  if (EVAL(dolong, TEST('o') || TEST('g'))) longprint(p->status);
-
-/* Print the name of this file */
-  (*putstring)(p->name);
-  (*putstring)(p->suffix);
-
-/* Only pad it if the caller requires it */
-  if (padout && (pad = w - p->length + INTERSPACE) > 0) {
 	do {
-		padout = pad;
-		if (padout > sizeof(blanks)-1) padout = sizeof(blanks)-1;
-		(void) fputs(&blanks[(sizeof(blanks)-1)-padout], stdout);
-	} while ((pad -= padout) != 0);
-  }
+		if (*name != '/' || pidx == 0 || path[pidx-1] != '/') {
+			if (pidx == plen)
+				path= (char *) reallocate((void *) path,
+						(plen*= 2) * sizeof(path[0]));
+			path[pidx++]= *name;
+		}
+	} while (*name++ != 0);
 
-/* If recursion is required, add to list if it's a directory */
-  if (TEST('R') && S_ISDIR(p->status->st_mode) &&
-      (p->name[0] != '.' ||
-       (p->name[1] != 0 && (p->name[1] != '.' || p->name[2] != 0)))) {
-	ep = newentry(p->name);
-	ep->parent = parent;
-	APPEND_dl(rlist, ep);
-  }
+	--pidx;		/* Put pidx back at the null.  The path[pidx++]= '/'
+			 * statement will overwrite it at the next call.
+			 */
 }
 
-/* Format and print out the information for a long listing.
- * This function handles the conversion of the mode bits
- * owner, etc. It assumes that the status has been obtained.
- */
+#define delpath(didx)	(path[pidx= didx]= 0)	/* Remove component. */
 
-void longprint F1(register struct stat *, sp)
-{
-  register unsigned int permbits;	/* file access permissions */
-  char filecode;		/* code for type of file */
-  static struct passwd *pwent = NIL;	/* password entry */
-  static struct group *grent = NIL;	/* group entry */
-  char *perm[PERMCLASSES];	/* permissions ogu */
+int field = 0;	/* (used to be) Fields that must be printed. */
+		/* (now) Effects triggered by certain flags. */
 
-  if (S_ISREG(sp->st_mode))       filecode = '-';
-  else if (S_ISDIR(sp->st_mode))  filecode = 'd';
-  else if (S_ISBLK(sp->st_mode))  filecode = 'b';
-  else if (S_ISCHR(sp->st_mode))  filecode = 'c';
-#ifdef		S_IFIFO
-  else if (S_ISFIFO(sp->st_mode)) filecode = 'p';
+#define F_INODE		0x001	/* -i */
+#define F_BLOCKS	0x002	/* -s */
+#define F_EXTRA		0x004	/* -X */
+#define F_MODE		0x008	/* -lMX */
+#define F_LONG		0x010	/* -l */
+#define F_GROUP		0x020	/* -g */
+#define F_BYTIME	0x040	/* -tuc */
+#define F_ATIME		0x080	/* -u */
+#define F_CTIME		0x100	/* -c */
+#define F_MARK		0x200	/* -F */
+#define F_TYPE		0x400	/* -T */
+#define F_DIR		0x800	/* -d */
+
+struct file {		/* A file plus stat(2) information. */
+	struct file	*next;	/* Lists are made of them. */
+	char		*name;	/* Null terminated name. */
+	ino_t		ino;
+	mode_t		mode;
+	uid_t		uid;
+	gid_t		gid;
+	nlink_t		nlink;
+	dev_t		rdev;
+	off_t		size;
+	time_t		mtime;
+	time_t		atime;
+	time_t		ctime;
+#if BSD
+	long		blocks;
 #endif
-#ifdef		S_IFLNK
-  else if (S_ISLNK(sp->st_mode))  filecode = 'l';
+};
+
+void setstat(struct file *f, struct stat *stp)
+{
+	f->ino=		stp->st_ino;
+	f->mode=	stp->st_mode;
+	f->nlink=	stp->st_nlink;
+	f->uid=		stp->st_uid;
+	f->gid=		stp->st_gid;
+	f->rdev=	stp->st_rdev;
+	f->size=	stp->st_size;
+	f->mtime=	stp->st_mtime;
+	f->atime=	stp->st_atime;
+	f->ctime=	stp->st_ctime;
+#if BSD
+	f->blocks=	stp->st_blocks;
 #endif
-#ifdef		S_IFSOCK
-  else if (S_ISSOCK(sp->st_mode)) filecode = 's';
-#endif
-  else                            filecode = '?';
-
-  permbits = USRGRPOTH(sp->st_mode);
-
-  perm[PERMUSR] = permstrings[(permbits >> 6) & 7];
-  perm[PERMGRP] = permstrings[(permbits >> 3) & 7];
-  perm[PERMOTH] = permstrings[(permbits)      & 7];
-
-  if (sp->st_mode & S_ISUID) perm[PERMUSR] += PERM_SUID;
-  if (sp->st_mode & S_ISGID)
-#ifdef	_SYSV
-	perm[PERMGRP] += PERM_LOCK;
-#else				/* _SYSV */
-	perm[PERMGRP] += PERM_SUID;
-#endif
-#ifdef	S_ISVTX
-  if (sp->st_mode & S_ISVTX) perm[PERMOTH] += PERM_STICKY;
-#endif
-
-  (void) printf("%c%s%s%s%c %2d ",
-	      filecode,
-	      perm[PERMUSR], perm[PERMGRP], perm[PERMOTH],
-	      ' ', sp->st_nlink);
-
-  if (TEST('o')) {
-	if (!TEST('n') && ((pwent && pwent->pw_uid == sp->st_uid) ||
-			   (pwent = getpwuid(sp->st_uid)) != NIL))
-		(void) printf("%-8.8s\t", pwent->pw_name);
-	else
-		(void) printf("%-8d\t", (int) sp->st_uid);
-  }
-  if (TEST('g')) {
-	if (!TEST('n') && ((grent && grent->gr_gid == sp->st_gid) ||
-			   (grent = getgrgid(sp->st_gid)) != NIL))
-		(void) printf("%-8.8s\t", grent->gr_name);
-	else
-		(void) printf("%-8d\t", (int) sp->st_gid);
-  }
-
-/* Now show how big the file is */
-  if (!S_ISCHR(sp->st_mode) && !S_ISBLK(sp->st_mode))
-	(void) printf("%7lu ", (unsigned long) sp->st_size);
-  else
-	(void) printf(" %2d,%3d ", (int) (sp->st_rdev >> 8) & 0377,
-		      (int) sp->st_rdev & 0377);
-
-/* Now the date */
-  date(TEST('u') ? sp->st_atime : TEST('c') ? sp->st_ctime : sp->st_mtime);
 }
 
-/* Given the time convert it into human readable form. The month and
- * day are always printed. If the time is within about the last half year,
- * the hour and minute are printed, otherwise the year.
- */
+#define	PAST	(26*7*24*3600L)	/* Half a year ago. */
+/* Between PAST and FUTURE from now a time is printed, otherwise a year. */
+#define FUTURE	(15*60L)	/* Fifteen minutes. */
 
-void date F1(time_t, t)
+static char *timestamp(struct file *f)
+/* Transform the right time field into something readable. */
 {
-  struct tm *tmbuf;		/* output time */
+	struct tm *tm;
+	time_t t;
+	static time_t now;
+	static int drift= 0;
+	static char date[] = "Jan 19  2038";
+	static char month[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
-  tmbuf = localtime(&t);
-  (void) printf("%.3s %2u ",
-	 "JanFebMarAprMayJunJulAugSepOctNovDec" + tmbuf->tm_mon * 3,
-	      (unsigned) tmbuf->tm_mday);
-  if (t <= today && (today - t) <= HALFYEAR)
-	(void) printf("%02u:%02u ", (unsigned) tmbuf->tm_hour,
-		      (unsigned) tmbuf->tm_min);
-  else
-	(void) printf("%5d ", tmbuf->tm_year + BASEYEAR);
-}
+	t= f->mtime;
+	if (field & F_ATIME) t= f->atime;
+	if (field & F_CTIME) t= f->ctime;
 
-/* Chase the parent pointers and make a path. This path is
- * used to locate the current directory. The function returns
- * the absolute pathname to the caller. The pathname relative
- * to the directory specified by the user is available from
- * the global variable pathname.
- */
+	tm= localtime(&t);
+	if (--drift < 0) { time(&now); drift= 50; }	/* limit time() calls */
 
-char *makepath F1(DIRENTRY *, p)
-{
-  char tmppath[PATH_MAX + 1];	/* build it here */
-  register char *cp;		/* pointer to tmppath */
-  register char *cq;		/* pointer into name */
-  char *cr;			/* temporary pointer */
-  char absolute;		/* / for absolute file names */
-
-/* Work your way back up to the root */
-  for (cp = tmppath, *cp++ = 0, absolute = 0; p; p = p->parent) {
-	for (cq = p->name, absolute = *cq; *cq; *cp++ = *cq++);
-	*cp++ = 0;
-  }
-
-/* Now flip the order */
-  for (cq = pathname, --cp; ; cp = cr) {
-	while (*--cp);
-	for (cr = cp++; *cp; *cq++ = *cp++);
-	if (cr == tmppath) break;
-	if (cq[-1] != '/') *cq++ = '/';
-  }
-  *cq = 0;
-  return absolute == '/' ? pathname : cwd;
-}
-
-/* Allocate memory for a new entry. Memory is allocated and
- * filled in. The next, parent and status pointers are set
- * to null. The function returns a pointer to the new entry.
- */
-
-DIRENTRY *newentry F1(char *, name)
-{
-  register DIRENTRY *p;		/* pointer to entry */
-
-  p = (DIRENTRY *) safemalloc(sizeof(*p));
-  p->name = (char *) safemalloc(strlen(name) + 1);
-  (void) strcpy(p->name, name);
-  p->suffix = NIL;
-  p->next = NIL;
-  p->parent = NIL;
-  p->status = NIL;
-  return p;
-}
-
-/* Free the memory associated with list of elements. The function
- * assumes all memory has been allocated using malloc(), so that
- * free() will work without suffering a heart attack. The list
- * header is set to null before returning.
- */
-
-void freelist F1(DIRLIST *, lp)
-{
-  register DIRENTRY *ep, *nep;
-
-  for (ep = HEAD_dl(*lp); ep; ep = nep) {
-	nep = ep->next;
-	freeentry(ep);
-  }
-  EMPTY_dl(*lp);
-}
-
-/* Free the memory associated with a directory entry. Remember that
- * all the memory should have been allocated using malloc().
- */
-
-void freeentry F1(register DIRENTRY *, p)
-{
-  if (p) {
-	if (p->name) free((FREE_T) p->name);
-	if (p->suffix && p->suffix[0] != 0 && p->suffix[1] != 0)
-		free((FREE_T) p->suffix);
-	if (p->status) free((FREE_T) p->status);
-	free((FREE_T) p);
-  }
-}
-
-/* Compare entries in the file list. Pointers to two entries are
- * expected as arguments (non null pointers). Compare the entries
- * and return -1, 0 or 1 depending on whether the first argument
- * is less than, equal to or greater than the second.
- */
-
-int alphacmp F2(DIRENTRY *, p, DIRENTRY *, q)
-{
-  register int rv = strcmp(p->name, q->name);
-
-  return TEST('r') ? -rv : rv;
-}
-
-/* Compare entries on the basis of access time. Pointers to
- * two entries are expected as arguments. It is assumed that the status
- * has been obtained. The routine will return -1, 0 or 1 depending
- * on whether the first argument is later than, equal to or earlier
- * than the second.
- */
-
-int atimecmp F2(DIRENTRY *, p, DIRENTRY *, q)
-{
-  register int rv;		/* comparison result */
-  long delta = p->status->st_atime - q->status->st_atime;
-
-  rv = delta > 0 ? -1 : delta ? 1 : 0;
-
-  return TEST('r') ? -rv : rv;
-}
-
-/* Compare entries on the basis of status change time. Pointers to
- * two entries are expected as arguments. It is assumed that the status
- * has been obtained. The routine will return -1, 0 or 1 depending
- * on whether the first argument is later than, equal to or earlier
- * than the second.
- */
-
-int ctimecmp F2(DIRENTRY *, p, DIRENTRY *, q)
-{
-  register int rv;		/* comparison result */
-  long delta = p->status->st_ctime - q->status->st_ctime;
-
-  rv = delta > 0 ? -1 : delta ? 1 : 0;
-
-  return TEST('r') ? -rv : rv;
-}
-
-/* Compare entries on the basis of modification time. Pointers to
- * two entries are expected as arguments. It is assumed that the status
- * has been obtained. The routine will return -1, 0 or 1 depending
- * on whether the first argument is later than, equal to or earlier
- * than the second.
- */
-
-int mtimecmp F2(DIRENTRY *, p, DIRENTRY *, q)
-{
-  register int rv;		/* comparison result */
-  long delta = p->status->st_mtime - q->status->st_mtime;
-
-  rv = delta > 0 ? -1 : delta ? 1 : 0;
-
-  return TEST('r') ? -rv : rv;
-}
-
-/* Append file name suffix. The suffix can be a simple file type
- * indicator or can be the full path name if it is a symbolic
- * link. If LF_SYMLINK is set, the entry is assumed to be a symbolic
- * link. In this case, no further stat is performed and the entry
- * in p->status is assumed to be that of the real file (not the link).
- * If LF_BADCWD is set, the current working directory may not be
- * correct for parsing the symbolic link. In this case, cwd[] and
- * pathname are used as a scratch area for computing the correct name.
- */
-
-void suffix F2(register DIRENTRY *, p, int, linkflags)
-{
-  char *type;			/* file type */
-  BOOL(showtype);		/* show file type */
-#ifdef		S_IFLNK
-  BOOL(dolink);			/* follow link */
-  char *link;			/* link to */
-  char *u, *v, *w;		/* link name processing pointers */
-  int ltextlen;			/* length of link text */
-  struct stat lsb;		/* link stat buffer */
-#endif
-
-  p->length = (*strlength)(p->name);
-
-#ifdef		S_IFLNK
-  link = NIL;
-
-  if (EVAL(dolink, TEST('o') || TEST('g')) &&
-      ((linkflags & LF_SYMLINK) != 0 || S_ISLNK(p->status->st_mode))) {
-
-	if ((link = followlink(p->name, &ltextlen)) != NIL) {
-	    p->length += ARROWLENGTH + (*strlength)(link);
-	    p->suffix = (char *) safemalloc(ltextlen + ARROWLENGTH + 2);
-
-	    u = link;
-
-	    if ((linkflags & LF_BADCWD) != 0 && link[0] != '/') {
-	    	for (u = w = cwd, v = p->name; (*u = *v) != 0; u++, v++)
-		    if (*u == '/')
-			w = u+1;
-		for (u = w, v = link; (*u = *v) != 0; u++, v++)
-		    continue;
-		u = cwd;
-	    }
-
-	    if ((linkflags & LF_SYMLINK) == 0 && !TEST('L') &&
-		!filestat(1, OPAQUESTAT, u, &lsb)) {
-		linkflags |= LF_SYMLINK;
-		*p->status = lsb;
-	    }
-
-	    if ((linkflags & LF_SYMLINK) != 0) {
-		(void) strcpy(p->suffix, ARROW);
-		(void) strcpy(p->suffix+ARROWLENGTH, link);
-	    }
+	if (t < now - PAST || t > now + FUTURE) {
+		sprintf(date, "%.3s %2d  %4d",
+			month + 3*tm->tm_mon,
+			tm->tm_mday,
+			1900 + tm->tm_year);
+	} else {
+		sprintf(date, "%.3s %2d %02d:%02d",
+			month + 3*tm->tm_mon,
+			tm->tm_mday,
+			tm->tm_hour, tm->tm_min);
 	}
-  }
-#endif
-
-  type = "";
-  if (EVAL(showtype, TEST('F') || TEST('p'))) {
-	if (S_ISDIR(p->status->st_mode))
-		type = "/";
-	else if (TEST('F')) {
-		if (p->status->st_mode & (S_IXUSR|S_IXGRP|S_IXOTH)) type = "*";
-#ifdef		S_IFIFO
-		if (S_ISFIFO(p->status->st_mode)) type = "|";
-#endif
-#ifdef		S_IFLNK
-		if (S_ISLNK(p->status->st_mode)) type = "@";
-#endif
-#ifdef		S_IFSOCK
-		if (S_ISSOCK(p->status->st_mode)) type = "=";
-#endif
-	}
-  }
-  p->length += strlen(type);
-
-#ifdef	S_IFLNK
-  if (link == NIL)
-	p->suffix = type;
-  else if ((linkflags & LF_SYMLINK) != 0)
-	strcpy(p->suffix+ARROWLENGTH+ltextlen, type);
-  else {
-	(void) strcpy(p->suffix, type);
-	(void) strcat(p->suffix+1, ARROW);
-	(void) strcat(p->suffix+1+ARROWLENGTH, link);
-  }
-#else
-  p->suffix = type;
-#endif
+	return date;
 }
 
-/* Follow a symbolic link and return the name of the file
- * to which it points. The function will return a pointer
- * to a static area.
- */
-
-#ifdef		S_IFLNK
-char *followlink F2(char *, name, register int *, len)
+char *permissions(struct file *f)
+/* Compute long or short rwx bits. */
 {
-  static char linkto[PATH_MAX + 1];	/* link to name */
+	static char rwx[] = "drwxr-x--x";
 
-  if ((*len = readlink(name, linkto, sizeof(linkto) - 1)) < 0) {
-	error(name);
-	return NIL;
-  }
-  linkto[*len] = 0;
-  return linkto;
-}
+	rwx[0] = ifmt(f->mode);
+	/* Note that rwx[0] is a guess for the more alien file types.  It is
+	 * correct for BSD4.3 and derived systems.  I just don't know how
+	 * "standardized" these numbers are.
+	 */
 
-#endif
+	if (field & F_EXTRA) {		/* Short style */
+		int mode = f->mode, ucase= 0;
 
-/* Get the status of a file prepending the path before calling
- * stat. The function pointer should indicate which status function
- * to call. Return 0 if successful, non-zero if the name cannot
- * be found.
- */
-
-int filestat F4(int, silent, statfunc, status, char *, name,
-	 struct stat *, statbuf)
-{
-  if ((*status) (name, statbuf)) {
-	if (!silent) {
-		if (errno == ENOENT)
-			(void) fprintf(stderr, "ls: %s not found\n", name);
+		if (uid == f->uid)	/* What group of bits to use. */
+			/* mode<<= 0, */
+			ucase= (mode<<3) | (mode<<6);
+			/* Remember if group or others have permissions. */
 		else
-			error(name);
+		if (gid == f->gid)
+			mode<<= 3;
+		else
+			mode<<= 6;
+
+		rwx[1]= mode&S_IRUSR ? (ucase&S_IRUSR ? 'R' : 'r') : '-';
+		rwx[2]= mode&S_IWUSR ? (ucase&S_IWUSR ? 'W' : 'w') : '-';
+
+		if (mode&S_IXUSR) {
+			static char sbit[]= { 'x', 'g', 'u', 's' };
+
+			rwx[3]= sbit[(f->mode&(S_ISUID|S_ISGID))>>10];
+			if (ucase&S_IXUSR) rwx[3] += 'A'-'a';
+		} else
+			rwx[3]= f->mode&(S_ISUID|S_ISGID) ? '=' : '-';
+		rwx[4]= 0;
+	} else {		/* Long form. */
+		char *p= rwx+1;
+		int mode= f->mode;
+
+		do {
+			p[0] = (mode & S_IRUSR) ? 'r' : '-';
+			p[1] = (mode & S_IWUSR) ? 'w' : '-';
+			p[2] = (mode & S_IXUSR) ? 'x' : '-';
+			mode<<= 3;
+		} while ((p+=3) <= rwx+7);
+
+		if (f->mode&S_ISUID) rwx[3]= f->mode&(S_IXUSR>>0) ? 's' : '=';
+		if (f->mode&S_ISGID) rwx[6]= f->mode&(S_IXUSR>>3) ? 's' : '=';
+		if (f->mode&S_ISVTX) rwx[9]= f->mode&(S_IXUSR>>6) ? 't' : '=';
+	}
+	return rwx;
+}
+
+void numeral(int i, char **pp)
+{
+	char itoa[3*sizeof(int)], *a=itoa;
+
+	do *a++ = i%10 + '0'; while ((i/=10) > 0);
+
+	do *(*pp)++ = *--a; while (a>itoa);
+}
+
+#define K	1024L		/* A kilobyte counts in multiples of K */
+#define T	1000L		/* A megabyte in T*K, a gigabyte in T*T*K */
+
+char *cxsize(struct file *f)
+/* Try and fail to turn a 32 bit size into 4 readable characters. */
+{
+	static char siz[] = "1.2m";
+	char *p= siz;
+	off_t z;
+
+	siz[1]= siz[2]= siz[3]= 0;
+
+	if (f->size <= 5*K) {	/* <= 5K prints as is. */
+		numeral((int) f->size, &p);
+		return siz;
+	}
+	z= (f->size + K-1) / K;
+
+	if (z <= 999) {		/* Print as 123k. */
+		numeral((int) z, &p);
+		*p = 'k';	/* Can't use 'K', looks bad */
+	} else
+	if (z*10 <= 99*T) {	/* 1.2m (Try ls -X /dev/at0) */
+		z= (z*10 + T-1) / T;	/* Force roundup */
+		numeral((int) z / 10, &p);
+		*p++ = '.';
+		numeral((int) z % 10, &p);
+		*p = 'm';
+	} else
+	if (z <= 999*T) {	/* 123m */
+		numeral((int) ((z + T-1) / T), &p);
+		*p = 'm';
+	} else {		/* 1.2g */
+		z= (z*10 + T*T-1) / (T*T);
+		numeral((int) z / 10, &p);
+		*p++ = '.';
+		numeral((int) z % 10, &p);
+		*p = 'g';
+	}
+	return siz;
+}
+
+/* Transform size of file to number of blocks.  This was once a function that
+ * guessed the number of indirect blocks, but that nonsense has been removed.
+ */
+#if BSD
+#define nblocks(f)	((f)->blocks)
+#else
+#define nblocks(f)	(((f)->size + BLOCK-1) / BLOCK)
+#endif
+
+/* From number of blocks to kilobytes. */
+#if BLOCK < 1024
+#define nblk2k(nb)	(((nb) + (1024 / BLOCK - 1)) / (1024 / BLOCK))
+#else
+#define nblk2k(nb)	((nb) * (BLOCK / 1024))
+#endif
+
+static int (*CMP)(struct file *f1, struct file *f2);
+static int (*rCMP)(struct file *f1, struct file *f2);
+
+static void mergesort(struct file **al)
+/* This is either a stable mergesort, or thermal noise, I'm no longer sure.
+ * It must be called like this: if (L != nil && L->next != nil) mergesort(&L);
+ */
+{
+	/* static */ struct file *l1, **mid;  /* Need not be local */
+	struct file *l2;
+
+	l1= *(mid= &(*al)->next);
+	do {
+		if ((l1= l1->next) == nil) break;
+		mid= &(*mid)->next;
+	} while ((l1= l1->next) != nil);
+
+	l2= *mid;
+	*mid= nil;
+
+	if ((*al)->next != nil) mergesort(al);
+	if (l2->next != nil) mergesort(&l2);
+
+	l1= *al;
+	for (;;) {
+		if ((*CMP)(l1, l2) <= 0) {
+			if ((l1= *(al= &l1->next)) == nil) {
+				*al= l2;
+				break;
+			}
+		} else {
+			*al= l2;
+			l2= *(al= &l2->next);
+			*al= l1;
+			if (l2 == nil) break;
+		}
+	}
+}
+
+int namecmp(struct file *f1, struct file *f2)
+{
+	return strcmp(f1->name, f2->name);
+}
+
+int mtimecmp(struct file *f1, struct file *f2)
+{
+	return f1->mtime == f2->mtime ? 0 : f1->mtime > f2->mtime ? -1 : 1;
+}
+
+int atimecmp(struct file *f1, struct file *f2)
+{
+	return f1->atime == f2->atime ? 0 : f1->atime > f2->atime ? -1 : 1;
+}
+
+int ctimecmp(struct file *f1, struct file *f2)
+{
+	return f1->ctime == f2->ctime ? 0 : f1->ctime > f2->ctime ? -1 : 1;
+}
+
+int typecmp(struct file *f1, struct file *f2)
+{
+	return ifmt(f1->mode) - ifmt(f2->mode);
+}
+
+int revcmp(struct file *f1, struct file *f2) { return (*rCMP)(f2, f1); }
+
+static void sort(struct file **al)
+/* Sort the files according to the flags. */
+{
+	if (!present('f') && *al != nil && (*al)->next != nil) {
+		CMP= namecmp;
+
+		if (!(field & F_BYTIME)) {
+			/* Sort on name */
+
+			if (present('r')) { rCMP= CMP; CMP= revcmp; }
+			mergesort(al);
+		} else {
+			/* Sort on name first, then sort on time. */
+
+			mergesort(al);
+			if (field & F_CTIME)
+				CMP= ctimecmp;
+			else
+			if (field & F_ATIME)
+				CMP= atimecmp;
+			else
+				CMP= mtimecmp;
+
+			if (present('r')) { rCMP= CMP; CMP= revcmp; }
+			mergesort(al);
+		}
+		/* Separate by file type if so desired. */
+
+		if (field & F_TYPE) {
+			CMP= typecmp;
+			mergesort(al);
+		}
+	}
+}
+
+struct file *newfile(char *name)
+/* Create file structure for given name. */
+{
+	struct file *new;
+
+	new= (struct file *) allocate(sizeof(*new));
+	new->name= strcpy((char *) allocate(strlen(name)+1), name);
+	return new;
+}
+
+void pushfile(struct file **flist, struct file *new)
+/* Add file to the head of a list. */
+{
+	new->next= *flist;
+	*flist= new;
+}
+
+void delfile(struct file *old)
+/* Release old file structure. */
+{
+	free((void *) old->name);
+	free((void *) old);
+}
+
+struct file *popfile(struct file **flist)
+/* Pop file off top of file list. */
+{
+	struct file *f;
+
+	f= *flist;
+	*flist= f->next;
+	return f;
+}
+
+int dotflag(char *name)
+/* Return flag that would make ls list this name: -a or -A. */
+{
+	if (*name++ != '.') return 0;
+
+	switch (*name++) {
+	case 0:		return 'a';			/* "." */
+	case '.':	if (*name == 0) return 'a';	/* ".." */
+	default:	return 'A';			/* ".*" */
+	}
+}
+
+int adddir(struct file **aflist, char *name)
+/* Add directory entries of directory name to a file list. */
+{
+	DIR *d;
+	struct dirent *e;
+
+	if (access(name, 0) < 0) {
+		report(name);
+		return 0;
+	}
+
+	if ((d= opendir(name)) == nil) {
+		report(name);
+		return 0;
+	}
+	while ((e= readdir(d)) != nil) {
+		if (e->d_ino != 0 && present(dotflag(e->d_name))) {
+			pushfile(aflist, newfile(e->d_name));
+			aflist= &(*aflist)->next;
+		}
+	}
+	closedir(d);
+	return 1;
+}
+
+off_t countblocks(struct file *flist)
+/* Compute total block count for a list of files. */
+{
+	off_t cb = 0;
+
+	while (flist != nil) {
+		switch (flist->mode & S_IFMT) {
+		case S_IFDIR:
+		case S_IFREG:
+#ifdef S_IFLNK
+		case S_IFLNK:
+#endif
+			cb += nblocks(flist);
+		}
+		flist= flist->next;
+	}
+	return cb;
+}
+
+void printname(char *name)
+/* Print a name with control characters as '?' (unless -q).  The terminal is
+ * assumed to be eight bit clean.
+ */
+{
+	int c, q= present('q');
+
+	while ((c= *name++) != 0) {
+		if (q && (c <= ' ' || c == 0177)) c= '?';
+		putchar(c);
+	}
+}
+
+int mark(struct file *f, int doit)
+{
+	int c;
+
+	if (!(field & F_MARK)) return 0;
+
+	switch (f->mode & S_IFMT) {
+	case S_IFDIR:	c= '/'; break;
+#ifdef S_IFIFO
+	case S_IFIFO:	c= '|'; break;
+#endif
+#ifdef S_IFLNK
+	case S_IFLNK:	c= '@'; break;
+#endif
+#ifdef S_IFSOCK
+	case S_IFSOCK:	c= '='; break;
+#endif
+	case S_IFREG:
+		if (f->mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
+			c= '*';
+			break;
+		}
+	default:
+		c= 0;
+	}
+	if (doit && c != 0) putchar(c);
+	return c;
+}
+
+int colwidth[MAXCOLS];	/* Need colwidth[i] spaces to print column i. */
+int sizwidth[MAXCOLS];	/* Spaces for the size field in a -X print. */
+int namwidth[MAXCOLS];	/* Name field. */
+
+int maxise(int *aw, int w)
+/* Set *aw to the larger of it and w.  Then return it. */
+{
+	if (w > *aw) *aw= w;
+	return *aw;
+}
+
+static int nsp= 0;	/* This many spaces have not been printed yet. */
+#define spaces(n)	(nsp= (n))
+#define terpri()	(nsp= 0, putchar('\n'))		/* No trailing spaces */
+
+void print1(struct file *f, int col, int doit)
+/* Either compute the number of spaces needed to print file f (doit == 0) or
+ * really print it (doit == 1).
+ */
+{
+	int width= 0, n;
+	char *p;
+
+	while (nsp>0) { putchar(' '); nsp--; }/* Fill gap between two columns */
+
+	if (field & F_INODE) {
+		if (doit) printf("%5d ", f->ino); else width+= 6;
+	}
+	if (field & F_BLOCKS) {
+		if (doit) printf("%4ld ", nblk2k(nblocks(f))); else width+= 5;
+	}
+	if (field & F_MODE) {
+		if (doit)
+			printf("%s ", permissions(f));
+		else
+			width+= (field & F_EXTRA) ? 5 : 11;
+	}
+	if (field & F_EXTRA) {
+		p= cxsize(f);
+		n= strlen(p)+1;
+
+		if (doit) {
+			n= sizwidth[col] - n;
+			while (n > 0) { putchar(' '); --n; }
+			printf("%s ", p);
+		} else
+			width+= maxise(&sizwidth[col], n);
+	}
+	if (field & F_LONG) {
+		if (doit) {
+			printf("%2d %-8s ", f->nlink, uidname(f->uid));
+			if (field & F_GROUP) printf("%-8s ", gidname(f->gid));
+
+			switch (f->mode & S_IFMT) {
+			case S_IFBLK:
+			case S_IFCHR:
+#ifdef S_IFMPB
+			case S_IFMPB:
+#endif
+#ifdef S_IFMPC
+			case S_IFMPC:
+#endif
+				printf("%3d, %3d ",
+					major(f->rdev), minor(f->rdev));
+				break;
+			default:
+				printf("%8ld ", (long) f->size);
+			}
+			printf("%s ", timestamp(f));
+		} else
+			width += (field & F_GROUP) ? 43 : 34;
+	}
+	n= strlen(f->name);
+	if (doit) {
+		printname(f->name);
+		if (mark(f, 1) != 0) n++;
+#ifdef S_IFLNK
+		if ((field & F_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
+			char *buf;
+			int r, didx;
+
+			buf= (char *) allocate(((size_t) f->size + 1)
+							* sizeof(buf[0]));
+			addpath(&didx, f->name);
+			r= readlink(path, buf, (int) f->size);
+			delpath(didx);
+			if (r > 0) buf[r] = 0; else r=1, strcpy(buf, "?");
+			printf(" -> ");
+			printname(buf);
+			free((void *) buf);
+			n+= 4 + r;
+		}
+#endif
+		spaces(namwidth[col] - n);
+	} else {
+		if (mark(f, 0) != 0) n++;
+#ifdef S_IFLNK
+		if ((field & F_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
+			n+= 4 + (int) f->size;
+		}
+#endif
+		width+= maxise(&namwidth[col], n + NSEP);
+		maxise(&colwidth[col], width);
+	}
+}
+
+int countfiles(struct file *flist)
+/* Return number of files in the list. */
+{
+	int n= 0;
+
+	while (flist != nil) { n++; flist= flist->next; }
+
+	return n;
+}
+
+struct file *filecol[MAXCOLS];	/* filecol[i] is list of files for column i. */
+int nfiles, nlines;	/* # files to print, # of lines needed. */
+
+int columnise(struct file *flist, int nplin)
+/* Chop list of files up in columns.  Note that 3 columns are used for 5 files
+ * even though nplin may be 4, filecol[3] will simply be nil.
+ */
+{
+	int i, j;
+
+	nlines= (nfiles + nplin - 1) / nplin;	/* nlines needed for nfiles */
+
+	filecol[0]= flist;
+
+	for (i=1; i<nplin; i++) {	/* Give nlines files to each column. */
+		for (j=0; j<nlines && flist != nil; j++) flist= flist->next;
+
+		filecol[i]= flist;
+	}
+}
+
+int print(struct file *flist, int nplin, int doit)
+/* Try (doit == 0), or really print the list of files over nplin columns.
+ * Return true if it can be done in nplin columns or if nplin == 1.
+ */
+{
+	register struct file *f;
+	register int i, totlen;
+
+	columnise(flist, nplin);
+
+	if (!doit) {
+		if (nplin==1 && !(field & F_EXTRA))
+			return 1;	/* No need to try 1 column. */
+
+		for (i=0; i<nplin; i++)
+			colwidth[i]= sizwidth[i]= namwidth[i]= 0;
+	}
+	while (--nlines >= 0) {
+		totlen=0;
+
+		for (i=0; i<nplin; i++) {
+			if ((f= filecol[i]) != nil) {
+				filecol[i]= f->next;
+				print1(f, i, doit);
+			}
+			if (!doit && nplin>1) {
+				/* See if this line is not too long. */
+				totlen+= colwidth[i];
+				if (totlen > ncols+NSEP) return 0;
+			}
+		}
+		if (doit) terpri();
 	}
 	return 1;
-  }
-  return 0;
 }
 
-/* Compute the length of the string taking into account the
- * form of output. String lengths will increase if the
- * visible output flag has been specified.
+enum depth { SURFACE, SURFACE1, SUBMERGED };
+enum state { BOTTOM, SINKING, FLOATING };
+
+void listfiles(struct file *flist, enum depth depth, enum state state)
+/* Main workhorse of ls, it sorts and prints the list of files.  Flags:
+ * depth: working with the command line / just one file / listing dir.
+ * state: How "recursive" do we have to be.
  */
-
-int stringlength F1(register CONST char *, s)
 {
-  register int i;		/* length */
+	struct file *dlist= nil, **afl= &flist, **adl= &dlist;
+	int nplin;
+	static int white = 1;	/* Nothing printed yet. */
 
-  for (i = 0; *s != 0; s++)
-	if (TEST('b') && !isprint(*s))
-		i += 4;
-	else
-		i++;
-  return i;
-}
+	/* Flush everything previously printed, so new error output will
+	 * not intermix with files listed earlier.
+	 */
+	fflush(stdout);
 
-/* Print a string without any conversion.
- */
+	if (field != 0 || state != BOTTOM) {	/* Need stat(2) info. */
+		while (*afl != nil) {
+			static struct stat st;
+			int r, didx;
 
-void printstring F1(char *, s)
-{
-  (void) fputs(s, stdout);
-}
+			addpath(&didx, (*afl)->name);
 
-/* Print a string converting invisible characters into question marks.
- */
-
-void qprintstring F1(register char *, s)
-{
-  for (; *s; s++) {
-	if (isprint(*s))
-		(void) putchar(*s);
-	else
-		(void) putchar('?');
-  }
-}
-
-/* Print a string converting invisible characters into visible sequences.
- */
-
-void bprintstring F1(register char *, s)
-{
-  for (; *s; s++) {
-	if (isprint(*s))
-		(void) putchar(*s);
-	else
-		(void) printf("\\%03d", *s & ((1 << CHAR_BIT) - 1));
-  }
-}
-
-/* This function does a malloc() with feeling. If malloc() returns
- * null, indicating no more memory, the function will fail with
- * an error message. The function will return a pointer to the
- * allocated memory.
- */
-
-void *safemalloc F1(size_t, n)
-{
-  register void *p;		/* malloc'ed region */
-
-  if ((p = (void *) malloc(n)) == NIL) {
-	(void) fputs("ls: insufficient memory\n", stderr);
-	exit(EXIT_FAILURE);
-  }
-  return p;
-}
-
-/* Wrapper for perror to prefix error codes with program name.
- */
-
-void error F1(char *, e)
-{
-  int err;			/* saved error code */
-
-  err = errno;
-  (void) fprintf(stderr, "ls: %s: ", e);
-  errno = err;
-  perror("");
-}
-
-/* This is a two way merge sort, but non-recursive and using a binary
- * comb to combine the sublists. The problem with the straightforward
- * two way merge is that switching the output from one bin to another
- * is time consuming. In this approach, bin[i] contains either zero,
- * or (1<<i) sorted elements (except for the last bin which can hold
- * any number of elements). When a bin overflows (it will always double
- * in size), it is emptied and merged with the next bin (hence the
- * doubling effect). This cascading is forced to stop at the last bin.
- * When all elements have been placed in bins, all bins are merged
- * yielding a sorted list. If the number of bins is too small, the
- * sort collapses, in the limit, into an insertion sort.
- *
- * The first is a pointer to the first element of the list.
- * The second argument is the byte offset from the element pointer to
- * find the pointer to the next element in the list. The third
- * argument is a pointer to a comparison function that returns -ve, zero
- * and +ve respectively if the first element is less than, equal to
- * or greater that the second element.
- */
-
-#define NEXT(p)		(* (void **) ((char *) p + offset))
-
-void *lsort F3(void *, head, int, offset, cmpfunc, cmp)
-{
-  register void *rp, *rq;		/* merge pointers */
-  register void **lp;			/* merge insertion pointer */
-  register void **bp;			/* list header scanner */
-  void **ep;				/* last header bin */
-  void *p;				/* next element */
-  void *q;				/* current element */
-  void *bin[9+1];			/* list headers */
-
-  ep = &bin[sizeof(bin)/sizeof(bin[0])-1];
-  for (bp = &bin[0]; bp <= ep; bp++)
-	*bp = 0;
-
-  for (p = head; p != 0; *bp = p, p = q) {
-	q = NEXT(p);
-	NEXT(p) = 0;
-
-	for (bp = &bin[0]; ;bp++) {
-	      if ((rp = *bp) != 0) {
-		    rq  = p;
-		    lp  = &p;
-		    *bp = 0;
-
-		    for (;;) {
-		      if ((*cmp)(rp, rq) < 0) {
-			*lp = rp;
-			lp = &NEXT(rp);
-			if ((rp = NEXT(rp)) == 0) {
-			  *lp = rq;
-			  break;
+			if ((r= status(path, &st)) < 0
+#ifdef S_IFLNK
+				&& (status == lstat || lstat(path, &st) < 0)
+#endif
+			) {
+				if (depth != SUBMERGED || errno != ENOENT)
+					report((*afl)->name);
+				delfile(popfile(afl));
+			} else {
+				setstat(*afl, &st);
+				afl= &(*afl)->next;
 			}
-		      } else {
-			*lp = rq;
-			lp = &NEXT(rq);
-			if ((rq = NEXT(rq)) == 0) {
-			  *lp = rp;
-			  break;
+			delpath(didx);
+		}
+	}
+	sort(&flist);
+
+	if (depth == SUBMERGED && (field & (F_BLOCKS | F_LONG)))
+		printf("total %ld\n", nblk2k(countblocks(flist)));
+
+	if (state == SINKING || depth == SURFACE1) {
+	/* Don't list directories themselves, list their contents later. */
+		afl= &flist;
+		while (*afl != nil) {
+			if (((*afl)->mode & S_IFMT) == S_IFDIR) {
+				pushfile(adl, popfile(afl));
+				adl= &(*adl)->next;
+			} else
+				afl= &(*afl)->next;
+		}
+	}
+
+	if ((nfiles= countfiles(flist)) > 0) {
+		/* Print files in how many columns? */
+		nplin= !present('C') ? 1 : nfiles < MAXCOLS ? nfiles : MAXCOLS;
+
+		while (!print(flist, nplin, 0)) nplin--;	/* Try first */
+
+		print(flist, nplin, 1);		/* Then do it! */
+		white = 0;
+	}
+
+	while (flist != nil) {	/* Destroy file list */
+		if (state == FLOATING && (flist->mode & S_IFMT) == S_IFDIR) {
+			/* But keep these directories for ls -R. */
+			pushfile(adl, popfile(&flist));
+			adl= &(*adl)->next;
+		} else
+			delfile(popfile(&flist));
+	}
+
+	while (dlist != nil) {	/* List directories */
+		if (dotflag(dlist->name) != 'a' || depth != SUBMERGED) {
+			int didx;
+
+			addpath(&didx, dlist->name);
+
+			flist= nil;
+			if (adddir(&flist, path)) {
+				if (depth != SURFACE1) {
+					if (!white) putchar('\n');
+					printf("%s:\n", path);
+					white = 0;
+				}
+				listfiles(flist, SUBMERGED,
+					state == FLOATING ? FLOATING : BOTTOM);
 			}
-		      }
-		    }
-	      } else if (q != 0 || bp == ep)
-		    break;
+			delpath(didx);
+		}
+		delfile(popfile(&dlist));
 	}
-	if (bp == ep) bp--;
-  }
-  return ep[-1];
 }
 
-/***********************************************************************\
- *                             Portable Code                           *
-\***********************************************************************/
-#endif
-
-/***********************************************************************\
- *                            Unportable Code                          *
-\***********************************************************************/
-#ifdef	PASS2
-/* Convert the size of a file (in bytes) to the number of
- * kilobytes of storage used. This figure will include the
- * number of indirect blocks used to store the file.
- * The Minix code was lifted from the original Minix ls.
- */
-
-#ifdef		_MINIX
-static unsigned long v1_zone_group[] = {
-  (unsigned long) V1_NR_DZONES,
-  (unsigned long) V1_INDIRECTS,
-  (unsigned long) 0};
-#if V1_NR_TZONES - V1_NR_DZONES != 2
-  << Wrong number of version 1 indirects >>
-#endif
-
-#ifdef V2_NR_DZONES
-static unsigned long v2_zone_group[] = {
-  (unsigned long) V2_NR_DZONES,
-  (unsigned long) V2_INDIRECTS,
-  (unsigned long) V2_INDIRECTS*V2_INDIRECTS,
-  (unsigned long) 0};
-#if V2_NR_TZONES - V2_NR_DZONES != 3
-  << Wrong number of version 2 indirects >>
-#endif
-#endif
-
-static unsigned long *filestructure[] = {	/* file structure */
-  v1_zone_group,			/* default version 1 */
-  v1_zone_group,			/* version 1 */
-#ifdef V2_NR_DZONES
-  v2_zone_group,			/* version 2 */
-#endif
-};
-#endif
-
-unsigned long bytestoblk F1(struct stat *, sp)
+int main(int argc, char **argv)
 {
-#ifdef		_BSD
-  return (sp->st_blocks * STD_BLK + BYTESPERBLK - 1) / BYTESPERBLK;
+	struct file *flist= nil, **aflist= &flist;
+	enum depth depth;
+	char *lsflags;
+#ifdef TIOCGWINSZ
+	struct winsize ws;
 #endif
 
-#ifdef		_SYSV
-  return (sp->st_blocks * STD_BLK + BYTESPERBLK - 1) / BYTESPERBLK;
-#endif
+	uid= geteuid();
+	gid= getegid();
 
-#ifdef		_MINIX
-  unsigned long blocks;		/* accumulated blocks */
-  unsigned long fileb;		/* size of file in blocks */
-  unsigned int filetype;	/* type of file */
-  unsigned long *fsp;		/* structure of filesystem for this file */
-  int i, j;			/* zone table scanner */
+	if ((arg0= strrchr(argv[0], '/')) == nil) arg0= argv[0]; else arg0++;
+	argv++;
 
-#ifndef		USEMTAB
-  fsp = filestructure[0];
-#else
-  static dev_t baddev = NO_DEV;	/* previous bad file system */
-  extern FILESYSTEM *cfs;	/* current file system */
-  extern FILESYSTEM *filesystems; /* list of file systems */
+	if (strcmp(arg0, "ls") != 0) {
+		char *p= arg0+1;
 
-/* Locate the file system */
-  if (cfs->dev == sp->st_dev)
-	fsp = cfs->fs;
-  else if (sp->st_dev == baddev)
-	fsp = filestructure[0];
-  else {
-	for (cfs = filesystems; cfs != NIL && cfs->dev != sp->st_dev; )
-		cfs = cfs->next;
-	if (cfs != NIL)
-		fsp = cfs->fs;
-	else {
-		(void) fprintf(stderr, "ls: device %d/%d not in /etc/mtab\n",
-				       (sp->st_dev >> MAJOR) & BYTE,
-				       (sp->st_dev >> MINOR) & BYTE);
-		baddev = sp->st_dev;
-		cfs = filesystems;
-		fsp = filestructure[0];
+		while (*p != 0) {
+			if (strchr(arg0flag, *p) != nil) *p += 'A' - 'a';
+			p++;
+		}
+		setflags(arg0+1);
 	}
-  }
-#endif
-
-/* Compute raw file size */
-  fileb = ((unsigned long) sp->st_size + STD_BLK - 1) / STD_BLK;
-  blocks = fileb;
-  filetype = sp->st_mode;
-
-/* Compute indirect block overhead */
-  if (fileb > fsp[0] && !S_ISBLK(filetype) && !S_ISCHR(filetype)) {
-	fileb -= fsp[0];
-	for (i = 1; fileb > fsp[i] && fsp[i] != 0; i++) {
-		blocks += (fsp[i] - 1)/(fsp[1] - 1);
-		fileb -= fsp[i];
-	}
-	blocks++;
-	for (j = 1; j < i; j++)
-		blocks += (fileb + fsp[j] - 1)/fsp[j];
-  }
-  return (blocks * STD_BLK + BYTESPERBLK - 1) / BYTESPERBLK;
-#endif
-}
-
-/* Build a table of mounted files systems. For Minix, each mounted file
- * system is characterised by the number of zone numbers, the number of
- * directs and the number of indirects within the inodes. Return a
- * pointer to a list of file system entries. If /etc/mtab is empty or
- * doesn't exist, a dummy list is returned.
- */
-
-FILESYSTEM *scanmtab F0()
-{
-#ifdef		_BSD
-  return NIL;
-#endif
-
-#ifdef		_SYSV
-  return NIL;
-#endif
-
-#ifdef		_MINIX
-#ifndef		USEMTAB
-  return NIL;
-#else
-  struct stat sb;			/* stat buffer */
-  FILESYSTEM *fs;			/* list of file systems */
-  FILESYSTEM *fsp;			/* pointer to file system entry */
-  int version;				/* file system version */
-  struct mntent *mp;			/* mounted file system */
-  FILE *mf;				/* mtab scanner */
-  static FILESYSTEM dummyfs = {NIL, NO_DEV, NIL};
-
-  if ((mf = setmntent(MTAB, "r")) == NIL) {
-    (void) fputs("ls: cannot access /etc/mtab\n", stderr);
-    return &dummyfs;
-  }
-
-  fs = NIL;
-  while ((mp = getmntent(mf)) != NIL) {
-	if (stat(mp->mnt_fsname, &sb) < 0) {
-		(void) fprintf(stderr,
-		               "ls: cannot get status of %s\n", mp->mnt_fsname);
-		continue;
-	}
-	if (S_ISBLK(sb.st_mode) == 0) {
-		(void) fprintf(stderr,
-		               "ls: %s not a block device\n", mp->mnt_fsname);
-		continue;
+	while (*argv != nil && (*argv)[0] == '-') {
+		if ((*argv)[1] == '-' && (*argv)[2] == 0) {
+			argv++;
+			break;
+		}
+		setflags(*argv++ + 1);
 	}
 
-	version = atoi(mp->mnt_type);
-	if (version < 1 ||
-	    version > sizeof(filestructure)/sizeof(filestructure[0])-1) {
-		(void) fprintf(stderr,
-		               "%s has bad filesystem version\n", mp->mnt_fsname);
-		continue;
+	istty= isatty(1);
+
+	if (istty && (lsflags= getenv("LSOPTS")) != nil) {
+		if (*lsflags == '-') lsflags++;
+		setflags(lsflags);
 	}
-	fsp = (FILESYSTEM *) safemalloc(sizeof(*fsp));
-	fsp->dev = sb.st_rdev;
-	fsp->next = fs;
-	fsp->fs = filestructure[version];
-	fs = fsp;
-  }
-  endmntent(mf);
-  return fs == NIL ? &dummyfs : fs;
+
+	if (!present('1') && !present('C') && !present('l')
+		&& (istty || present('M') || present('X') || present('F'))
+	) setflags("C");
+
+	if (istty) setflags("q");
+
+	if (SUPER_ID == 0 || present('a')) setflags("A");
+
+	if (present('i')) field|= F_INODE;
+	if (present('s')) field|= F_BLOCKS;
+	if (present('M')) field|= F_MODE;
+	if (present('X')) field|= F_EXTRA|F_MODE;
+	if (present('t')) field|= F_BYTIME;
+	if (present('u')) field|= F_ATIME;
+	if (present('c')) field|= F_CTIME;
+	if (present('l')) {
+		field= (field | F_MODE | F_LONG) & ~F_EXTRA;
+		if (present('g')) field|= F_GROUP;
+	}
+	if (present('F')) field|= F_MARK;
+	if (present('T')) field|= F_TYPE;
+	if (present('d')) field|= F_DIR;
+
+#ifdef S_IFLNK
+	status= present('L') ? stat : lstat;
 #endif
+
+#ifdef TIOCGWINSZ
+	if (present('C')) {
+		int t= istty ? 1 : open("/dev/tty", O_WRONLY);
+
+		if (t >= 0 && ioctl(t, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+			ncols= ws.ws_col - 1;
+
+		if (t != 1) close(t);
+	}
 #endif
-}
 
-/****************************************************\
- *                 mntent library                    *
- *                                                   *
- * Most Minix systems won't have the mntent library, *
- * so the code is included here. This library is     *
- * preferred to the mtab library because the data    *
- * structures are allocated dynamically and the      *
- * data space can be re-used later by ls.            *
-\****************************************************/
-#ifdef _MINIX
-#ifndef USEMNTENTLIB
+	depth= SURFACE;
 
-#include <string.h>
-
-/* Read the next entry from the mtab file. The entry is parsed and returned
- * as a struct mntent. A static structure is returned. Return NULL on end
- * of file or error.
- */
-struct mntent *getmntent(mf)
-FILE *mf;
-{
-  int c;
-  char *p;
-  static char line[128];		/* local line buffer */
-  static struct mntent mt;		/* local mtab entry */
-  static char mde[] = " ";		/* delimiter */
-
-  while (fgets(line, sizeof line, mf) != NIL) {
-	p = strchr(line, 0);
-	if (p[-1] == '\n') {
-		*--p = 0;
+	if (*argv == nil) {
+		if (!(field & F_DIR)) depth= SURFACE1;
+		pushfile(aflist, newfile("."));
 	} else {
-		while ((c = getc(mf)) != 'n' && c != EOF)
-			continue;
+		if (argv[1] == nil && !(field & F_DIR)) depth= SURFACE1;
+
+		do {
+			pushfile(aflist, newfile(*argv++));
+			aflist= &(*aflist)->next;
+		} while (*argv!=nil);
 	}
-	if (line[0] == '#') continue;
-	if ((mt.mnt_fsname = strtok(line, mde)) != NIL &&
-	    (mt.mnt_dir    = strtok((char *) NIL, mde)) != NIL &&
-	    (mt.mnt_type   = strtok((char *) NIL, mde)) != NIL &&
-	    (mt.mnt_opts   = strtok((char *) NIL, mde)) != NIL)
-		return &mt;
-	break;
-  }
-  return NIL;
+	listfiles(flist, depth,
+		(field & F_DIR) ? BOTTOM : present('R') ? FLOATING : SINKING);
+	exit(ex);
 }
-#endif
-#endif
-#endif
+/* Kees J. Bot  25-4-89. */

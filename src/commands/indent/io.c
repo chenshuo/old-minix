@@ -102,7 +102,7 @@ void dump_line()
 	 while (e_lab > s_lab && (e_lab[-1] == ' ' || e_lab[-1] == '\t'))
 	    e_lab--;
 	 cur_col = pad_output(1, label_target());
-	 fprintf(output, "%.*s", e_lab - s_lab, s_lab);
+	 fprintf(output, "%.*s", (int)(e_lab - s_lab), s_lab);
 	 cur_col = count_spaces(cur_col, s_lab);
       } else
 	 cur_col = 1;			/* there is no label section */

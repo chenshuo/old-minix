@@ -51,10 +51,14 @@
 
 #include "kernel.h"
 #include <sgtty.h>
+#include <sys/ioctl.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
+#if (CHIP == INTEL)
+#include <minix/keymap.h>
+#endif
 #if (CHIP == M68000)
 #include "proc.h"
 #endif
@@ -62,6 +66,13 @@
 
 #define O_NOCTTY   00400	/* Kludge due to compiler overflow */
 #define O_NONBLOCK 04000	/* ditto */
+
+#if (CHIP == INTEL) && ENABLE_NETWORKING
+/* The ethernet driver may steal the IRQ of the second RS232 line. */
+PUBLIC int nr_rs_lines = NR_RS_LINES;
+#else
+#define nr_rs_lines NR_RS_LINES
+#endif
 
 /* Array and macros to convert line numbers to structure pointers. */
 PRIVATE struct tty_struct *p_tty_addr[NR_CONS + NR_RS_LINES];
@@ -73,11 +84,11 @@ PRIVATE struct tty_struct *p_tty_addr[NR_CONS + NR_RS_LINES];
 #define isrs232(tp)   ((tp) >= ctty_addr(NR_CONS))
 
 /* Macros for magic tty line numbers. */
-#define isttyline(line) ((unsigned) (line) < NR_CONS + NR_RS_LINES)
+#define isttyline(line) ((unsigned) (line) < NR_CONS + nr_rs_lines)
 
 /* Macros for magic tty structure pointers. */
 #define FIRST_TTY (ctty_addr(0))
-#define END_TTY   (ctty_addr(NR_CONS + NR_RS_LINES))
+#define END_TTY   (ctty_addr(NR_CONS + nr_rs_lines))
 
 /* Miscellaneous. */
 #define LF        '\012'	/* '\n' is not portably a LF */
@@ -108,7 +119,7 @@ FORWARD _PROTOTYPE( int out_process, (struct tty_struct *tp,
 FORWARD _PROTOTYPE( int rd_chars, (struct tty_struct *tp) );
 FORWARD _PROTOTYPE( void rs_start, (struct tty_struct *tp) );
 FORWARD _PROTOTYPE( void tty_icancel, (struct tty_struct *tp) );
-FORWARD _PROTOTYPE( void tty_init, (void) );
+FORWARD _PROTOTYPE( void tty_init, (int line) );
 FORWARD _PROTOTYPE( void tty_ocancel, (struct tty_struct *tp) );
 FORWARD _PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
 		int status) );
@@ -123,14 +134,44 @@ PUBLIC void tty_task()
 
   message tty_mess;		/* buffer for all incoming messages */
   register struct tty_struct *tp;
+  int line;
 
-  tty_init();
+  /* Initialize the console. */
+  tty_init(0);
+
+  /* Display the Minix startup banner. */
+  printf("Minix %s.   Copyright 1995 Prentice-Hall, Inc.\n\n", OS_RELEASE);
+
+#if (CHIP == INTEL)
+  /* Real mode, protected mode, or 386 mode? */
+#if _WORD_SIZE == 4
+  printf("Executing in 386 mode\n\n");
+#else
+  printf("Executing in %s mode\n\n", protected_mode ? "protected" : "real");
+#endif
+#endif
+
+#if (CHIP == INTEL) && ENABLE_NETWORKING
+  /* Can the second RS232 line be used? */
+  {
+  long irq;
+
+  irq = ETHER_IRQ;
+  (void) env_parse("DPETH0", "x:d:x", 1, &irq, 0L, (long) NR_IRQ_VECTORS - 1);
+  if (irq == SECONDARY_IRQ) nr_rs_lines = 1;
+  }
+#endif
+
+  /* Initialize the other lines. */
+  for (line = 1; line < NR_CONS + nr_rs_lines; line++) tty_init(line);
+
   while (TRUE) {
 	receive(ANY, &tty_mess);
 	if (!isttyline(tty_mess.TTY_LINE)) {
 		tty_mess.m_type = -1;	/* force error */
 		tty_mess.TTY_LINE = 0;	/* so hardware ints can get through */
 	}
+
 	tp = tty_addr(tty_mess.TTY_LINE);
 	switch(tty_mess.m_type) {
 	    case HARD_INT:	do_int();			break;
@@ -271,14 +312,11 @@ check_output:
  *===========================================================================*/
 PRIVATE void in_char(tp, ch)
 register struct tty_struct *tp;	/* terminal on which char arrived */
-register char ch;		/* scan code for character that arrived */
+register int ch;		/* scan code for character that arrived */
 {
 /* A character has just been typed in.  Process, save, and echo it. */
 
   int mode, sig, scode;
-#if (CHIP == INTEL)
-  int c;
-#endif
 
   scode = ch;			/* save the scan code */
 
@@ -290,9 +328,20 @@ register char ch;		/* scan code for character that arrived */
   mode = tp->tty_mode & (RAW | CBREAK);
 #if (CHIP == INTEL)
   if (tp->tty_makebreak == TWO_INTS) {
-	c = make_break(ch);	/* console give 2 ints/ch */
-	if (c == -1) return;
-	ch = c;
+	ch = make_break(ch);	/* console give 2 ints/ch */
+	if (ch == -1) return;
+
+	/* The numeric pad generates ASCII escape sequences: ESC [ letter */
+	if ((scode = letter_code(scode)) != 0) {
+		/* This key is to generate a three-character escape sequence. */
+		in1_char(tp, ESC, 'E');
+		in1_char(tp, BRACKET, BRACKET);
+		in1_char(tp, scode, scode);
+		return;
+	}
+
+	/* Drop unrecognized special keys (those with high bits set). */
+	if (ch > 0xFF) return;
   } else
 #endif
 	if (mode != RAW) ch &= 0177;	/* 7-bit chars except in raw mode */
@@ -381,16 +430,6 @@ register char ch;		/* scan code for character that arrived */
   /* All 3 modes come here. */
   if (ch == '\n' && tp->tty_incount < tp->tty_insize)
 	tp->tty_lfct++;		/* count line feeds */
-
-#if (CHIP == INTEL)
-  /* The numeric pad generates ASCII escape sequences: ESC [ letter */
-  if (isconsole(tp) && (scode = letter_code(scode)) != 0) {
-	/* This key is to generate a three-character escape sequence. */
-	in1_char(tp, ESC, 'E');
-	in1_char(tp, BRACKET, BRACKET);
-	ch = scode;
-  }
-#endif
 
   in1_char(tp, ch, ch);
 }
@@ -546,8 +585,7 @@ register struct tty_struct *tp;	/* pointer to terminal to read from */
 	}
 
 	/* Copy at least half of buffer to user space. */
-	phys_copy(tp->tty_inphys + (tp->tty_intail - tp->tty_inbuf),
-		  user_phys, (phys_bytes) user_ct);
+	phys_copy(vir2phys(tp->tty_intail), user_phys, (phys_bytes) user_ct);
 	user_phys += user_ct;
 	user_cum += user_ct;
 	if ( (tp->tty_intail += ct) == tp->tty_inbufend)
@@ -723,6 +761,15 @@ message *m_ptr;			/* pointer to message sent to task */
 	flags = (eof <<8);
 	break;
 
+     case KIOCSMAP:
+	/* Load a new keymap (only /dev/console). */
+	if (isconsole(tp)) {
+		r = kbd_loadmap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS);
+	} else {
+		r = ENOTTY;
+	}
+	break;
+
 #if (MACHINE == ATARI)
      case VDU_LOADFONT:
  	r = vdu_loadfont(m_ptr);
@@ -736,6 +783,9 @@ message *m_ptr;			/* pointer to message sent to task */
 	tty_ocancel(tp);
 	break;
 #endif
+
+     default:
+	r = ENOTTY;
   }
 
   /* Send the reply. Like tty_reply() with extra arguments flags and erki. */
@@ -990,7 +1040,8 @@ register struct tty_struct *tp;
 	if (tp->tty_mode & RAW) {
 		if (count > sizeof tp->tty_ramqueue)
 			count = sizeof tp->tty_ramqueue;
-		phys_copy(tp->tty_phys, tp->tty_outphys, (phys_bytes) count);
+		phys_copy(tp->tty_phys, vir2phys(tp->tty_ramqueue),
+							(phys_bytes) count);
 		tp->tty_rwords = count;
 	} else {
 		if (count > sizeof tty_buf) count = sizeof tty_buf;
@@ -1025,66 +1076,60 @@ register struct tty_struct *tp;
 /*==========================================================================*
  *				tty_init				    *
  *==========================================================================*/
-PRIVATE void tty_init()
+PRIVATE void tty_init(line)
+int line;			/* TTY line to initialize. */
 {
 /* Initialize tty structure and call driver initialization routines. */
 
-  int line;
   register struct tty_struct *tp;
 
-  for (line = 0; line < NR_CONS + NR_RS_LINES; ++line) {
-	tp = &tty_struct[line];
-	tp->tty_line = line - NR_CONS;
-	p_tty_addr[line] = tp;
-	tty_bphys = umap(proc_ptr, D, (vir_bytes) tty_buf, sizeof tty_buf);
-	if (isconsole(tp)) {
-		tp->tty_inbuf = kb_inbuf[line];
-		tp->tty_inbufend = tp->tty_inbuf + KB_IN_BYTES;
-		tp->tty_ihighwater = KB_IN_BYTES;
-		tp->tty_ilow_water = KB_IN_BYTES;
-		tp->tty_insize = KB_IN_BYTES;
-	} else {
-		tp->tty_inbuf = rs_inbuf[tp->tty_line];
-		tp->tty_inbufend = tp->tty_inbuf + RS_IN_BYTES;
-		tp->tty_ihighwater = RS_IN_BYTES - 2 * RS_IBUFSIZE;
-		tp->tty_ilow_water = (RS_IN_BYTES - 2 * RS_IBUFSIZE) * 7 / 8;
-		tp->tty_insize = RS_IN_BYTES;
-	}
-	tp->tty_inphys = umap(proc_ptr, D, (vir_bytes) tp->tty_inbuf,
-			      (vir_bytes)tp->tty_insize);
-	tp->tty_intail = tp->tty_inhead = tp->tty_inbuf;
-	tp->tty_outphys = umap(proc_ptr, D, (vir_bytes) tp->tty_ramqueue,
-			       sizeof tp->tty_ramqueue);
-	tp->tty_etail = tp->tty_ebuf;
-	tp->tty_ebufend = tp->tty_ebuf + sizeof tp->tty_ebuf;
-	tp->tty_erase = ERASE_CHAR;
-	tp->tty_kill  = KILL_CHAR;
-	tp->tty_intr  = INTR_CHAR;
-	tp->tty_quit  = QUIT_CHAR;
-	tp->tty_xon   = XON_CHAR;
-	tp->tty_xoff  = XOFF_CHAR;
-	tp->tty_eof   = EOT_CHAR;
-	if (isconsole(tp)) {
-		tp->tty_devread = kb_read;
-		tp->tty_devstart = console;
-		tp->tty_mode = CRMOD | XTABS | ECHO;
-		tp->tty_makebreak = TWO_INTS;
+  tp = &tty_struct[line];
+  tp->tty_line = line - NR_CONS;
+  p_tty_addr[line] = tp;
+  tty_bphys = vir2phys(tty_buf);
+  if (isconsole(tp)) {
+	tp->tty_inbuf = kb_inbuf[line];
+	tp->tty_inbufend = tp->tty_inbuf + KB_IN_BYTES;
+	tp->tty_ihighwater = KB_IN_BYTES;
+	tp->tty_ilow_water = KB_IN_BYTES;
+	tp->tty_insize = KB_IN_BYTES;
+  } else {
+	tp->tty_inbuf = rs_inbuf[tp->tty_line];
+	tp->tty_inbufend = tp->tty_inbuf + RS_IN_BYTES;
+	tp->tty_ihighwater = RS_IN_BYTES - 2 * RS_IBUFSIZE;
+	tp->tty_ilow_water = (RS_IN_BYTES - 2 * RS_IBUFSIZE) * 7 / 8;
+	tp->tty_insize = RS_IN_BYTES;
+  }
+  tp->tty_intail = tp->tty_inhead = tp->tty_inbuf;
+  tp->tty_etail = tp->tty_ebuf;
+  tp->tty_ebufend = tp->tty_ebuf + sizeof tp->tty_ebuf;
+  tp->tty_erase = ERASE_CHAR;
+  tp->tty_kill  = KILL_CHAR;
+  tp->tty_intr  = INTR_CHAR;
+  tp->tty_quit  = QUIT_CHAR;
+  tp->tty_xon   = XON_CHAR;
+  tp->tty_xoff  = XOFF_CHAR;
+  tp->tty_eof   = EOT_CHAR;
+  if (isconsole(tp)) {
+	tp->tty_devread = kb_read;
+	tp->tty_devstart = console;
+	tp->tty_mode = CRMOD | XTABS | ECHO;
+	tp->tty_makebreak = TWO_INTS;
 #if (CHIP == INTEL)
-		scr_init(tp->tty_line);
-		kb_init(tp->tty_line);
+	scr_init(tp->tty_line);
+	kb_init(tp->tty_line);
 #endif
 #if (MACHINE == ATARI)
-		vduinit(tp);
-		kbdinit(tp->tty_line);
+	vduinit(tp);
+	kbdinit(tp->tty_line);
 #endif
-	} else {
-		tp->tty_devread = rs_read;
-		tp->tty_devstart = rs_start;
-		tp->tty_mode = RAW | BITS8;
-		tp->tty_makebreak = ONE_INT;
-		tp->tty_speed = rs_init(tp->tty_line);
-		rs_setc(tp->tty_line, tp->tty_xoff);
-	}
+  } else {
+	tp->tty_devread = rs_read;
+	tp->tty_devstart = rs_start;
+	tp->tty_mode = RAW | BITS8;
+	tp->tty_makebreak = ONE_INT;
+	tp->tty_speed = rs_init(tp->tty_line);
+	rs_setc(tp->tty_line, tp->tty_xoff);
   }
 }
 

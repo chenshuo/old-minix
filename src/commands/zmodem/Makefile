@@ -2,18 +2,23 @@
 
 all: rz sz
 
-CFLAGS= -m -DV7 -D_MINIX -D_POSIX_SOURCE -DLCASE=0 -O
-O=o
+CFLAGS= -m -DV7 -D_MINIX -D_POSIX_SOURCE -DLCASE=0 -O -wo
 
 rz: rz.c rbsb.c zm.c zmodem.h
-	@rm -rf rz
-	@cc $(CFLAGS) -o rz rz.c
-	@chmem =10000 rz
+	cc $(CFLAGS) -i -o rz rz.c
+	install -S 5kw $@
 
 sz: sz.c rbsb.c zm.c zmodem.h
-	@rm -rf sz
-	@cc $(CFLAGS) -o sz sz.c
-	@chmem =10000 sz
+	cc $(CFLAGS) -i -o sz sz.c
+	install -S 5kw $@
+
+install:	/usr/bin/rz /usr/bin/sz
+
+/usr/bin/rz:	rz
+	install -cs -o bin rz $@
+
+/usr/bin/sz:	sz
+	install -cs -o bin sz $@
 
 clean:	
-	@rm -f *.bak *.o *.s core rz sz
+	rm -f *.bak *.o core rz sz

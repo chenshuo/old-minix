@@ -246,9 +246,15 @@ PRIVATE port_t addr_8250[] = {
 PUBLIC struct rs232_s rs_lines[NR_RS_LINES];
 
 #if C_RS232_INT_HANDLERS
+FORWARD _PROTOTYPE( int rs232_1handler, (int irq) );
+FORWARD _PROTOTYPE( int rs232_2handler, (int irq) );
 FORWARD _PROTOTYPE( void in_int, (struct rs232_s *rs) );
 FORWARD _PROTOTYPE( void line_int, (struct rs232_s *rs) );
 FORWARD _PROTOTYPE( void modem_int, (struct rs232_s *rs) );
+#else
+/* rs2.x */
+PUBLIC _PROTOTYPE( int rs232_1handler, (int irq) );
+PUBLIC _PROTOTYPE( int rs232_2handler, (int irq) );
 #endif
 
 FORWARD _PROTOTYPE( void out_int, (struct rs232_s *rs) );
@@ -469,10 +475,13 @@ int minor;			/* which rs line */
 
 #if (CHIP == INTEL)
   /* Enable interrupts for both interrupt controller and device. */
-  if (minor & 1)		/* COM2 on IRQ3 */
+  if (minor & 1) {		/* COM2 on IRQ3 */
+	put_irq_handler(SECONDARY_IRQ, rs232_2handler);
 	enable_irq(SECONDARY_IRQ);
-  else				/* COM1 on IRQ4 */
+  } else {			/* COM1 on IRQ4 */
+	put_irq_handler(RS232_IRQ, rs232_1handler);
 	enable_irq(RS232_IRQ);
+  }
   out_byte(rs->int_enab_port, IE_LINE_STATUS_CHANGE | IE_MODEM_STATUS_CHANGE
 				| IE_RECEIVER_READY | IE_TRANSMITTER_READY);
 #else /* MACHINE == ATARI */
@@ -633,7 +642,8 @@ int nbytes;			/* number of bytes to write */
 /*==========================================================================*
  *				rs232_1handler				    *
  *==========================================================================*/
-PUBLIC void rs232_1handler()
+PRIVATE int rs232_1handler(irq)
+int irq;
 {
 /* Interrupt hander for IRQ4.
  * Only 1 line (usually COM1) should use it.
@@ -663,7 +673,7 @@ PUBLIC void rs232_1handler()
 		line_int(rs);
 		continue;
 	}
-	return;
+	return(1);	/* reenable serial interrupt */
   }
 #endif
 }
@@ -672,7 +682,8 @@ PUBLIC void rs232_1handler()
 /*==========================================================================*
  *				rs232_2handler				    *
  *==========================================================================*/
-PUBLIC void rs232_2handler()
+PRIVATE int rs232_2handler(irq)
+int irq;
 {
 /* Interrupt hander for IRQ3.
  * Only 1 line (usually COM2) should use it.
@@ -697,7 +708,7 @@ PUBLIC void rs232_2handler()
 		line_int(rs);
 		continue;
 	}
-	return;
+	return(1);	/* reenable serial interrupt */
   }
 #endif
 }

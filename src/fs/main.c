@@ -33,7 +33,7 @@ FORWARD _PROTOTYPE( void fs_init, (void)				);
 FORWARD _PROTOTYPE( void get_boot_parameters, (void)			);
 FORWARD _PROTOTYPE( void get_work, (void)				);
 FORWARD _PROTOTYPE( dev_t load_ram, (void)				);
-FORWARD _PROTOTYPE( void load_super, (Dev_t super_dev, block_t origin)	);
+FORWARD _PROTOTYPE( void load_super, (Dev_t super_dev)			);
 
 #if ASKDEV
 FORWARD _PROTOTYPE( int askdev, (void)					);
@@ -153,7 +153,7 @@ PRIVATE void fs_init()
   buf_pool();			/* initialize buffer pool */
   get_boot_parameters();	/* get the parameters from the menu */
   d = load_ram();		/* init RAM disk, load if it is root */
-  load_super(d, (block_t) 0);	/* load super block for root device */
+  load_super(d);		/* load super block for root device */
 
   /* Initialize the 'fproc' fields for process 0 .. INIT. */
   for (i = 0; i <= LOW_USER; i+= 1) {
@@ -186,16 +186,9 @@ PRIVATE void fs_init()
  *===========================================================================*/
 PRIVATE void buf_pool()
 {
-/* Initialize the buffer pool.  On the IBM PC, the hardware DMA chip is
- * not able to cross 64K boundaries, so any buffer that happens to lie
- * across such a boundary is not used.  This is not very elegant, but all
- * the alternative solutions are as bad, if not worse.  The fault lies with
- * the PC hardware.
- */
-  register struct buf *bp;
+/* Initialize the buffer pool. */
 
-  vir_bytes low_off, high_off;		/* only used on INTEL chips */
-  phys_bytes org;
+  register struct buf *bp;
 
   bufs_in_use = 0;
   front = &buf[0];
@@ -209,19 +202,6 @@ PRIVATE void buf_pool()
   }
   buf[0].b_prev = NIL_BUF;
   buf[NR_BUFS - 1].b_next = NIL_BUF;
-
-  /* Delete any buffers that span a 64K boundary, by marking them as used. */
-#if (CHIP == INTEL)
-  for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) {
-	org = get_physbase();	/* phys addr where FS is */
-	low_off = (vir_bytes) bp->b_data;
-	high_off = low_off + BLOCK_SIZE - 1;
-	if (((org + low_off) & M64K) != ((org + high_off) & M64K)) {
-		++bp->b_count;	/* it was 0, by static initialization */
-		rm_lru(bp);
-	}
-  }
-#endif
 
   for (bp = &buf[0]; bp < &buf[NR_BUFS]; bp++) bp->b_hash = bp->b_next;
   buf_hash[0] = front;
@@ -239,30 +219,19 @@ PRIVATE dev_t load_ram()
  */
 
   register struct buf *bp, *bp1;
-  int count;
   long k_loaded, lcount;
-  struct super_block *sp;
-  block_t ram_offset = 0;	/* block offset of RAM image on demo diskette*/
-  block_t i, b;
+  u32_t ram_size, fsmax;
+  zone_t zones;
+  struct super_block *sp, *dsp;
+  block_t b;
   dev_t root_device;		/* really the root image device */
   dev_t super_dev;		/* device to get superblock from */
-  phys_clicks ram_clicks, init_org, init_text_clicks, init_data_clicks;
   int major, task;
   message dev_mess;
 
-  /* Get size of INIT by reading block on diskette where 'build' put it. */
-  init_org = data_org[INFO];
-  init_text_clicks = data_org[INFO + 1];
-  init_data_clicks = data_org[INFO + 2];
-
-  /* Print ATARI copyright message. */
-#if (MACHINE == ATARI)
-  printf("Booting MINIX 1.6.25.  Copyright 1993 Prentice-Hall, Inc.\n");
-#endif
-
   /* If the root device is specified in the boot parameters, use it. */
   if (ROOT_DEV != DEV_RAM) {
-	lcount = boot_parameters.bp_ramsize;
+	ram_size = boot_parameters.bp_ramsize;
 	super_dev = ROOT_DEV;	/* get superblock directly from root device */
 	major = (super_dev >> MAJOR) & BYTE;	/* major device nr */
 	task = dmap[major].dmap_task;		/* device task nr */
@@ -291,59 +260,54 @@ PRIVATE dev_t load_ram()
   task = dmap[major].dmap_task;		/* device task nr */
   dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
   dev_mess.DEVICE = sp->s_dev;
-  dev_mess.TTY_FLAGS = O_RDWR;
+  dev_mess.TTY_FLAGS = O_RDONLY;
   (*dmap[major].dmap_open)(task, &dev_mess);
   if (dev_mess.REP_STATUS != OK) panic("Cannot open root device", NO_NUM);
 
-  read_super(sp, ram_offset);	/* read in default (root or image) super blk*/
-  if (sp->s_version == 0) {
+  /* Read in default (root or image) super block. */
+  if (read_super(sp) != OK) {
 	dev_mess.m_type = DEV_CLOSE;		/* distinguish from open */
+	dev_mess.DEVICE = sp->s_dev;
 	(*dmap[major].dmap_close)(task, &dev_mess);
 	sp->s_dev = RAM_IMAGE;
 	major = (sp->s_dev >> MAJOR) & BYTE;	/* major device nr */
 	task = dmap[major].dmap_task;		/* device task nr */
 	dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
 	dev_mess.DEVICE = sp->s_dev;
-	dev_mess.TTY_FLAGS = O_RDWR;
+	dev_mess.TTY_FLAGS = O_RDONLY;
 	(*dmap[major].dmap_open)(task, &dev_mess);
 	if (dev_mess.REP_STATUS != OK) panic("Cannot open RAM image",NO_NUM);
-	read_super(sp, ram_offset);	/* read in HD RAM image super block */
-	if (sp->s_version == 0) panic("Bad root file system", NO_NUM);
+	/* Read in HD RAM image super block. */
+	if (read_super(sp) != OK) panic("Bad root file system", NO_NUM);
   }
 
   root_device = sp->s_dev;
   lcount = sp->s_zones << sp->s_log_zone_size;	/* # blks on root dev*/
 
+  /* Stretch the RAM disk file system to the boot parameters size, but no
+   * further than the last zone bit map block allows.
+   */
+  ram_size = lcount;
+  fsmax = (u32_t) sp->s_zmap_blocks * CHAR_BIT * BLOCK_SIZE;
+  fsmax = (fsmax + (sp->s_firstdatazone-1)) << sp->s_log_zone_size;
+  if (boot_parameters.bp_ramsize > ram_size)
+	ram_size = boot_parameters.bp_ramsize;
+  if (ram_size > fsmax)
+	ram_size = fsmax;
+
 got_root_dev:
-  if (lcount > MAX_RAM) panic("RAM disk is too big. # blocks > ", MAX_RAM);
-  count = (int) lcount;		/* lcount is now known to be <= MAX_RAM */
-  ram_clicks = (lcount * BLOCK_SIZE)/CLICK_SIZE;
+  if (ram_size > MAX_RAM) panic("RAM disk is too big. # blocks > ", MAX_RAM);
 
-  /* Tell MM the origin and size of INIT, and the amount of memory used for the
-   * system plus RAM disk combined, so it can remove all of it from the map.
-   */
-  m1.m_type = BRK2;
-  m1.m1_i1 = init_text_clicks;
-  m1.m1_i2 = init_data_clicks;
-  m1.m1_i3 = init_org + init_text_clicks + init_data_clicks + ram_clicks;
-  m1.m1_p1 = (char *) (int) init_org;	/* bug in Alcyon 4.14 C needs 2 casts*/
-  if (sendrec(MM_PROC_NR, &m1) != OK) panic("FS Can't report to MM", NO_NUM);
-
-  /* Tell RAM driver where RAM disk is and how big it is. The BRK2 call has
-   * filled in the m1.POSITION field.
-   */
+  /* Tell RAM driver how big the RAM disk must be. */
   m1.m_type = DEV_IOCTL;
   m1.DEVICE = RAM_DEV;
-  m1.COUNT = count;
+  m1.COUNT = ram_size;
   if (sendrec(MEM, &m1) != OK) panic("Can't report size to MEM", NO_NUM);
 
-#if (CHIP == INTEL)
-  /* Say if we are running in real mode or protected mode.
-   * 'bp_processor' is re-used to mean 'protected_mode'.
-   */
-  printf("Executing in %s mode\n\n",
-	 boot_parameters.bp_processor ? "protected" : "real");
-#endif
+  /* Tell MM the RAM disk size, and wait for it to come "on-line". */
+  m1.m1_i1 = ((long) ram_size * BLOCK_SIZE) >> CLICK_SHIFT;
+  if (sendrec(MM_PROC_NR, &m1) != OK)
+	panic("FS can't sync up with MM", NO_NUM);
 
   /* If the root device is not the RAM disk, it doesn't need loading. */
   if (ROOT_DEV != DEV_RAM) return(super_dev);	/* ROOT_DEV is a macro */
@@ -351,7 +315,7 @@ got_root_dev:
 #if FASTLOAD
   /* Copy the blocks one at a time from the root diskette to the RAM */
   fastload(root_device, (char *) m1.POSITION);	/* assumes 32 bit pointers */
-#else
+#else /* !FASTLOAD */
 
   printf("Loading RAM disk.                       Loaded:    0K ");
 
@@ -360,23 +324,36 @@ got_root_dev:
   inode[0].i_dev = root_device;
   inode[0].i_zone[0] = root_device;
 
-  for (i = 0; i < count; i++) {
-	b = i + ram_offset;		/* true block number */
-	bp = rahead(&inode[0], (block_t) b, (off_t)BLOCK_SIZE*b, BLOCK_SIZE);
-	bp1 = get_block(ROOT_DEV, i, NO_READ);
+  for (b = 0; b < (block_t) lcount; b++) {
+	bp = rahead(&inode[0], b, (off_t)BLOCK_SIZE * b, BLOCK_SIZE);
+	bp1 = get_block(ROOT_DEV, b, NO_READ);
 	memcpy(bp1->b_data, bp->b_data, (size_t) BLOCK_SIZE);
 	bp1->b_dirt = DIRTY;
 	put_block(bp, I_MAP_BLOCK);
 	put_block(bp1, I_MAP_BLOCK);
-	k_loaded = ( (long) i * BLOCK_SIZE)/1024L;	/* K loaded so far */
+	k_loaded = ( (long) b * BLOCK_SIZE)/1024L;	/* K loaded so far */
 	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b%4DK %c", k_loaded, 0);
   }
-#endif /* FASTLOAD */
+#endif /* !FASTLOAD */
 
-  if ( ((root_device ^ DEV_FD0) & ~BYTE) == 0 )
-	printf("\rRAM disk loaded.    Please remove root diskette.           \n\n");
-  else
-	printf("\rRAM disk loaded.                                           \n\n");
+  printf("\rRAM disk loaded.");
+  if ((root_device & ~BYTE) == DEV_FD0)
+	printf("    Please remove root diskette.");
+  printf("\33[K\n\n");
+
+  dev_mess.m_type = DEV_CLOSE;
+  dev_mess.DEVICE = root_device;
+  (*dmap[major].dmap_close)(task, &dev_mess);
+
+  /* Resize the root file system. */
+  bp = get_block(ROOT_DEV, SUPER_BLOCK, NORMAL);
+  dsp = (struct super_block *) bp->b_data;
+  zones = ram_size >> sp->s_log_zone_size;
+  dsp->s_nzones = conv2(sp->s_native, (u16_t) zones);
+  dsp->s_zones = conv4(sp->s_native, zones);
+  bp->b_dirt = DIRTY;
+  put_block(bp, ZUPER_BLOCK);
+
   return(super_dev);
 }
 
@@ -384,9 +361,8 @@ got_root_dev:
 /*===========================================================================*
  *				load_super				     *
  *===========================================================================*/
-PRIVATE void load_super(super_dev, origin)
+PRIVATE void load_super(super_dev)
 dev_t super_dev;			/* place to get superblock from */
-block_t origin;				/* offset to give to read_super() */
 {
   int bad;
   register struct super_block *sp;
@@ -399,10 +375,9 @@ block_t origin;				/* offset to give to read_super() */
   /* Read in super_block for the root file system. */
   sp = &super_block[0];
   sp->s_dev = super_dev;
-  read_super(sp, origin);
 
   /* Check super_block for consistency (is it the right diskette?). */
-  bad = (sp->s_version == 0); /* version is zero if bad magic in super block.*/
+  bad = (read_super(sp) != OK);
   if (!bad) {
 	rip = get_inode(super_dev, ROOT_INODE);	/* inode for root dir */
 	if ( (rip->i_mode & I_TYPE) != I_DIRECTORY || rip->i_nlinks < 3) bad++;

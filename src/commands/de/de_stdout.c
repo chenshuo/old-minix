@@ -65,8 +65,9 @@ _PROTOTYPE(void Draw_Offset , (de_state *s ));
 _PROTOTYPE(void Word_Pointers , (off_t old_addr , off_t new_addr ));
 _PROTOTYPE(void Block_Pointers , (off_t old_addr , off_t new_addr ));
 _PROTOTYPE(void Map_Pointers , (off_t old_addr , off_t new_addr ));
-_PROTOTYPE(void Print_Number , (word_t number , int output_base ));
-_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode , int zindex , int zrow ));
+_PROTOTYPE(void Print_Number , (Word_t number , int output_base ));
+_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode ,
+						int zindex , int zrow ));
 
 
 
@@ -523,14 +524,16 @@ void Draw_Words( s )
 
 
 char *super_block_info[] =  {	"number of inodes",
-				"number of zones",
+				"V1 number of zones",
 				"inode bit map blocks",
 				"zone bit map blocks",
 				"first data zone",
-				"blocks per zone shift",
+				"blocks per zone shift & flags",
 				"maximum file size",
 				"",
-				"magic number"  };
+				"magic number",
+				"fsck magic number",
+				"V2 number of zones"  };
 
 
 void Draw_Info( s )
@@ -543,7 +546,7 @@ void Draw_Info( s )
 
 
   if ( s->is_fs  &&  s->block == SUPER_BLOCK  &&  page == 0 )
-      for ( i = 0;  i < 9;  ++i )
+      for ( i = 0;  i < 11;  ++i )
  	{
 	Goto( INFO_COLUMN, INFO_LINE + i );
 	printf( "%s", super_block_info[ i ] );
@@ -1158,10 +1161,10 @@ void Draw_Zone_Numbers( s, inode, zindex, zrow )
 	++zindex, zrow += s->zone_num_size / sizeof (word_t) )
     {
     Goto( INFO_COLUMN, INFO_LINE + zrow );
-    if ( zindex < inode->i_ndzones )
+    if ( zindex < s->ndzones )
       printf( "zone %d", zindex );
     else
-      printf( "%sindirect", plurals[ zindex - inode->i_ndzones ] );
+      printf( "%sindirect", plurals[ zindex - s->ndzones ] );
     if ( s->magic != SUPER_MAGIC )
       {
       zone = inode->i_zone[ zindex ];

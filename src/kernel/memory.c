@@ -1,178 +1,214 @@
-/* This file contains the drivers for the following special files:
+/* This file contains the device dependent part of the drivers for the
+ * following special files:
  *     /dev/null	- null device (data sink)
  *     /dev/mem		- absolute memory
  *     /dev/kmem	- kernel virtual memory
  *     /dev/ram		- RAM disk
- *     /dev/port	- i/o ports ((CHIP == INTEL) only)
- *
- * The driver supports the following operations (using message format m2):
- *
- *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
- * ----------------------------------------------------------------
- * |  DEV_OPEN  | device  | proc nr |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_CLOSE | device  | proc nr |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_READ  | device  | proc nr |  bytes  |  offset | buf ptr |
- * |------------+---------+---------+---------+---------+---------|
- * | DEV_WRITE  | device  | proc nr |  bytes  |  offset | buf ptr |
- * |------------+---------+---------+---------+---------+---------|
- * | DEV_IOCTL  | device  |         |  blocks | ram org |         |
- * |------------+---------+---------+---------+---------+---------|
- * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
- * ----------------------------------------------------------------
- *  
  *
  * The file contains one entry point:
  *
  *   mem_task:	main entry when system is brought up
  *
+ *  Changes:
+ *	20 Apr  1992 by Kees J. Bot: device dependent/independent split
  */
 
 #include "kernel.h"
-#include <minix/callnr.h>
-#include <minix/com.h>
+#include "driver.h"
 
-#ifdef PORT_DEV
-#define NR_RAMS            5	/* number of RAM-type devices */
-#else
-#define NR_RAMS            4
-#endif
-PRIVATE message mess;		/* message buffer */
-PRIVATE phys_bytes ram_origin[NR_RAMS];	/* origin of each RAM disk  */
-PRIVATE phys_bytes ram_limit[NR_RAMS];	/* limit of RAM disk per minor dev. */
+#define NR_RAMS            4	/* number of RAM-type devices */
 
-FORWARD _PROTOTYPE( int do_mem, (message *m_ptr) );
-FORWARD _PROTOTYPE( int do_setup, (message *m_ptr) );
+PRIVATE struct device m_geom[NR_RAMS];	/* Base and size of each RAM disk */
+PRIVATE int m_device;		/* current device */
+
+FORWARD _PROTOTYPE( struct device *m_prepare, (int device) );
+FORWARD _PROTOTYPE( int m_schedule, (int proc_nr, struct iorequest_s *iop) );
+FORWARD _PROTOTYPE( int m_do_open, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( void m_init, (void) );
+FORWARD _PROTOTYPE( int do_setup, (struct driver *dp, message *m_ptr) );
+
+
+/* Entry points to this driver. */
+PRIVATE struct driver m_dtab = {
+  no_name,	/* current device's name */
+  m_do_open,	/* open or mount */
+  do_nop,	/* nothing on a close */
+  do_setup,	/* specify ram disk geometry */
+  m_prepare,	/* prepare for I/O on a given minor device */
+  m_schedule,	/* do the I/O */
+  nop_finish,	/* schedule does the work, no need to be smart */
+  nop_cleanup	/* nothing's dirty */
+};
+
 
 /*===========================================================================*
- *				mem_task				     * 
+ *				mem_task				     *
  *===========================================================================*/
 PUBLIC void mem_task()
 {
-/* Main program of the memory task. */
-
-  int r, caller, proc_nr;
-
-  /* Initialize this task. */
-  ram_origin[KMEM_DEV] = numap(SYSTASK, (vir_bytes) 0, (vir_bytes) 1);
-  ram_limit[KMEM_DEV] = ((phys_bytes) sizes[1] << CLICK_SHIFT) +
-                        ram_origin[KMEM_DEV];
-#if (CHIP == INTEL)
-  if (!protected_mode)
-	ram_limit[MEM_DEV] = 0x100000;	/* above 1M em_xfer word count fails */
-  else
-	ram_limit[MEM_DEV] = 0x1000000;	/* above 16M not mapped on 386 */
-  ram_limit[PORT_DEV] = 0x10000;
-#else
-#if (CHIP == M68000)
-  ram_limit[MEM_DEV] = MEM_BYTES;
-#else
-#error /* memory limit not set up */
-#endif
-#endif
-
-  /* Here is the main loop of the memory task.  It waits for a message, carries
-   * it out, and sends a reply.
-   */
-  while (TRUE) {
-	/* First wait for a request to read or write. */
-	receive(ANY, &mess);
-	if (mess.m_source < 0)
-		panic("mem task got message from ", mess.m_source);
-	caller = mess.m_source;
-	proc_nr = mess.PROC_NR;
-
-	/* Now carry out the work.  It depends on the opcode. */
-	switch(mess.m_type) {
-	    case DEV_OPEN:	r = OK;			break;
-	    case DEV_CLOSE:	r = OK;			break;
-	    case DEV_READ:	r = do_mem(&mess);	break;
-	    case DEV_WRITE:	r = do_mem(&mess);	break;
-	    case SCATTERED_IO:	r = do_vrdwt(&mess, do_mem); break;
-	    case DEV_IOCTL:	r = do_setup(&mess);	break;
-	    default:		r = EINVAL;		break;
-	}
-
-	/* Finally, prepare and send the reply message. */
-	mess.m_type = TASK_REPLY;
-	mess.REP_PROC_NR = proc_nr;
-	mess.REP_STATUS = r;
-	send(caller, &mess);
-  }
+  m_init();
+  driver_task(&m_dtab);
 }
 
 
 /*===========================================================================*
- *				do_mem					     * 
+ *				m_prepare				     *
  *===========================================================================*/
-PRIVATE int do_mem(m_ptr)
-register message *m_ptr;	/* pointer to read or write message */
+PRIVATE struct device *m_prepare(device)
+int device;
 {
-/* Read or write /dev/null, /dev/mem, /dev/kmem, /dev/ram or /dev/port. */
+/* Prepare for I/O on a device. */
 
-  int device, count;
-#if (CHIP == INTEL)
-  int endport, port, portval;
-#endif
+  if (device < 0 || device >= NR_RAMS) return(NIL_DEV);
+  m_device = device;
+
+  return(&m_geom[device]);
+}
+
+
+/*===========================================================================*
+ *				m_schedule				     *
+ *===========================================================================*/
+PRIVATE int m_schedule(proc_nr, iop)
+int proc_nr;			/* process doing the request */
+struct iorequest_s *iop;	/* pointer to read or write request */
+{
+/* Read or write /dev/null, /dev/mem, /dev/kmem, or /dev/ram. */
+
+  int device, count, opcode;
   phys_bytes mem_phys, user_phys;
+  struct device *dv;
+
+  /* Type of request */
+  opcode = iop->io_request & ~OPTIONAL_IO;
 
   /* Get minor device number and check for /dev/null. */
-  device = m_ptr->DEVICE;
-  if (device < 0 || device >= NR_RAMS) return(ENXIO);	/* bad minor device */
-  if (device==NULL_DEV) return(m_ptr->m_type == DEV_READ ? 0 : m_ptr->COUNT);
-
-  /* Set up 'mem_phys' for /dev/mem, /dev/kmem, or /dev/ram. */
-  mem_phys = ram_origin[device] + m_ptr->POSITION;
-  if (mem_phys >= ram_limit[device]) return(0);
-  count = m_ptr->COUNT;
-  if (mem_phys + count > ram_limit[device]) count = ram_limit[device]-mem_phys;
+  device = m_device;
+  dv = &m_geom[device];
 
   /* Determine address where data is to go or to come from. */
-  user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-		    (vir_bytes) count);
-  if (user_phys == 0) return(E_BAD_ADDR);
+  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf,
+  						(vir_bytes) iop->io_nbytes);
+  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
 
-#ifdef PORT_DEV
-  /* Do special case of /dev/port. */
-  if (device == PORT_DEV) {
-	port = mem_phys;
-	mem_phys = umap(proc_ptr, D, (vir_bytes) &portval, (vir_bytes) 1);
-	for (endport = port + count; port != endport; ++port) {
-		if (m_ptr->m_type == DEV_READ) {
-			portval = in_byte(port);
-			phys_copy(mem_phys, user_phys++, (phys_bytes) 1);
-		} else {
-			phys_copy(user_phys++, mem_phys, (phys_bytes) 1);
-			out_byte(port, portval);
-		}
-	}
-	return(count);
+  if (device == NULL_DEV) {
+	/* /dev/null: Black hole. */
+	if (opcode == DEV_WRITE) iop->io_nbytes = 0;
+	count = 0;
+  } else {
+	/* /dev/mem, /dev/kmem, or /dev/ram: Check for EOF */
+	if (iop->io_position >= dv->dv_size) return(OK);
+	count = iop->io_nbytes;
+	if (iop->io_position + count > dv->dv_size)
+		count = dv->dv_size - iop->io_position;
   }
-#endif
+
+  /* Set up 'mem_phys' for /dev/mem, /dev/kmem, or /dev/ram */
+  mem_phys = dv->dv_base + iop->io_position;
+
+  /* Book the number of bytes to be transferred in advance. */
+  iop->io_nbytes -= count;
+
+  if (count == 0) return(OK);
 
   /* Copy the data. */
-  if (m_ptr->m_type == DEV_READ)
-	phys_copy(mem_phys, user_phys, (long) count);
+  if (opcode == DEV_READ)
+	phys_copy(mem_phys, user_phys, (phys_bytes) count);
   else
-	phys_copy(user_phys, mem_phys, (long) count);
-  return(count);
+	phys_copy(user_phys, mem_phys, (phys_bytes) count);
+
+  return(OK);
+}
+
+
+/*============================================================================*
+ *				m_do_open				      *
+ *============================================================================*/
+PRIVATE int m_do_open(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Check device number on open.  Give I/O privileges to a process opening
+ * /dev/mem or /dev/kmem.
+ */
+
+  if (m_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+
+#if (CHIP == INTEL)
+  if (m_device == MEM_DEV || m_device == KMEM_DEV)
+	enable_iop(proc_addr(m_ptr->PROC_NR));
+#endif
+
+  return(OK);
 }
 
 
 /*===========================================================================*
- *				do_setup				     * 
+ *				m_init					     *
  *===========================================================================*/
-PRIVATE int do_setup(m_ptr)
+PRIVATE void m_init()
+{
+  /* Initialize this task. */
+  m_geom[KMEM_DEV].dv_base = vir2phys(0);
+  m_geom[KMEM_DEV].dv_size = (phys_bytes) sizes[1] << CLICK_SHIFT;
+
+#if (CHIP == INTEL)
+  if (!protected_mode) {
+	m_geom[MEM_DEV].dv_size =   0x100000;	/* 1M for 8086 systems */
+  } else {
+#if _WORD_SIZE == 2
+	m_geom[MEM_DEV].dv_size =  0x1000000;	/* 16M for 286 systems */
+#else
+	m_geom[MEM_DEV].dv_size = 0xFFFFFFFF;	/* 4G-1 for 386 systems */
+#endif
+  }
+#else /* !(CHIP == INTEL) */
+#if (CHIP == M68000)
+  m_geom[MEM_DEV].dv_size = MEM_BYTES;
+#else /* !(CHIP == M68000) */
+#error /* memory limit not set up */
+#endif /* !(CHIP == M68000) */
+#endif /* !(CHIP == INTEL) */
+}
+
+
+/*===========================================================================*
+ *				do_setup				     *
+ *===========================================================================*/
+PRIVATE int do_setup(dp, m_ptr)
+struct driver *dp;
 message *m_ptr;			/* pointer to read or write message */
 {
-/* Set parameters for one of the disk RAMs. */
+/* Set parameters for one of the RAM disks. */
 
-  int device;
+  unsigned long bytesize;
+  unsigned base, size;
+  struct memory *memp;
 
-  device = m_ptr->DEVICE;
-  if (device != RAM_DEV) return(ENXIO);	/* bad minor device */
-  ram_origin[device] = m_ptr->POSITION;
-  ram_limit[device] = m_ptr->POSITION + (long) m_ptr->COUNT * BLOCK_SIZE;
+  if (m_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+
+  /* It must be a server on /dev/ram: */
+  if (m_ptr->PROC_NR >= LOW_USER || m_device != RAM_DEV) return(ENOTTY);
+
+  bytesize = (unsigned long) m_ptr->COUNT * BLOCK_SIZE;
+  size = (bytesize + CLICK_SHIFT-1) >> CLICK_SHIFT;
+
+#if (CHIP == INTEL)
+  if (pc_at && !protected_mode && ext_memsize * 1024L >= bytesize) {
+	/* The RAM disk can be placed in extended memory. */
+	base = 0x100000L >> CLICK_SHIFT;
+  } else
+#endif
+  {
+	/* Find a memory chunk big enough for the RAM disk. */
+	memp= &mem[NR_MEMS];
+	while ((--memp)->size < size) {
+		if (memp == mem) panic("RAM disk is too big.", NO_NUM);
+	}
+	base = memp->base + memp->size - size;
+	memp->size -= size;
+  }
+  m_geom[RAM_DEV].dv_base = (unsigned long) base << CLICK_SHIFT;
+  m_geom[RAM_DEV].dv_size = bytesize;
   return(OK);
 }

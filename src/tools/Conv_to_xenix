@@ -1,3 +1,0 @@
-# Conv_to_xenix is a filter that converts asld assembly files to xenix format
-
-sed -f Conv_script

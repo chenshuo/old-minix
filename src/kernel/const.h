@@ -41,9 +41,10 @@
 #define BREAKPOINT_VECTOR  3	/* software breakpoint */
 #define OVERFLOW_VECTOR    4	/* from INTO */
 
-/* Fixed system call vector (the only software interrupt). */
+/* Fixed system call vector. */
 #define SYS_VECTOR        32	/* system calls are made with int SYSVEC */
 #define SYS386_VECTOR     33	/* except 386 system calls use this */
+#define LEVEL0_VECTOR     34	/* for execution of a function at level 0 */
 
 /* Suitable irq bases for hardware interrupts.  Reprogram the 8259(s) from
  * the PC BIOS defaults since the BIOS doesn't respect all the processor's
@@ -55,6 +56,7 @@
 #define IRQ8_VECTOR     0x30 	/* together for simplicity */
 
 /* Hardware interrupt numbers. */
+#define NR_IRQ_VECTORS    16
 #define CLOCK_IRQ          0
 #define KEYBOARD_IRQ       1
 #define CASCADE_IRQ        2	/* cascade enable for 2nd AT controller */
@@ -64,20 +66,15 @@
 #define XT_WINI_IRQ        5	/* xt winchester */
 #define FLOPPY_IRQ         6	/* floppy disk */
 #define PRINTER_IRQ        7
-#define AT_WINI_IRQ       14	/* at winchester */
 #define PS_KEYB_IRQ        9	/* keyboard interrupt vector for PS/2 */
+#define AHA_SCSI_IRQ      11	/* Adaptec 154x SCSI controller */
+#define AT_WINI_IRQ       14	/* at winchester */
 
-/* Hardware vector numbers. */
-#define CLOCK_VECTOR     ((CLOCK_IRQ & 0x07) + IRQ0_VECTOR)
-#define KEYBOARD_VECTOR  ((KEYBOARD_IRQ & 0x07) + IRQ0_VECTOR)
-#define ETHER_VECTOR     ((ETHER_IRQ & 0x07) + IRQ0_VECTOR)
-#define SECONDARY_VECTOR ((SECONDARY_IRQ & 0x07) + IRQ0_VECTOR)
-#define RS232_VECTOR     ((RS232_IRQ & 0x07) + IRQ0_VECTOR)
-#define XT_WINI_VECTOR   ((XT_WINI_IRQ & 0x07) + IRQ0_VECTOR)
-#define FLOPPY_VECTOR    ((FLOPPY_IRQ & 0x07) + IRQ0_VECTOR)
-#define PRINTER_VECTOR   ((PRINTER_IRQ & 0x07) + IRQ0_VECTOR)
-#define AT_WINI_VECTOR   ((AT_WINI_IRQ & 0x07) + IRQ8_VECTOR)
-#define PS_KEYB_VECTOR   ((PS_KEYB_IRQ & 0x07) + IRQ8_VECTOR)
+/* Interrupt number to hardware vector. */
+#define BIOS_VECTOR(irq)	\
+	(((irq) < 8 ? BIOS_IRQ0_VEC : BIOS_IRQ8_VEC) + ((irq) & 0x07))
+#define VECTOR(irq)	\
+	(((irq) < 8 ? IRQ0_VECTOR : IRQ8_VECTOR) + ((irq) & 0x07))
 
 /* BIOS parameter vectors. */
 #define WINI_0_PARM_VEC 0x41
@@ -87,13 +84,13 @@
 #define INT_CTL         0x20	/* I/O port for interrupt controller */
 #define INT_CTLMASK     0x21	/* setting bits in this port disables ints */
 #define INT2_CTL        0xA0	/* I/O port for second interrupt controller */
-#define INT2_MASK       0xA1	/* setting bits in this port disables ints */
+#define INT2_CTLMASK    0xA1	/* setting bits in this port disables ints */
 
 /* Magic numbers for interrupt controller. */
 #define ENABLE          0x20	/* code used to re-enable after an interrupt */
 
 /* Sizes of memory tables. */
-#define NR_MEMS            4	/* number of chunks of memory */
+#define NR_MEMS            3	/* number of chunks of memory */
 
 /* Magic memory locations and sizes. */
 #define COLOR_BASE   0xB8000L	/* base of color video memory */
@@ -103,8 +100,8 @@
 
 /* What memory address the Etherplus card will use as the starting
    address of its 8K buffer. If conflicts arise, change EPLUS_BASE. */
-#define EPLUS_BASE   0xC8000L
-#define EPLUS_SIZE    0x2000L
+#define EPLUS_BASE   0xD0000L
+#define EPLUS_SIZE    0x8000L
 
 /* Cursor shape is needed by debugger as well as console driver. */
 #define CURSOR_SHAPE      15	/* block cursor for MDA/HGC/CGA/EGA/VGA... */
@@ -153,5 +150,16 @@
 #else
 #define NQ                 3	/* # of scheduling queues */
 #endif
+
+/* Env_parse() return values. */
+#define EP_UNSET	0	/* variable not set */
+#define EP_OFF		1	/* var = off */
+#define EP_ON		2	/* var = on (or field left blank) */
+#define EP_SET		3	/* var = 1:2:3 (nonblank field) */
+
+/* To translate an address in kernel space to a physical address.  This is
+ * the same as umap(proc_ptr, D, vir, sizeof(*vir)), but a lot less costly.
+ */
+#define vir2phys(vir)	(data_base + (vir_bytes) (vir))
 
 #define printf        printk	/* the kernel really uses printk, not printf */

@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: add_ext.c,v 1.6 89/07/25 14:17:19 ceriel Exp $ */
+/* $Header: add_ext.c,v 1.7 93/01/05 12:03:11 ceriel Exp $ */
 
 /*
 	ADD TWO EXTENDED FORMAT NUMBERS

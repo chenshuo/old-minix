@@ -7,11 +7,13 @@
 */
 
 #include <sys/types.h>
-#include <curses.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <sgtty.h>
+#include <stdarg.h>
+#include <curses.h>
+#include <stdio.h>
 
 /* Size of the board */
 #define SIZE 19
@@ -550,6 +552,22 @@ char GetChar()
 
   c = getch();
   if (c < 0) abort();
+  if (c == '\033') {	/* arrow key */
+	if ((c = getch()) == '[') {
+		c = getch();
+		switch (c) {
+		case 'A': c = 'U'; break;
+		case 'B': c = 'D'; break;
+		case 'C': c = 'R'; break;
+		case 'D': c = 'L'; break;
+		default:
+			c = '?';
+			break;
+		}
+	}
+	else
+		c = '?';
+  }
   if (islower(c))
 	return toupper(c);
   else
@@ -569,7 +587,7 @@ char *Command;
 	refresh();
 	*Command = GetChar();	/* Read from keyboard */
 	switch (*Command) {
-	    case '\n':		/* '\n' or space means place a */
+	    case '\r':		/* '\r' or space means place a */
 	    case ' ':
 		*Command = 'E';
 		break;		/* stone at the cursor position  */
@@ -577,6 +595,7 @@ char *Command;
 	    case 'L':
 	    case 'R':
 	    case 'U':
+	    case 'D':
 	    case '7':
 	    case '9':
 	    case '1':

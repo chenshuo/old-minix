@@ -72,14 +72,15 @@
 #define REGISTER register
 #define DOTZ ".Z"
 
-#ifdef AZTEC86 
-#ifdef AZTECBITS
-# define BITS   AZTECBITS
-#else
+#include <limits.h>
+
+/* The default for Minix is -b13, but we can do -b16 if the machine can. */
+#define DEFAULTBITS 13
+#if INT_MAX == 32767
 # define BITS 13
+#else
+# define BITS 16
 #endif
-# undef USERMEM
-#endif /* AZTEC86 */
 
 #ifdef USERMEM
 # if USERMEM >= (433484+SACREDMEM)
@@ -170,7 +171,7 @@ char_type magic_header[] = "\037\235";	/* 1F 9D */
 #define ARGVAL() (*++(*argv) || (--argc && *++argv))
 
 int n_bits;				/* number of bits/code */
-int maxbits = BITS;			/* user settable max # bits/code */
+int maxbits = DEFAULTBITS;		/* user settable max # bits/code */
 code_int maxcode;			/* maximum code, given n_bits */
 code_int maxmaxcode = 1 << BITS;	/* should NEVER generate this code */
 #ifdef COMPATIBLE		/* But wrong! */

@@ -59,7 +59,11 @@
 #define _NO_LIMIT        100	/* arbitrary number; limit not enforced */
 
 #define NGROUPS_MAX        0	/* supplemental group IDs not available */
-#define ARG_MAX         4096	/* # bytes of args + environ for exec() */
+#if _EM_WSIZE > 2
+#define ARG_MAX        16384	/* # bytes of args + environ for exec() */
+#else
+#define ARG_MAX         4096	/* args + environ on small machines */
+#endif
 #define CHILD_MAX  _NO_LIMIT    /* MINIX does not limit children */
 #define OPEN_MAX          20	/* # open files a process may have */
 #define LINK_MAX         127	/* # links a file may have */

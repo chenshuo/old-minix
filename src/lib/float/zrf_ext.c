@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: zrf_ext.c,v 1.4 88/08/04 11:16:20 ceriel Exp $ */
+/* $Header: zrf_ext.c,v 1.5 93/01/05 12:06:58 ceriel Exp $ */
 
 /*
 	ZERO and return EXTEND FORMAT FLOAT

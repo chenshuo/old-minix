@@ -1,17 +1,21 @@
 # Makefile for mined
 
 CFLAGS	= -O -wo -D_POSIX_SOURCE
-O=o
 
-OBJ = mined1.$O mined2.$O
+OBJ = mined1.o mined2.o
+
+all:	mined
 
 mined:	$(OBJ)
-	@rm -rf mined
-	@echo Start linking mined
-	@$(CC) -i -o $@ $(OBJ) >/dev/null
-	@chmem =64000 mined
+	$(CC) -i -o $@ $(OBJ)
+	install -S 32kw $@
+
+install:	/usr/bin/mined
+
+/usr/bin/mined:	mined
+	install -cs -o bin mined $@
 
 $(OBJ):	mined.h
 
 clean:
-	@rm -f mined *.o *.s core *.bak
+	rm -f mined *.o *.s core *.bak

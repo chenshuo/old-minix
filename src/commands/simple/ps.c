@@ -115,11 +115,6 @@
 #undef CLICK_SHIFT
 #define CLICK_SHIFT 0
 #define phys_clicks phys_bytes
-
-/* Fix: many off_t's and one long should be phys_bytes' and a couple of longs
- * should be off_t's. Also, phys_bytes should be unsigned as well as long.
- * There will be a problem lseeking if the 386 kernel is every mapped high.
- */
 #endif
 
 /*----- ps's local stuff below this line ------*/
@@ -150,21 +145,12 @@ sysinfo_t sysinfo;		/* sysinfo holds actual system info */
 
 /* Structure for tty name info (also part of ps's database). */
 typedef struct {
-  char tty_name[NAME_MAX + 1];	/* file name in /dev */
+  char tty_name[NAME_MAX];	/* file name in /dev */
   dev_t tty_dev;		/* major/minor pair */
 } ttyinfo_t;
 
-/* Structure for system path info (part of ps's database). */
-typedef struct {
-  char ke_path[PATH_MAX + 1];	/* paths of kernel, */
-  char mm_path[PATH_MAX + 1];	/* mm, */
-  char fs_path[PATH_MAX + 1];	/* and fs used in last ps -U */
-} pathinfo_t;
-
-pathinfo_t pathinfo;		/* pathinfo holds actual path info */
-
 /* N_TTYINFO is # of ttyinfo_t structs - should be >= # of entries in /dev. */
-#define	N_TTYINFO	100
+#define	N_TTYINFO	48
 
 ttyinfo_t ttyinfo[N_TTYINFO];	/* ttyinfo holds actual tty info */
 
@@ -200,9 +186,9 @@ struct tasktab tasktab[NR_TASKS + INIT_PROC_NR + 1];	/* task table */
  * fff s uuu ppppp ppppp ppppp aaaa sss rrrrrrrrrr tttmmm:ss ccccccccccccccccccccc
  */
 #define S_HEADER "  PID TTY  TIME CMD\n"
-#define S_FORMAT "%5d %3s%3ld:%02ld %.63s\n"
+#define S_FORMAT "%5d %3s%3ld:%02ld %s\n"
 #define L_HEADER "  F S UID   PID  PPID  PGRP ADDR  SZ       RECV TTY  TIME CMD\n"
-#define L_FORMAT "%3o %c %3d %5d %5d %5d %4d %3d %10s %3s%3ld:%02ld %.21s\n"
+#define L_FORMAT "%3o %c %3d %5d %5d %5d %4d %3d %10s %3s%3ld:%02ld %s\n"
 
 struct pstat {			/* structure filled by pstat() */
   dev_t ps_dev;			/* major/minor of controlling tty */
@@ -215,20 +201,20 @@ struct pstat {			/* structure filled by pstat() */
   int ps_mflags;		/* mm flags */
   int ps_ftask;			/* (possibly pseudo) fs suspend task */
   char ps_state;		/* process state */
-  size_t ps_tsize;		/* text size (in bytes) */
-  size_t ps_dsize;		/* data size (in bytes) */
-  size_t ps_ssize;		/* stack size (in bytes) */
-  off_t ps_vtext;		/* physical text offset */
-  off_t ps_vdata;		/* physical data offset */
-  off_t ps_vstack;		/* physical stack offset */
-  off_t ps_text;		/* physical text offset */
-  off_t ps_data;		/* physical data offset */
-  off_t ps_stack;		/* physical stack offset */
+  vir_bytes ps_tsize;		/* text size (in bytes) */
+  vir_bytes ps_dsize;		/* data size (in bytes) */
+  vir_bytes ps_ssize;		/* stack size (in bytes) */
+  phys_bytes ps_vtext;		/* virtual text offset */
+  phys_bytes ps_vdata;		/* virtual data offset */
+  phys_bytes ps_vstack;		/* virtual stack offset */
+  phys_bytes ps_text;		/* physical text offset */
+  phys_bytes ps_data;		/* physical data offset */
+  phys_bytes ps_stack;		/* physical stack offset */
   int ps_recv;			/* process number to receive from */
   time_t ps_utime;		/* accumulated user time */
   time_t ps_stime;		/* accumulated system time */
   char *ps_args;		/* concatenated argument string */
-  char *ps_istackframe;          /* initial stack frame from MM */
+  vir_bytes ps_procargs;	/* initial stack frame from MM */
 };
 
 /* Ps_state field values in pstat struct above */
@@ -250,7 +236,6 @@ _PROTOTYPE(int addrread, (int fd, phys_clicks base, vir_bytes addr,
 _PROTOTYPE(void usage, (char *pname ));
 _PROTOTYPE(void err, (char *s ));
 _PROTOTYPE(int gettynames, (ttyinfo_t ttyinfo []));
-_PROTOTYPE(int outdates, (char *file, time_t tm ));
 
 
 /*
@@ -267,15 +252,20 @@ char *tname(dev_nr)
 Dev_t dev_nr;
 {
   int i;
+  static char tty_name[NAME_MAX + 1];
 
   if (majdev(dev_nr) == TTY_MAJ && mindev(dev_nr) == 0) return "co";
 
-  for (i = 0; i < N_TTYINFO && ttyinfo[i].tty_name[0] != '\0'; i++)
-	if (ttyinfo[i].tty_dev == dev_nr)
-		if (strlen(ttyinfo[i].tty_name) <= 3)
-			return ttyinfo[i].tty_name;
+  for (i = 0; i < N_TTYINFO && ttyinfo[i].tty_name[0] != '\0'; i++) {
+	if (ttyinfo[i].tty_dev == dev_nr) {
+		strncpy(tty_name, ttyinfo[i].tty_name, NAME_MAX);
+		tty_name[NAME_MAX]= 0;
+		if (strlen(tty_name) <= 3)
+			return tty_name;
 		else
-			return &(ttyinfo[i].tty_name[3]);
+			return tty_name + 3;
+	}
+  }
 
   return "?";
 }
@@ -355,7 +345,9 @@ char *argv[];
   int opt_long = FALSE;		/* -l */
   int opt_notty = FALSE;	/* -x */
   int opt_update = FALSE;	/* -U */
-  int opt_path = FALSE;		/* alternative system executables */
+  char *ke_path;		/* paths of kernel, */
+  char *mm_path;		/* mm, */
+  char *fs_path;		/* and fs used in ps -U */
 
   (void) signal(SIGSEGV, disaster);	/* catch a common crash */
 
@@ -374,97 +366,61 @@ char *argv[];
 		    default:	usage(argv[0]);
 		}
 	break;
-      case 4:			/* ps <kernel mm fs> */
-	if (argv[1][0] != '-') break;
       default:	usage(argv[0]);
 }
 
-  if (argc >= 4) {		/* ps [-][alxU] <kernel mm fs> */
-	opt_path = TRUE;
-	strncpy(pathinfo.ke_path, argv[argc - 3], (size_t)PATH_MAX);
-	strncpy(pathinfo.mm_path, argv[argc - 2], (size_t)PATH_MAX);
-	strncpy(pathinfo.fs_path, argv[argc - 1], (size_t)PATH_MAX);
+  if (argc == 5) {		/* ps [-][alxU] <kernel mm fs> */
+	if (!opt_update) usage(argv[0]);
+	ke_path = argv[2];
+	mm_path = argv[3];
+	fs_path = argv[4];
   } else {
-	strcpy(pathinfo.ke_path, KERNEL_PATH);
-	strcpy(pathinfo.mm_path, MM_PATH);
-	strcpy(pathinfo.fs_path, FS_PATH);
+	if (opt_update) usage(argv[0]);
   }
 
-  /* Fill the sysinfo and ttyinfo structs */
-  if (opt_update || opt_path ||
-      (db_fd = open(DBASE_PATH, O_RDONLY)) == -1) {
-
-	/* Try to use old database's paths for this update */
-	if (opt_update && !opt_path &&
-	    (db_fd = open(DBASE_PATH, O_RDONLY)) != -1) {
-		if (read(db_fd, (char *) &sysinfo,
-			 sizeof(sysinfo_t)) == sizeof(sysinfo_t) &&
-		    read(db_fd, (char *) ttyinfo,
-			 sizeof(ttyinfo)) == sizeof(ttyinfo) &&
-		    read(db_fd, (char *) &pathinfo,
-			 sizeof(pathinfo_t)) == sizeof(pathinfo_t))
-			fprintf(stderr, "Using old pathnames found in %s.\n",
-				DBASE_PATH);
-		(void) close(db_fd);
-	}
+  if (opt_update) {
+	/* Update the sysinfo and ttyinfo structs. */
+	setgid(getgid());
+	setuid(getuid());
 	strncpy(sysinfo.ke_proc[0].n_name, ID_PROC, (size_t)NAME_SIZ);
 	strncpy(sysinfo.ke_tasktab[0].n_name, ID_TASKTAB, (size_t)NAME_SIZ);
-	if (nlist(pathinfo.ke_path, sysinfo.ke_proc) != 0 ||
-	    nlist(pathinfo.ke_path, sysinfo.ke_tasktab) != 0)
+	if (nlist(ke_path, sysinfo.ke_proc) != 0 ||
+	    nlist(ke_path, sysinfo.ke_tasktab) != 0)
 		err("Can't read kernel namelist");
 	strncpy(sysinfo.mm_mproc[0].n_name, ID_MPROC, (size_t)NAME_SIZ);
-	if (nlist(pathinfo.mm_path, sysinfo.mm_mproc) != 0)
+	if (nlist(mm_path, sysinfo.mm_mproc) != 0)
 		err("Can't read mm namelist");
 	strncpy(sysinfo.fs_fproc[0].n_name, ID_FPROC, (size_t)NAME_SIZ);
-	if (nlist(pathinfo.fs_path, sysinfo.fs_fproc) != 0)
+	if (nlist(fs_path, sysinfo.fs_fproc) != 0)
 		err("Can't read fs namelist");
 
 	if (gettynames(ttyinfo) == -1) err("Can't get tty names");
 
-	if (opt_update) {
-		if ((db_fd = creat(DBASE_PATH, DBASE_MODE)) == -1)
-			err("Can't creat psdatabase");
-		if (write(db_fd, (char *) &sysinfo,
-			  sizeof(sysinfo_t)) != sizeof(sysinfo_t) ||
-		    write(db_fd, (char *) ttyinfo,
-			  sizeof(ttyinfo)) != sizeof(ttyinfo) ||
-		    write(db_fd, (char *) &pathinfo,
-			  sizeof(pathinfo_t)) != sizeof(pathinfo_t))
-			err("Can't write psdatabase");
-		fprintf(stderr, "Updated terminal names and system addresses in %s using:\n",
-			DBASE_PATH);
-		fprintf(stderr, "%s, %s, %s.\n",
-			pathinfo.ke_path, pathinfo.mm_path,
-			pathinfo.fs_path);
-		exit(0);	/* don't attempt to do further output */
-	}
-  } else {			/* get info from database */
-	struct stat db_stat;
-
-	if (read(db_fd, (char *) &sysinfo,
-		 sizeof(sysinfo_t)) != sizeof(sysinfo_t) ||
-	    read(db_fd, (char *) ttyinfo,
-		 sizeof(ttyinfo)) != sizeof(ttyinfo) ||
-	    read(db_fd, (char *) &pathinfo,
-		 sizeof(pathinfo_t)) != sizeof(pathinfo_t))
-		err("Can't read info from psdatabase");
-
-	/* Compare modification time of database with kernel/mm/fs
-	 * and warn user if the database appears to be outdated.
-	 * Times are ignored if the system executables have no
-	 * namelist.
-	 */
-	(void) fstat(db_fd, &db_stat);
-	if (outdates(pathinfo.ke_path, db_stat.st_mtime))
-		fprintf(stderr, "Warning: %s is older than %s\n",
-			DBASE_PATH, pathinfo.ke_path);
-	if (outdates(pathinfo.mm_path, db_stat.st_mtime))
-		fprintf(stderr, "Warning: %s is older than %s\n",
-			DBASE_PATH, pathinfo.mm_path);
-	if (outdates(pathinfo.fs_path, db_stat.st_mtime))
-		fprintf(stderr, "Warning: %s is older than %s\n",
-			DBASE_PATH, pathinfo.fs_path);
+	db_fd = open(DBASE_PATH, O_WRONLY | O_CREAT | O_TRUNC, DBASE_MODE);
+	if (db_fd == -1)
+		err("Can't creat psdatabase");
+	if (write(db_fd, (char *) &sysinfo,
+		  sizeof(sysinfo_t)) != sizeof(sysinfo_t) ||
+	    write(db_fd, (char *) ttyinfo,
+		  sizeof(ttyinfo)) != sizeof(ttyinfo))
+		err("Can't write psdatabase");
+	fprintf(stderr, "Updated terminal names and system addresses in %s using:\n",
+		DBASE_PATH);
+	fprintf(stderr, "%s, %s, %s.\n",
+		ke_path, mm_path,
+		fs_path);
+	exit(0);	/* don't attempt to do further output */
   }
+
+  /* Fill the sysinfo and ttyinfo structs */
+  db_fd = open(DBASE_PATH, O_RDONLY);
+  if (db_fd == -1)
+	err("Can't creat psdatabase");
+
+  if (read(db_fd, (char *) &sysinfo, sizeof(sysinfo_t)) != sizeof(sysinfo_t)
+    || read(db_fd, (char *) ttyinfo, sizeof(ttyinfo)) != sizeof(ttyinfo))
+	err("Can't read info from psdatabase");
+
   (void) close(db_fd);
 
   /* Get kernel tables */
@@ -525,11 +481,7 @@ char *argv[];
 }
 
   union {
-#if (CHIP == M68000)
-	long stk_i;
-#else
-	int stk_i;
-#endif
+	vir_bytes stk_i;
 	char *stk_cp;
 	char stk_c;
   } stk[ARG_MAX / sizeof(char *)], *sp;
@@ -540,15 +492,20 @@ struct pstat *bufp;
   int nargv;
   int cnt;			/* # of bytes read from stack frame */
   int neos;			/* # of '\0's seen in argv string space */
+  phys_bytes iframe;
   long l;
   char *cp, *args;
 
+  /* Phys address of the original stack frame. */
+  iframe = bufp->ps_procargs - bufp->ps_vstack + bufp->ps_stack;
+
   /* Calculate the number of bytes to read from user stack */
-  cnt = bufp->ps_ssize - ( (long)bufp->ps_istackframe - (long)bufp->ps_stack );
-  if (cnt > ARG_MAX) cnt = ARG_MAX;
+  l = (phys_bytes) bufp->ps_ssize - (iframe - bufp->ps_stack);
+  if (l > ARG_MAX) l = ARG_MAX;
+  cnt = l;
 
   /* Get cnt bytes from user initial stack to local stack buffer */
-  if (lseek(memfd, ((long) bufp->ps_istackframe), 0) < 0)
+  if (lseek(memfd, (off_t) iframe, 0) < 0)
 	return NULL; 
 
   if ( read(memfd, (char *)stk, cnt) != cnt ) 
@@ -558,8 +515,8 @@ struct pstat *bufp;
   nargv = (int) sp[0].stk_i;  /* number of argv arguments */
 
   /* See if argv[0] is with the bytes we read in */
-  l = (long) sp[1].stk_cp - (long) bufp->ps_istackframe + (long)bufp->ps_stack -
-	(long)bufp->ps_vstack;
+  l = (long) sp[1].stk_cp - (long) bufp->ps_procargs;
+
   if ( ( l < 0 ) || ( l > cnt ) )  
 	return NULL;
 
@@ -574,7 +531,8 @@ struct pstat *bufp;
 			break;
 		else
 			*cp = ' ';
-  if (neos != nargv) return NULL;
+  if (cp == args) return NULL;
+  *cp = '\0';
 
   return args;
 
@@ -653,9 +611,7 @@ struct pstat *bufp;
   bufp->ps_utime = PROC[p_ki].user_time;
   bufp->ps_stime = PROC[p_ki].sys_time;
 
-  bufp->ps_istackframe = (char *)(MPROC[p_nr].mp_procargs 
-			    - (PROC[p_ki].p_map[S].mem_vir << CLICK_SHIFT)
-			    + (PROC[p_ki].p_map[S].mem_phys << CLICK_SHIFT));
+  bufp->ps_procargs = MPROC[p_nr].mp_procargs;
 
   if (bufp->ps_state == Z_STATE)
 	bufp->ps_args = "<defunct>";
@@ -673,7 +629,7 @@ vir_bytes addr;
 char *buf;
 int nbytes;
 {
-  if (lseek(fd, ((long) base << CLICK_SHIFT) + (long) addr, 0) < 0)
+  if (lseek(fd, ((off_t) base << CLICK_SHIFT) + addr, 0) < 0)
 	return -1;
 
   return read(fd, buf, nbytes);
@@ -725,26 +681,4 @@ ttyinfo_t ttyinfo[];
   }
 
   return 0;
-}
-
-/* Outdates returns true iff non-stripped file was modified later than time. */
-int outdates(file, tm)
-char *file;
-time_t tm;
-{
-  int fd;
-  struct exec hd;
-  struct stat buf;
-
-  if ((fd = open(file, O_RDONLY)) == -1) return 0;
-
-  if (read(fd, (char *) &hd,
-	 sizeof(struct exec)) != sizeof(struct exec) ||
-      fstat(fd, &buf) == -1) {
-	(void) close(fd);
-	return 0;
-  }
-  (void) close(fd);
-
-  return !BADMAG(hd) && hd.a_syms != 0 && buf.st_mtime > tm;
 }

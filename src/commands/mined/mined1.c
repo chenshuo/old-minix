@@ -524,6 +524,9 @@ void SH()
 {
   register int w;
   int pid, status;
+  char *shell;
+
+  if ((shell = getenv("SHELL")) == NIL_PTR) shell = "/bin/sh";
 
   switch (pid = fork()) {
   	case -1:			/* Error */
@@ -539,7 +542,7 @@ void SH()
 			if (open("/dev/tty", 0) < 0)
 				exit (126);
 		}
-  		execl("/bin/sh", "sh", "-i", (char *) 0);
+  		execl(shell, shell, (char *) 0);
   		exit(127);			/* Exit with 127 */
   	default :				/* This is the parent */
   		signal(SIGINT, SIG_IGN);
@@ -553,7 +556,7 @@ void SH()
   RD();
 
   if ((status >> 8) == 127)		/* Child died with 127 */
-  	error("Cannot exec /bin/sh (possibly not enough memory)", NIL_PTR);
+  	error("Cannot exec ", shell);
   else if ((status >> 8) == 126)
   	error("Cannot open /dev/tty as fd #0", NIL_PTR);
 }
@@ -1176,7 +1179,7 @@ int bytes;
 {
   char *p;
 
-  p = malloc((unsigned) bytes);
+  p = (char *)malloc((unsigned) bytes);
   if (p == NIL_PTR) {
 	if (loading == TRUE)
 		panic("File too big.");

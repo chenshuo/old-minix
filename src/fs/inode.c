@@ -92,6 +92,7 @@ register struct inode *rip;	/* pointer to inode to be released */
 		/* i_nlinks == 0 means free the inode. */
 		truncate(rip);	/* return all the disk blocks */
 		rip->i_mode = I_NOT_ALLOC;	/* clear I_TYPE field */
+		rip->i_dirt = DIRTY;
 		inum = (int) rip->i_num;	/* do not pass an unshort */
 		free_inode(rip->i_dev, inum);
 	} else {

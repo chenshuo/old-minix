@@ -24,10 +24,10 @@
  */
 #if (CHIP == INTEL)
 struct sigregs {  
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   short sr_gs;
   short sr_fs;
-#endif /* INTEL_32BITS */
+#endif /* _WORD_SIZE == 4 */
   short sr_es;
   short sr_ds;
   int sr_di;
@@ -81,10 +81,10 @@ struct sigcontext {
 };
 
 #if (CHIP == INTEL)
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
 #define sc_gs sc_regs.sr_gs
 #define sc_fs sc_regs.sr_fs
-#endif /* INTEL_32BITS */
+#endif /* _WORD_SIZE == 4 */
 #define sc_es sc_regs.sr_es
 #define sc_ds sc_regs.sr_ds
 #define sc_di sc_regs.sr_di

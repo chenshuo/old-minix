@@ -7,7 +7,7 @@
 #include "proc.h"
 #include "protect.h"
 
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
 #define INT_GATE_TYPE (INT_286_GATE | DESC_386_BIT)
 #define TSS_TYPE      (AVL_286_TSS  | DESC_386_BIT)
 #else
@@ -25,7 +25,7 @@ struct gatedesc_s {
   u16_t selector;
   u8_t pad;			/* |000|XXXXX| ig & trpg, |XXXXXXXX| task g */
   u8_t p_dpl_type;		/* |P|DL|0|TYPE| */
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   u16_t offset_high;
 #else
   u16_t reserved;
@@ -40,7 +40,7 @@ struct tss_s {
   reg_t ss1;
   reg_t sp2;
   reg_t ss2;
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   reg_t cr3;
 #endif
   reg_t ip;
@@ -57,12 +57,12 @@ struct tss_s {
   reg_t cs;
   reg_t ss;
   reg_t ds;
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   reg_t fs;
   reg_t gs;
 #endif
   reg_t ldt;
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   u16_t trap;
   u16_t iobase;
 /* u8_t iomap[0]; */
@@ -94,7 +94,7 @@ unsigned dpl_type;
   idp->offset_low = base;
   idp->selector = CS_SELECTOR;
   idp->p_dpl_type = dpl_type;
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   idp->offset_high = base >> OFFSET_HIGH_SHIFT;
 #endif
 }
@@ -133,20 +133,26 @@ PUBLIC void prot_init()
 	segment_not_present, SEG_NOT_VECTOR, INTR_PRIVILEGE,
 	stack_exception, STACK_FAULT_VECTOR, INTR_PRIVILEGE,
 	general_protection, PROTECTION_VECTOR, INTR_PRIVILEGE,
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
 	page_fault, PAGE_FAULT_VECTOR, INTR_PRIVILEGE,
 	copr_error, COPROC_ERR_VECTOR, INTR_PRIVILEGE,
 #endif
-	clock_int, CLOCK_VECTOR, INTR_PRIVILEGE,
-	tty_int, KEYBOARD_VECTOR, INTR_PRIVILEGE,
-	psecondary_int, SECONDARY_VECTOR, INTR_PRIVILEGE,
-#if NETWORKING_ENABLED
-	eth_int, ETHER_VECTOR, INTR_PRIVILEGE,
-#endif
-	prs232_int, RS232_VECTOR, INTR_PRIVILEGE,
-	disk_int, FLOPPY_VECTOR, INTR_PRIVILEGE,
-	lpr_int, PRINTER_VECTOR, INTR_PRIVILEGE,
-	wini_int, AT_WINI_VECTOR, INTR_PRIVILEGE,
+	{ hwint00, VECTOR( 0), INTR_PRIVILEGE },
+	{ hwint01, VECTOR( 1), INTR_PRIVILEGE },
+	{ hwint02, VECTOR( 2), INTR_PRIVILEGE },
+	{ hwint03, VECTOR( 3), INTR_PRIVILEGE },
+	{ hwint04, VECTOR( 4), INTR_PRIVILEGE },
+	{ hwint05, VECTOR( 5), INTR_PRIVILEGE },
+	{ hwint06, VECTOR( 6), INTR_PRIVILEGE },
+	{ hwint07, VECTOR( 7), INTR_PRIVILEGE },
+	{ hwint08, VECTOR( 8), INTR_PRIVILEGE },
+	{ hwint09, VECTOR( 9), INTR_PRIVILEGE },
+	{ hwint10, VECTOR(10), INTR_PRIVILEGE },
+	{ hwint11, VECTOR(11), INTR_PRIVILEGE },
+	{ hwint12, VECTOR(12), INTR_PRIVILEGE },
+	{ hwint13, VECTOR(13), INTR_PRIVILEGE },
+	{ hwint14, VECTOR(14), INTR_PRIVILEGE },
+	{ hwint15, VECTOR(15), INTR_PRIVILEGE },
   };
 
   /* This is called early and can't use tables set up by main(). */
@@ -159,11 +165,11 @@ PUBLIC void prot_init()
   /* Build temporary gdt and idt pointers in GDT where BIOS needs them. */
   dtp= (struct desctableptr_s *) &gdt[BIOS_GDT_INDEX];
   * (u16_t *) dtp->limit = sizeof gdt - 1;
-  * (u32_t *) dtp->base = data_base + (phys_bytes) (vir_bytes) gdt;
+  * (u32_t *) dtp->base = vir2phys(gdt);
 
   dtp= (struct desctableptr_s *) &gdt[BIOS_IDT_INDEX];
   * (u16_t *) dtp->limit = sizeof idt - 1;
-  * (u32_t *) dtp->base = data_base + (phys_bytes) (vir_bytes) idt;
+  * (u32_t *) dtp->base = vir2phys(idt);
 
   /* Build segment descriptors for tasks and interrupt handlers. */
   init_dataseg(&gdt[DS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
@@ -176,7 +182,7 @@ PUBLIC void prot_init()
 	       (phys_bytes) MAX_286_SEG_SIZE, INTR_PRIVILEGE);
   init_dataseg(&gdt[DB_DS_INDEX], hclick_to_physb(break_vector.selector),
 	       (phys_bytes) MAX_286_SEG_SIZE, INTR_PRIVILEGE);
-  init_dataseg(&gdt[GDT_INDEX], data_base + (phys_bytes) (vir_bytes) gdt,
+  init_dataseg(&gdt[GDT_INDEX], vir2phys(gdt),
 	       (phys_bytes) sizeof gdt, INTR_PRIVILEGE);
 
   /* Build scratch descriptors for functions in klib286. */
@@ -191,10 +197,6 @@ PUBLIC void prot_init()
   init_dataseg(&gdt[MONO_INDEX], (phys_bytes) MONO_BASE,
 	       (phys_bytes) MONO_SIZE, TASK_PRIVILEGE);
 
-/* Build descriptor for Western Digital Etherplus card buffer. */
-  init_dataseg(&gdt[EPLUS_INDEX], (phys_bytes) EPLUS_BASE,
-		(phys_bytes) EPLUS_SIZE, TASK_PRIVILEGE);
-
   /* Build main TSS.
    * This is used only to record the stack pointer to be used after an
    * interrupt.
@@ -203,8 +205,8 @@ PUBLIC void prot_init()
    * process table.
    */
   tss.ss0 = DS_SELECTOR;
-  init_dataseg(&gdt[TSS_INDEX], data_base + (phys_bytes) (vir_bytes) &tss,
-	       (phys_bytes) sizeof tss, INTR_PRIVILEGE);
+  init_dataseg(&gdt[TSS_INDEX], vir2phys(&tss), (phys_bytes) sizeof tss,
+  							INTR_PRIVILEGE);
   gdt[TSS_INDEX].access = PRESENT | (INTR_PRIVILEGE << DPL_SHIFT) | TSS_TYPE;
 
   /* Build descriptors for interrupt gates in IDT. */
@@ -215,8 +217,10 @@ PUBLIC void prot_init()
   }
   int_gate(SYS_VECTOR, (phys_bytes) (vir_bytes) p_s_call,
 	   PRESENT | (USER_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
+  int_gate(LEVEL0_VECTOR, (phys_bytes) (vir_bytes) level0_call,
+  	   PRESENT | (TASK_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
 
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   /* Build 16-bit code segment for debugger.  Debugger runs mainly in 16-bit
    * mode but it is inconvenient to switch directly.
    */
@@ -289,8 +293,7 @@ PUBLIC void ldt_init()
 
   for (rp = BEG_PROC_ADDR, ldt_selector = FIRST_LDT_INDEX * DESC_SIZE;
        rp < END_PROC_ADDR; ++rp, ldt_selector += DESC_SIZE) {
-	init_dataseg(&gdt[ldt_selector / DESC_SIZE],
-		     data_base + (phys_bytes) (vir_bytes) rp->p_ldt,
+	init_dataseg(&gdt[ldt_selector / DESC_SIZE], vir2phys(rp->p_ldt),
 		     (phys_bytes) sizeof rp->p_ldt, INTR_PRIVILEGE);
 	gdt[ldt_selector / DESC_SIZE].access = PRESENT | LDT;
 	rp->p_ldt_sel = ldt_selector;
@@ -309,7 +312,8 @@ phys_bytes size;
 
   segdp->base_low = base;
   segdp->base_middle = base >> BASE_MIDDLE_SHIFT;
-#if INTEL_32BITS
+
+#if _WORD_SIZE == 4
   segdp->base_high = base >> BASE_HIGH_SHIFT;
   --size;			/* convert to a limit, 0 size means 4G */
   if (size > BYTE_GRAN_MAX) {
@@ -324,4 +328,16 @@ phys_bytes size;
 #else
   segdp->limit_low = size - 1;
 #endif
+}
+
+
+/*=========================================================================*
+ *				enable_iop				   *
+ *=========================================================================*/
+PUBLIC void enable_iop(pp)
+struct proc *pp;
+{
+/* Allow a user process to use I/O instructions. */
+
+  pp->p_reg.psw |= 0x3000;
 }

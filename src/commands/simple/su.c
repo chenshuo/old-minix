@@ -7,14 +7,8 @@
 #include <unistd.h>
 #include <minix/minlib.h>
 
-#ifdef SUPERGROUP
-/* If this flag is set then su allows members of group 0 to become each other
- * without a password.  See passwd(1) for more.  (kjb)
- */
-#define getid()	getgid()
-#else
-#define getid()	getuid()
-#endif
+/* True iff the invoker need not give a password. */
+#define privileged()	(getgid() == 0)
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(int putenv, (char *env));
@@ -49,7 +43,7 @@ char *argv[];
 	std_err("\n");
 	exit(1);
   }
-  if (pwd->pw_passwd[0] != '\0' && getid() != 0) {
+  if (pwd->pw_passwd[0] != '\0' && !privileged()) {
 	password = getpass("Password:");
 	if (strcmp(pwd->pw_passwd, crypt(password, pwd->pw_passwd))) {
 		std_err("Sorry\n");

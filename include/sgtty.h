@@ -75,74 +75,10 @@ struct tchars {
 #define BSDELAY      0100000
 #define ALLDELAY     0177400
 
-/* screen stuff */
-
-#define	SCR	('S'<<8)
-#define SCR_ATTR	(SCR | 1)
-#define SCR_SETCOL	(SCR | 2)
-#define SCR_GETCOL	(SCR | 3)
-#define SCR_SETCOLMAP	(SCR | 4)
-#define SCR_GETCOLMAP	(SCR | 5)
-
-#ifdef MACHINE
-
-#if MACHINE == ATARI
-
-/* declaration for font header */
-struct fnthdr {
-	char width;
-	char heigth;
-	void *addr;
-};
-
-#define VDU_LOADFONT ('F' << 8)
-
-/* ST specific clock stuff */
-#define	 DCLOCK	('D'<<8)
-
-#define	DC_RBMS100	(DCLOCK|1)
-#define	DC_RBMS200	(DCLOCK|2)
-#define	DC_RSUPRA	(DCLOCK|3)
-#define	DC_RICD  	(DCLOCK|4)
-#define	DC_WBMS100	(DCLOCK|8)
-#define	DC_WBMS200	(DCLOCK|9)
-#endif /* MACHINE == ATARI */
-
-#if MACHINE == SUN_4_60
-/* Window size support, not really SparcStation specific */
-struct winsize {
-  unsigned short ws_row;	/* number of character rows */
-  unsigned short ws_col;	/* number of characters per line */
-  unsigned short ws_xpixel;	/* horizontal character size in pixels */
-  unsigned short ws_ypixel;	/* vertical character size in pixels */
-};
-
-#define TIOCGWINSZ (('t'<<8) | 104)	/* get window size */
-#define TIOCSWINSZ (('t'<<8) | 103)	/* set window size */
-
-/* SparcStation specific floppy support: */
-struct diskio {
-  int  f_cyl;			/* disk cylinder number */
-  unsigned char f_head;		/* disk head (aka 'side' or 'track') number */
-  unsigned char f_sec;		/* sector number (not used at the moment */
-  unsigned char f_density;	/* bit density (data rate): HIGH_D or LOW_D */
-  char *f_buf;			/* address of data */
-  int  f_cnt;			/* length of buffer in bytes */
-};
-
-#define TIOCEJECT (('f'<<8) | 0)	/* Floppy disk eject */
-#define TIOCFORMAT (('f'<<8) | 1)	/* Format one track */
-
-#define LOW_D		1	/* Actually: `normal' density MFM (250Kb/s) */
-#define HIGH_D		0	/* `high' density MFM (500Kb/s) */
-#endif /* MACHINE == SUN_4_60 */
-
-#endif /* MACHINE defined */
-
 #include <ansi.h>
 
 _PROTOTYPE( int gtty, (int _fd, struct sgttyb *_argp)			);
-_PROTOTYPE( int ioctl, (int _fd, int _request, struct sgttyb * _argp)	);
+_PROTOTYPE( int ioctl, (int _fd, int _request, void *_data)		);
 _PROTOTYPE( int stty, (int _fd, struct sgttyb *_argp)			);
 
 #endif /* _SGTTY_H */

@@ -7,12 +7,12 @@
 #define MAX_ESC_PARMS      2	/* number of escape sequence params allowed */
 
 #define ERASE_CHAR      '\b'	/* default erase character */
-#define KILL_CHAR        '@'	/* default kill character */
+#define KILL_CHAR (char) 025	/* default kill character */
 #define INTR_CHAR (char)0177	/* default interrupt character */
 #define QUIT_CHAR (char) 034	/* default quit character */
 #define XOFF_CHAR (char) 023	/* default x-off character (CTRL-S) */
 #define XON_CHAR  (char) 021	/* default x-on character (CTRL-Q) */
-#define EOT_CHAR  (char) 004	/* CTRL-D */
+#define EOT_CHAR  (char) 004	/* default eof character (CTRL-D) */
 
 /* This MARKER is used as an unambiguous flag for an unescaped end of
  * file character.  It is meaningful only in cooked mode.  0200 should
@@ -42,13 +42,11 @@ EXTERN struct tty_struct {
   int tty_ilow_water;		/* threshold for queue not too full */
   int tty_insize;		/* size of buffer */
   char *tty_intail;		/* pointer to next char to be given to prog */
-  phys_bytes tty_inphys;	/* physical address of input buffer */
   int tty_incount;		/* # chars in tty_inqueue */
   int tty_lfct;			/* # line feeds in tty_inqueue */
   devread_t tty_devread;	/* routine to read from low level buffers */
 
   /* Output section. */
-  phys_bytes tty_outphys;	/* physical address of output buffer */
   int tty_rwords;		/* number of WORDS (not bytes) in outqueue */
   int tty_org;			/* location in RAM where 6845 base points */
   int tty_vid;			/* current position of cursor in video RAM */

@@ -11,7 +11,6 @@
 #include <sys/stat.h>
 #include "buf.h"
 #include "dev.h"
-#include "fcntl.h"
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
@@ -66,16 +65,14 @@ PUBLIC int do_mount()
 
   /* Fill in the super block. */
   sp->s_dev = dev;		/* read_super() needs to know which dev */
-  read_super(sp, (block_t) 0);
+  r = read_super(sp);
 
-  /* Make a few basic checks to see if super block looks reasonable. */
-  if (sp->s_version == 0 || sp->s_imap_blocks < 1 || sp->s_zmap_blocks < 1 ||
-				sp->s_ninodes < 1 || sp->s_zones < 1 ) {
-	sp->s_dev = NO_DEV;
+  /* Is it recognized as a Minix filesystem? */
+  if (r != OK) {
 	dev_mess.m_type = DEV_CLOSE;
 	dev_mess.DEVICE = dev;
 	(*dmap[major].dmap_close)(task, &dev_mess);
-	return(EINVAL);
+	return(r);
   }
 
   /* Now get the inode of the file to be mounted on. */

@@ -296,8 +296,11 @@ PUBLIC int do_rename()
 	/* Update the .. entry in the directory (still points to old_dirp). */
 	numb = new_dirp->i_num;
 	(void) unlink_file(old_ip, NIL_INODE, dot2);
-	if (search_dir(old_ip, dot2, &numb, ENTER) == OK) new_dirp->i_nlinks++;
-							 /* new link created */
+	if (search_dir(old_ip, dot2, &numb, ENTER) == OK) {
+		/* New link created. */
+		new_dirp->i_nlinks++;
+		new_dirp->i_dirt = DIRTY;
+	}
   }
 	
   /* Release the inodes. */

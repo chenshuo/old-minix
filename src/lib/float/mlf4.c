@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: mlf4.c,v 1.3 88/07/25 10:43:51 ceriel Exp $ */
+/* $Header: mlf4.c,v 1.4 93/01/05 12:05:37 ceriel Exp $ */
 
 /*
  * Multiply Single Precesion Float (MLF 4)
@@ -11,7 +11,7 @@
 
 #include	"FP_types.h"
 
-SINGLE
+void
 mlf4(s2,s1)
 SINGLE	s1,s2;
 {
@@ -22,5 +22,4 @@ SINGLE	s1,s2;
 		/* do a multiply */
 	mul_ext(&e1,&e2);
 	compact(&e1,&s1,sizeof(SINGLE));
-	return(s1);
 }

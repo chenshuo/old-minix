@@ -25,6 +25,7 @@ _PROTOTYPE( int dev_io, (int rw_flag, int nonblock, Dev_t dev,
 			off_t pos, int bytes, int proc, char *buff)	);
 _PROTOTYPE( int do_ioctl, (void)					);
 _PROTOTYPE( void no_call, (int task_nr, message *m_ptr)			);
+_PROTOTYPE( void no_dev, (int task_nr, message *m_ptr)			);
 _PROTOTYPE( void rw_dev2, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void tty_close, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void tty_open, (int task_nr, message *mess_ptr)		);
@@ -134,7 +135,7 @@ _PROTOTYPE( void free_bit, (struct buf *map_ptr [], bit_t bit_returned));
 _PROTOTYPE( struct super_block *get_super, (Dev_t dev)			);
 _PROTOTYPE( int load_bit_maps, (Dev_t dev)				);
 _PROTOTYPE( int mounted, (struct inode *rip)				);
-_PROTOTYPE( void read_super, (struct super_block *sp, block_t offset)	);
+_PROTOTYPE( int read_super, (struct super_block *sp)			);
 _PROTOTYPE( int unload_bit_maps, (Dev_t dev)				);
 
 /* time.c */

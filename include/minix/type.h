@@ -95,7 +95,7 @@ struct mem_map {
 struct iorequest_s {
   long io_position;		/* position in device file (really off_t) */
   char *io_buf;			/* buffer in user space */
-  unsigned short io_nbytes;	/* size of request */
+  int io_nbytes;		/* size of request */
   unsigned short io_request;	/* read, write (optionally) */
 };
 #endif /* _TYPE_H */

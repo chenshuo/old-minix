@@ -25,27 +25,35 @@ PUBLIC void p_dmp()
   int index;
 
   printf(
-         "\r\nproc  --pid -pc- -sp flag -user- --sys-- -base- -size-  recv- command\r\n");
+	"\r\nproc  --pid -pc-  -sp- flag -user- --sys-- -base- -size-  recv- command\r\n");
 
   for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
 	if (rp->p_flags & P_SLOT_FREE) continue;
 	base = rp->p_map[T].mem_phys;
 	size = rp->p_map[S].mem_phys + rp->p_map[S].mem_len - base;
 	prname(proc_number(rp));
-	printf("%5u %4lx %4lx %2x %7U %7U %5uK %5uK  ",
+	printf("%5u %5lx %5lx %2x %7U %7U %5uK %5uK  ",
 	       rp->p_pid,
 	       (unsigned long) rp->p_reg.pc,
 	       (unsigned long) rp->p_reg.sp,
 	       rp->p_flags,
 	       rp->user_time, rp->sys_time,
 	       click_to_round_k(base), click_to_round_k(size));
+	if (rp->p_flags == 0)
+		printf("      ");
+	else {
+		if (rp->p_flags & RECEIVING) prname(rp->p_getfrom);
+		if (rp->p_flags & SENDING) {
+			printf("S: ");
+			prname(rp->p_sendto);
+		}
+	}
 	index = proc_number(rp);
 	if (index > LOW_USER) {
 		printf("%s", aout[index]);
 	}
 	printf("\r\n");
   }
-  printf("\r\n");
 }
 
 #endif				/* (CHIP == INTEL) */
@@ -135,7 +143,6 @@ PUBLIC void p_dmp()
 	}
 	printf("\r\n");
   }
-  printf("\r\n");
 }
 
 
@@ -191,36 +198,6 @@ int len;
 }
 
 
-PUBLIC void tty_dmp()
-{
-  struct tty_struct *tp;
-  int i;
-
-  printf("tty_events = %u\r\n", tty_events);
-
-  for (i = 0; i < NR_CONS + NR_RS_LINES; i++) {
-	tp = &tty_struct[i];
-	printf("line %d; incount = %d, inleft = %d, outleft = %d\n",
-	       i, tp->tty_incount, tp->tty_inleft, tp->tty_outleft);
-	if (tp->tty_busy)
-		printf("busy\r\n");
-	else
-		printf("not busy\r\n");
-	if (tp->tty_inhibited)
-		printf("inhibited\r\n");
-	else
-		printf("not inhibited\r\n");
-	if (tp->tty_waiting)
-		if (tp->tty_waiting == SUSPENDED)
-			printf("suspended\r\n");
-		else
-			printf("waiting\r\n");
-	else
-		printf("not waiting\r\n");
-  }
-}
-
-
 PRIVATE void prname(i)
 int i;
 {
@@ -242,7 +219,7 @@ char *ptr;
  * purposes.
  */
 
-  phys_bytes src, dst;
+  phys_bytes src;
   char *np;
 
   aout[proc_nr][0] = 0;
@@ -250,8 +227,7 @@ char *ptr;
 
   src = numap(source_nr, (vir_bytes) ptr, (vir_bytes) NSIZE);
   if (!src) return;
-  dst = umap(proc_addr(SYSTASK), D, (vir_bytes) (aout[proc_nr]), (vir_bytes)NSIZE);
-  phys_copy(src, dst, (phys_bytes) NSIZE);
+  phys_copy(src, vir2phys(aout[proc_nr]), (phys_bytes) NSIZE);
 
   aout[proc_nr][NSIZE] = 0;
   for (np = &aout[proc_nr][0]; np < &aout[proc_nr][NSIZE]; np++)

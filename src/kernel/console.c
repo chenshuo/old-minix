@@ -455,21 +455,56 @@ char c;				/* next character in escape sequence */
 			    MAX(1, MIN(SCR_LINES, tp->tty_esc_parmv[0])) - 1 );
 			break;
 
-		    case 'J':		/* ESC [J clears screen from cursor */
-			if (value == 0) {
-				n=2*((SCR_LINES-(tp->tty_row+1))*LINE_WIDTH
-					      + LINE_WIDTH - (tp->tty_column));
-				vx = tp->tty_vid;
-				long_vid_copy(NIL_PTR,vid_base,vx,n/2);
-			}
-			break;
+		    /* cursor mods from dweaver@clover.cleaf.com 
+		       (David Weaver) from comp.os.minix 12 Sep 1994
+		       This adds full support for the ED and EL sequences.
+		    */
+	            case 'J':		/* ESC [sJ clears in display */
+		      switch (value)
+		      {
+		        case 0: /* Clear from cursor to end of screen */
+		          n = 2 * ((SCR_LINES - (tp->tty_row + 1)) * LINE_WIDTH
+		     		       + LINE_WIDTH - (tp->tty_column));
+		          vx = tp->tty_vid;
+		          break;
+		        case 1:	/* Clear from start of screen to cursor */
+		          n = 2 * (tp->tty_row * LINE_WIDTH + tp->tty_column);
+	  	          vx = tp->tty_vid -
+		 	    (2 * (tp->tty_row * LINE_WIDTH + tp->tty_column));
+	 	          break;
+		        case 2:		/* Clear entire screen */
+		          n = 2 * SCR_LINES * LINE_WIDTH;
+		          vx = tp->tty_vid -
+			    (2 * (tp->tty_row * LINE_WIDTH + tp->tty_column));
+	  	          break;
+	  	        default:	/* Do nothing */
+		          n = 0;
+	  	          vx = tp->tty_vid;
+		      }
+	  	      vid_copy(NIL_PTR, vid_base, vx, n / 2);
+		      break;
 
-		    case 'K':		/* ESC [K clears line from cursor */
-			if (value == 0) {
-				n = 2 * (LINE_WIDTH - (tp->tty_column));
-				vid_copy(NIL_PTR, vid_base, tp->tty_vid, n/2);
-			}
-			break;
+		    case 'K':		/* ESC [sK clears in line */
+		      switch (value)
+		      {
+	  	        case 0:		/* Clear from cursor to end of line */
+		          n = 2 * (LINE_WIDTH - (tp->tty_column));
+		          vx = tp->tty_vid;
+		          break;
+		        case 1:	/* Clear from beginning of line to cursor */
+		      	  n = 2 * (tp->tty_column);
+		          vx = tp->tty_vid - tp->tty_column;
+		          break;
+	 	        case 2:		/* Clear entire line */
+		          n = 2 * LINE_WIDTH;
+		          vx = tp->tty_vid;
+	 	          break;
+		        default:		/* Do nothing */
+		          n = 0;
+		          vx = tp->tty_vid;
+		      }
+		      vid_copy(NIL_PTR, vid_base, vx, n / 2);
+		      break;
 
 		    case 'L':		/* ESC [nL inserts n lines ar cursor */
 			n = value;
@@ -533,16 +568,16 @@ char c;				/* next character in escape sequence */
 	 		switch (value) {
  			    case 1: /*  BOLD  */
 				if (color)
-	 				one_con_attribute = /* red fg */
-					 	(attr & 0xf0ff) | 0x0400;
+	 				one_con_attribute = /* yellow fg */
+					 	(attr & 0xf0ff) | 0x0E00;
 				else
 		 			one_con_attribute |= 0x0800; /* inten*/
  				break;
  
  			    case 4: /*  UNDERLINE */
 				if (color)
-					one_con_attribute = /* blue fg */
-					 (attr & 0xf0ff) | 0x0100;
+					one_con_attribute = /* lt green fg */
+					 (attr & 0xf0ff) | 0x0A00;
 				else
 					one_con_attribute = /* ul */
 					 (attr & 0x8900);
@@ -775,7 +810,7 @@ int minor;
 
   set_6845(CUR_SIZE, CURSOR_SHAPE);	/* set cursor shape */
   set_6845(VID_ORG, 0);			/* use page 0 of video ram */
-  move_to(&tty_struct[0], 0, SCR_LINES-1); /* move cursor to lower left */
+  move_to(&tty_struct[0], 0, 0);	/* move cursor to upper left */
 }
 
 /*===========================================================================*

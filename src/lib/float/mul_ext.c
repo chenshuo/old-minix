@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: mul_ext.c,v 1.5 89/07/25 14:20:12 ceriel Exp $ */
+/* $Header: mul_ext.c,v 1.6 93/01/05 12:05:51 ceriel Exp $ */
 
 /*
 	ROUTINE TO MULTIPLY TWO EXTENDED FORMAT NUMBERS

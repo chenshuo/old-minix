@@ -15,7 +15,6 @@ struct proc {
   reg_t p_ldt_sel;		/* selector in gdt giving ldt base and limit*/
   struct segdesc_s p_ldt[2];	/* local descriptors for code and data */
 				/* 2 is LDT_SIZE - avoid include protect.h */
-  reg_t p_splimit;		/* lowest legal stack value */
 #endif /* (CHIP == INTEL) */
 
 #if (CHIP == M68000)
@@ -85,11 +84,7 @@ struct proc {
 #define isoksusern(n)     ((unsigned) (n) < NR_PROCS)
 #define isokusern(n)      ((unsigned) ((n) - LOW_USER) < NR_PROCS - LOW_USER)
 #define isrxhardware(n)   ((n) == ANY || (n) == HARDWARE)
-#if 0
-/* The old macro.  Why are servers other than MM and FS now not allowed? */
-#define isservn(n)        ((unsigned) (n) < LOW_USER)
-#endif
-#define isservn(n)        ((n) == FS_PROC_NR || (n) == MM_PROC_NR)
+#define issysentn(n)      ((n) == FS_PROC_NR || (n) == MM_PROC_NR)
 #define istaskp(p)        ((p) < END_TASK_ADDR && (p) != proc_addr(IDLE))
 #define isuserp(p)        ((p) >= BEG_USER_ADDR)
 #define proc_addr(n)      (pproc_addr + NR_TASKS)[(n)]

@@ -12,10 +12,11 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <time.h>
-#include <curses.h>
 #include <stdlib.h>
 #include <sgtty.h>
 #include <unistd.h>
+#include <stdarg.h>
+#include <curses.h>
 #include <stdio.h>
 
 /* A value of -1 will make it go forever */

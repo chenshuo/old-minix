@@ -6,6 +6,8 @@
 
 #include	<errno.h>
 
+static const char unknown[] = "Unknown error";
+
 const char *_sys_errlist[] = {
         "Error 0",
         "Not owner",
@@ -23,7 +25,7 @@ const char *_sys_errlist[] = {
         "Permission denied",
         "Bad address",
         "Block device required",
-        "Mount device busy",
+        "Resource busy",
         "File exists",
         "Cross-device link",
         "No such device",
@@ -46,7 +48,34 @@ const char *_sys_errlist[] = {
 	"File name too long",
 	"No locks available",
 	"Function not implemented",
-	"Directory not empty"
+	"Directory not empty",
+	/*40*/unknown,
+	/*41*/unknown,
+	/*42*/unknown,
+	/*43*/unknown,
+	/*44*/unknown,
+	/*45*/unknown,
+	/*46*/unknown,
+	/*47*/unknown,
+	/*48*/unknown,
+	/*49*/unknown,
+	"Invalid packet size",
+	"Not enough buffers left",
+	"Illegal ioctl for device",
+	"Badmode for ioctl",
+	"Would block",
+	"Bad destination address",
+	"Destination not reachable",
+	"All ready connected",
+	"Address in use",
+	"Connection refused",
+	"Connection reset",
+	"Connection timed out",
+	"Urgent data present",
+	"No urgent data present",
+	"No connection",
+	"Allready shutdown",
+	"No such connection",
 };
 
 const int _sys_nerr = sizeof(_sys_errlist) / sizeof(_sys_errlist[0]);

@@ -41,12 +41,22 @@ unsigned vec_nr;
 	"Unexpected interrupt along vector >= 17", SIGILL, 0,
   };
   register struct ex_s *ep;
+  struct proc *saved_proc;
+
+  saved_proc= proc_ptr;	/* Save proc_ptr, because it may be changed by debug 
+  			 * statements.
+  			 */
 
   ep = &ex_data[vec_nr];
 
-  if (k_reenter == 0 && isuserp(proc_ptr)) {
+  if (vec_nr == 2) {		/* spurious NMI on some machines */
+	printf("got spurious NMI\n");
+	return;
+  }
+
+  if (k_reenter == 0 && isuserp(saved_proc)) {
 	unlock();		/* this is protected like sys_call() */
-	cause_sig(proc_number(proc_ptr), ep->signum);
+	cause_sig(proc_number(saved_proc), ep->signum);
 	return;
   }
 
@@ -56,9 +66,9 @@ unsigned vec_nr;
 	printf("\r\nIntel-reserved exception %d\r\n", vec_nr);
   else
 	printf("\r\n%s\r\n", ep->msg);
-  printf("process number %d, pc = 0x%04x:0x%08lx\r\n",
-	 proc_number(proc_ptr),
-	 (unsigned) proc_ptr->p_reg.cs,
-  	 (unsigned long) proc_ptr->p_reg.pc);
+  printf("process number %d, pc = 0x%04x:0x%08x\r\n",
+	proc_number(saved_proc),
+	(unsigned) saved_proc->p_reg.cs,
+	(unsigned) saved_proc->p_reg.pc);
   panic("exception in kernel, mm or fs", NO_NUM);
 }

@@ -15,7 +15,7 @@ typedef int ssize_t;
 
 _PROTOTYPE( int creat, (const char *_path, Mode_t _mode)		);
 _PROTOTYPE( int open,  (const char *_path, int _oflag, ...) 		);
-_PROTOTYPE( int access, (const char *_path, Mode_t _amode)		);
+_PROTOTYPE( int access, (const char *_path, int _amode)			);
 _PROTOTYPE( int close, (int _fd)					);
 _PROTOTYPE( off_t lseek, (int _fd, off_t _offset, int _whence)		);
 _PROTOTYPE( ssize_t read, (int _fd, void *_buf, size_t _n)		);

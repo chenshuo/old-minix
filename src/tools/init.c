@@ -24,7 +24,7 @@
  *	2c1	# /dev/tty1 is enabled using /etc/getty for speed detection
  *	0c2	# /dev/tty2 is disabled
  *	
- * If any of the /etc/tty entries start with a 2, the file /etc/getty must
+ * If any of the /etc/tty entries start with a 2, the file /sbin/getty must
  * be present and executable.
  *
  * If the files /usr/adm/wtmp and /etc/utmp exist and are writable, init
@@ -32,6 +32,9 @@
  * signal 1 (SIGHUP) to init will cause it to reread /etc/ttys and start
  * up new shell processes if necessary.  It will not, however, kill off
  * login processes for lines that have been turned off; do this manually.
+ * Signal 15 (SIGTERM) makes init stop spawning new processes, this is
+ * used by shutdown and friends when they are about to close the system
+ * down.
  */
 
 #include <sys/types.h>
@@ -55,7 +58,7 @@
 #define SHELL2		"/usr/bin/sh"
 #define LOGIN1		"/bin/login"
 #define LOGIN2		"/usr/bin/login"
-#define GETTY		"/etc/getty"	/* GETTY for dial IN/OUT */
+#define GETTY		"/usr/bin/getty"
 
 #define PIDSLOTS	8		/* maximum number of ttys entries */
 #define TTYSBUF		(8 * PIDSLOTS)	/* buffer for reading /etc/ttys */
@@ -114,6 +117,8 @@ char **environ;			/* declaration required by library routines */
 char *CONSOLE = CONSNAME;	/* name of system console */
 struct sgttyb args;		/* buffer for TIOCGETP */
 int gothup = 0;			/* flag, showing signal 1 was received */
+int gotabrt = 0;		/* flag, showing signal 6 was received */
+int spawn = 1;			/* flag, spawn processes only when set */
 int pidct = 0;			/* count of running children */
 
 char *env[] = { (char *)0 };	/* tiny environment for execle */
@@ -128,6 +133,8 @@ FORWARD _PROTOTYPE( void wtmp, (char *user, char *id, char *line,
 FORWARD _PROTOTYPE( void readttys, (void)				);
 FORWARD _PROTOTYPE( void startup, (int linenr, int mode1, int mode2)	);
 FORWARD _PROTOTYPE( void onhup, (int s)					);
+FORWARD _PROTOTYPE( void onterm, (int s)				);
+FORWARD _PROTOTYPE( void onabrt, (int s)				);
 
 PUBLIC int main()
 {
@@ -136,14 +143,20 @@ PUBLIC int main()
   int i;			/* loop variable */
   int status;			/* return status from child process */
   struct slotent *slotp;	/* slots[] pointer */
+  struct sigaction sa;
 
-  sync();			/* force buffers out onto disk */
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+
+  sa.sa_handler = onabrt;	/* called when CTRL-ALT-DEL typed */
+  sigaction(SIGABRT, &sa, (struct sigaction *) NULL);
 
   /* Execute the /etc/rc file. */
   if(pid = fork()) {
 	/* Parent just waits. */
-	while (wait(&status) != pid)
-		;
+	while (wait(&status) != pid) {
+		if (gotabrt) reboot(1);
+	}
   } else {
 	/* Child exec's the shell to do the work. */
 	open(CONSOLE, O_RDWR);		/* std input */
@@ -168,8 +181,14 @@ PUBLIC int main()
    * First set up the signals.
    */
 
-  for (i = 1; i <= _NSIG; i++) signal(i, SIG_IGN);
-  signal(SIGHUP, onhup);
+  sa.sa_handler = SIG_IGN;
+  for (i = 1; i <= _NSIG; i++) sigaction(i, &sa, (struct sigaction *) NULL);
+  sa.sa_handler = onhup;
+  sigaction(SIGHUP, &sa, (struct sigaction *) NULL);
+  sa.sa_handler = onabrt;
+  sigaction(SIGABRT, &sa, (struct sigaction *) NULL);
+  sa.sa_handler = onterm;
+  sigaction(SIGTERM, &sa, (struct sigaction *) NULL);
 
   while(1) {
 	sync();
@@ -197,15 +216,25 @@ PUBLIC int main()
 	}
 
 	/* If a signal 1 (SIGHUP) is received, reread /etc/ttys. */
-	if(gothup) {
+	if (gothup) {
 		readttys();
 		gothup = 0;
 	}
 
-	/* See which lines need a login process started up. */
-	for(slotp = slots; slotp < &slots[PIDSLOTS]; ++slotp) {
-		if(slotp->onflag && slotp->pid <= 0)
-		      startup((int)(slotp-slots), DEAD_PROCESS, LOGIN_PROCESS);
+	/* Reboot on signal 6 (SIGABRT). */
+	if (gotabrt) {
+		error("CTRL-ALT-DEL", NOHANG);
+		wtmp("C-A-D", "~~", "~", 0, BOOT_TIME, -1);
+		reboot(1);
+	}
+
+	if (spawn) {
+		/* See which lines need a login process started up. */
+		for(slotp = slots; slotp < &slots[PIDSLOTS]; ++slotp) {
+			if(slotp->onflag && slotp->pid <= 0)
+			      startup((int)(slotp-slots), DEAD_PROCESS,
+			      				LOGIN_PROCESS);
+		}
 	}
   }
 }
@@ -214,7 +243,19 @@ PRIVATE void onhup(s)
 int s;				/* ANSI C requires a parameter */
 {
   gothup = 1;
-  signal(SIGHUP, onhup);
+  spawn = 1;
+}
+
+PRIVATE void onterm(s)
+int s;
+{
+  spawn = 0;
+}
+
+PRIVATE void onabrt(s)
+int s;
+{
+  if (++gotabrt == 2) reboot(1);
 }
 
 PRIVATE void readttys()
@@ -238,7 +279,7 @@ PRIVATE void readttys()
   /* The first character of each line on /etc/ttys tells what to do:
    * 	0 = do not enable line
    *	1 = enable line for regular login
-   *	2 = use /etc/getty on this line to detect modem speed dynamically
+   *	2 = use /sbin/getty on this line to detect modem speed dynamically
    */
   while(p < endp) {
 	switch(*p++) {
@@ -363,25 +404,20 @@ int lineno;			/* slot number in UTMP */
 /* Log an event into the WTMP and UTMP files. */
 
   struct utmp utmp;		/* UTMP/WTMP User Accounting */
-  char *sp = "               ";	/* blank space */
+  char *p;
   register int fd;
 
   /* Clear the fields. */
-  strncpy(utmp.ut_name, sp, sizeof(utmp.ut_name));
-  strncpy(utmp.ut_id, sp, sizeof(utmp.ut_id));
-  strncpy(utmp.ut_line, sp, sizeof(utmp.ut_line));
+  memset((void *) &utmp, 0, sizeof(utmp));
 
   /* Strip the /dev part of the TTY name. */
-  sp = strrchr(line, '/');
-  if (sp == 0) 
-	sp = line;
-    else 
-	sp++;
+  p = strrchr(line, '/');
+  if (p != 0) line = p+1;
 
   /* Enter new values. */
   strncpy(utmp.ut_name, user, sizeof(utmp.ut_name));
   strncpy(utmp.ut_id, id, sizeof(utmp.ut_id));
-  strncpy(utmp.ut_line, sp, sizeof(utmp.ut_line));
+  strncpy(utmp.ut_line, line, sizeof(utmp.ut_line));
   utmp.ut_pid = pid;
   utmp.ut_type = type;
   utmp.ut_time = time((time_t *)0);

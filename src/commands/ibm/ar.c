@@ -155,8 +155,8 @@ _PROTOTYPE(void insert_abort, (int s ));
 _PROTOTYPE(void mwrite, (int fd, char *address, int bytes ));
 _PROTOTYPE(void int_to_p2, (char *cp, int n ));
 _PROTOTYPE(void long_to_p4, (char *cp, long n ));
-_PROTOTYPE(int p2_to_int, (unsigned char *cp ));
-_PROTOTYPE(long p4_to_long, (unsigned char *cp ));
+_PROTOTYPE(int p2_to_int, (char *cp ));
+_PROTOTYPE(long p4_to_long, (char *cp ));
 _PROTOTYPE(void addmove, (long pos ));
 _PROTOTYPE(struct i_ar_hdr *get_member, (int fd ));
 _PROTOTYPE(int open_archive, (char *filename, int opt, int to_create ));
@@ -333,18 +333,20 @@ long n;
 /* Convert char array regarded as a pdp-11 order int to an int */
 
 int p2_to_int(cp)
-unsigned char *cp;
+char *cp;
 {
-  return(cp[0] + 0x100 * cp[1]);
+  unsigned char *ucp = (unsigned char *) cp;
+  return(ucp[0] + 0x100 * ucp[1]);
 }
 
 /* Convert char array regarded as a pdp-11 order long to a long */
 
 long p4_to_long(cp)
-unsigned char *cp;
+char *cp;
 {
-  return((long) cp[2] + 0x100L * cp[3] +
-	0x10000L * cp[0] + 0x1000000L * cp[1]);
+  unsigned char *ucp = (unsigned char *) cp;
+  return((long) ucp[2] + 0x100L * ucp[3] +
+	0x10000L * ucp[0] + 0x1000000L * ucp[1]);
 }
 
 #endif /* not SARMAG */
@@ -423,7 +425,7 @@ int to_create;
 	mwrite(fd, ARMAG, MAGICSIZE);
 #else
 	magic = ARMAG;
-	mwrite(fd, &magic, MAGICSIZE);
+	mwrite(fd, (char *) &magic, MAGICSIZE);
 #endif
 	return(fd);
   } else {

@@ -7,7 +7,7 @@ struct stat;
 _PROTOTYPE( phys_clicks alloc_mem, (phys_clicks clicks)			);
 _PROTOTYPE( void free_mem, (phys_clicks base, phys_clicks clicks)	);
 _PROTOTYPE( phys_clicks max_hole, (void)				);
-_PROTOTYPE( void mem_init, (void)					);
+_PROTOTYPE( void mem_init, (phys_clicks *total, phys_clicks *free)	);
 _PROTOTYPE( phys_clicks mem_left, (void)				);
 _PROTOTYPE( int do_brk3, (void)						);
 
@@ -33,8 +33,8 @@ _PROTOTYPE( int do_getset, (void)					);
 
 /* main.c */
 _PROTOTYPE( void main, (void)						);
-_PROTOTYPE( int do_brk2, (void)						);
-_PROTOTYPE( phys_clicks get_mem, (phys_clicks *pbase, int extflag)	);
+_PROTOTYPE( int get_mem, (phys_clicks *base, phys_clicks *size,
+						phys_clicks *total)	);
 
 #if (MACHINE == MACINTOSH)
 _PROTOTYPE( phys_clicks start_click, (void)				);
@@ -58,6 +58,7 @@ _PROTOTYPE( int do_sigpending, (void)					);
 _PROTOTYPE( int do_sigmask, (void)					);
 _PROTOTYPE( int do_sigreturn, (void)					);
 _PROTOTYPE( int do_sigsuspend, (void)					);
+_PROTOTYPE( int do_reboot, (void)					);
 
 /* trace.c */
 _PROTOTYPE( int do_trace, (void)					);
@@ -81,12 +82,12 @@ _PROTOTYPE( void sys_fresh, (int proc, struct mem_map *ptr,
 		phys_clicks dc, phys_clicks *basep, phys_clicks *sizep)	);
 _PROTOTYPE( void sys_getsp, (int proc, vir_bytes *newsp)		);
 _PROTOTYPE( void sys_newmap, (int proc, struct mem_map *ptr)		);
+_PROTOTYPE( void sys_getmap, (int proc, struct mem_map *ptr)		);
 _PROTOTYPE( void sys_sendsig, (int proc, struct sigmsg *ptr)		);
 _PROTOTYPE( void sys_oldsig, (int proc, int sig, sighandler_t sighandler));
 _PROTOTYPE( void sys_endsig, (int proc)					);
-_PROTOTYPE( void sys_sigreturn, (int proc, vir_bytes scp, int flags)	);
+_PROTOTYPE( int sys_sigreturn, (int proc, vir_bytes scp, int flags)	);
 _PROTOTYPE( int sys_trace,(int req, int procnr, long addr, long *data_p));
 _PROTOTYPE( void sys_xit, (int parent, int proc, phys_clicks *basep, 
 						 phys_clicks *sizep));
 _PROTOTYPE( void tell_fs, (int what, int p1, int p2, int p3)		);
-

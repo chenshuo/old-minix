@@ -221,6 +221,7 @@ char *filename;
 	register int pfd, len;
 	chroff sbx_fdlen();
 	register char *profptr;
+	struct stored_profile st_prof;
 
 	if(filename) strcpy(pfile,filename);
 	else		/* Check for user's profile */
@@ -239,21 +240,26 @@ char *filename;
 		  }
 		return;
 	  }
-	if((len = (int)sbx_fdlen(pfd)) < sizeof(struct profile))
+	if((len = (int)sbx_fdlen(pfd)) < sizeof(struct stored_profile))
 		goto badfil;
 	profptr = memalloc((SBMO)len);
 	if(read(pfd,profptr,len) != len)
 		goto badfmt;
 
 	/* Have read profile into memory, now set up ptrs etc */
-	if(((struct profile *)profptr)->version != 1)
+	bcopy((SBMA)profptr,(SBMA)&st_prof,sizeof(struct stored_profile));
+	def_prof.version = prof_upack(st_prof.version);
+	if(def_prof.version != 1)
 		goto badfmt;
-	bcopy((SBMA)profptr,(SBMA)&def_prof,sizeof(struct profile));
-	def_prof.chrvec  += (long) profptr;
-	def_prof.metavec += (long) profptr;
-	def_prof.extvec  += (long) profptr;
+	def_prof.chrvcnt = prof_upack(st_prof.chrvcnt);
+	def_prof.chrvec  = profptr + prof_upack(st_prof.chrvec);
+	def_prof.metavcnt = prof_upack(st_prof.metavcnt);
+	def_prof.metavec = profptr + prof_upack(st_prof.metavec);
+	def_prof.extvcnt = prof_upack(st_prof.extvcnt);
+	def_prof.extvec  = profptr + prof_upack(st_prof.extvec);
 #if SUN
-	def_prof.menuvec += (long) profptr;
+	def_prof.menuvcnt = prof_upack(st_prof.menuvcnt);
+	def_prof.menuvec = profptr + prof_upack(st_prof.menuvec);
 #endif /*SUN*/
 	goto done;
 

@@ -74,9 +74,15 @@ char * _CONST envp[];		/* pointer to environment */
 
   /* Count the argument pointers and environment pointers. */
   i = 0;
-  while (argv[i] != NULL) i++;
+  if (argv != NULL)
+  {
+	while (argv[i] != NULL) i++;
+  }
   j = 0;
-  while (envp[j] != NULL) j++;
+  if (envp != NULL)
+  {
+	while (envp[j] != NULL) j++;
+  }
 
   return(__execve(path, argv, envp, i, j));
 }

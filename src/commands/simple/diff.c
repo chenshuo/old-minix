@@ -36,6 +36,7 @@
 #include <string.h>		/* string manipulation			 */
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <ctype.h>
 #include <time.h>
 #include <dirent.h>
@@ -846,7 +847,7 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
   char *newmark, *oldmark;
   int len;
   char *line;
-  int i;
+  int i, status;
 
   oldfp = file1;
   newfp = file2;
@@ -868,7 +869,7 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
   inputfp = popen(buff, "r");
   if (!inputfp) {
 	fprintf(stderr, "Can't execute diff %s %s\n", old, new);
-	exit(1);
+	exit(2);
   }
   preoldend = -1000;
   firstoutput = 1;
@@ -882,7 +883,6 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
 		printf("*** %s %s", old, ctime(&statbuf.st_mtime));
 		fstat(fileno(newfp), &statbuf);
 		printf("--- %s %s", new, ctime(&statbuf.st_mtime));
-		printf("***************\n");
 		firstoutput = 0;
 	}
 	if (isdigit(*buff)) {
@@ -897,7 +897,7 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
 		}
 		if (*s != 'a' && *s != 'd' && *s != 'c') {
 			fprintf(stderr, "Unparseable input: %s", s);
-			exit(1);
+			exit(2);
 		}
 		op = *s;
 		s++;
@@ -912,7 +912,7 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
 		}
 		if (*s != '\n' && *s != ' ') {
 			fprintf(stderr, "Unparseable input: %s", s);
-			exit(1);
+			exit(2);
 		}
 		newmark = oldmark = "! ";
 		if (op == 'a') {
@@ -990,7 +990,9 @@ FILE *file1, *file2;		/* The corresponding file-pointers	 */
 		prenewend = newend;
 	}
   }
-  if (pclose(inputfp) != 0) severe_error = 1;
+  status = pclose(inputfp);
+  if (status != 0) diffs++;
+  if (!WIFEXITED(status) || WEXITSTATUS(status) > 1) severe_error = 1;
 
   if (preoldend >= 0) {
 	dumphunk();
@@ -1033,7 +1035,7 @@ void dumphunk()
 	strcpy(newhunk + newsize + 2, line);
 	newsize += len;
   }
-
+  fputs("***************\n", stdout);
   if (preoldbeg >= preoldend) {
 	printf("*** %d ****\n", preoldend);
   } else {
@@ -1233,7 +1235,7 @@ size_t size;
   ptr = malloc(size);
   if (ptr == NULL) {
 	fprintf(stderr, "%s: out of memory\n", progname);
-	exit(1);
+	exit(2);
   }
   return(ptr);
 }
@@ -1245,7 +1247,7 @@ size_t size;
   ptr = realloc(ptr, size);
   if (ptr == NULL) {
 	fprintf(stderr, "%s: out of memory\n", progname);
-	exit(1);
+	exit(2);
   }
   return(ptr);
 }

@@ -17,8 +17,7 @@ char    *patbuf;                /* where to put compiled pattern */
         char    *patptr,        /* destination string pntr   */
                 *lp,            /* Last pattern pointer      */
                 *spp,           /* Save beginning of pattern */
-                delim,          /* pattern delimiter         */
-                *cclass();      /* Compile class routine     */
+                delim;          /* pattern delimiter         */
 
         lp = patptr = patbuf;
         delim = getcharacter();
@@ -220,7 +219,6 @@ char    *pattern;       /* pattern to match */
          * Match the current line (in Linebuf[]), return 1 if it does.
          */
         char    *l;             /* Line pointer       */
-        char    *pmatch();
         char    *next;
         int     matches;
 

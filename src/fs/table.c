@@ -84,7 +84,7 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 
 	no_sys,		/* 64 = KSIG: signals originating in the kernel	*/
 	do_unpause,	/* 65 = UNPAUSE	*/
-	no_sys, 	/* 66 = BRK2 (used to tell MM size of FS,INIT)	*/
+	no_sys, 	/* 66 = unused  */
 	do_revive,	/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
 	no_sys,		/* 69 = unused */
@@ -94,6 +94,7 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 	no_sys,		/* 73 = SIGPENDING */
 	no_sys,		/* 74 = SIGPROCMASK */
 	no_sys,		/* 75 = SIGRETURN */
+	no_sys,		/* 76 = REBOOT */
 };
 
 
@@ -109,20 +110,31 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 PUBLIC struct dmap dmap[] = {
 /*  Open       Read/Write   Close       Task #      Device  File
     ----       ----------   -----       -------     ------  ----      */
-    0,         0,           0,          0,           /* 0 = not used  */
+    no_dev,    no_dev,      no_dev,     0,           /* 0 = not used  */
     dev_opcl,  call_task,   dev_opcl,   MEM,         /* 1 = /dev/mem  */
     dev_opcl,  call_task,   dev_opcl,   FLOPPY,      /* 2 = /dev/fd0  */
     dev_opcl,  call_task,   dev_opcl,   WINCHESTER,  /* 3 = /dev/hd0  */
     tty_open,  call_task,   tty_close,  TTY,         /* 4 = /dev/tty0 */
     ctty_open, rw_dev2,     ctty_close, TTY,         /* 5 = /dev/tty  */
     no_call,   call_task,   no_call,    PRINTER,     /* 6 = /dev/lp   */
-    dev_opcl,  call_task,   dev_opcl,   SCSI,        /* 7 = /dev/hdscsi0  */
-#if NETWORKING_ENABLED
-    nw_open,   nw_rw,       nw_close,	INET_PROC_NR, /* 8 = /dev/ip   */
+#if (MACHINE == ATARI)
+    dev_opcl,  call_task,   dev_opcl,   SCSI,        /* 7 = /dev/hdscsi0 */
+#endif
+#if (MACHINE == IBM_PC)
+#if ENABLE_NETWORKING
+    net_open,  net_rw,      net_close,	INET_PROC_NR,/* 7 = /dev/ip   */
 #if ALLOW_USER_SEND
-    nw_open,   nw_rw,       nw_close,   7,            /* 9 = debug /dev/ip */
-#endif
-#endif
+    net_open,  net_rw,      net_close,  7,           /* 8 = debug /dev/ip */
+#else /* !ALLOW_USER_SEND */
+    no_dev,    no_dev,      no_dev,     0,           /* 8 = not used  */
+#endif /* !ALLOW_USER_SEND */
+#else /* !ENABLE_NETWORKING */
+    no_dev,    no_dev,      no_dev,     0,           /* 7 = not used  */
+    no_dev,    no_dev,      no_dev,     0,           /* 8 = not used  */
+#endif /* !ENABLE_NETWORKING */
+    no_dev,    no_dev,      no_dev,     0,           /* 9 = not used  */
+    dev_opcl,  call_task,   dev_opcl,   SCSI,        /*10 = /dev/sd0  */
+#endif /* IBM_PC */
 };
 
 PUBLIC int max_major = sizeof(dmap)/sizeof(struct dmap);

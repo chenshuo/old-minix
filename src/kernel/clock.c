@@ -50,6 +50,8 @@
 				/*   11x11, 11 = LSB then MSB, x11 = sq wave */
 #define TIMER_COUNT ((unsigned) (TIMER_FREQ/HZ)) /* initial value for counter*/
 #define TIMER_FREQ  1193182L	/* clock frequency for timer in PC and AT */
+
+#define CLOCK_ACK_BIT	0x80	/* PS/2 clock interrupt acknowledge bit */
 #endif
 
 #if (CHIP == M68000)
@@ -81,6 +83,7 @@ FORWARD _PROTOTYPE( void do_setalarm, (message *m_ptr) );
 FORWARD _PROTOTYPE( void init_clock, (void) );
 FORWARD _PROTOTYPE( void cause_alarm, (void) );
 FORWARD _PROTOTYPE( void do_setsyn_alrm, (message *m_ptr) );
+FORWARD _PROTOTYPE( int clock_handler, (int irq) );
 
 /*===========================================================================*
  *				clock_task				     *
@@ -361,6 +364,7 @@ PRIVATE void init_clock()
   out_byte(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
   out_byte(TIMER0, TIMER_COUNT);	/* load timer low byte */
   out_byte(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
+  put_irq_handler(CLOCK_IRQ, clock_handler);	/* set the interrupt handler */
   enable_irq(CLOCK_IRQ);		/* ready for clock interrupts */
 }
 
@@ -438,7 +442,8 @@ PRIVATE void init_clock()
 /*===========================================================================*
  *				clock_handler				     *
  *===========================================================================*/
-PUBLIC void clock_handler()
+PRIVATE int clock_handler(irq)
+int irq;
 {
 /* Switch context to do_clocktick if an alarm has gone off.
  * Also switch there to reschedule if the reschedule will do something.
@@ -485,6 +490,11 @@ PUBLIC void clock_handler()
 
   register struct proc *rp;
 
+  if (ps_mca) {
+	/* Acknowledge the PS/2 clock interrupt. */
+	out_byte(PORT_B, in_byte(PORT_B) | CLOCK_ACK_BIT);
+  }
+
   /* Update user and system accounting times.
    * First charge the current process for user time.
    * If the current process is not the billable process (usually because it
@@ -517,7 +527,7 @@ PUBLIC void clock_handler()
       (rdy_head[USER_Q] != NIL_PROC || rdy_head[SHADOW_Q] != NIL_PROC)) {
 #endif
 	interrupt(CLOCK);
-	return;
+	return 1;	/* Reenable interrupts */
   }
 
   if (--sched_ticks == 0) {
@@ -525,4 +535,5 @@ PUBLIC void clock_handler()
 	sched_ticks = SCHED_RATE;	/* reset quantum */
 	prev_ptr = bill_ptr;		/* new previous process */
   }
+  return 1;	/* Reenable clock interrupt */
 }

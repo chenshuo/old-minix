@@ -172,7 +172,7 @@ message *m_ptr;			/* pointer to message buffer */
   vir_clicks vlo, vhi;		/* virtual clicks containing message to send */
 
   /* User processes are only allowed to send to FS and MM.  Check for this. */
-  if (isuserp(caller_ptr) && !isservn(dest)) return(E_BAD_DEST);
+  if (isuserp(caller_ptr) && !issysentn(dest)) return(E_BAD_DEST);
   dest_ptr = proc_addr(dest);	/* pointer to destination's proc entry */
   if (dest_ptr->p_flags & P_SLOT_FREE) return(E_BAD_DEST);	/* dead dest */
 
@@ -456,8 +456,7 @@ register struct proc *rp;	/* this process is no longer runnable */
   while (xp->p_nextready != rp)
 	if ( (xp = xp->p_nextready) == NIL_PROC) return;
   xp->p_nextready = xp->p_nextready->p_nextready;
-  while (xp->p_nextready != NIL_PROC) xp = xp->p_nextready;
-  *qtail = xp;
+  if (*qtail == rp) *qtail = xp;
 }
 
 

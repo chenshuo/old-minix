@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cfi.c,v 1.4 89/07/25 14:18:03 ceriel Exp $ */
+/* $Header: cfi.c,v 1.5 93/01/05 12:03:48 ceriel Exp $ */
 
 /*
 		CONVERT FLOAT TO SIGNED (CFI m n)
@@ -46,6 +46,7 @@ DOUBLE	src;	/* assume worst case */
 	new = buf.m1 >> (31-buf.exp);
 	if (buf.sign)
 		new = -new;
+done:
 	src.d[ss == 8] = new;
 	return(new);
 }

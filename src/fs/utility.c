@@ -55,7 +55,7 @@ int flag;			/* M3 means path may be in message */
  */
 
   register char *rpu, *rpm;
-  int r, n;
+  int r;
   vir_bytes vpath;
 
   /* Check name length for validity. */
@@ -69,7 +69,6 @@ int flag;			/* M3 means path may be in message */
 	return(ERROR);
   }
 
-  n = len - 1;			/* # chars not including 0 byte */
   if (flag == M3 && len <= M3_STRING) {
 	/* Just copy the path from the message to 'user_path'. */
 	rpu = &user_path[0];
@@ -80,24 +79,6 @@ int flag;			/* M3 means path may be in message */
 	/* String is not contained in the message.  Get it from user space. */
 	vpath = (vir_bytes) path;
 	r = rw_user(D, who, vpath, (vir_bytes) len, user_path, FROM_USER);
-  }
-
-  /* Paths that end in "/." like "/a/b/." or "/" are a pain. Get rid of them */
-  if (r == OK) {
-	rpu = &user_path[n - 1]; /* points to last char */
-	while (n > 2) {
-		if (*rpu == '/') 
-		{
-		    *rpu = '\0';	 /* remove the "/" */
-		    n -= 1;
-		    rpu -= 1;
-		} else
-		if (*rpu == '.' && *(--rpu) == '/') {
-			*rpu = '\0';	 /* remove the "/." */
-			n -= 2;
-			rpu -= 1;
-		} else break;
-	}
   }
   return(r);
 }
@@ -132,7 +113,7 @@ int num;			/* number to go with format string */
   if (num != NO_NUM) printf("%d",num); 
   printf("\n");
   (void) do_sync();		/* flush everything to the disk */
-  sys_abort();
+  sys_abort(2);
 }
 
 

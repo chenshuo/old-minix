@@ -1,38 +1,26 @@
-/* This file contains a driver for the WD winchester controller from 
- * Western Digital (WX-2 and related controllers).
- *
- * Original code written by Adri Koppes.
- * Patches from Gary Oliver for use with the Western Digital WX-2.
- * Patches from Harry McGavran for robust operation on turbo clones.
- * Patches from Mike Mitchell for WX-2 auto configure operation.
- *
- * The driver supports the following operations (using message format m2):
- *
- *	m_type	  DEVICE   PROC_NR	COUNT	 POSITION  ADRRESS
- * ----------------------------------------------------------------
- * |  DEV_OPEN  |         |         |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_CLOSE |         |         |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_READ  | device  | proc nr |  bytes  |	 offset | buf ptr |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_WRITE[D | device  | proc nr |  bytes  |	 offset | buf ptr |
- * |------------+---------+---------+---------+---------+---------|
- * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
- * ----------------------------------------------------------------
+/* This file contains the device dependent part of a driver for the WD
+ * winchester controller from Western Digital (WX-2 and related controllers).
+ * It was written by Adri Koppes.
  *
  * The file contains one entry point:
  *
- *	 winchester_task:	main entry when system is brought up
+ *	 xt_winchester_task:	main entry when system is brought up
  *
+ *
+ * Changes:
+ *	10 Apr 1987 by Gary Oliver: use with the Western Digital WX-2.
+ *		  ? by Harry McGavran: robust operation on turbo clones.
+ *		  ? by Mike Mitchell: WX-2 auto configure operation.
+ *	 2 May 1992 by Kees J. Bot: device dependent/independent split.
  */
 
 #include "kernel.h"
-#include <minix/callnr.h>
-#include <minix/com.h>
-#include <minix/partition.h>
+#include "driver.h"
 
-#define MAX_DRIVES         2	/* only one supported (hd0 - hd4) */
+#if ENABLE_XT_WINI
+
+/* If the DMA buffer is large enough then use it always. */
+#define USE_BUF		(DMA_BUF_SIZE > BLOCK_SIZE)
 
 /* I/O Ports used by winchester disk task. */
 #define WIN_DATA       0x320	/* winchester disk controller data register */
@@ -47,8 +35,8 @@
 #define DMA_ADDR       0x006	/* port for low 16 bits of DMA address */
 #define DMA_TOP	       0x082	/* port for top 4 bits of 20-bit DMA addr */
 #define DMA_COUNT      0x007	/* port for DMA count (count =	bytes - 1) */
-#define DMA_M2	       0x00C	/* DMA status port */
-#define DMA_M1	       0x00B	/* DMA status port */
+#define DMA_FLIPFLOP   0x00C	/* DMA byte pointer flop-flop */
+#define DMA_MODE       0x00B	/* DMA mode port */
 #define DMA_INIT       0x00A	/* DMA init port */
 
 /* Winchester disk controller command bytes. */
@@ -56,10 +44,10 @@
 #define WIN_SENSE	0x03	/* command for the controller to get its status */
 #define WIN_READ	0x08	/* command for the drive to read */
 #define WIN_WRITE	0x0a	/* command for the drive to write */
-#define WIN_SPECIFY	0x0C	/* command for the controller: accept params */
-#define WIN_ECC_READ	0x0D	/* command for the controller: read ecc len */
+#define WIN_SPECIFY	0x0C	/* command for the controller to accept params	*/
+#define WIN_ECC_READ	0x0D	/* command for the controller to read ecc length */
 
-#define DMA_INT		   3	/* Command with dma and interrupt */
+#define DMA_INT		   3 /* Command with dma and interrupt */
 #define INT		   2	/* Command with interrupt, no dma */
 #define NO_DMA_INT	   0	/* Command without dma and interrupt */
 
@@ -68,32 +56,32 @@
 #define DMA_WRITE	0x4B	/* DMA write opcode */
 
 /* Parameters for the disk drive. */
-#define SECTOR_SIZE	 512	/* physical sector size in bytes */
 #ifndef NR_SECTORS
 /* For RLL drives NR_SECTORS has to be defined in the makefile or in config.h.
  * There is some hope of getting it from the parameter table for these drives,
- * and then this driver should use wn_maxsec like at_wini.c.
+ * and then this driver should use wn_sectors like at_wini.c.
  * Unfortunately it is not standard in XT parameter tables.
  */
-#define NR_SECTORS	0x11	/* number of sectors per track */
+#define NR_SECTORS	  17	/* number of sectors per track */
 #endif
 
 /* Error codes */
-#define ERR		  -1	/* general error */
+#define ERR		 (-1)	/* general error */
+#define ERR_BAD_SECTOR	 (-2)	/* block marked bad detected */
 
 /* Miscellaneous. */
+#define MAX_DRIVES         2	/* this driver support two drives (hd0 - hd9) */
 #define MAX_ERRORS	   4	/* how often to try rd/wt before quitting */
 #define MAX_RESULTS	   4	/* max number of bytes controller returns */
-#define DEV_PER_DRIVE   (1 + NR_PARTITIONS)	/* whole drive & each partn */
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
+#define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
+#define NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
 #define MAX_WIN_RETRY  32000	/* max # times to try to output to WIN */
 #if AUTO_BIOS
-#define AUTO_PARAM     0x1AD	/* drive param table starts here in sect 0 */
+#define AUTO_PARAM     0x1AD	/* drive parameter table starts here in sect 0	*/
 #define AUTO_ENABLE	0x10	/* auto bios enabled bit from status reg */
-
-/* Some start up parameters in order to extract the drive parameter table
- * from the winchester. These should not need changed.
- */
+/* some start up parameters in order to extract the drive parameter table */
+/* from the winchester. these should not need changed. */
 #define AUTO_CYLS	 306	/* default number of cylinders */
 #define AUTO_HEADS	   4	/* default number of heads */
 #define AUTO_RWC	 307	/* default reduced write cylinder */
@@ -103,240 +91,376 @@
 #endif
 
 /* Variables. */
-PUBLIC int using_bios = FALSE;	/* this disk driver does not use the BIOS */
-
 PRIVATE struct wini {		/* main drive struct, one entry per drive */
-  int wn_opcode;		/* DEV_READ or DEV_WRITE */
-  int wn_procnr;		/* which proc wanted this operation? */
-  int wn_drive;			/* drive number addressed (<< 5) */
-  int wn_cylinder;		/* cylinder number addressed */
-  int wn_sector;		/* sector addressed */
-  int wn_head;			/* head number addressed */
-  int wn_heads;			/* maximum number of heads */
-  int wn_ctrl_byte;		/* Control byte for COMMANDS (10-Apr-87 GO) */
-  long wn_low;			/* lowest cylinder of partition */
-  long wn_size;			/* size of partition in blocks */
-  int wn_count;			/* byte count */
-  vir_bytes wn_address;		/* user virtual address */
-  char wn_results[MAX_RESULTS];	/* the controller can give lots of output */
-} wini[NR_DEVICES];
+  unsigned wn_cylinders;	/* number of cylinders */
+  unsigned wn_heads;		/* number of heads */
+  unsigned wn_reduced_wr;	/* first cylinder with reduced write current */
+  unsigned wn_precomp;		/* first cylinder with write precompensation */
+  unsigned wn_max_ecc;		/* maximum ECC burst length */
+  unsigned wn_ctlbyte;		/* control byte for COMMANDS (10-Apr-87 GO) */
+  unsigned wn_open_ct;		/* in-use count */
+  struct device wn_part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
+  struct device wn_subpart[SUB_PER_DRIVE]; /* subpartititions: hd[1-4][a-d] */
+} wini[MAX_DRIVES], *w_wn;
 
-PRIVATE int w_need_reset = FALSE; /* set to 1 when controller must be reset */
-PRIVATE int nr_drives;		 /* Number of drives */
+PRIVATE struct trans {
+  struct iorequest_s *tr_iop;	/* belongs to this I/O request */
+  unsigned long tr_block;	/* first sector to transfer */
+  unsigned tr_count;		/* byte count */
+  phys_bytes tr_phys;		/* user physical address */
+  phys_bytes tr_dma;		/* DMA physical address */
+} wtrans[NR_IOREQS];
 
-PRIVATE message w_mess;		/* message buffer for in and out */
+PRIVATE int w_need_reset = FALSE;	/* set when controller must be reset */
+PRIVATE int nr_drives;			/* Number of drives */
+PRIVATE int w_switches;			/* Drive type switches */
+PRIVATE struct trans *w_tp;		/* to add transfer requests */
+PRIVATE unsigned w_count;		/* number of bytes to transfer */
+PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
+PRIVATE int w_opcode;			/* DEV_READ or DEV_WRITE */
+PRIVATE int w_drive;			/* selected drive */
+PRIVATE struct device *w_dv;		/* device's base and size */
+PRIVATE char w_results[MAX_RESULTS];/* the controller can give lots of output */
 
-PRIVATE int command[6];		/* Common command block */
 
-PRIVATE unsigned char buf[BLOCK_SIZE] = { 0 };
-				/* Buffer used by the startup routine */
-				/* Initialized to try to avoid DMA wrap. */
-
-PRIVATE struct param {
-	int nr_cyl;		/* Number of cylinders */
-	int nr_heads;		/* Number of heads */
-	int reduced_wr;		/* First cylinder with reduced write current */
-	int wr_precomp;		/* First cylinder with write precompensation */
-	int max_ecc;		/* Maximum ECC burst length */
-	int ctrl_byte;		/* Copied control-byte from bios tables */
-} param0, param1;
-
-FORWARD _PROTOTYPE( int check_init, (void) );
-FORWARD _PROTOTYPE( int com_out, (int mode) );
-FORWARD _PROTOTYPE( void copy_param, (unsigned char *src, struct param *dest));
-FORWARD _PROTOTYPE( void copy_prt, (int base_dev) );
-FORWARD _PROTOTYPE( int  hd_wait, (int bits) );
-FORWARD _PROTOTYPE( void init_params, (void) );
-FORWARD _PROTOTYPE( int old_win_results, (struct wini *wn) );
-FORWARD _PROTOTYPE( int read_ecc, (void) );
-FORWARD _PROTOTYPE( void sort, (struct wini wn[]) );
-FORWARD _PROTOTYPE( int w_do_rdwt, (message *m_ptr) );
-FORWARD _PROTOTYPE( void w_dma_setup, (struct wini *wn) );
-FORWARD _PROTOTYPE( int w_reset, (void) );
-FORWARD _PROTOTYPE( int w_transfer, (struct wini *wn) );
-FORWARD _PROTOTYPE( void w_wait_int, (void) );
+FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
+FORWARD _PROTOTYPE( char *w_name, (void) );
+FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
+FORWARD _PROTOTYPE( int w_finish, (void) );
+FORWARD _PROTOTYPE( void w_dma_setup, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( int w_transfer, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( int win_results, (void) );
 FORWARD _PROTOTYPE( void win_out, (int val) );
-FORWARD _PROTOTYPE( int win_specify, (int drive, struct param *parmp) );
-FORWARD _PROTOTYPE( int win_results, (struct wini *wn) );
+FORWARD _PROTOTYPE( int w_reset, (void) );
+FORWARD _PROTOTYPE( int w_handler, (int irq) );
+FORWARD _PROTOTYPE( int win_specify, (int drive) );
+FORWARD _PROTOTYPE( int check_init, (void) );
+FORWARD _PROTOTYPE( int read_ecc, (void) );
+FORWARD _PROTOTYPE( int hd_wait, (int bits) );
+FORWARD _PROTOTYPE( int com_out, (int mode, u8_t *command) );
+FORWARD _PROTOTYPE( void init_params, (void) );
+FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( void w_init, (void) );
+FORWARD _PROTOTYPE( void copy_param, (char *src, struct wini *dest) );
+FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
 
-/*=========================================================================*
- *				winchester_task	 			   * 
- *=========================================================================*/
-PUBLIC void winchester_task()
+
+/* Entry points to this driver. */
+PRIVATE struct driver w_dtab = {
+  w_name,	/* current device's name */
+  w_do_open,	/* open or mount request, initialize device */
+  w_do_close,	/* release device */
+  do_diocntl,	/* get or set a partition's geometry */
+  w_prepare,	/* prepare for I/O on a given minor device */
+  w_schedule,	/* precompute cylinder, head, sector, etc. */
+  w_finish,	/* do the I/O */
+  nop_cleanup,	/* no cleanup needed */
+  w_geometry	/* tell the geometry of the disk */
+};
+
+
+/*===========================================================================*
+ *				xt_winchester_task			     *
+ *===========================================================================*/
+PUBLIC void xt_winchester_task()
 {
-/* Main program of the winchester disk driver task. */
-
-  int r, caller, proc_nr;
-
-  /* First initialize the controller */
   init_params();
 
-  /* Here is the main loop of the disk task.  It waits for a message, carries
-   * it out, and sends a reply.
-   */
+  put_irq_handler(XT_WINI_IRQ, w_handler);
+  enable_irq(XT_WINI_IRQ);	/* ready for winchester interrupts */
 
-  while (TRUE) {
-	/* First wait for a request to read or write a disk block. */
-	receive(ANY, &w_mess);	/* get a request to do some work */
-	if (w_mess.m_source < 0) {
-		printf("winchester task got message from %d ",w_mess.m_source);
-		continue;
-	}
-	caller = w_mess.m_source;
-	proc_nr = w_mess.PROC_NR;
-
-	/* Now carry out the work. */
-	switch(w_mess.m_type) {
-	    case DEV_OPEN:	r = OK;				  break;
-	    case DEV_CLOSE:	r = OK;				  break;
-
-	    case DEV_READ:
-	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
-
-	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
-		default:		r = EINVAL;		  break;
-	}
-
-	/* Finally, prepare and send the reply message. */
-	w_mess.m_type = TASK_REPLY;	
-	w_mess.REP_PROC_NR = proc_nr;
-
-	w_mess.REP_STATUS = r;	/* # of bytes transferred or error code */
-	send(caller, &w_mess);	/* send reply to caller */
-  }
+  driver_task(&w_dtab);
 }
 
 
-/*==========================================================================*
- *				w_do_rdwt	 			    * 
- *==========================================================================*/
-PRIVATE int w_do_rdwt(m_ptr)
-message *m_ptr;			/* pointer to read or write w_message */
+/*===========================================================================*
+ *				w_prepare				     *
+ *===========================================================================*/
+PRIVATE struct device *w_prepare(device)
+int device;
 {
-/* Carry out a read or write request from the disk. */
-  register struct wini *wn;
-  int r, device, errors = 0;
-  long sector, s;
+/* Prepare for I/O on a device. */
 
-  /* Decode the w_message parameters. */
-  device = m_ptr->DEVICE;
-  if (device < 0 || device >= NR_DEVICES)
-	return(EIO);
-  if (m_ptr->COUNT != BLOCK_SIZE)
-	return(EINVAL);
-  wn = &wini[device];		/* 'wn' points to entry for this drive */
+  /* Nothing to transfer as yet. */
+  w_count = 0;
 
-  wn->wn_opcode = m_ptr->m_type;	/* DEV_READ or DEV_WRITE */
-  if (m_ptr->POSITION % BLOCK_SIZE != 0)
-	return(EINVAL);
-  s = m_ptr->POSITION;
-  if (s < 0 || s > wn->wn_size * SECTOR_SIZE - BLOCK_SIZE)
-	return(0);
-  sector = s/SECTOR_SIZE + wn->wn_low;
-  wn->wn_cylinder = sector / (wn->wn_heads * NR_SECTORS);
-  wn->wn_sector =  (sector % NR_SECTORS);
-  wn->wn_head = (sector % (wn->wn_heads * NR_SECTORS) )/NR_SECTORS;
-  wn->wn_count = m_ptr->COUNT;
-  wn->wn_address = (vir_bytes) m_ptr->ADDRESS;
-  wn->wn_procnr = m_ptr->PROC_NR;
+  if (device < NR_DEVICES) {			/* hd0, hd1, ... */
+	w_drive = device / DEV_PER_DRIVE;	/* save drive number */
+	w_wn = &wini[w_drive];
+	w_dv = &w_wn->wn_part[device % DEV_PER_DRIVE];
+  } else
+  if ((unsigned) (device -= MINOR_hd1a) < NR_SUBDEVS) {	/* hd1a, hd1b, ... */
+	w_drive = device / SUB_PER_DRIVE;
+	w_wn = &wini[w_drive];
+	w_dv = &w_wn->wn_subpart[device % SUB_PER_DRIVE];
+  } else
+	return(NIL_DEV);
 
-  /* This loop allows a failed operation to be repeated. */
-  while (errors <= MAX_ERRORS) {
-	errors++;		/* increment count once per loop cycle */
-	if (errors >= MAX_ERRORS)
-		return(EIO);
+  return(w_drive < nr_drives ? w_dv : NIL_DEV);
+}
+
+
+/*===========================================================================*
+ *				w_name					     *
+ *===========================================================================*/
+PRIVATE char *w_name()
+{
+/* Return a name for the current device. */
+  static char name[] = "xt-hd5";
+
+  name[5] = '0' + w_drive * DEV_PER_DRIVE;
+  return name;
+}
+
+
+/*===========================================================================*
+ *				w_schedule				     *
+ *===========================================================================*/
+PRIVATE int w_schedule(proc_nr, iop)
+int proc_nr;			/* process doing the request */
+struct iorequest_s *iop;	/* pointer to read or write request */
+{
+/* Gather I/O requests on consecutive blocks so they may be read/written
+ * in one command if using a buffer.  Check and gather all the requests
+ * and try to finish them as fast as possible if unbuffered.
+ */
+  int r, opcode;
+  unsigned long pos;
+  unsigned nbytes, count, dma_count;
+  unsigned long block;
+  phys_bytes user_phys, dma_phys;
+
+  /* This many bytes to read/write */
+  nbytes = iop->io_nbytes;
+  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+
+  /* From/to this position on the device */
+  pos = iop->io_position;
+  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
+
+  /* To/from this user address */
+  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
+  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
+
+  /* Read or write? */
+  opcode = iop->io_request & ~OPTIONAL_IO;
+
+  /* Which block on disk and how close to EOF? */
+  if (pos >= w_dv->dv_size) return(OK);		/* At EOF */
+  if (pos + nbytes > w_dv->dv_size) nbytes = w_dv->dv_size - pos;
+  block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
+
+  if (USE_BUF && w_count > 0 && block != w_nextblock) {
+	/* This new request can't be chained to the job being built */
+	if ((r = w_finish()) != OK) return(r);
+  }
+
+  /* The next consecutive block */
+  if (USE_BUF) w_nextblock = block + (nbytes >> SECTOR_SHIFT);
+
+  /* While there are "unscheduled" bytes in the request: */
+  do {
+	count = nbytes;
+
+	if (USE_BUF) {
+		if (w_count == DMA_BUF_SIZE) {
+			/* Can't transfer more than the buffer allows. */
+			if ((r = w_finish()) != OK) return(r);
+		}
+
+		if (w_count + count > DMA_BUF_SIZE)
+			count = DMA_BUF_SIZE - w_count;
+	} else {
+		if (w_tp == wtrans + NR_IOREQS) {
+			/* All transfer slots in use. */
+			if ((r = w_finish()) != OK) return(r);
+		}
+	}
+
+	if (w_count == 0) {
+		/* The first request in a row, initialize. */
+		w_opcode = opcode;
+		w_tp = wtrans;
+	}
+
+	if (USE_BUF) {
+		dma_phys = tmp_phys + w_count;
+	} else {
+		/* Memory chunk to DMA. */
+		dma_phys = user_phys;
+		dma_count = dma_bytes_left(dma_phys);
+
+		if (dma_count < count) {
+			/* Nearing a 64K boundary. */
+			if (dma_count >= SECTOR_SIZE) {
+				/* Can read a few sectors before hitting the
+				 * boundary.
+				 */
+				count = dma_count & ~SECTOR_MASK;
+			} else {
+				/* Must use the special buffer for this. */
+				count = SECTOR_SIZE;
+				dma_phys = tmp_phys;
+			}
+		}
+	}
+
+	/* Store I/O parameters */
+	w_tp->tr_iop = iop;
+	w_tp->tr_block = block;
+	w_tp->tr_count = count;
+	w_tp->tr_phys = user_phys;
+	w_tp->tr_dma = dma_phys;
+
+	/* Update counters */
+	w_tp++;
+	w_count += count;
+	block += count >> SECTOR_SHIFT;
+	user_phys += count;
+	nbytes -= count;
+  } while (nbytes > 0);
+
+  return(OK);
+}
+
+
+/*===========================================================================*
+ *				w_finish				     *
+ *===========================================================================*/
+PRIVATE int w_finish()
+{
+/* Carry out the I/O requests gathered in wtrans[]. */
+
+  struct trans *tp = wtrans, *tp2;
+  unsigned count;
+  int r, errors = 0, many = USE_BUF;
+
+  if (w_count == 0) return(OK);	/* Spurious finish. */
+
+  do {
+	if (w_opcode == DEV_WRITE) {
+		tp2 = tp;
+		count = 0;
+		do {
+			if (USE_BUF || tp2->tr_dma == tmp_phys) {
+				phys_copy(tp2->tr_phys, tp2->tr_dma,
+						(phys_bytes) tp2->tr_count);
+			}
+			count += tp2->tr_count;
+			tp2++;
+		} while (many && count < w_count);
+	} else {
+		count = many ? w_count : tp->tr_count;
+	}
 
 	/* First check to see if a reset is needed. */
 	if (w_need_reset) w_reset();
 
 	/* Now set up the DMA chip. */
-	w_dma_setup(wn);
+	w_dma_setup(tp, count);
 
 	/* Perform the transfer. */
-	r = w_transfer(wn);
-	if (r == OK) break;	/* if successful, exit loop */
+	r = w_transfer(tp, count);
 
-  }
+	if (r != OK) {
+		/* An error occurred, try again block by block unless */
+		if (r == ERR_BAD_SECTOR || ++errors == MAX_ERRORS)
+			return(tp->tr_iop->io_nbytes = EIO);
 
-  return(r == OK ? BLOCK_SIZE : EIO);
+		/* Reset if halfway, but bail out if optional I/O. */
+		if (errors == MAX_ERRORS / 2) {
+			w_need_reset = TRUE;
+			if (tp->tr_iop->io_request & OPTIONAL_IO)
+				return(tp->tr_iop->io_nbytes = EIO);
+		}
+		many = 0;
+		continue;
+	}
+	errors = 0;
+
+	w_count -= count;
+
+	do {
+		if (w_opcode == DEV_READ) {
+			if (USE_BUF || tp->tr_dma == tmp_phys) {
+				phys_copy(tp->tr_dma, tp->tr_phys,
+						(phys_bytes) tp->tr_count);
+			}
+		}
+		tp->tr_iop->io_nbytes -= tp->tr_count;
+		count -= tp->tr_count;
+		tp++;
+	} while (count > 0);
+  } while (w_count > 0);
+
+  return(OK);
 }
 
 
 /*==========================================================================*
- *				w_dma_setup 				    * 
+ *				w_dma_setup				    *
  *==========================================================================*/
-PRIVATE void w_dma_setup(wn)
-struct wini *wn;		/* pointer to the drive struct */
+PRIVATE void w_dma_setup(tp, count)
+struct trans *tp;		/* pointer to the transfer struct */
+unsigned count;			/* bytes to transfer */
 {
-/* The IBM PC can perform DMA operations by using the DMA chip.	 To use it,
+/* The IBM PC can perform DMA operations by using the DMA chip.  To use it,
  * the DMA (Direct Memory Access) chip is loaded with the 20-bit memory address
  * to by read from or written to, the byte count minus 1, and a read or write
  * opcode.  This routine sets up the DMA chip.  Note that the chip is not
- * capable of doing a DMA across a 64K boundary (e.g., you can't read a 
+ * capable of doing a DMA across a 64K boundary (e.g., you can't read a
  * 512-byte block starting at physical address 65520).
  */
 
-  int mode, low_addr, high_addr, top_addr, low_ct, high_ct, top_end;
-  vir_bytes vir, ct;
-  phys_bytes user_phys;
-
-  mode = (wn->wn_opcode == DEV_READ ? DMA_READ : DMA_WRITE);
-  vir = (vir_bytes) wn->wn_address;
-  ct = (vir_bytes) wn->wn_count;
-  user_phys = numap(wn->wn_procnr, vir, ct);
-  low_addr	= (int) user_phys & BYTE;
-  high_addr = (int) (user_phys >>  8) & BYTE;
-  top_addr	= (int) (user_phys >> 16) & BYTE;
-  low_ct  = (int) (ct - 1) & BYTE;
-  high_ct = (int) ( (ct - 1) >> 8) & BYTE;
-
-  /* Check to see if the transfer will require the DMA address counter to
-   * go from one 64K segment to another.  If so, do not even start it, since
-   * the hardware does not carry from bit 15 to bit 16 of the DMA address.
-   * Also check for bad buffer address.	 These errors mean FS contains a bug.
-   */
-  if (user_phys == 0)
-	  panic("FS gave winchester disk driver bad addr", (int) vir);
-  top_end = (int) (((user_phys + ct - 1) >> 16) & BYTE);
-  if (top_end != top_addr) panic("Trying to DMA across 64K boundary",top_addr);
-
-  /* Now set up the DMA registers. */
-  out_byte(DMA_M2, mode);	/* set the DMA mode */
-  out_byte(DMA_M1, mode);	/* set it again */
-  out_byte(DMA_ADDR, low_addr);	/* output low-order 8 bits */
-  out_byte(DMA_ADDR, high_addr);/* output next 8 bits */
-  out_byte(DMA_TOP, top_addr);	/* output highest 4 bits */
-  out_byte(DMA_COUNT, low_ct);	/* output low 8 bits of count - 1 */
-  out_byte(DMA_COUNT, high_ct);	/* output high 8 bits of count - 1 */
+  /* Set up the DMA registers. */
+  out_byte(DMA_FLIPFLOP, 0);		/* write anything to reset it */
+  out_byte(DMA_MODE, w_opcode == DEV_WRITE ? DMA_WRITE : DMA_READ);
+  out_byte(DMA_ADDR, (int) tp->tr_dma >>  0);
+  out_byte(DMA_ADDR, (int) tp->tr_dma >>  8);
+  out_byte(DMA_TOP, (int) (tp->tr_dma >> 16));
+  out_byte(DMA_COUNT, (count - 1) >> 0);
+  out_byte(DMA_COUNT, (count - 1) >> 8);
 }
+
 
 /*=========================================================================*
  *				w_transfer				   *
  *=========================================================================*/
-PRIVATE int w_transfer(wn)
-register struct wini *wn;	/* pointer to the drive struct */
+PRIVATE int w_transfer(tp, count)
+struct trans *tp;		/* pointer to the transfer struct */
+unsigned count;			/* transferring count bytes */
 {
-/* The drive is now on the proper cylinder.	 Read or write 1 block. */
+/* Read or write count bytes starting with tp->tr_block. */
 
-  /* The command is issued by outputing 6 bytes to the controller chip. */
-  command[0] = (wn->wn_opcode == DEV_READ ? WIN_READ : WIN_WRITE);
-  command[1] = wn->wn_head | wn->wn_drive;
-  command[2] = (((wn->wn_cylinder & 0x0300) >> 2) | wn->wn_sector);
-  command[3] = (wn->wn_cylinder & 0xFF);
-  command[4] = BLOCK_SIZE/SECTOR_SIZE;
-  command[5] = wn->wn_ctrl_byte;
+  unsigned cylinder, sector, head, secspcyl = w_wn->wn_heads * NR_SECTORS;
+  u8_t command[6];
+  message mess;
 
-  if (com_out(DMA_INT) != OK)
+  cylinder = tp->tr_block / secspcyl;
+  head = (tp->tr_block % secspcyl) / NR_SECTORS;
+  sector = tp->tr_block % NR_SECTORS;
+
+  /* The command is issued by outputting 6 bytes to the controller chip. */
+  command[0] = w_opcode == DEV_WRITE ? WIN_WRITE : WIN_READ;
+  command[1] = head | (w_drive << 5);
+  command[2] = ((cylinder & 0x0300) >> 2) | sector;
+  command[3] = cylinder & 0xFF;
+  command[4] = count >> SECTOR_SHIFT;
+  command[5] = w_wn->wn_ctlbyte;
+
+  if (com_out(DMA_INT, command) != OK)
 	return(ERR);
 
   out_byte(DMA_INIT, 3);	/* initialize DMA */
+
   /* Block, waiting for disk interrupt. */
-  w_wait_int();
+  receive(HARDWARE, &mess);
 
   /* Get controller status and check for errors. */
-  if (win_results(wn) == OK)
+  if (win_results() == OK)
 	return(OK);
-  if ((wn->wn_results[0] & 63) == 24)
+  if ((w_results[0] & 63) == 24)
 	read_ecc();
   else
 	w_need_reset = TRUE;
@@ -345,23 +469,22 @@ register struct wini *wn;	/* pointer to the drive struct */
 
 
 /*==========================================================================*
- *				old_win_results				    * 
+ *				win_results				    *
  *==========================================================================*/
-PRIVATE int old_win_results(wn)
-register struct wini *wn;	/* pointer to the drive struct */
+PRIVATE int win_results()
 {
 /* Extract results from the controller after an operation. */
 
-  register int i;
-  int status;
+  int i, status;
+  u8_t command[6];
 
   status = in_byte(WIN_DATA);
   out_byte(WIN_DMA, 0);
   if (!(status & 2))		/* Test "error" bit */
 	return(OK);
   command[0] = WIN_SENSE;
-  command[1] = wn->wn_drive;
-  if (com_out(NO_DMA_INT) != OK)
+  command[1] = w_drive << 5;
+  if (com_out(NO_DMA_INT, command) != OK)
 	return(ERR);
 
   /* Loop, extracting bytes from WIN */
@@ -369,14 +492,14 @@ register struct wini *wn;	/* pointer to the drive struct */
 	if (hd_wait(WST_REQ) != OK)
 		return(ERR);
 	status = in_byte(WIN_DATA);
-	wn->wn_results[i] = status & BYTE;
+	w_results[i] = status & BYTE;
   }
-  if(hd_wait(WST_REQ) != OK)	/* Missing from			*/
+  if (hd_wait(WST_REQ) != OK)	/* Missing from			*/
 	 return (ERR);		/* Original.  11-Apr-87 G.O.	*/
 
   status = in_byte(WIN_DATA);	 /* Read "error" flag */
 
-  if(((status & 2) != 0) || (wn->wn_results[0] & 0x3F)) {
+  if (((status & 2) != 0) || (w_results[0] & 0x3F)) {
 	return(ERR);
   } else
 	return(OK);
@@ -384,10 +507,10 @@ register struct wini *wn;	/* pointer to the drive struct */
 
 
 /*===========================================================================*
- *				win_out					     * 
+ *				win_out					     *
  *===========================================================================*/
 PRIVATE void win_out(val)
-int val;			/* write byte to winchester disk controller */
+int val;		/* write this byte to winchester disk controller */
 {
 /* Output a byte to the controller.  This is not entirely trivial, since you
  * can only write to it when it is listening, and it decides when to listen.
@@ -401,186 +524,175 @@ int val;			/* write byte to winchester disk controller */
 	r = in_byte(WIN_STATUS);
   } while((r & (WST_REQ | WST_BUSY)) == WST_BUSY);
 
-	out_byte(WIN_DATA, val);
+  out_byte(WIN_DATA, val);
 }
 
+
 /*===========================================================================*
- *				w_reset					     * 
+ *				w_reset					     *
  *===========================================================================*/
 PRIVATE int w_reset()
 {
-/* Issue a reset to the controller.	 This is done after any catastrophe,
+/* Issue a reset to the controller.  This is done after any catastrophe,
  * like the controller refusing to respond.
  */
 
-  int r = 0, i;
+  int r, i, drive;
+  u8_t command[6];
+  message mess;
 
   /* Strobe reset bit low. */
   out_byte(WIN_STATUS, 0);
 
-  for(i = MAX_WIN_RETRY/10; i; --i)
-	;	/* Spin loop for a while */
+  milli_delay(1);	/* Wait for a while */
 
   out_byte(WIN_SELECT, 0);	/* Issue select pulse */
   for (i = 0; i < MAX_WIN_RETRY; i++) {
 	r = in_byte(WIN_STATUS);
-	if(r & 0x30)		/* What is 10? 20 = INTERRUPT */
+	if (r & 0x30)		/* What is 10? 20 = INTERRUPT */
 		return (ERR);
 
-	if((r & (WST_BUSY | WST_BUS | WST_REQ)) ==
+	if ((r & (WST_BUSY | WST_BUS | WST_REQ)) ==
 		(WST_BUSY | WST_BUS | WST_REQ))
 		break;
   }
 
   if (i == MAX_WIN_RETRY) {
-	printf("Hard disk won't reset, status = %x\n", r);
+	printf("%s: reset failed, status = %x\n", w_name(), r);
 	return(ERR);
   }
 
   /* Reset succeeded.  Tell WIN drive parameters. */
   w_need_reset = FALSE;
 
-  if(win_specify(0, &param0) != OK)
-	return (ERR);
+  for (drive = 0; drive < nr_drives; drive++) {
+	if (win_specify(drive) != OK)
+		return (ERR);
 
-
-  if ((nr_drives > 1) && (win_specify(1, &param1) != OK))
-	return(ERR);
-
-
-  for (i=0; i<nr_drives; i++) {
 	command[0] = WIN_RECALIBRATE;
-	command[1] = i << 5;
-	command[5] = wini[i * DEV_PER_DRIVE].wn_ctrl_byte;
+	command[1] = drive << 5;
+	command[5] = wini[drive].wn_ctlbyte;
 
-
-	if (com_out(INT) != OK)
+	if (com_out(INT, command) != OK)
 		return(ERR);
 
-	w_wait_int();
+	receive(HARDWARE, &mess);
 
-	if (win_results(&wini[i * DEV_PER_DRIVE]) != OK) {
-		w_need_reset = TRUE;
-		return(ERR);
+	if (win_results() != OK) {
+		/* No actual drive present? */
+		nr_drives = drive;
 	}
-	 }
-	 return(OK);
+  }
+  return(nr_drives > 0 ? OK : ERR);
 }
 
 
-/*===========================================================================*
- *				w_wait_int				     *
- *===========================================================================*/
-PRIVATE void w_wait_int()
+/*==========================================================================*
+ *				w_handler				    *
+ *==========================================================================*/
+PRIVATE int w_handler(irq)
+int irq;
 {
-   /*DEBUG: loop looking for 0x20 in status (I don't know what that is!!) */
-   /*		 10-Apr-87. G. Oliver					  */
-   int r, i; /* Some local storage */
+/* Disk interrupt, send message to winchester task and reenable interrupts. */
 
-   receive(HARDWARE, &w_mess);
+  int r, i;
 
-   out_byte(DMA_INIT, 0x07);	/* Disable int from DMA */
+  out_byte(DMA_INIT, 0x07);	/* Disable int from DMA */
 
-   for(i=0; i<MAX_WIN_RETRY; ++i) {
+  for (i = 0; i < MAX_WIN_RETRY; ++i) {
 	r = in_byte(WIN_STATUS);
-	if(r & WST_INTERRUPT)
+	if (r & WST_INTERRUPT)
 		break;		/* Exit if end of int */
   }
 
-#if MONITOR
-   if (i > 10) {		/* arbitrary limit below which we don't care */
-	if(i == MAX_WIN_RETRY)
-		printf("wini: timeout waiting for INTERRUPT status\n");
-	else
-		printf("wini: %d loops waiting for INTERRUPT status\n", i);
-   }
-#endif /* MONITOR */
+  interrupt(WINCHESTER);
+  return 1;
 }
 
 
-/*===========================================================================*
- *				win_specify				     *
- *===========================================================================*/
-PRIVATE int win_specify(drive, paramp)
+/*============================================================================*
+ *				win_specify				      *
+ *============================================================================*/
+PRIVATE int win_specify(drive)
 int drive;
-struct param *paramp;
 {
+  struct wini *wn = &wini[drive];
+  u8_t command[6];
+
   command[0] = WIN_SPECIFY;		/* Specify some parameters */
   command[1] = drive << 5;		/* Drive number */
 
-	if (com_out(NO_DMA_INT) != OK)		/* Output command block */
-		return(ERR);
+  if (com_out(NO_DMA_INT, command) != OK)	/* Output command block */
+	return(ERR);
 
 	/* No. of cylinders (high byte) */
-  win_out(paramp->nr_cyl >> 8);
+  win_out(wn->wn_cylinders >> 8);
 
 	/* No. of cylinders (low byte) */
-  win_out(paramp->nr_cyl);
+  win_out(wn->wn_cylinders);
 
 	/* No. of heads */
-  win_out(paramp->nr_heads);
+  win_out(wn->wn_heads);
 
 	/* Start reduced write (high byte) */
-  win_out(paramp->reduced_wr >> 8);
+  win_out(wn->wn_reduced_wr >> 8);
 
 	/* Start reduced write (low byte) */
-  win_out(paramp->reduced_wr);
+  win_out(wn->wn_reduced_wr);
 
 	/* Start write precompensation (high byte) */
-  win_out(paramp->wr_precomp >> 8);
+  win_out(wn->wn_precomp >> 8);
 
 	/* Start write precompensation (low byte) */
-  win_out(paramp->wr_precomp);
+  win_out(wn->wn_precomp);
 
 	/* Ecc burst length */
-  win_out(paramp->max_ecc);
+  win_out(wn->wn_max_ecc);
 
-	if (check_init() != OK) {  /* See if controller accepted parameters */
-		w_need_reset = TRUE;
-		return(ERR);
-	}
-  else
-  return(OK);
+  if (check_init() != OK) {  /* See if controller accepted parameters */
+	w_need_reset = TRUE;
+	return(ERR);
+  } else
+	return(OK);
 }
 
-/*===========================================================================*
- *				check_init				     *
- *===========================================================================*/
+
+/*============================================================================*
+ *				check_init				      *
+ *============================================================================*/
 PRIVATE int check_init()
 {
 /* Routine to check if controller accepted the parameters */
   int r, s;
 
   if (hd_wait(WST_REQ | WST_INPUT) == OK) {
-	  r = in_byte(WIN_DATA);
+	r = in_byte(WIN_DATA);
 
-	   do {
+	do {
 		s = in_byte(WIN_STATUS);
-	   } while(s & WST_BUSY);		/* Loop while still busy */
+	} while(s & WST_BUSY);		/* Loop while still busy */
 
-	   if (r & 2)		/* Test error bit */
-		{
+	if (r & 2)		/* Test error bit */
 		return(ERR);
-		}
-	  else
+	else
 		return(OK);
   } else
-	{
 	return (ERR);	/* Missing from original: 11-Apr-87 G.O. */
-  }
 }
 
-/*===========================================================================*
- *				read_ecc				     *
- *===========================================================================*/
+
+/*============================================================================*
+ *				read_ecc				      *
+ *============================================================================*/
 PRIVATE int read_ecc()
 {
 /* Read the ecc burst-length and let the controller correct the data */
 
   int r;
+  u8_t command[6];
 
   command[0] = WIN_ECC_READ;
-  if (com_out(NO_DMA_INT) == OK && hd_wait(WST_REQ) == OK) {
+  if (com_out(NO_DMA_INT, command) == OK && hd_wait(WST_REQ) == OK) {
 	r = in_byte(WIN_DATA);
 	if (hd_wait(WST_REQ) == OK) {
 		r = in_byte(WIN_DATA);
@@ -591,16 +703,16 @@ PRIVATE int read_ecc()
   return(ERR);
 }
 
-/*===========================================================================*
- *				hd_wait					     *
- *===========================================================================*/
+
+/*============================================================================*
+ *				hd_wait					      *
+ *============================================================================*/
 PRIVATE int hd_wait(bits)
-register int bits;
+int bits;
 {
 /* Wait until the controller is ready to receive a command or send status */
 
-  register int i = 0;
-  int r;
+  int r, i = 0;
 
   do {
 	r = in_byte(WIN_STATUS) & bits;
@@ -613,277 +725,233 @@ register int bits;
 	return(OK);
 }
 
-/*===========================================================================*
- *				com_out					     *
- *===========================================================================*/
-PRIVATE int com_out(mode)
+
+/*============================================================================*
+ *				com_out					      *
+ *============================================================================*/
+PRIVATE int com_out(mode, commandp)
 int mode;
+u8_t *commandp;
 {
 /* Output the command block to the winchester controller and return status */
 
-	register int i;
-	int r;
+  int i, r;
 
-	out_byte(WIN_DMA, mode);
-	out_byte(WIN_SELECT, mode);
-	for (i=0; i<MAX_WIN_RETRY; i++) {
-		r = in_byte(WIN_STATUS);
-		if (r & WST_BUSY)
-			break;
-	}
+  out_byte(WIN_DMA, mode);
+  out_byte(WIN_SELECT, mode);
+  for (i = 0; i < MAX_WIN_RETRY; i++) {
+	r = in_byte(WIN_STATUS);
+	if (r & WST_BUSY)
+		break;
+  }
 
-	if (i == MAX_WIN_RETRY) {
-		w_need_reset = TRUE;
-		return(ERR);
-	}
+  if (i == MAX_WIN_RETRY) {
+	w_need_reset = TRUE;
+	return(ERR);
+  }
 
 
-	for (i=0; i<6; i++) {
-		if(hd_wait(WST_REQ) != OK)
-			break;		/* No data request pending */
+  for (i = 0; i < 6; i++) {
+	if (hd_wait(WST_REQ) != OK)
+		break;		/* No data request pending */
 
-		r = in_byte(WIN_STATUS);
+	r = in_byte(WIN_STATUS);
 
-		if((r & (WST_BUSY | WST_BUS | WST_INPUT)) !=
-			(WST_BUSY | WST_BUS))
-			break;
+	if ((r & (WST_BUSY | WST_BUS | WST_INPUT)) !=
+		(WST_BUSY | WST_BUS))
+		break;
 
-		out_byte(WIN_DATA, command[i]);
-	}
+	out_byte(WIN_DATA, commandp[i]);
+  }
 
-	if(i != 6) {
-		return(ERR);
-	}
-	else
-		return(OK);
+  if (i != 6)
+	return(ERR);
+  else
+	return(OK);
 }
 
-/*============================================================================*
- *				init_params				      *
- *===========================================================================*/
 
+/*==========================================================================*
+ *				init_params				    *
+ *==========================================================================*/
 PRIVATE void init_params()
 {
-/* This routine is called at startup to initialize the partition table,
- * the number of drives and the controller
-*/
-  unsigned int i, segment, offset;
-  int type_0, type_1;
-  phys_bytes address;
+/* This routine is called at startup to initialize the number of drives and
+ * the controller.
+ */
+  unsigned int drive, segment, offset;
+  int dtype;
+  phys_bytes address, buf_phys;
+  char buf[16];
 
   /* Get the number of drives from the bios */
-  phys_copy(0x475L, umap(proc_ptr, D, (vir_bytes) buf, 1), 1L);
-  nr_drives = *buf & 0xFF;
+  buf_phys = vir2phys(buf);
+  phys_copy(0x475L, buf_phys, 1L);
+  nr_drives = buf[0] & 0xFF;
   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
   /* Read the switches from the controller */
-  i = in_byte(WIN_SELECT);
+  w_switches = in_byte(WIN_SELECT);
 
 #if AUTO_BIOS
-  /* Get the drive parameters from sector zero of the drive if the
-   * autoconfig mode of the controller has been selected.
-   */
-  if(i & AUTO_ENABLE) {
-	/* Set up some phony parameters so that we can read the first sector
-	 * from the winchester. All drives will have one cylinder and one head
-	 * but set up initially to the mini scribe drives from ibm
+  /* If no auto configuration or not enabled then go to the ROM. */
+  if (!(w_switches & AUTO_ENABLE)) {
+#endif
+	for (drive = 0; drive < nr_drives; drive++) {
+		/* Calculate the drive type */
+		dtype = (w_switches >> (2 * drive)) & 03;
+
+		/* Copy the parameter vector from the saved vector table */
+		offset = vec_table[2 * WINI_0_PARM_VEC];
+		segment = vec_table[2 * WINI_0_PARM_VEC + 1];
+
+		/* Calculate the parameters' address and copy them to buf */
+		address = hclick_to_physb(segment) + offset + 16 * dtype;
+		phys_copy(address, buf_phys, 16L);
+
+		/* Copy the parameters to the structure of the drive. */
+		copy_param(buf, &wini[drive]);
+	}
+#if AUTO_BIOS
+  }
+#endif
+}
+
+
+/*============================================================================*
+ *				w_do_open				      *
+ *============================================================================*/
+PRIVATE int w_do_open(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device open: Initialize the controller and read the partition table. */
+
+  static int init_done = FALSE;
+
+  if (!init_done) { w_init(); init_done = TRUE; }
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+
+  if (w_wn->wn_open_ct++ == 0) {
+	/* Partition the disk. */
+	partition(&w_dtab, w_drive * DEV_PER_DRIVE, P_PRIMARY);
+  }
+  return(OK);
+}
+
+
+/*============================================================================*
+ *				w_do_close				      *
+ *============================================================================*/
+PRIVATE int w_do_close(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device close: Release a device. */
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  w_wn->wn_open_ct--;
+  return(OK);
+}
+
+
+/*==========================================================================*
+ *				w_init					    *
+ *==========================================================================*/
+PRIVATE void w_init()
+{
+  /* Initialize the controller. */
+
+  int drive;
+  struct wini *wn;
+#if AUTO_BIOS
+  message mess;
+
+  for (drive = 0; drive < nr_drives; drive++) {
+	/* Get the drive parameters from sector zero of the drive if the
+	 * autoconfig mode of the controller has been selected.
 	 */
-	param1.nr_cyl = param0.nr_cyl = AUTO_CYLS;
-	param1.nr_heads = param0.nr_heads = AUTO_HEADS;
-	param1.reduced_wr = param0.reduced_wr = AUTO_RWC;
-	param1.wr_precomp = param0.wr_precomp = AUTO_WPC;
-	param1.max_ecc = param0.max_ecc = AUTO_ECC;
-	param1.ctrl_byte = param0.ctrl_byte = AUTO_CTRL;
-	wini[DEV_PER_DRIVE].wn_heads = wini[0].wn_heads = param0.nr_heads;
-	wini[DEV_PER_DRIVE].wn_low = wini[0].wn_low = 0L;
-	wini[DEV_PER_DRIVE].wn_size = wini[0].wn_size
-		   = (long)AUTO_CYLS * (long)AUTO_HEADS * (long)NR_SECTORS;
-	wini[DEV_PER_DRIVE].wn_drive = 1 << 5; /* set drive number */
-	cim_xt_wini();		/* ready for XT wini interrupts */
-	if(w_reset() != OK)
-	  panic("cannot setup for reading winchester parameter tables",0);
-
-	if (nr_drives > 1) {
-	  
-	  /* Generate the request to read the first sector from the disk. */
-	  w_mess.DEVICE = DEV_PER_DRIVE;
-	  w_mess.POSITION = 0L;
-	  w_mess.COUNT = BLOCK_SIZE;
-	  w_mess.ADDRESS = (char *) buf;
-	  w_mess.PROC_NR = WINCHESTER;
-	  w_mess.m_type = DEV_READ;
-	  if(w_do_rdwt(&w_mess) != BLOCK_SIZE)
-		panic("cannot read drive parameters from winchester",DEV_PER_DRIVE);
-
-	  /* copy the parameter tables into the structures for later use */
-	  copy_param(&buf[AUTO_PARAM], &param1);
-
+	if (w_switches & AUTO_ENABLE) {
+		/* Set up some phony parameters so that we can read the
+		 * first sector from the winchester.  All drives will have
+		 * one cylinder and one head but set up initially to the
+		 * mini scribe drives from IBM.
+		 */
+		wn = &wini[drive];
+		wn->wn_cylinders = AUTO_CYLS;
+		wn->wn_heads = AUTO_HEADS;
+		wn->wn_reduced_wr = AUTO_RWC;
+		wn->wn_precomp = AUTO_WPC;
+		wn->wn_max_ecc = AUTO_ECC;
+		wn->wn_ctlbyte = AUTO_CTRL;
+		wn->wn_part[0].dv_size = SECTOR_SIZE;
 	}
+  }
 
-	/* generate the request to read the first sector from the winchester */
-	w_mess.DEVICE = 0;
-	w_mess.POSITION = 0L;
-	w_mess.COUNT = BLOCK_SIZE;
-	w_mess.ADDRESS = (char *) buf;
-	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DEV_READ;
-	if(w_do_rdwt(&w_mess) != BLOCK_SIZE)
-	  panic("cannot read drive parameters from winchester", 0);
+  /* Initialize controller to read parameters from the drives. */
+  if (nr_drives > 0 && w_reset() != OK) nr_drives = 0;
 
-	/* copy the parameter tables into the structures for later use */
-	copy_param(&buf[AUTO_PARAM], &param0);
+  for (drive = 0; drive < nr_drives; drive++) {
+	if (w_switches & AUTO_ENABLE) {
+		/* read the first sector from the drive */
+		mess.DEVICE = drive * DEV_PER_DRIVE;
+		mess.POSITION = 0L;
+		mess.COUNT = SECTOR_SIZE;
+		mess.ADDRESS = (char *) tmp_buf;
+		mess.PROC_NR = WINCHESTER;
+		mess.m_type = DEV_READ;
+		if (do_rdwt(&w_dtab, &mess) != SECTOR_SIZE) {
+			printf("%s: can't read parameters\n", w_name());
+			nr_drives = drive;
+			break;
+		}
 
-	   
-   /* whoever compiled the kernel wanted the auto bios code included. if it
-	* turns out that the tables should be read from the rom, then handle
-	* this case the regular way */
-  } else {
-#endif
-
-  /* Calculate the drive types */
-  type_0 = i & 3;
-  type_1 = (i >> 2) & 3;
-
-  /* Copy the parameter vector from the saved vector table */
-  offset = vec_table[2 * WINI_0_PARM_VEC];
-  segment = vec_table[2 * WINI_0_PARM_VEC + 1];
-
-  /* Calculate the address off the parameters and copy them to buf */
-  address = hclick_to_physb(segment) + offset;
-  phys_copy(address, umap(proc_ptr, D, (vir_bytes) buf, 64), 64L);
-
-  /* Copy the parameters to the structures */
-  copy_param(&buf[type_0 * 16], &param0);
-  copy_param(&buf[type_1 * 16], &param1);
-
-#if AUTO_BIOS
-  /* close up the code to be executed when the controller has not been
-   * set up to for auto configuration */
+		/* save the parameter tables for later use */
+		copy_param(&tmp_buf[AUTO_PARAM], &wini[drive]);
+	}
   }
 #endif
 
-  /* Set the parameters in the drive structure */
-  for (i = 0; i < DEV_PER_DRIVE; i++) {
-	wini[i].wn_heads = param0.nr_heads;
-	wini[i].wn_ctrl_byte = param0.ctrl_byte;
-	wini[i].wn_drive = 0 << 5;	/* Set drive number */
-  }
+  if (nr_drives > 0 && w_reset() != OK) nr_drives = 0;
 
-  wini[0].wn_low = wini[DEV_PER_DRIVE].wn_low = 0L;
-  wini[0].wn_size = (long)((long)param0.nr_cyl * 
-				   (long)param0.nr_heads * (long)NR_SECTORS);
-
-  for (i = DEV_PER_DRIVE; i < (2*DEV_PER_DRIVE); i++) {
-	wini[i].wn_heads = param1.nr_heads;
-	wini[i].wn_ctrl_byte = param1.ctrl_byte;
-	wini[i].wn_drive = 1 << 5;	/* Set drive number */
-  }
-  wini[DEV_PER_DRIVE].wn_size =
-	(long)((long)param1.nr_cyl * (long)param1.nr_heads * (long)NR_SECTORS);
-
-  /* Initialize the controller */
-  cim_xt_wini();		/* ready for XT wini interrupts */
-  if ((nr_drives > 0) && (w_reset() != OK)) nr_drives = 0;
-
-  /* Read the partition table for each drive and save them */
-  for (i = 0; i < nr_drives; i++) {
-	w_mess.DEVICE = i * DEV_PER_DRIVE;
-	w_mess.POSITION = 0L;
-	w_mess.COUNT = BLOCK_SIZE;
-	w_mess.ADDRESS = (char *) buf;
-	w_mess.PROC_NR = WINCHESTER;
-	w_mess.m_type = DEV_READ;
-	if (w_do_rdwt(&w_mess) != BLOCK_SIZE) {
-		printf("Can't read partition table of winchester %d ", i);
-		continue;
-	}
-	copy_prt(i * DEV_PER_DRIVE);
+  /* Set the size of each disk. */
+  for (drive = 0; drive < nr_drives; drive++) {
+	(void) w_prepare(drive * DEV_PER_DRIVE);
+	wn->wn_part[0].dv_size = ((unsigned long) wn->wn_cylinders *
+				wn->wn_heads * NR_SECTORS) << SECTOR_SHIFT;
+	printf("%s: %d cylinders, %d heads, %d sectors per track\n",
+		w_name(), wn->wn_cylinders, wn->wn_heads, NR_SECTORS);
   }
 }
 
+
 /*==========================================================================*
- *				copy_param 				    *
+ *				copy_param				    *
  *==========================================================================*/
 PRIVATE void copy_param(src, dest)
-register unsigned char *src;
-register struct param *dest;
+char *src;
+struct wini *dest;
 {
-/* This routine copies the parameters from src to dest
- * and sets the parameters for partition 0 and DEV_PER_DRIVE
- */
+/* This routine copies the parameters from src to dest.  */
 
-  dest->nr_cyl = *(u16_t *)src;
-  dest->nr_heads = (int)src[2];
-  dest->reduced_wr = *(u16_t *)&src[3];
-  dest->wr_precomp = *(u16_t *)&src[5];
-  dest->max_ecc = (int)src[7];
-  dest->ctrl_byte = (int)src[8];
+  dest->wn_cylinders = bp_cylinders(src);
+  dest->wn_heads = bp_heads(src);
+  dest->wn_reduced_wr = bp_reduced_wr(src);
+  dest->wn_precomp = bp_precomp(src);
+  dest->wn_max_ecc = bp_max_ecc(src);
+  dest->wn_ctlbyte = bp_ctlbyte(src);
 }
 
-/*===========================================================================*
- *				copy_prt				     *
- *===========================================================================*/
-PRIVATE void copy_prt(base_dev)
-int base_dev;			/* base device for drive */
+
+/*============================================================================*
+ *				w_geometry				      *
+ *============================================================================*/
+PRIVATE void w_geometry(chs)
+unsigned *chs;			/* {cylinder, head, sector} */
 {
-/* This routine copies the partition table for the selected drive to
- * the variables wn_low and wn_size
- */
-
-  register struct part_entry *pe;
-  register struct wini *wn;
-
-  for (pe = (struct part_entry *) &buf[PART_TABLE_OFF],
-       wn = &wini[base_dev + 1];
-       pe < ((struct part_entry *) &buf[PART_TABLE_OFF]) + NR_PARTITIONS;
-       ++pe, ++wn) {
-	wn->wn_low = pe->lowsec;
-	wn->wn_size = pe->size;
-
-	/* Adjust low sector to a multiple of (BLOCK_SIZE/SECTOR_SIZE) for old
-	 * Minix partitions only.  We can assume the ratio is 2 and round to
-	 * even, which is slightly simpler.
-	 */
-	if (pe->sysind == OLD_MINIX_PART && wn->wn_low & 1) {
-		++wn->wn_low;
-		--wn->wn_size;
-	}
-  }
-  sort(&wini[base_dev + 1]);
+  chs[0] = w_wn->wn_cylinders;
+  chs[1] = w_wn->wn_heads;
+  chs[2] = NR_SECTORS;
 }
-
-/*===========================================================================*
- *					sort				     *
- *===========================================================================*/
-PRIVATE void sort(wn)
-register struct wini wn[];
-{
-  register int i,j;
-  struct wini tmp;
-
-  for (i = 0; i < NR_PARTITIONS; i++)
-	for (j = 0; j < NR_PARTITIONS-1; j++)
-		if ((wn[j].wn_low == 0 && wn[j+1].wn_low != 0) ||
-		    (wn[j].wn_low > wn[j+1].wn_low && wn[j+1].wn_low != 0)) {
-			tmp = wn[j];
-			wn[j] = wn[j+1];
-			wn[j+1] = tmp;
-		}
-}
-
-/*==========================================================================*
- *				win_results				    *
- *==========================================================================*/
-PRIVATE int win_results(wn)
-register struct wini *wn;	/* pointer to the drive struct */
-{
-/* Extract results from the controller after an operation, then allow wini
- * interrupts again.
- */
-
-  int r;
-
-  r = old_win_results(wn);
-  cim_xt_wini();
-  return(r);
-}
+#endif /* ENABLE_XT_WINI */

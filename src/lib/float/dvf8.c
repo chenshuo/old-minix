@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: dvf8.c,v 1.4 89/07/25 14:19:25 ceriel Exp $ */
+/* $Header: dvf8.c,v 1.5 93/01/05 12:04:59 ceriel Exp $ */
 
 /*
 	DIVIDE TWO FLOATS - DOUBLE Precision (DVF 8)
@@ -11,7 +11,7 @@
 
 #include	"FP_types.h"
 
-DOUBLE
+void
 dvf8(s2,s1)
 DOUBLE	s1,s2;
 {
@@ -23,5 +23,4 @@ DOUBLE	s1,s2;
 		/* do a divide */
 	div_ext(&e1,&e2);
 	compact(&e1,&s1.d[0],sizeof(DOUBLE));
-	return s1;
 }

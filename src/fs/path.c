@@ -257,6 +257,7 @@ int flag;			/* LOOK_UP, ENTER, DELETE or IS_EMPTY */
   unsigned new_slots, old_slots;
   block_t b;
   struct super_block *sp;
+  int extended = 0;
 
   /* If 'ldir_ptr' is not a pointer to a dir inode, error. */
   if ( (ldir_ptr->i_mode & I_TYPE) != I_DIRECTORY) return(ENOTDIR);
@@ -350,6 +351,7 @@ int flag;			/* LOOK_UP, ENTER, DELETE or IS_EMPTY */
 	if ( (bp = new_block(ldir_ptr, ldir_ptr->i_size)) == NIL_BUF)
 		return(err_code);
 	dp = &bp->b_dir[0];
+	extended = 1;
   }
 
   /* 'bp' now points to a directory block with space. 'dp' points to slot. */
@@ -361,7 +363,10 @@ int flag;			/* LOOK_UP, ENTER, DELETE or IS_EMPTY */
   put_block(bp, DIRECTORY_BLOCK);
   ldir_ptr->i_update |= CTIME | MTIME;	/* mark mtime for update later */
   ldir_ptr->i_dirt = DIRTY;
-  if (new_slots > old_slots)
+  if (new_slots > old_slots) {
 	ldir_ptr->i_size = (off_t) new_slots * DIR_ENTRY_SIZE;
+	/* Send the change to disk if the directory is extended. */
+	if (extended) rw_inode(ldir_ptr, WRITING);
+  }
   return(OK);
 }

@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: sub_ext.c,v 1.5 89/07/25 14:21:00 ceriel Exp $ */
+/* $Header: sub_ext.c,v 1.6 93/01/05 12:06:40 ceriel Exp $ */
 
 /*
 	SUBTRACT 2 EXTENDED FORMAT NUMBERS

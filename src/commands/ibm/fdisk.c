@@ -1,7 +1,6 @@
 /* fdisk - partition a hard disk	Author: Jakob Schripsema */
 
-/* Before running this, use DOS FDISK to put the boot code in sector 0.
- * Run this with:
+/* Run this with:
  *
  *	fdisk [-hheads] [-ssectors] [device]
  *
@@ -11,7 +10,7 @@
  *	fdisk -h4 -s17 /dev/hd0		(MINIX default)
  *	fdisk -h4 -s17 c:		(DOS default)
  *	fdisk -h6 -s25 /dev/hd5		(second drive, probably RLL)
- *	fdisk junkfile			(to expermiment safely)
+ *	fdisk junkfile			(to experiment safely)
  *
  * The device is opened in read-only mode if the file permissions do not
  * permit read-write mode, so it is convenient to use a login account with
@@ -25,15 +24,29 @@
  * This was modified extensively by Bruce Evans 28 Dec 89.
  * The new version has not been tried with DOS.  The open modes are suspect
  * (everyone should convert to use fcntl.h).
- */
+ *
+ * Changed 18 Dec 92 by Kees J. Bot: Bootstrap code and geometry from device.
+ *
+ * modified 01 March 95 by asw: updated list of known partition types. Also
+ * changed display format slightly to allow for partition type names of
+ * up to 9 chars (previous format allowed for 7, but there were already
+ * some 8 char names in the list).
+*/
 
 #include <sys/types.h>
 #include <minix/partition.h>
+#if __minix_vmd
+#include <sys/ioctl.h>
+#else
+#include <sgtty.h>
+#endif
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <errno.h>
 
 #ifdef DOS
 #include <dos.h>
@@ -60,16 +73,21 @@
 #define SEC_MASK	0x3f	/* mask to extract sec bits from sec field */
 
 /* Globals  */
-char secbuf[SECSIZE];
+char rawsecbuf[SECSIZE + sizeof(long)];
+char *secbuf;
 int badbases;
 int badsizes;
 int badorders;
 char *devname;
 int nhead;
 int nsec;
+int ncyl = 1024;
 int readonly;
+int override= 0;
 
 _PROTOTYPE(int main, (int argc, char *argv []));
+_PROTOTYPE(int diocntl, (char *device, int request, struct part_entry *entry));
+_PROTOTYPE(void getgeom, (void));
 _PROTOTYPE(int getboot, (char *buffer));
 _PROTOTYPE(int putboot, (char *buffer));
 _PROTOTYPE(int load_from_file, (void));
@@ -82,8 +100,6 @@ _PROTOTYPE(int mark_partition, (struct part_entry *pe));
 _PROTOTYPE(int change_partition, (struct part_entry *entry));
 _PROTOTYPE(int get_a_char, (void));
 _PROTOTYPE(int print_menu, (void));
-_PROTOTYPE(int getboot, (char *buffer));
-_PROTOTYPE(int putboot, (char *buffer));
 _PROTOTYPE(void adj_base, (struct part_entry *pe));
 _PROTOTYPE(void adj_size, (struct part_entry *pe));
 _PROTOTYPE(struct part_entry *ask_partition, (void));
@@ -95,6 +111,38 @@ _PROTOTYPE(int mygets, (char *buf, int length));
 _PROTOTYPE(char *systype, (int type));
 _PROTOTYPE(void toggle_active, (struct part_entry *pe));
 _PROTOTYPE(void usage, (void));
+
+/* One hand made master bootstrap. */
+char bootstrap[] = {
+0353,0001,0000,0061,0300,0216,0330,0216,0300,0372,0216,0320,0274,0000,0174,0373,
+0275,0276,0007,0211,0346,0126,0277,0000,0006,0271,0000,0001,0374,0362,0245,0352,
+0044,0006,0000,0000,0264,0002,0315,0026,0250,0010,0164,0033,0350,0062,0001,0166,
+0007,0060,0344,0315,0026,0242,0177,0007,0054,0060,0074,0012,0163,0363,0120,0350,
+0037,0001,0177,0007,0130,0353,0007,0240,0002,0006,0204,0300,0164,0144,0230,0262,
+0005,0366,0362,0262,0200,0000,0302,0210,0340,0120,0350,0240,0000,0163,0003,0351,
+0144,0000,0130,0054,0001,0174,0141,0276,0276,0175,0211,0357,0271,0040,0000,0362,
+0245,0200,0301,0004,0211,0356,0215,0174,0020,0070,0154,0004,0164,0016,0213,0135,
+0010,0053,0134,0010,0213,0135,0012,0033,0134,0012,0163,0014,0212,0044,0206,0144,
+0020,0210,0044,0106,0071,0376,0162,0364,0211,0376,0201,0376,0356,0007,0162,0326,
+0342,0322,0211,0356,0264,0020,0366,0344,0001,0306,0200,0174,0004,0001,0162,0026,
+0353,0021,0204,0322,0175,0041,0211,0356,0200,0174,0004,0000,0164,0013,0366,0004,
+0200,0164,0006,0350,0077,0000,0162,0055,0303,0203,0306,0020,0201,0376,0376,0007,
+0162,0346,0350,0214,0000,0203,0007,0350,0207,0000,0221,0007,0376,0302,0174,0017,
+0315,0021,0321,0340,0321,0340,0200,0344,0003,0070,0342,0166,0012,0262,0200,0264,
+0010,0122,0315,0023,0132,0162,0143,0350,0003,0000,0162,0333,0303,0211,0356,0214,
+0134,0010,0214,0134,0012,0277,0003,0000,0122,0264,0010,0315,0023,0200,0341,0077,
+0376,0306,0210,0310,0366,0346,0211,0303,0213,0104,0010,0213,0124,0012,0367,0363,
+0222,0210,0325,0366,0361,0060,0322,0321,0352,0321,0352,0010,0342,0210,0321,0376,
+0301,0132,0210,0306,0273,0000,0174,0270,0001,0002,0315,0023,0163,0014,0117,0164,
+0006,0060,0344,0315,0023,0163,0301,0071,0347,0303,0201,0076,0376,0175,0125,0252,
+0165,0001,0303,0350,0013,0000,0251,0007,0353,0005,0350,0004,0000,0235,0007,0353,
+0376,0136,0255,0126,0211,0306,0254,0204,0300,0164,0011,0264,0016,0273,0001,0000,
+0315,0020,0353,0362,0303,0000,0057,0144,0145,0166,0057,0150,0144,0077,0010,0000,
+0015,0012,0000,0116,0157,0156,0145,0040,0141,0143,0164,0151,0166,0145,0015,0012,
+0000,0116,0145,0170,0164,0040,0144,0151,0163,0153,0015,0012,0000,0122,0145,0141,
+0144,0040,0145,0162,0162,0157,0162,0040,0000,0116,0157,0164,0040,0142,0157,0157,
+0164,0141,0142,0154,0145,0040,0000,0000,
+};
 
 main(argc, argv)
 int argc;
@@ -115,6 +163,7 @@ char *argv[];
 		if (argp[1] == 's') nsec = atoi(argp + 2);
 	else
 		usage();
+	override= 1;
   }
 
   if (argn == argc)
@@ -124,6 +173,14 @@ char *argv[];
   else
 	usage();
 
+  /* Align the sector buffer in such a way that the partition table is at
+   * a mod 4 offset in memory.  Some weird people add alignment checks to
+   * their Minix!
+   */
+  secbuf = rawsecbuf;
+  while ((long)(secbuf + PART_TABLE_OFF) % sizeof(long) != 0) secbuf++;
+
+  getgeom();
   getboot(secbuf);
   chk_table();
 
@@ -174,6 +231,53 @@ char *argv[];
 
 #ifdef UNIX
 
+#define DSETP	0
+#define DGETP	1
+
+#ifdef DIOCGETP
+/* The hard disk driver supports an ioctl to report the base and size of a
+ * device as a partition table entry.
+ */
+
+int diocntl(device, request, entry)
+	char *device;
+	int request;
+	struct part_entry *entry;
+{
+	int r, f, err;
+
+	if ((f= open(device, O_RDONLY)) < 0) return -1;
+	r= ioctl(f, request == DSETP ? DIOCSETP : DIOCGETP, (void *) entry);
+	err= errno;
+	(void) close(f);
+	errno= err;
+	return r;
+}
+#else
+#define diocntl(d, r, e)		(errno= ENOTTY, -1)
+#endif
+
+void getgeom()
+{
+			/* pc  at  qd  ps pat  qh  PS */
+  static char fl_cyls[]= { 40, 80, 40, 80, 40, 80, 80 };
+  static char fl_secs[]= {  9, 15,  9,  9,  9,  9, 18 };
+  struct stat st;
+  struct part_entry geom;
+
+  if (override) return;
+
+  if (stat(devname, &st) < 0 || !S_ISBLK(st.st_mode)) return;
+
+  if (diocntl(devname, DGETP, &geom) < 0) return;
+
+  nhead = geom.last_head + 1;
+  nsec = geom.last_sec & 0x3F;
+  ncyl = ((geom.last_sec & 0xC0) << 2 | geom.last_cyl) + 1;
+
+  printf("Geometry of %s: %dx%dx%d\n", devname, ncyl, nhead, nsec);
+}
+
 static int devfd;
 
 getboot(buffer)
@@ -192,6 +296,13 @@ char *buffer;
   if (read(devfd, buffer, SECSIZE) != SECSIZE) {
 	printf("Cannot read boot sector\n");
 	exit(1);
+  }
+  if (* (unsigned short *) &buffer[510] != 0xAA55) {
+	printf("Invalid boot sector on %s.\n", devname);
+	printf("Partition table reset and boot code installed.\n");
+	memset(buffer, 0, 512);
+	memcpy(buffer, bootstrap, sizeof(bootstrap));
+	* (unsigned short *) &buffer[510] = 0xAA55;
   }
 }
 
@@ -280,7 +391,7 @@ int rawflag;
   struct part_entry *pe1;
   int sec_mask;
   char sizefootnote;
-  char type[8];
+  char type[10];
 
   badbases = 0;
   badsizes = 0;
@@ -289,18 +400,18 @@ int rawflag;
 	cyl_mask = 0;		/* no contribution of cyl to sec */
 	sec_mask = 0xff;
         format =
-"%2d   %3d%c   %4s  %-7s  x%02x %3d  x%02x   x%02x %3d  x%02x %7ld%c%7ld %7ld%c\n";
+"%2d   %3d%c  %4s %-9s  x%02x %3d  x%02x   x%02x %3d  x%02x %7ld%c%7ld %7ld%c\n";
   } else {
 	cyl_mask = CYL_MASK;
 	sec_mask = SEC_MASK;
 	format =
-"%2d   %3d%c   %4s  %-7s %4d %3d %3d   %4d %3d  %3d %7ld%c%7ld %7ld%c\n";
+"%2d   %3d%c  %4s %-9s %4d %3d %3d   %4d %3d  %3d %7ld%c%7ld %7ld%c\n";
   }
   printf(
 "                          ----first----  -----last----  --------sectors-------\n"
 	);
   printf(
-"Num Sorted Active Type     Cyl Head Sec   Cyl Head Sec    Base    Last    Size\n"
+"Num Sorted Act  Type     Cyl Head Sec   Cyl Head Sec    Base    Last    Size\n"
 	);
   pe = (struct part_entry *) &secbuf[PART_TABLE_OFF];
   for (i = 1; i <= NR_PARTITIONS; i++, pe++) {
@@ -570,7 +681,7 @@ struct part_entry *entry;
 		printf("Leaving partition inactive\n");
 		break;
 	} else if (ch == 'y') {
-		toggle_active((struct part_entry *)0);
+		toggle_active(entry);
 		break;
 	}
   }
@@ -866,27 +977,48 @@ char *systype(type)
 int type;
 {
 /* Convert system indicator into system name. */
-
+/* asw 01.03.95: added types based on info in kjb's part.c and output
+ * from Linux (1.0.8) fdisk. Note comments here, there are disagreements.
+*/
   switch(type) {
-	case NO_PART: return("None");
-	case 1: return("DOS-12");
-	case 2: return("XENIX");
-	case 3: return("XNX-OLD");
-	case 4: return("DOS-16");
-	case 5: return("DOS-EXT");
-	case 6: return("DOS-BIG");
-	case 8: return("AIX");
-	case 10: return("OPUS");
+	case NO_PART: 
+	           return("None");
+	case 1:    return("DOS-12");
+	case 2:    return("XENIX");
+	case 3:    return("XENIX usr");
+	case 4:    return("DOS-16");
+	case 5:    return("DOS-EXT");
+	case 6:    return("DOS-BIG");
+	case 7:    return("HPFS");
+	case 8:    return("AIX");
+	case 9:    return("COHERENT");	/* LINUX says AIX bootable */
+	case 0x0a: return("OS/2");	/* LINUX says OPUS */
+	case 0x10: return("OPUS");
+	case 0x40: return("VENIX286");
 	case 0x51: return("NOVELL?");
-	case 0x52: return("CPM?");
-	case 0x63: return("386/IX");
-	case 0x64: return("NOVELL");
-	case 0x75: return("PCIX");
-	case MINIX_PART: return("MINIX");
-	case OLD_MINIX_PART: return("MNX-OLD");
-	case 0xDB: return("CPM");
-	case 0xFF: return("BADBLKS");
-	default: return("Unknown");
+	case 0x52: return("MICROPORT");
+	case 0x63: return("386/IX");	/*LINUX calls this GNU HURD */
+	case 0x64: return("NOVELL286");
+	case 0x65: return("NOVELL386");
+	case 0x75: return("PC/IX");
+	case OLD_MINIX_PART: 
+		   return("MINIX old");	/* 0x80 */
+	case MINIX_PART: 
+	           return("MINIX"); 	/* 0x81 */
+	case 0x82: return("LINUXswap");
+	case 0x83: return("LINUX");
+	case 0x93: return("AMOEBA");
+	case 0x94: return("AMOEBAbad");
+	case 0xa5: return("386BSD");
+	case 0xb7: return("BSDI");
+	case 0xb8: return("BSDIswap");
+	case 0xc7: return("Syrinx");
+	case 0xDB: return("CP/M");
+	case 0xe1: return("DOS acc");
+	case 0xe3: return("DOS r/o");
+	case 0xf2: return("DOS 2ary");
+	case 0xFF: return("Badblocks");
+	default:   return("Unknown");
   }
 }
 
@@ -907,3 +1039,4 @@ void usage()
   printf("Usage: fdisk [-hheads] [-ssectors] [device]\n");
   exit(1);
 }
+

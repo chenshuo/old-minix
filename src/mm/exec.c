@@ -113,8 +113,8 @@ PUBLIC int do_exec()
   load_seg(fd, D, data_bytes);
 
 #if (SHADOWING == 1)
-  if (lseek(fd, sym_bytes, 1) < 0) 	;		/* error */
-  if (relocate(fd, (unsigned char *)mbuf) < 0) 	;	/* error */
+  if (lseek(fd, (off_t)sym_bytes, SEEK_CUR) == (off_t) -1) ;	/* error */
+  if (relocate(fd, (unsigned char *)mbuf) < 0) 	;		/* error */
 #endif
 
   close(fd);			/* don't need exec file any more */
@@ -171,7 +171,7 @@ vir_bytes *pc;
 {
 /* Read the header and extract the text, data, bss and total sizes from it. */
 
-  int m, ct, hdr_size;
+  int m, ct;
   vir_clicks tc, dc, s_vir, dvir;
   phys_clicks totc;
   struct exec hdr;		/* a.out header is read in here */
@@ -199,26 +199,18 @@ vir_bytes *pc;
    * are given in the header.
    */
 
-  hdr_size = sizeof(struct exec) - 4 * sizeof(long);
-  if (read(fd, (char *) &hdr, hdr_size) != hdr_size) return(ENOEXEC);
-#if (CHIP == M68000)
-  if (hdr.a_cpu == A_MAGIC0 && hdr.a_flags == A_MAGIC1)
-  {
-    /* old style 68000 executable; convert header */
+  if (read(fd, (char *) &hdr, A_MINHDR) != A_MINHDR) return(ENOEXEC);
 
-    short version;
-
-    hdr.a_flags = hdr.a_magic[1];
-    hdr.a_cpu = 0xb; /* A_M68K */
-    hdr.a_magic[0] = A_MAGIC0;
-    hdr.a_magic[1] = A_MAGIC1;
-    version = (hdr.a_unused << 8) + hdr.a_hdrlen;
-    hdr.a_hdrlen = hdr.a_version & 0xff;
-    hdr.a_unused = (hdr.a_version >> 8) & 0xff;
-    hdr.a_version = version;
-  }
+  /* Check magic number, cpu type, and flags. */
+  if (BADMAG(hdr)) return(ENOEXEC);
+#if (CHIP == INTEL && _WORD_SIZE == 2)
+  if (hdr.a_cpu != A_I8086) return(ENOEXEC);
 #endif
-  if (hdr.a_magic[0] != A_MAGIC0 || hdr.a_magic[1] != A_MAGIC1)return(ENOEXEC);
+#if (CHIP == INTEL && _WORD_SIZE == 4)
+  if (hdr.a_cpu != A_I80386) return(ENOEXEC);
+#endif
+  if ((hdr.a_flags & ~(A_NSYM | A_EXEC | A_SEP)) != 0) return(ENOEXEC);
+
   *ft = ( (hdr.a_flags & A_SEP) ? SEPARATE : 0);    /* separate I & D or not */
 
   /* Get text and data sizes. */
@@ -264,7 +256,7 @@ vir_bytes *pc;
   s_vir = dvir + (totc - sc);
   m = size_ok(*ft, tc, dc, sc, dvir, s_vir);
   ct = hdr.a_hdrlen & BYTE;		/* header length */
-  if (ct > hdr_size) read(fd, (char *)&hdr, ct-hdr_size); /* skip unused hdr*/
+  if (ct > A_MINHDR) lseek(fd, (off_t) ct, SEEK_SET); /* skip unused hdr */
   return(m);
 }
 

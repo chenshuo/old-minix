@@ -11,6 +11,7 @@
 
 #include "fs.h"
 #include <unistd.h>
+#include <minix/callnr.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
@@ -77,10 +78,7 @@ PUBLIC int do_chown()
 	/* FS is R/W.  Whether call is allowed depends on ownership, etc. */
 	if (super_user) {
 		/* The super user can do anything. */
-		rip->i_uid = owner;	
-		rip->i_gid = group;
-		rip->i_update |= CTIME;
-		rip->i_dirt = DIRTY;
+		rip->i_uid = owner;	/* others later */
 	} else {
 		/* Regular users can only change groups of their own files. */
 		if (rip->i_uid != fp->fp_effuid) r = EPERM;
@@ -145,7 +143,7 @@ PUBLIC int do_access()
 PUBLIC int forbidden(rip, access_desired, real_uid)
 register struct inode *rip;	/* pointer to inode to be checked */
 mode_t access_desired;	/* RWX bits */
-int real_uid;			/* set iff real uid to be tested */
+int real_uid;			/* XXX - obsolescent (was for access()) */
 {
 /* Given a pointer to an inode, 'rip', and the access desired, determine
  * if the access is allowed, and if not why not.  The routine looks up the
@@ -167,8 +165,8 @@ int real_uid;			/* set iff real uid to be tested */
 
   /* Isolate the relevant rwx bits from the mode. */
   bits = rip->i_mode;
-  test_uid = (real_uid ? fp->fp_realuid : fp->fp_effuid);
-  test_gid = (real_uid ? fp->fp_realgid : fp->fp_effgid);
+  test_uid = (fs_call == ACCESS ? fp->fp_realuid : fp->fp_effuid);
+  test_gid = (fs_call == ACCESS ? fp->fp_realgid : fp->fp_effgid);
   if (test_uid == SU_UID) {
 	/* Grant read and write permission.  Grant search permission for
 	 * directories.  Grant execute permission (for non-directories) if
@@ -177,7 +175,7 @@ int real_uid;			/* set iff real uid to be tested */
 	if ( (bits & I_TYPE) == I_DIRECTORY ||
 	     bits & ((X_BIT << 6) | (X_BIT << 3) | X_BIT))
 		perm_bits = R_BIT | W_BIT | X_BIT;
-	else	
+	else
 		perm_bits = R_BIT | W_BIT;
   } else {
 	if (test_uid == rip->i_uid) shift = 6;		/* owner */

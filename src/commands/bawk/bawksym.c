@@ -3,7 +3,10 @@
  * stack management routines.
  */
 #include <ctype.h>
+#include <minix/minlib.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "bawk.h"
 
 #define MAXARGS         10      /* max # of arguments to a builtin func */

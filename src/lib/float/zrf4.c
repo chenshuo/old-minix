@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: zrf4.c,v 1.4 89/07/25 14:21:09 ceriel Exp $ */
+/* $Header: zrf4.c,v 1.5 93/01/05 12:06:46 ceriel Exp $ */
 
 /*
 	return a zero float (ZRF 4)

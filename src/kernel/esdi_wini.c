@@ -1,9 +1,7 @@
-/*
- *     hard disk driver for ibm ps/2 esdi adapter
+/*     device dependent part of a hard disk driver for ibm ps/2 esdi adapter
  *
  *     written by doug burks, based on other minix wini drivers.
  *     some additions by art roberts
- *     last changed:  22 Jan 1991
  *
  *     references:
  *        ibm personal system/2 hardware technical reference  (1988)
@@ -18,173 +16,231 @@
  *         adverse conditions.
  *       * the error processing has not been tested.  my disk works too well.
  *
- * The driver supports the following operations (using message format m2):
- *
- *    m_type      DEVICE    PROC_NR     COUNT    POSITION  ADRRESS
- * ----------------------------------------------------------------
- * |  DEV_OPEN  |         |         |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_CLOSE |         |         |         |         |         |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_READ  | device  | proc nr |  bytes  |  offset | buf ptr |
- * |------------+---------+---------+---------+---------+---------|
- * |  DEV_WRITE | device  | proc nr |  bytes  |  offset | buf ptr |
- * ----------------------------------------------------------------
- * |SCATTERED_IO| device  | proc nr | requests|         | iov ptr |
- * ----------------------------------------------------------------
- *
  * The file contains one entry point:
  *
- *   winchester_task:	main entry when system is brought up
+ *   esdi_winchester_task:	main entry when system is brought up
+ *
+ *
+ * Changes:
+ *	 3 May 1992 by Kees J. Bot: device dependent/independent split.
  */
 #include "kernel.h"
-#include <minix/callnr.h>
-#include <minix/com.h>
-#include <minix/partition.h>
+#include "driver.h"
+
+#if ENABLE_ESDI_WINI
+
+/* If the DMA buffer is large enough then use it always. */
+#define USE_BUF		(DMA_BUF_SIZE > BLOCK_SIZE)
 
 
 /*****  esdi i/o adapter ports  */
 
-#define  CMD_REG   0x3510          /*  command interface register            */
-#define  STAT_REG  0x3510          /*  status interface register             */
-#define  BCTL_REG  0x3512          /*  basic control register                */
-#define  BST_REG   0x3512          /*  basic status register                 */
-#define  ATT_REG   0x3513          /*  attention register                    */
-#define  INT_REG   0x3513          /*  interrupt status register             */
+#define  CMD_REG   0x3510	/* command interface register            */
+#define  STAT_REG  0x3510	/* status interface register             */
+#define  BCTL_REG  0x3512	/* basic control register                */
+#define  BST_REG   0x3512	/* basic status register                 */
+#define  ATT_REG   0x3513	/* attention register                    */
+#define  INT_REG   0x3513	/* interrupt status register             */
 
 
 /*****  basic status register bits  */
 
-#define  DMA_ENA   0x80            /*  DMA enabled?                          */
-#define  INT_PND   0x40            /*  interrupt pending?                    */
-#define  CMD_PRG   0x20            /*  command in progress?                  */
-#define  BUSY      0x10            /*  is adapter busy?                      */
-#define  STR_FUL   0x08            /*  status interface register set?        */
-#define  CMD_FUL   0x04            /*  command interface register full?      */
-#define  XFR_REQ   0x02            /*  data transfer operation ready?        */
-#define  INT_SET   0x01            /*  adapter sending interrupt?            */
+#define  DMA_ENA   0x80		/* DMA enabled?                          */
+#define  INT_PND   0x40		/* interrupt pending?                    */
+#define  CMD_PRG   0x20		/* command in progress?                  */
+#define  BUSY      0x10		/* is adapter busy?                      */
+#define  STR_FUL   0x08		/* status interface register set?        */
+#define  CMD_FUL   0x04		/* command interface register full?      */
+#define  XFR_REQ   0x02		/* data transfer operation ready?        */
+#define  INT_SET   0x01		/* adapter sending interrupt?            */
 
 
 /*****  attention register commands  */
 
-#define  ATT_CMD  0x01             /*  command request                       */
-#define  ATT_EOI  0x02             /*  end of interrupt processing           */
-#define  ATT_ABT  0x03             /*  abort the current command             */
-#define  ATT_RST  0xE4             /*  reset the esdi adapter                */
+#define  ATT_CMD   0x01		/* command request                       */
+#define  ATT_EOI   0x02		/* end of interrupt processing           */
+#define  ATT_ABT   0x03		/* abort the current command             */
+#define  ATT_RST   0xE4		/* reset the esdi adapter                */
 
 
 /*****  dma register addresses  */
 
-#define  DMA_EXTCMD  0x18          /*  extended function register            */
-#define  DMA_EXEC    0x1A          /*  extended function execute             */
+#define  DMA_EXTCMD  0x18	/* extended function register            */
+#define  DMA_EXEC    0x1A	/* extended function execute             */
 
 
 /*****  miscellaneous  */
 
-#define  ERR            -1         /*  general error code                    */
-#define  SECTOR_SIZE    512        /*  hard disk sector size  [bytes]        */
-#define  MAX_ERRORS     4          /*  maximum number of read/write retries  */
-#define  MAX_DRIVES     2          /*  maximum number of physical drives     */
-#define  DEV_PER_DRIVE  (1+NR_PARTITIONS)
-                                   /*  number of logical devices on each     */
-                                   /*    physical hard disk drive            */
+#define  ERR            (-1)	/* general error code                    */
+#define  ERR_BAD_SECTOR (-2)	/* block marked bad detected             */
+#define  MAX_ERRORS     4	/* maximum number of read/write retries  */
+#define  MAX_DRIVES     2	/* maximum number of physical drives     */
 #define  NR_DEVICES     (MAX_DRIVES*DEV_PER_DRIVE)
-                                   /*  maximum number of logical devices     */
-#define  SYS_PORTA      0x92       /*  system control port a                 */
-#define  LIGHT_ON       0xC0       /*  fixed-disk activity light reg. mask   */
+				/* Maximum number of logical devices     */
+#define  SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
+#define  NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
+
+#define  SYS_PORTA      0x92	/* system control port a                 */
+#define  LIGHT_ON       0xC0	/* fixed-disk activity light reg. mask   */
 
 
 /*****  variables  */
 
-PRIVATE struct wini {              /*  disk/partition information            */
-   int wn_opcode;                  /*  requested disk operation              */
-                                   /*    DEV_READ/DEV_WRITE                  */
-   int wn_procnr;                  /*  process requesting operation          */
-   int wn_drive;                   /*  physical hard disk drive number       */
-   long wn_offset;                 /*  offset [sectors on full disk] to the  */
-                                   /*    requested disk block                */
-   long wn_low;                    /*  lowest sector for the partition       */
-   long wn_size;                   /*  disk partition size  [sectors]        */
-   int wn_count;                   /*  read/write request size  [bytes]      */
-   vir_bytes wn_address;           /*  buffer address for requested i/o      */
-} wini[NR_DEVICES];                /*  index:  0, 5 -- full disk 1, 2        */
-                                   /*     others:  add partition number      */
-PUBLIC int using_bios = FALSE;     /*  is the bios used for hard disk i/o?   */
-PRIVATE int nr_drives;             /*  actual number of physical disk drive  */
-PRIVATE message w_mess;            /*  minix message structure buffer        */
-PRIVATE int command[4];            /*  controller command buffer             */
-PRIVATE unsigned int status_block[9]; /*  status block output from a command */
-PRIVATE unsigned char buf[BLOCK_SIZE];
-                                   /*  partition table buffer                */
-PRIVATE int dma_channel;           /*  fixed disk dma channel number         */
+PRIVATE struct wini {		/* disk/partition information            */
+  unsigned open_ct;			/* in-use count			 */
+  struct device part[DEV_PER_DRIVE];	/* primary partitions: hd[0-4]   */
+  struct device subpart[SUB_PER_DRIVE];	/* subpartititions: hd[1-4][a-d] */
+} wini[MAX_DRIVES], *w_wn;
+
+PRIVATE struct trans {
+  struct iorequest_s *iop;	/* belongs to this I/O request           */
+  unsigned long block;		/* first sector to transfer              */
+  unsigned count;		/* byte count                            */
+  phys_bytes phys;		/* user physical address                 */
+  phys_bytes dma;		/* DMA physical address                  */
+} wtrans[NR_IOREQS];
+
+PRIVATE int nr_drives;		/* actual number of physical disk drive  */
+PRIVATE int command[4];		/* controller command buffer             */
+PRIVATE unsigned int status_block[9];	/* status block output from a command */
+PRIVATE int dma_channel;	/* fixed disk dma channel number         */
+PRIVATE struct trans *w_tp;	/* to add transfer requests              */
+PRIVATE unsigned w_count;	/* number of bytes to transfer           */
+PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
+PRIVATE int w_opcode;		/* DEV_READ or DEV_WRITE                 */
+PRIVATE int w_drive;		/* selected drive                        */
+PRIVATE int w_istat;		/* interrupt status of last command      */
+PRIVATE struct device *w_dv;	/* device's base and size                */
 
 
 /*****  functions  */
 
-FORWARD void wake ();
-FORWARD void copy_prt ();
-FORWARD void sort ();
-FORWARD int w_command ();
-FORWARD int w_do_rdwt ();
-FORWARD int w_transfer ();
-FORWARD int w_att_write ();
-FORWARD int w_interrupt ();
-FORWARD void w_dma_setup();
+FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
+FORWARD _PROTOTYPE( char *w_name, (void) );
+FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( void w_init, (void) );
+FORWARD _PROTOTYPE( int w_command, (int device, int cmd, int num_words) );
+FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
+FORWARD _PROTOTYPE( int w_finish, (void) );
+FORWARD _PROTOTYPE( int w_transfer, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( int w_att_write, (int value) );
+FORWARD _PROTOTYPE( void w_interrupt, (int dma) );
+FORWARD _PROTOTYPE( int w_handler, (int irq) );
+FORWARD _PROTOTYPE( void w_dma_setup, (struct trans *tp, unsigned count) );
+FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
+
+
+/* Entry points to this driver. */
+PRIVATE struct driver w_dtab = {
+  w_name,	/* current device's name */
+  w_do_open,	/* open or mount request, initialize device */
+  w_do_close,	/* release device */
+  do_diocntl,	/* get or set a partition's geometry */
+  w_prepare,	/* prepare for I/O on a given minor device */
+  w_schedule,	/* precompute cylinder, head, sector, etc. */
+  w_finish,	/* do the I/O */
+  nop_cleanup,	/* no cleanup needed */
+  w_geometry	/* tell the geometry of the disk */
+};
 
 
 /*===========================================================================*
- *				winchester_task				     * 
+ *				esdi_winchester_task			     *
  *===========================================================================*/
-PUBLIC void winchester_task () {
-/*
- *     services requests for hard disk i/o
- *
- *     after initializing the whole mess, wait for a request message, service
- *     it, send the results, wait for a request message, service it, etc.,
- *     etc.
- */
-   int r, caller, proc_nr;
-
-   wake ();
-
-   while (TRUE) {
-
-      receive (ANY, &w_mess);
-      if (w_mess.m_source < 0) {
-         printf ("winchester task got message from %d\n", w_mess.m_source);
-         continue;
-      }
-      caller = w_mess.m_source;
-      proc_nr = w_mess.PROC_NR;
-
-	switch(w_mess.m_type) {
-	    case DEV_OPEN:	r = OK;				  break;
-	    case DEV_CLOSE:	r = OK;				  break;
-
-	    case DEV_READ:
-	    case DEV_WRITE:	r = w_do_rdwt(&w_mess);		  break;
-
-	    case SCATTERED_IO:	r = do_vrdwt(&w_mess, w_do_rdwt); break;
-	    default:		r = EINVAL;			  break;
-	}
-      w_mess.m_type = TASK_REPLY;	
-      w_mess.REP_PROC_NR = proc_nr;
-      w_mess.REP_STATUS = r;       /*  no. of bytes transferred/error code */
-      send (caller, &w_mess);
-   }
+PUBLIC void esdi_winchester_task()
+{
+  driver_task(&w_dtab);
 }
 
 
 /*===========================================================================*
- *                              wake                                         *
+ *				w_prepare				     *
  *===========================================================================*/
-PRIVATE void wake () {
-/*
- *     initializes everything needed to run the hard disk
+PRIVATE struct device *w_prepare(device)
+int device;
+{
+/* Prepare for I/O on a device. */
+
+  /* Nothing to transfer as yet. */
+  w_count = 0;
+
+  if (device < NR_DEVICES) {			/* hd0, hd1, ... */
+	w_drive = device / DEV_PER_DRIVE;	/* save drive number */
+	w_wn = &wini[w_drive];
+	w_dv = &w_wn->part[device % DEV_PER_DRIVE];
+  } else
+  if ((unsigned) (device -= MINOR_hd1a) < NR_SUBDEVS) {	/* hd1a, hd1b, ... */
+	w_drive = device / SUB_PER_DRIVE;
+	w_wn = &wini[w_drive];
+	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
+  } else
+	return(NIL_DEV);
+
+  return(w_drive < nr_drives ? w_dv : NIL_DEV);
+}
+
+
+/*===========================================================================*
+ *				w_name					     *
+ *===========================================================================*/
+PRIVATE char *w_name()
+{
+/* Return a name for the current device. */
+  static char name[] = "esdi-hd5";
+
+  name[7] = '0' + w_drive * DEV_PER_DRIVE;
+  return name;
+}
+
+
+/*============================================================================*
+ *				w_do_open				      *
+ *============================================================================*/
+PRIVATE int w_do_open(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device open: Initialize the controller and read the partition table. */
+
+  static int init_done = FALSE;
+
+  if (!init_done) { w_init(); init_done = TRUE; }
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+
+  if (w_wn->open_ct++ == 0) {
+	/* partition the disk */
+	partition(&w_dtab, w_drive * DEV_PER_DRIVE, P_PRIMARY);
+  }
+  return(OK);
+}
+
+
+/*============================================================================*
+ *				w_do_close				      *
+ *============================================================================*/
+PRIVATE int w_do_close(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device close: Release a device. */
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  w_wn->open_ct--;
+  return(OK);
+}
+
+
+/*============================================================================*
+ *                              w_init                                        *
+ *============================================================================*/
+PRIVATE void w_init()
+{
+/*     initializes everything needed to run the hard disk
  *
  *     the following items are initialized:
  *       -- hard disk attributes stored in bios
- *       -- partition table, read from the disk
  *       -- dma transfer channel, read from system register
  *       -- dma transfer and interrupts [disabled]
  *
@@ -196,122 +252,52 @@ PRIVATE void wake () {
  *     activity and abort the operations.  the truly paranoid can reset the
  *     adapter.  until such worries are proven, why bother?
  */
-   unsigned int drv;               /*  hard disk drive number                */
-   phys_bytes address;             /*  real bios address                     */
+  unsigned int drive;		/* hard disk drive number                */
+  unsigned long size;		/* hard disk size			 */
 
-   /*  retrieve the actual number of hard disk drives from bios  */
-   phys_copy (0x475L, umap (proc_ptr, D, (vir_bytes)buf, 1), 1L);
-   nr_drives = (int) *buf;
-   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
-   if (nr_drives <= 0) return;
+  /* get the number of drives from the bios */
+  phys_copy(0x475L, tmp_phys, 1L);
+  nr_drives = tmp_buf[0];
+  if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
-   for (drv = 0;  drv < nr_drives;  ++drv) {
-      if (w_command (drv, 0x0609, 6) != OK) {
-         panic ("Unable to get hard disk parameters\n", NO_NUM);
-      }
-      wini[5*drv].wn_size = ((unsigned long)status_block[3] << 16) |
-                             (unsigned long)status_block[2];
-   }
-   if (w_command (7, 0x060A, 5) != OK) {
-      panic ("Unable to get hard disk dma channel\n", NO_NUM);
-   }
-   dma_channel = (status_block[2] & 0x3C00) >> 10;
-/*
- *     retrieves the full partition table
- */
-   wini[0].wn_low = wini[5].wn_low = 0L;
-   for (drv = 0;  drv < nr_drives;  ++drv) {
+  put_irq_handler(AT_WINI_IRQ, w_handler);
+  enable_irq(AT_WINI_IRQ);	/* ready for winchester interrupts */
 
-      w_mess.DEVICE = 5 * drv;
-      w_mess.POSITION = 0L;
-      w_mess.COUNT = BLOCK_SIZE;
-      w_mess.ADDRESS = (char *) buf;
-      w_mess.PROC_NR = WINCHESTER;
-      w_mess.m_type = DEV_READ;
-
-      if (w_do_rdwt (&w_mess) != BLOCK_SIZE) {
-         printf ("Can't read partition table on winchester %d\n", drv);
-         milli_delay (20000);
-         continue;
-      }
-      if (buf[510] != 0x55  ||  buf[511] != 0xAA) {
-         printf ("Invalid partition table on winchester %d\n", drv);
-         milli_delay (20000);
-         continue;
-      }
-      copy_prt ((int)5*drv);       /*  flesh out the partitions              */
-   }
-   return;
+  for (drive = 0; drive < nr_drives; ++drive) {
+	(void) w_prepare(drive * DEV_PER_DRIVE);
+	if (w_command(drive, 0x0609, 6) != OK) {
+		printf("%s: unable to get parameters\n", w_name());
+		nr_drives = drive;
+		break;
+	}
+	/* size of the drive */
+	size =  ((unsigned long) status_block[2] <<  0) |
+		((unsigned long) status_block[3] << 16);
+	if (drive == 0) {
+		if (w_command(7, 0x060A, 5) != OK) {
+			printf("%s: unable to get dma channel\n", w_name());
+			nr_drives = 0;
+			return;
+		}
+		dma_channel = (status_block[2] & 0x3C00) >> 10;
+	}
+	printf("%s: %lu sectors\n", w_name(), size);
+	w_wn->part[0].dv_size = size << SECTOR_SHIFT;
+  }
 }
-
-
-/*============================================================================*
- *                              copy_prt                                      *
- *============================================================================*/
-PRIVATE void copy_prt (base_dev)
-int base_dev; {                  /* base device for drive */
-/*
- *     fills out the hard disk partition initial block and number of blocks
- *
- *     the old minix partition support was removed, since this driver didn't
- *     exist for old partitions.
- */
-   register struct part_entry *pe;
-   register struct wini *wn;
-
-   for (pe = (struct part_entry *) &buf[PART_TABLE_OFF],
-           wn = &wini[base_dev + 1];
-        pe < ((struct part_entry *) &buf[PART_TABLE_OFF]) + NR_PARTITIONS;
-        ++pe, ++wn) {
-      wn->wn_low = pe->lowsec;
-      wn->wn_size = pe->size;
-   }
-   sort (&wini[base_dev+1]);
-}
-
-
-
-/*==========================================================================*
- *                                sort                                      *
- *==========================================================================*/
-PRIVATE void sort (wn)
-register struct wini wn[]; {
-/*
- *     sorts the partition table according to the initial block number
- *
- *     this apparently eliminates missing partitions, though it screws up
- *     partition numbers compared with using fdisk on different operating
- *     systems.
- */
-   register int i,j;
-   struct wini tmp;
-
-   for (i = 0;  i < NR_PARTITIONS;  i++) {
-      for (j = 0;  j < NR_PARTITIONS-1;  j++) {
-         if ((wn[j].wn_low == 0  &&  wn[j+1].wn_low != 0)  ||
-             (wn[j].wn_low > wn[j+1].wn_low  &&  wn[j+1].wn_low != 0)) {
-            tmp = wn[j];
-            wn[j] = wn[j+1];
-            wn[j+1] = tmp;
-         }
-      }
-   }
-   return;
-}
-
 
 
 /*===========================================================================*
  *                          w_command                                        *
  *===========================================================================*/
-PRIVATE int w_command (device, cmd, num_words)
-int device;                        /*  i device to operate on                */
-                                   /*    1-2   physical disk drive number    */
-                                   /*    7     hard disk controller          */
-int cmd;                           /*  i command to execute                  */
-int num_words; {                   /*  i expected size of status block       */
-/*
- *     executes a command for a particular device
+PRIVATE int w_command(device, cmd, num_words)
+int device;			/* i device to operate on                */
+				/*   1-2   physical disk drive number    */
+				/*   7     hard disk controller          */
+int cmd;			/* i command to execute                  */
+int num_words;			/* i expected size of status block       */
+{
+/*     executes a command for a particular device
  *
  *     the operation is conducted as follows:
  *       -- create the command block
@@ -327,109 +313,229 @@ int num_words; {                   /*  i expected size of status block       */
  *     interrupts to ensure that the status register contents still apply when
  *     the desired register is read/written.
  */
-   register int ki;                /*  -- scratch --                         */
-   int status;                     /*  disk adapter status register value    */
+  register int ki;		/* -- scratch --                         */
+  int status;			/* disk adapter status register value    */
 
-   device <<= 5;                   /*  adjust device for our use             */
-   command[0] = cmd | device;      /*  build command block                   */
-   command[1] = 0;
+  device <<= 5;			/* adjust device for our use             */
+  command[0] = cmd | device;	/* build command block                   */
+  command[1] = 0;
 
-   w_att_write (device | ATT_CMD);
+  w_att_write(device | ATT_CMD);
 
-   for (ki = 0;  ki < 2;  ++ki) {
-      out_word (CMD_REG, command[ki]);
-      unlock ();
-      while (TRUE) {
-         lock ();
-         status = in_byte (BST_REG);
-         if (!(status & CMD_FUL)) break;
-         unlock ();
-      }
-   }
-   unlock ();
+  for (ki = 0; ki < 2; ++ki) {
+	out_word(CMD_REG, command[ki]);
+	unlock();
+	while (TRUE) {
+		lock();
+		status = in_byte(BST_REG);
+		if (!(status & CMD_FUL)) break;
+		unlock();
+	}
+  }
+  unlock();
 
-   status = w_interrupt (0);
-   if (status != (device | 0x01)) {
-      w_att_write (device | ATT_ABT);
-      w_interrupt (0);
-      return  ERR;
-   }
-   for (ki = 0;  ki < num_words;  ++ki) {
-      while (TRUE) {
-         lock ();
-         status = in_byte (BST_REG);
-         if (status & STR_FUL) break;
-         unlock ();
-      }
-      status_block[ki] = in_word (STAT_REG);
-      unlock ();
-   }
-   w_att_write (device | ATT_EOI);
+  w_interrupt(0);
+  if (w_istat != (device | 0x01)) {
+	w_att_write(device | ATT_ABT);
+	w_interrupt(0);
+	return(ERR);
+  }
+  for (ki = 0; ki < num_words; ++ki) {
+	while (TRUE) {
+		lock();
+		status = in_byte(BST_REG);
+		if (status & STR_FUL) break;
+		unlock();
+	}
+	status_block[ki] = in_word(STAT_REG);
+	unlock();
+  }
+  w_att_write(device | ATT_EOI);
 
-   return  OK;
+  return(OK);
 }
 
 
-
 /*===========================================================================*
- *				w_do_rdwt				     * 
+ *				w_schedule				     *
  *===========================================================================*/
-PRIVATE int w_do_rdwt(m_ptr)
-message *m_ptr;	{		/* pointer to read or write w_message */
-/*
- *     reads/writes a block from the hard disk
- *
- *     checks the validity of the request as fully as possible and fills the
- *     disk information structure before calling 'w_transfer' to do the dirty
- *     work.  while unsuccessful operations are re-tried, this may be
- *     superfluous, since the controller does the same on its own.  turns on
- *     the fixed disk activity light, while busy.  computers need blinking
- *     lights, right?
+PRIVATE int w_schedule(proc_nr, iop)
+int proc_nr;			/* process doing the request */
+struct iorequest_s *iop;	/* pointer to read or write request */
+{
+/* Gather I/O requests on consecutive blocks so they may be read/written
+ * in one command if using a buffer.  Check and gather all the requests
+ * and try to finish them as fast as possible if unbuffered.
  */
-   register struct wini *wn;
-   int r, device, errors;
+  int r, opcode;
+  unsigned long pos;
+  unsigned nbytes, count;
+  unsigned long block;
+  phys_bytes user_phys, dma_phys;
 
-   device = m_ptr->DEVICE;
-   if (device < 0 || device >= NR_DEVICES) return  EIO;
-   if (m_ptr->COUNT != BLOCK_SIZE) return  EINVAL;
+  /* This many bytes to read/write */
+  nbytes = iop->io_nbytes;
+  if ((nbytes & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
 
-   wn = &wini[device];
-   wn->wn_drive = device/DEV_PER_DRIVE;	/* save drive number */
-   if (wn->wn_drive >= nr_drives) return  EIO;
+  /* From/to this position on the device */
+  pos = iop->io_position;
+  if ((pos & SECTOR_MASK) != 0) return(iop->io_nbytes = EINVAL);
 
-   wn->wn_opcode = m_ptr->m_type;	/* DEV_READ or DEV_WRITE */
-   if (m_ptr->POSITION % BLOCK_SIZE != 0) return  EINVAL;
+  /* To/from this user address */
+  user_phys = numap(proc_nr, (vir_bytes) iop->io_buf, nbytes);
+  if (user_phys == 0) return(iop->io_nbytes = EINVAL);
 
-   wn->wn_offset = m_ptr->POSITION/SECTOR_SIZE;
-   if (wn->wn_offset+BLOCK_SIZE/SECTOR_SIZE > wn->wn_size) return  0;
+  /* Read or write? */
+  opcode = iop->io_request & ~OPTIONAL_IO;
 
-   wn->wn_offset += wn->wn_low;
-   wn->wn_count = m_ptr->COUNT;
-   wn->wn_address = (vir_bytes) m_ptr->ADDRESS;
-   wn->wn_procnr = m_ptr->PROC_NR;
+  /* Which block on disk and how close to EOF? */
+  if (pos >= w_dv->dv_size) return(OK);		/* At EOF */
+  if (pos + nbytes > w_dv->dv_size) nbytes = w_dv->dv_size - pos;
+  block = (w_dv->dv_base + pos) >> SECTOR_SHIFT;
 
-   out_byte (SYS_PORTA, in_byte (SYS_PORTA) | LIGHT_ON); 
-                                   /*  turn on the disk activity light     */
+  if (USE_BUF && w_count > 0 && block != w_nextblock) {
+	/* This new request can't be chained to the job being built */
+	if ((r = w_finish()) != OK) return(r);
+  }
 
-   for (errors = 0;  errors < MAX_ERRORS;  ++errors) {
+  /* The next consecutive block */
+  if (USE_BUF) w_nextblock = block + (nbytes >> SECTOR_SHIFT);
 
-      r = w_transfer(wn);
-      if (r == OK) break;
-   }
-   out_byte (SYS_PORTA, in_byte (SYS_PORTA) & ~LIGHT_ON); 
-                                   /*  turn off the disk activity light    */
-   return  (r == OK?  BLOCK_SIZE : EIO);
+  /* While there are "unscheduled" bytes in the request: */
+  do {
+	count = nbytes;
+
+	if (USE_BUF) {
+		if (w_count == DMA_BUF_SIZE) {
+			/* Can't transfer more than the buffer allows. */
+			if ((r = w_finish()) != OK) return(r);
+		}
+
+		if (w_count + count > DMA_BUF_SIZE)
+			count = DMA_BUF_SIZE - w_count;
+	} else {
+		if (w_tp == wtrans + NR_IOREQS) {
+			/* All transfer slots in use. */
+			if ((r = w_finish()) != OK) return(r);
+		}
+	}
+
+	if (w_count == 0) {
+		/* The first request in a row, initialize. */
+		w_opcode = opcode;
+		w_tp = wtrans;
+	}
+
+	if (USE_BUF) {
+		dma_phys = tmp_phys + w_count;
+	} else {
+		/* Note: No 64K boundary problem, the better PS/2's have a
+		 * working DMA chip.
+		 */
+		dma_phys = user_phys;
+	}
+
+	/* Store I/O parameters */
+	w_tp->iop = iop;
+	w_tp->block = block;
+	w_tp->count = count;
+	w_tp->phys = user_phys;
+	w_tp->dma = dma_phys;
+
+	/* Update counters */
+	w_tp++;
+	w_count += count;
+	block += count >> SECTOR_SHIFT;
+	user_phys += count;
+	nbytes -= count;
+  } while (nbytes > 0);
+
+  return(OK);
 }
 
 
+/*===========================================================================*
+ *				w_finish				     *
+ *===========================================================================*/
+PRIVATE int w_finish()
+{
+/*     carries out the I/O requests gathered in wtrans[]
+ *
+ *     fills the disk information structure for one block at a time or many
+ *     in a row before calling 'w_transfer' to do the dirty work.  while
+ *     unsuccessful operations are re-tried, this may be superfluous, since
+ *     the controller does the same on its own.  turns on the fixed disk
+ *     activity light, while busy.  computers need blinking lights, right?
+ */
+
+  struct trans *tp = wtrans, *tp2;
+  unsigned count;
+  int r, errors = 0, many = USE_BUF;
+
+  if (w_count == 0) return(OK);	/* Spurious finish. */
+
+  do {
+	if (w_opcode == DEV_WRITE) {
+		tp2 = tp;
+		count = 0;
+		do {
+			if (USE_BUF || tp2->dma == tmp_phys) {
+				phys_copy(tp2->phys, tp2->dma,
+						(phys_bytes) tp2->count);
+			}
+			count += tp2->count;
+			tp2++;
+		} while (many && count < w_count);
+	} else {
+		count = many ? w_count : tp->count;
+	}
+
+	/* Turn on the disk activity light. */
+	out_byte(SYS_PORTA, in_byte(SYS_PORTA) | LIGHT_ON);
+
+	/* Perform the transfer. */
+	r = w_transfer(tp, count);
+
+	/* Turn off the disk activity light. */
+	out_byte(SYS_PORTA, in_byte(SYS_PORTA) & ~LIGHT_ON);
+
+	if (r != OK) {
+		/* An error occurred, try again block by block unless */
+		if (r == ERR_BAD_SECTOR || ++errors == MAX_ERRORS)
+			return(tp->iop->io_nbytes = EIO);
+
+		many = 0;
+		continue;
+	}
+	errors = 0;
+
+	w_count -= count;
+
+	do {
+		if (w_opcode == DEV_READ) {
+			if (USE_BUF || tp->dma == tmp_phys) {
+				phys_copy(tp->dma, tp->phys,
+						(phys_bytes) tp->count);
+			}
+		}
+		tp->iop->io_nbytes -= tp->count;
+		count -= tp->count;
+		tp++;
+	} while (count > 0);
+  } while (w_count > 0);
+
+  return(OK);
+}
+
 
 /*===========================================================================*
- *				w_transfer				     * 
+ *				w_transfer				     *
  *===========================================================================*/
-PRIVATE int w_transfer(wn)
-register struct wini *wn; {    /* pointer to the drive struct */
-/*
- *     reads/writes a single block of data from/to the hard disk
+PRIVATE int w_transfer(tp, count)
+struct trans *tp;		/* pointer to the transfer struct */
+unsigned int count;		/* bytes to transfer */
+{
+/*     reads/writes a single block of data from/to the hard disk
  *
  *     the read/write operation performs the following steps:
  *       -- create the command block
@@ -442,51 +548,44 @@ register struct wini *wn; {    /* pointer to the drive struct */
  *       -- set up and start up the direct memory transfer
  *       -- wait for an interrupt, signalling the end of the transfer
  */
-   int device;                     /*  device mask for the command register  */
-   int ki;                         /*  -- scratch --                         */
-   long offset;                    /*  ... [blocks] to the requested block   */
-   int r;                          /*  function return (success) value       */
-   int status;                     /*  basic status register value           */
+  int device;			/* device mask for the command register  */
+  int ki;			/* -- scratch --                         */
+  int status;			/* basic status register value           */
 
-   device = wn->wn_drive << 5;
-   if (wn->wn_opcode == DEV_READ) {
-      command[0] = 0x4601 | device;
-   } else {
-      command[0] = 0x4602 | device;
-   }
-   command[1] = BLOCK_SIZE / SECTOR_SIZE;
-   offset = wn->wn_offset;
-   command[2] = (int)(offset & 0xFFFF);
-   command[3] = (int)(offset >> 16);
+  device = w_drive << 5;
+  command[0] = (w_opcode == DEV_WRITE ? 0x4602 : 0x4601) | device;
+  command[1] = count >> SECTOR_SHIFT;
+  command[2] = (int) (tp->block & 0xFFFF);
+  command[3] = (int) (tp->block >> 16);
 
-   w_att_write (device | ATT_CMD);
+  w_att_write(device | ATT_CMD);
 
-   for (ki = 0;  ki < 4;  ++ki) {
-      out_word (CMD_REG, command[ki]);
-      unlock ();
-      while (TRUE) {
-         lock ();
-         status = in_byte (BST_REG);
-         if (!(status & CMD_FUL)) break;
-         unlock ();
-      }
-   }
-   unlock ();
+  for (ki = 0; ki < 4; ++ki) {
+	out_word(CMD_REG, command[ki]);
+	unlock();
+	while (TRUE) {
+		lock();
+		status = in_byte(BST_REG);
+		if (!(status & CMD_FUL)) break;
+		unlock();
+	}
+  }
+  unlock();
 
-   status = w_interrupt (0);
-   if (status != (device | 0x0B)) {
-      w_att_write (device | ATT_ABT);
-      w_interrupt (0);
-      return  ERR;
-   }
-   w_dma_setup (wn);
+  w_interrupt(0);
+  if (w_istat != (device | 0x0B)) {
+	w_att_write(device | ATT_ABT);
+	w_interrupt(0);
+	return(ERR);
+  }
+  w_dma_setup(tp, count);
 
-   status = w_interrupt (1);
+  w_interrupt(1);
 
-   w_att_write (device | ATT_EOI);
+  w_att_write(device | ATT_EOI);
 
-   if ((status & 0x0F) > 8) return  ERR;
-   return  OK;
+  if ((w_istat & 0x0F) > 8) return(ERR);
+  return(OK);
 }
 
 
@@ -494,28 +593,28 @@ register struct wini *wn; {    /* pointer to the drive struct */
 /*==========================================================================*
  *                            w_att_write                                   *
  *==========================================================================*/
-PRIVATE int w_att_write (value)
-register int value; {
-/*
- *     writes a command to the esdi attention register
+PRIVATE int w_att_write(value)
+register int value;
+{
+/*     writes a command to the esdi attention register
  *
  *     waits for the controller to finish its business before sending the
  *     command to the controller.  note that the interrupts must be off to read
  *     the basic status register and, if the controller is ready, must not be
  *     turned back on until the attention register command is sent.
  */
-   int status;                     /*  basic status register value           */
+  int status;			/* basic status register value           */
 
-   while (TRUE) {
-      lock ();
-      status = in_byte (BST_REG);
-      if (!(status & (INT_PND | BUSY))) break;
-      unlock ();
-   }
-   out_byte (ATT_REG, value);
-   unlock ();
+  while (TRUE) {
+	lock();
+	status = in_byte(BST_REG);
+	if (!(status & (INT_PND | BUSY))) break;
+	unlock();
+  }
+  out_byte(ATT_REG, value);
+  unlock();
 
-   return  OK;
+  return(OK);
 }
 
 
@@ -523,10 +622,10 @@ register int value; {
 /*===========================================================================*
  *                          w_interrupt                                      *
  *===========================================================================*/
-PRIVATE int w_interrupt (dma)
-int dma; {                         /*  i dma transfer is underway            */
-/*
- *     waits for an interrupt from the hard disk controller
+PRIVATE void w_interrupt(dma)
+int dma;			/* i dma transfer is underway            */
+{
+/*     waits for an interrupt from the hard disk controller
  *
  *     enable interrupts on the hard disk and interrupt controllers (and dma if
  *     necessary).  wait for an interrupt.  when received, return the interrupt
@@ -537,71 +636,76 @@ int dma; {                         /*  i dma transfer is underway            */
  *     interrupts, due to the expected long times to process reads and writes
  *     and to avoid busy waits.
  */
-   message dummy;                  /*  -- scratch --                         */
-   int status;                     /*  basic status register value           */
+  message dummy;		/* -- scratch --                         */
+  int status;			/* basic status register value           */
 
-   dma = dma << 1;
-   out_byte (BCTL_REG, dma | 1);
-   cim_at_wini ();
+  out_byte(BCTL_REG, dma ? 0x03 : 0x01);
 
-   receive (HARDWARE, &dummy);
+  receive(HARDWARE, &dummy);
 
-   out_byte (BCTL_REG, 0);
-   if (dma) out_byte (DMA_EXTCMD, 0x90+dma_channel);
-
-   status = in_byte (INT_REG);
-
-   return  status;
+  out_byte(BCTL_REG, 0);
+  if (dma) out_byte(DMA_EXTCMD, 0x90 + dma_channel);
 }
 
 
 
 /*==========================================================================*
- *			w_dma_setup				  	    *
+ *				w_handler				    *
  *==========================================================================*/
-PRIVATE void w_dma_setup(wn)
-register struct wini *wn; {
-/*
- *     programs the dma controller to move data to and from the hard disk.
+PRIVATE int w_handler(irq)
+int irq;
+{
+/* Disk interrupt, send message to winchester task and reenable interrupts. */
+
+  w_istat = in_byte(INT_REG);
+  interrupt(WINCHESTER);
+  return 1;
+}
+
+
+
+/*==========================================================================*
+ *			w_dma_setup					    *
+ *==========================================================================*/
+PRIVATE void w_dma_setup(tp, count)
+struct trans *tp;
+unsigned int count;
+{
+/*     programs the dma controller to move data to and from the hard disk.
  *
  *     uses the extended mode operation of the ibm ps/2 interrupt controller
  *     chip, rather than the intel 8237 (pc/at) compatible mode.
  */
-   int mode, low_addr, high_addr, top_addr, low_ct, high_ct;
-   vir_bytes vir, ct;
-   phys_bytes user_phys;
 
-   vir = (vir_bytes) wn->wn_address;
-   ct = (vir_bytes) BLOCK_SIZE;
-   user_phys = numap (wn->wn_procnr, vir, BLOCK_SIZE);
-
-   low_addr = (int) user_phys & BYTE;
-   high_addr = (int) (user_phys >> 8) & BYTE;
-   top_addr = (int) (user_phys >> 16) & BYTE;
-   low_ct = (int) (ct - 1) & BYTE;
-   high_ct = (int) ((ct-1) >> 8) & BYTE;
-   if (user_phys == 0)
-      panic ("FS gave winchester disk driver bad addr %d", (int)vir);
-
-   mode = (wn->wn_opcode == DEV_READ?  0x4C : 0x44);
-   lock ();
-   out_byte (DMA_EXTCMD, 0x90+dma_channel);
-                                   /*  disable access to dma channel 5     */
-   out_byte (DMA_EXTCMD, 0x20+dma_channel);
-                                   /*  clear the address byte pointer      */
-   out_byte (DMA_EXEC, low_addr);  /*  set the lower eight address bits    */
-   out_byte (DMA_EXEC, high_addr); /*  set address bits 8-15               */
-   out_byte (DMA_EXEC, top_addr);  /*  set the higher four address bits    */
-   out_byte (DMA_EXTCMD, 0x40+dma_channel);
-                                   /*  clear the count byte pointer        */
-   out_byte (DMA_EXEC, low_ct);    /*  set the lower eight bits of count   */
-   out_byte (DMA_EXEC, high_ct);   /*  set the higher eight bits of count  */
-   out_byte (DMA_EXTCMD, 0x70+dma_channel);
-                                   /*  set the transfer mode               */
-   out_byte (DMA_EXEC, mode);      /*  set the transfer mode               */
-   out_byte (DMA_EXTCMD, 0xA0+dma_channel);
-                                   /*  enable access to dma channel 5      */
-   unlock ();
-
-   return;
+  lock();
+  out_byte(DMA_EXTCMD, 0x90 + dma_channel);
+  /* Disable access to dma channel 5     */
+  out_byte(DMA_EXTCMD, 0x20 + dma_channel);
+  /* Clear the address byte pointer      */
+  out_byte(DMA_EXEC, (int)  tp->dma >>  0);	/* address bits 0..7   */
+  out_byte(DMA_EXEC, (int)  tp->dma >>  8);	/* address bits 8..15  */
+  out_byte(DMA_EXEC, (int) (tp->dma >> 16));	/* address bits 16..19 */
+  out_byte(DMA_EXTCMD, 0x40 + dma_channel);
+  /* Clear the count byte pointer        */
+  out_byte(DMA_EXEC, (count - 1) >> 0);		/* count bits 0..7     */
+  out_byte(DMA_EXEC, (count - 1) >> 8);		/* count bits 8..15    */
+  out_byte(DMA_EXTCMD, 0x70 + dma_channel);
+  /* Set the transfer mode               */
+  out_byte(DMA_EXEC, w_opcode == DEV_WRITE ? 0x44 : 0x4C);
+  out_byte(DMA_EXTCMD, 0xA0 + dma_channel);
+  /* Enable access to dma channel 5      */
+  unlock();
 }
+
+
+/*============================================================================*
+ *				w_geometry				      *
+ *============================================================================*/
+PRIVATE void w_geometry(chs)
+unsigned *chs;			/* {cylinder, head, sector} */
+{
+  chs[0] = (w_wn->part[0].dv_size >> SECTOR_SHIFT) / (64 * 32);
+  chs[1] = 64;
+  chs[2] = 32;
+}
+#endif /* ENABLE_ESDI_WINI */

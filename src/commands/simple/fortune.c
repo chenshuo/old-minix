@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <stdio.h>
 
-#define COOKIEJAR "/usr/games/lib/fortunes.dat"
+#define COOKIEJAR "/usr/lib/fortune.dat"
 
 static char *Copyright = "\0Copyright (c) 1990 Bert Reuling";
 static unsigned long seed;
@@ -29,10 +29,9 @@ char *argv[];
   }
 
   /* Create seed from : date, time, user-id and process-id. we can't get
-   * the position of the moon, unfortunately. Note that super cookies
-   * are not affected by chance...
+   * the position of the moon, unfortunately.
    */
-  seed = time( (time_t *) 0) * (long) getuid() * (long) getpid();
+  seed = time( (time_t *) 0) ^ (long) getuid() ^ (long) getpid();
 
   if (stat(COOKIEJAR, &cookie_stat) != 0) {
 	printf("\nIt furthers one to see the super guru.\n  - %s\n", argv[0]);

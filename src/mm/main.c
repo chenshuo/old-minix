@@ -1,16 +1,13 @@
 /* This file contains the main program of the memory manager and some related
  * procedures.  When MINIX starts up, the kernel runs for a little while,
- * initializing itself and its tasks, and then it runs MM.  MM at this point
- * does not know where FS is in memory and how big it is.  By convention, FS
- * must start at the click following MM, so MM can deduce where it starts at
- * least.  Later, when FS runs for the first time, FS makes a pseudo-call,
- * BRK2, to tell MM how big it is.  This allows MM to figure out where INIT
- * is.
+ * initializing itself and its tasks, and then it runs MM and FS.  Both MM
+ * and FS initialize themselves as far as they can.  FS then makes a call to
+ * MM, because MM has to wait for FS to acquire a RAM disk.  MM asks the
+ * kernel for all free memory and starts serving requests.
  *
  * The entry points into this file are:
  *   main:	starts MM running
  *   reply:	reply to a process making an MM system call
- *   do_brk2:	pseudo-call for FS to report its size
  */
 
 #include "mm.h"
@@ -111,10 +108,12 @@ PRIVATE void mm_init()
 	SIGQUIT, SIGILL, SIGTRAP, SIGABRT,
 	SIGEMT, SIGFPE, SIGUSR1, SIGSEGV,
 	SIGUSR2, 0 };
+  register int proc_nr;
   register struct mproc *rmp;
   register char *sig_ptr;
-
-  mem_init();			/* initialize tables to all physical mem */
+  phys_clicks ram_clicks, total_clicks, minix_clicks, free_clicks, dummy;
+  message mess;
+  struct mem_map kernel_map[NR_SEGS];
 
   /* Build the set of signals which cause core dumps.
    * (core_bits is now misnamed.  DEBUG.)
@@ -123,125 +122,61 @@ PRIVATE void mm_init()
   for (sig_ptr = core_sigs; *sig_ptr != 0; sig_ptr++)
 	sigaddset(&core_bits, *sig_ptr);
 
+  /* Get the memory map of the kernel to see how much memory it uses,
+   * including the gap between address 0 and the start of the kernel.
+   */
+  sys_getmap(SYSTASK, kernel_map);
+  minix_clicks = kernel_map[S].mem_phys + kernel_map[S].mem_len;
+
   /* Initialize MM's tables. */
-  for (rmp = &mproc[0]; rmp < &mproc[LOW_USER]; rmp++) rmp->mp_flags |= IN_USE;
-  mproc[INIT_PROC_NR].mp_flags |= IN_USE;
+  for (proc_nr = 0; proc_nr <= INIT_PROC_NR; proc_nr++) {
+	rmp = &mproc[proc_nr];
+	rmp->mp_flags |= IN_USE;
+	sys_getmap(proc_nr, rmp->mp_seg);
+	if (rmp->mp_seg[T].mem_len != 0) rmp->mp_flags |= SEPARATE;
+	minix_clicks += (rmp->mp_seg[S].mem_phys + rmp->mp_seg[S].mem_len)
+				- rmp->mp_seg[T].mem_phys;
+  }
   mproc[INIT_PROC_NR].mp_pid = INIT_PID;
   sigemptyset(&mproc[INIT_PROC_NR].mp_ignore);
   sigemptyset(&mproc[INIT_PROC_NR].mp_catch);
   procs_in_use = LOW_USER + 1;
-}
 
+  /* Wait for FS to send a message telling the RAM disk size then go "on-line".
+   */
+  if (receive(FS_PROC_NR, &mess) != OK)
+	panic("MM can't obtain RAM disk size from FS", NO_NUM);
 
-/*===========================================================================*
- *				do_brk2	   				     *
- *===========================================================================*/
-PUBLIC int do_brk2()
-{
-/* This "call" is made once by FS during system initialization and then never
- * again by anyone.  It contains the origin and size of INIT, and the combined
- * size of the 1536 bytes of unused mem, MINIX and RAM disk.
- *   m1_i1 = size of INIT text in clicks
- *   m1_i2 = size of INIT data in clicks
- *   m1_i3 = number of bytes for MINIX + RAM DISK
- *   m1_p1 = origin of INIT in clicks
- */
+  ram_clicks = mess.m1_i1;
 
-  int mem1, mem2, mem3;
-  register struct mproc *rmp;
-  phys_clicks init_org, init_clicks, ram_base, ram_clicks, tot_clicks;
-  phys_clicks init_text_clicks, init_data_clicks;
-  phys_clicks minix_clicks;
-
-  if (who != FS_PROC_NR) return(EPERM);	/* only FS make do BRK2 */
-
-  /* Remove the memory used by MINIX from the memory map. */
-  init_text_clicks = mm_in.m1_i1;	/* size of INIT in clicks */
-  init_data_clicks = mm_in.m1_i2;	/* size of INIT in clicks */
-  init_org = (phys_clicks) ((int) mm_in.m1_p1);	/* INIT's mem addr */
-  init_clicks = init_text_clicks + init_data_clicks;
-  minix_clicks = init_org + init_clicks;	/* size of system in clicks */
-  ram_base = alloc_mem(minix_clicks);	/* remove MINIX from map */
-  if (ram_base != 0)
-	panic("inconsistent system memory base", ram_base);
-
-  /* Remove the memory used by the RAM disk from the memory map. */
-  tot_clicks = mm_in.m1_i3;		/* total size of MINIX + RAM disk */
-  ram_clicks = tot_clicks - minix_clicks;	/* size of RAM disk */
-#if (CHIP == INTEL)
-  /* Put RAM disk in extended memory, if any. */
-  if (get_mem(&ram_base, TRUE) >= ram_clicks)
-	goto got_base;
-#endif
-  ram_base = alloc_mem(ram_clicks);	/* remove the RAM disk from the map */
-  if (ram_base == NO_MEM)
-	panic("not enough memory for RAM disk", NO_NUM);
-got_base:
-  mm_out.POSITION = (phys_bytes) ram_base * CLICK_SIZE;	/* tell FS where */
+  /* Initialize tables to all physical mem. */
+  mem_init(&total_clicks, &free_clicks);
 
   /* Print memory information. */
-#if (MACHINE == MACINTOSH)
-  /* Mac memory does not start at zero, so adjust the numbers */
-  mem1 = click_to_round_k(minix_clicks-start_click()+ram_clicks+mem_left());  
-  mem2 = click_to_round_k(minix_clicks-start_click());
-#else
-  mem1 = click_to_round_k(minix_clicks + ram_clicks + mem_left());  
-  mem2 = click_to_round_k(minix_clicks);
-#endif
-  mem3 = click_to_round_k(ram_clicks);
-#if (MACHINE == IBM_PC)		/* why not for no-one or everyone? */
-  printf("\033[H\033[J");	/* go to top of screen and clear screen */
-#endif
-  printf("Memory size =%5dK   ", mem1);
-  printf("MINIX =%4dK   ", mem2);
-  printf("RAM disk =%5dK   ", mem3);
-  printf("Available =%5dK\n\n", mem1 - mem2 - mem3);
-  if (mem1 - mem2 - mem3 < 32)
-	panic("not enough memory to run MINIX", NO_NUM);
+  printf("\nMemory size =%5dK   ", click_to_round_k(total_clicks));
+  printf("MINIX =%4dK   ", click_to_round_k(minix_clicks));
+  printf("RAM disk =%5dK   ", click_to_round_k(ram_clicks));
+  printf("Available =%5dK\n\n", click_to_round_k(free_clicks));
 
-  /* Initialize INIT's table entry. */
-  rmp = &mproc[INIT_PROC_NR];
-  rmp->mp_seg[T].mem_phys = init_org;
-  rmp->mp_seg[T].mem_len  = init_text_clicks;
-  rmp->mp_seg[D].mem_phys = init_org + init_text_clicks;
-  rmp->mp_seg[D].mem_len  = init_data_clicks;
-  rmp->mp_seg[S].mem_phys = init_org + init_clicks;
-#if (CHIP == M68000)
-#if (SHADOWING == 0)
-  rmp->mp_seg[T].mem_vir  = 0;
-  rmp->mp_seg[D].mem_vir  = init_text_clicks;
-  rmp->mp_seg[S].mem_vir  = init_clicks;
-#else
-  rmp->mp_seg[T].mem_vir  = rmp->mp_seg[T].mem_phys;
-  rmp->mp_seg[D].mem_vir  = rmp->mp_seg[D].mem_phys;
-  rmp->mp_seg[S].mem_vir  = rmp->mp_seg[S].mem_phys;
-#endif
-#else
-  rmp->mp_seg[S].mem_vir  = init_clicks;
-#endif
-  if (init_text_clicks != 0) rmp->mp_flags |= SEPARATE;
-
-  return(OK);
+  /* Tell FS to continue. */
+  if (send(FS_PROC_NR, &mess) != OK)
+	panic("MM can't sync up with FS", NO_NUM);
 }
 
 
 /*===========================================================================*
  *				get_mem					     *
  *===========================================================================*/
-PUBLIC phys_clicks get_mem(pbase, extflag)
-phys_clicks *pbase;		/* where to return the base */
-int extflag;			/* nonzero for extended memory */
+PUBLIC int get_mem(base, size, total)
+phys_clicks *base, *size, *total;
 {
-/* Ask kernel for the next chunk of memory.  'extflag' specifies the type of
- * memory.  "Extended" memory here means memory above 1MB which is no good
- * for putting programs in but usable for the RAM disk.  MM doesn't care
- * about the locations of the 2 types of memory, except memory above 1MB is
- * unreachable unless CLICK_SIZE > 16, but still usable for the RAM disk.
- */
+/* Ask kernel for the next chunk of memory. */
   mm_out.m_type = SYS_MEM;
-  mm_out.DEVICE = extflag;
-  if (sendrec(SYSTASK, &mm_out) != OK || mm_out.m_type != OK)
+  if (sendrec(SYSTASK, &mm_out) != OK)
 	panic("kernel didn't respond to get_mem", NO_NUM);
-  *pbase = (phys_clicks) mm_out.POSITION;
-  return((phys_clicks) mm_out.COUNT);
+  if (mm_out.m1_i2 == 0) return(0);
+  *base = mm_out.m1_i1;
+  *size = mm_out.m1_i2;
+  *total = mm_out.m1_i3;
+  return(1);
 }

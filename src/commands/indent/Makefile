@@ -1,17 +1,21 @@
 # Makefile for indent
 
-CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE
-O=o
+CFLAGS= -c -O -D_MINIX -D_POSIX_SOURCE -wo
 
-OBJ = args.$O comment.$O lexi.$O indent.$O parse.$O io.$O
+all:	indent
+
+OBJ = args.o comment.o lexi.o indent.o parse.o io.o
 
 indent: ${OBJ}
-	@rm -rf indent
-	@echo Start linking indent
-	@$(CC) -o indent -i ${OBJ} >/dev/null
-	@chmem =60000 indent
+	$(CC) -o indent -i ${OBJ}
+	install -S 32kw $@
+
+install:	/usr/bin/indent
+
+/usr/bin/indent:	indent
+	install -cs -o bin indent $@
 
 $(OBJ): globs.h codes.h
 
 clean:
-	@rm -f *.bak *.o *.s core indent
+	rm -f *.bak *.o core indent

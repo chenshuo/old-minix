@@ -12,6 +12,7 @@
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void list, (void));
 _PROTOTYPE(void usage, (void));
+_PROTOTYPE(void tell, (char *this));
 
 int main(argc, argv)
 int argc;
@@ -41,8 +42,12 @@ char *argv[];
   }
 
   /* The mount has completed successfully. Tell the user. */
-  std_err(argv[1]);
-  std_err(" mounted\n");
+  tell(argv[1]);
+  tell(" is read-");
+  tell(ro ? "only" : "write");
+  tell(" mounted on ");
+  tell(argv[2]);
+  tell("\n");
 
   /* Update /etc/mtab. */
   n = load_mtab("mount");
@@ -105,4 +110,11 @@ void usage()
 {
   std_err("Usage: mount special name [-r]\n");
   exit(1);
+}
+
+
+void tell(this)
+char *this;
+{
+  write(1, this, strlen(this));
 }

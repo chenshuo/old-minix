@@ -563,8 +563,10 @@ lookup (name, namekind)
 void 
 welcome()
 {
+#if !__minix
   printf ("This is free software with ABSOLUTELY NO WARRANTY.\n");
   printf ("For details type `warranty'. \n");
+#endif
 }
 
 

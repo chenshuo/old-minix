@@ -141,6 +141,7 @@ struct line *lp;
 		putchar('\n');
 
 	if (domake || expmake) {	/*  Get the shell to execute it  */
+		fflush(stdout);
 		if ((estat = dosh(q, shell)) != 0) {
 		    if (estat == -1)
 			fatal("Couldn't execute %s", shell,0);
@@ -380,16 +381,19 @@ struct name *np;
 {
 #ifdef unix
   struct stat info;
-  int         fd;
+  int r;
 
-
-  if (stat(np->n_name, &info) < 0) {
+  if (is_archive_ref(np->n_name)) {
+	r = archive_stat(np->n_name, &info);
+  } else {
+	r = stat(np->n_name, &info);
+  }
+  if (r < 0) {
 	if (errno != ENOENT)
 		fatal("Can't open %s; error %d", np->n_name, errno);
 
 	np->n_time = 0L;
-  }
-  else {
+  } else {
 	np->n_time = info.st_mtime;
 	np->n_flag |= N_EXISTS;
   }

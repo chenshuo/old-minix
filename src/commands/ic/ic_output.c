@@ -177,7 +177,7 @@ ic_state *s;
 	printf("Output is ASCII     ");
   else
 	printf("Output base = %2d    ", s->output_base);
-  if ((int) s->scratch_pad != 0) printf("Scratch file = %s", s->file_name);
+  if (s->scratch_pad != (FILE *)NULL) printf("Scratch file = %s", s->file_name);
   Move(WAIT_COLUMN, WAIT_LINE);
 }
 

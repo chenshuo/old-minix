@@ -5,7 +5,6 @@
  * The entry points into this file are
  *   do_dup:	  perform the DUP system call
  *   do_fcntl:	  perform the FCNTL system call
- *   lock_op:	  handle the setting of locks
  *   lock_revive: revive processes when a lock is released
  *   do_sync:	  perform the SYNC system call
  *   do_fork:	  adjust the tables after MM has performed a FORK system call
@@ -73,7 +72,7 @@ PUBLIC int do_dup()
  *===========================================================================*/
 PUBLIC int do_fcntl()
 {
-/* Perform the fcntl(fd, request, addr) system call. */
+/* Perform the fcntl(fd, request, ...) system call. */
 
   register struct filp *f;
   int new_fd, r, fl;
@@ -137,20 +136,17 @@ int req;			/* either F_SETLK or F_SETLKW */
 {
 /* Perform the advisory locking required by POSIX. */
 
-  int r, ltype, mo, i, conflict = 0, unlocking = 0;
+  int r, ltype, i, conflict = 0, unlocking = 0;
+  mode_t mo;
   off_t first, last;
   struct flock flock;
-
-  char *fs_addr;
-  vir_bytes user_flock, fs_flock, flock_size;
+  vir_bytes user_flock, flock_size;
   struct file_lock *flp, *flp2, *empty;
 
   /* Fetch the flock structure from user space. */
-  fs_flock   = (vir_bytes) &flock;
   flock_size = (vir_bytes) sizeof(struct flock);
   user_flock = (vir_bytes) name1;
-  fs_addr = (char *) fs_flock;
-  r = rw_user(D, who, user_flock, flock_size, fs_addr, FROM_USER);
+  r = rw_user(D, who, user_flock, flock_size, (char *) &flock, FROM_USER);
   if (r != OK) return(EINVAL);
 
   /* Make some error checks. */
@@ -169,7 +165,7 @@ int req;			/* either F_SETLK or F_SETLKW */
 	case SEEK_END:	first = f->filp_ino->i_size; break;
 	default:	return(EINVAL);
   }
-  /* check for overflow */
+  /* Check for overflow. */
   if (((long)flock.l_start > 0) && ((first + flock.l_start) < first))
 	return(EINVAL);
   if (((long)flock.l_start < 0) && ((first + flock.l_start) > first))
@@ -190,8 +186,7 @@ int req;			/* either F_SETLK or F_SETLKW */
 	if (last < flp->lock_first) continue;	/* new one is in front */
 	if (first > flp->lock_last) continue;	/* new one is afterwards */
 	if (ltype == F_RDLCK && flp->lock_type == F_RDLCK) continue;
-	if (req != F_GETLK && ltype != F_UNLCK && flp->lock_pid == fp->fp_pid) 
-		continue;
+	if (ltype != F_UNLCK && flp->lock_pid == fp->fp_pid) continue;
   
 	/* There might be a conflict.  Process it. */
 	conflict = 1;
@@ -258,8 +253,7 @@ int req;			/* either F_SETLK or F_SETLKW */
 	}
 
 	/* Copy the flock structure back to the caller. */
-	fs_addr = (char *) fs_flock;
-	r = rw_user(D, who, user_flock, flock_size, fs_addr, TO_USER);
+	r = rw_user(D, who, user_flock, flock_size, (char *) &flock, TO_USER);
 	return(r);
   }
 
@@ -296,7 +290,7 @@ PUBLIC void lock_revive()
   for (fptr = &fproc[INIT_PROC_NR + 1]; fptr < &fproc[NR_PROCS]; fptr++){
 	task = -fptr->fp_task;
 	if (fptr->fp_suspended == SUSPENDED && task == XLOCK) {
-		revive((int)(fptr - fproc), 0);
+		revive( (int) (fptr - fproc), 0);
 	}
   }
 }
@@ -340,17 +334,13 @@ PUBLIC int do_fork()
  */
 
   register struct fproc *cp;
-  register char *sptr, *dptr;
   int i;
 
   /* Only MM may make this call directly. */
   if (who != MM_PROC_NR) return(ERROR);
 
   /* Copy the parent's fproc struct to the child. */
-  sptr = (char *) &fproc[parent];	/* pointer to parent's 'fproc' struct*/
-  dptr = (char *) &fproc[child];	/* pointer to child's 'fproc' struct */
-  i = sizeof(struct fproc);		/* how many bytes to copy */
-  while (i--) *dptr++ = *sptr++;	/* fproc[child] = fproc[parent] */
+  fproc[child] = fproc[parent];
 
   /* Increase the counters in the 'filp' table. */
   cp = &fproc[child];
@@ -481,7 +471,7 @@ PUBLIC int do_revive()
  */
 
 #if !ALLOW_USER_SEND
-  if (who > 0) return(EPERM);
+  if (who >= LOW_USER) return(EPERM);
 #endif
 
   revive(m.REP_PROC_NR, m.REP_STATUS);

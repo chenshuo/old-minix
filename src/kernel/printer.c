@@ -77,7 +77,6 @@ PRIVATE int caller;		/* process to tell when printing done (FS) */
 PRIVATE int done_status;	/* status of last output completion */
 PRIVATE int oleft;		/* bytes of output left in obuf */
 PRIVATE char obuf[128];		/* output buffer */
-PRIVATE phys_bytes obuf_phys;	/* physical address of obuf */
 PRIVATE int opending;		/* nonzero while expected printing not done */
 PRIVATE char *optr;		/* ptr to next char in obuf to print */
 PRIVATE int orig_count;		/* original byte count */
@@ -95,6 +94,7 @@ FORWARD _PROTOTYPE( void pr_start, (void) );
 FORWARD _PROTOTYPE( void print_init, (void) );
 FORWARD _PROTOTYPE( void reply, (int code, int replyee, int process,
 		int status) );
+FORWARD _PROTOTYPE( int pr_handler, (int irq) );
 
 /*===========================================================================*
  *				printer_task				     *
@@ -253,12 +253,12 @@ PRIVATE void print_init()
  * BIOS and initialize the printer.
  */
 
-  obuf_phys = umap(proc_ptr, D, (vir_bytes)obuf, (vir_bytes)sizeof obuf);
-  phys_copy(0x408L, umap(proc_ptr, D, (vir_bytes)&port_base, (vir_bytes)2),2L);
+  phys_copy(0x408L, vir2phys(&port_base), 2L);
   out_byte(port_base + 2, INIT_PRINTER);
   milli_delay(2);		/* easily satisfies Centronics minimum */
   out_byte(port_base + 2, SELECT);
-  cim_printer();		/* ready for printer interrupts */
+  put_irq_handler(PRINTER_IRQ, pr_handler);
+  enable_irq(PRINTER_IRQ);		/* ready for printer interrupts */
 }
 
 
@@ -272,7 +272,7 @@ PRIVATE void pr_start()
   register int chunk;
 
   if ( (chunk = user_left) > sizeof obuf) chunk = sizeof obuf;
-  phys_copy(user_phys, obuf_phys, (phys_bytes) chunk);
+  phys_copy(user_phys, vir2phys(obuf), (phys_bytes) chunk);
   user_phys += chunk;
   user_left -= chunk;
   optr = obuf;
@@ -282,12 +282,14 @@ PRIVATE void pr_start()
 
 
 /*===========================================================================*
- *				pr_char					     *
+ *				pr_handler				     *
  *===========================================================================*/
-PUBLIC void pr_char()
+PRIVATE int pr_handler(irq)
+int irq;
 {
 /* This is the interrupt handler.  When a character has been printed, an
- * interrupt occurs, and the assembly code routine trapped to calls pr_char().
+ * interrupt occurs, and the assembly code routine trapped to calls
+ * pr_handler().
  *
  * One problem is that the 8259A controller generates spurious interrupts to
  * IRQ7 when it gets confused by mistimed interrupts on any line.  (IRQ7 for
@@ -306,7 +308,7 @@ PUBLIC void pr_char()
 	 * interrupt status does not affect the printer.
 	 */
 	out_byte(port_base + 2, SELECT);
-	return;
+	return 1;
   }
 
   do {
@@ -321,7 +323,7 @@ PUBLIC void pr_char()
 		 * pr_restart, since they are not synchronized with printer
 		 * interrupts.  It may happen after a spurious interrupt.
 		 */
-		return;
+		return 1;
 	}
 	if ((status & STATUS_MASK) == NORMAL_STATUS) {
 		/* Everything is all right.  Output another character. */
@@ -335,7 +337,7 @@ PUBLIC void pr_char()
 		/* Error.  This would be better ignored (treat as busy). */
 		done_status = status;
 		interrupt(PRINTER);
-		return;
+		return 1;
 	}
   }
   while (--oleft != 0);
@@ -343,6 +345,7 @@ PUBLIC void pr_char()
   /* Finished printing chunk OK. */
   done_status = OK;
   interrupt(PRINTER);
+  return 1;	/* Reenable printer interrupt */
 }
 
 
@@ -352,13 +355,16 @@ PUBLIC void pr_char()
 PUBLIC void pr_restart()
 {
 /* Check if printer is hung up, and if so, restart it.
- * Test-and-set done by tasim_printer() stops pr_char() being reentered.
+ * Disable_irq() returns true if the irq could be disabled, so that
+ * pr_restart() is not reentered.
  */
 
   if (oleft != 0) {
-	if (opending && !tasim_printer()) {
-		pr_char();
-		cim_printer();	/* ready for printer interrupts again */
+	if (opending && disable_irq(PRINTER_IRQ)) {
+		(void) pr_handler(PRINTER_IRQ);
+
+		/* ready for printer interrupts again */
+		enable_irq(PRINTER_IRQ);
 	}
 	opending = TRUE;	/* expect some printing before next call */
   }

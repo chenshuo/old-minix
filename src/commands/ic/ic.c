@@ -268,7 +268,7 @@ int c;
       case 'w':
       case ESC_PGUP:		/* Write tos to a file */
 	{
-		if ((int) s->scratch_pad == (int) NULL) {
+		if (s->scratch_pad == (FILE *) NULL) {
 			/* Try to open a scratch pad file  */
 			strcpy(s->file_name, "./pad");
 			if ((s->scratch_pad = fopen(s->file_name,"w")) ==NULL){

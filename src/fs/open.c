@@ -28,7 +28,7 @@ PRIVATE char mode_map[] = {R_BIT, W_BIT, R_BIT|W_BIT, 0};
 FORWARD _PROTOTYPE( int common_open, (int oflags, Mode_t omode)		);
 FORWARD _PROTOTYPE( int pipe_open, (struct inode *rip,Mode_t bits,int oflags));
 FORWARD _PROTOTYPE( struct inode *new_node, (char *path, Mode_t bits,
-			zone_t z0, off_t lsize)			);
+							zone_t z0)	);
 
 /*===========================================================================*
  *				do_creat				     *
@@ -49,10 +49,9 @@ PUBLIC int do_creat()
  *===========================================================================*/
 PUBLIC int do_mknod()
 {
-/* Perform the mknod(name, mode, addr, size) system call. */
+/* Perform the mknod(name, mode, addr) system call. */
 
   register mode_t bits, mode_bits;
-  long size;
   struct inode *ip;
 
   /* Only the super_user may make nodes other than fifos. */
@@ -60,9 +59,7 @@ PUBLIC int do_mknod()
   if (!super_user && ((mode_bits & I_TYPE) != I_NAMED_PIPE)) return(EPERM);
   if (fetch_name(m.m1_p1, m.m1_i1, M1) != OK) return(err_code);
   bits = (mode_bits & I_TYPE) | (mode_bits & ALL_MODES & fp->fp_umask);
-  size = (long) m.m1_p2;	/* number of blocks in the device */
-  if (size > MAX_FILE_POS/BLOCK_SIZE) return(EINVAL);
-  ip = new_node(user_path, bits, (zone_t) m.m1_i3, (off_t) size * BLOCK_SIZE);
+  ip = new_node(user_path, bits, (zone_t) m.m1_i3);
   put_inode(ip);
   return(err_code);
 }
@@ -71,11 +68,10 @@ PUBLIC int do_mknod()
 /*===========================================================================*
  *				new_node				     *
  *===========================================================================*/
-PRIVATE struct inode *new_node(path, bits, z0, lsize)
+PRIVATE struct inode *new_node(path, bits, z0)
 char *path;			/* pointer to path name */
 mode_t bits;			/* mode of the new inode */
 zone_t z0;			/* zone number 0 for new inode */
-off_t lsize;			/* size of the special file */
 {
 /* New_node() is called by common_open(), do_mknod(), and do_mkdir().  
  * In all cases it allocates a new inode, makes a directory entry for it on 
@@ -107,7 +103,6 @@ off_t lsize;			/* size of the special file */
 	 */
 	rip->i_nlinks++;
 	rip->i_zone[0] = z0;		/* major/minor device numbers */
-	rip->i_size = lsize;		/* size (needed for block specials) */
 	rw_inode(rip, WRITING);		/* force inode to disk now */
 
 	/* New inode acquired.  Try to make directory entry. */
@@ -185,7 +180,7 @@ mode_t omode;
   if (oflags & O_CREAT) {
   	/* Create a new inode by calling new_node(). */
         omode = I_REGULAR | (omode & ALL_MODES & fp->fp_umask);
-    	rip = new_node(user_path, omode, NO_ZONE, (off_t) 0);
+    	rip = new_node(user_path, omode, NO_ZONE);
     	r = err_code;
     	if (r == OK) exist = FALSE;      /* we just created the file */
 	else if (r != EEXIST) return(r); /* other error */
@@ -214,6 +209,11 @@ mode_t omode;
 				if ((r = forbidden(rip, W_BIT, 0)) !=OK) break;
 				truncate(rip);
 				wipe_inode(rip);
+				/* Send the inode from the inode cache to the
+				 * block cache, so it gets written on the next
+				 * cache flush.
+				 */
+				rw_inode(rip, WRITING);
 			}
 			break;
  
@@ -228,7 +228,7 @@ mode_t omode;
 			dev_mess.m_type = DEV_OPEN;
 			dev = (dev_t) rip->i_zone[0];
 			dev_mess.DEVICE = dev;
-			dev_mess.TTY_FLAGS = mode;
+			dev_mess.TTY_FLAGS = bits | (oflags & ~O_ACCMODE);
 			major = (dev >> MAJOR) & BYTE;	/* major device nr */
 			if (major <= 0 || major >= max_major) {
 				r = ENODEV;
@@ -335,24 +335,28 @@ PUBLIC int do_close()
   if ( (rfilp = get_filp(fd)) == NIL_FILP) return(err_code);
   rip = rfilp->filp_ino;	/* 'rip' points to the inode */
 
-  /* Check to see if the file is special. */
-  mode_word = rip->i_mode & I_TYPE;
-  if (mode_word == I_CHAR_SPECIAL || mode_word == I_BLOCK_SPECIAL) {
-	dev = (dev_t) rip->i_zone[0];
-	if (mode_word == I_BLOCK_SPECIAL)  {
-		/* Invalidate cache entries unless special is mounted or ROOT*/
-		(void) do_sync();	/* purge cache */
-		if (mounted(rip) == FALSE) invalidate(dev);
+  if (rfilp->filp_count - 1 == 0) {
+	  /* Check to see if the file is special. */
+	  mode_word = rip->i_mode & I_TYPE;
+	  if (mode_word == I_CHAR_SPECIAL || mode_word == I_BLOCK_SPECIAL) {
+		dev = (dev_t) rip->i_zone[0];
+		if (mode_word == I_BLOCK_SPECIAL)  {
+			/* Invalidate cache entries unless special is mounted
+			 * or ROOT
+			 */
+			(void) do_sync();	/* purge cache */
+			if (!mounted(rip)) invalidate(dev);
+		}
+		/* Use the dmap_close entry to do any special processing
+		 * required.
+		 */
+		dev_mess.m_type = DEV_CLOSE;
+		dev_mess.DEVICE = dev;
+		dev_mess.COUNT= rfilp->filp_count - 1;
+		major = (dev >> MAJOR) & BYTE;	/* major device nr */
+		task = dmap[major].dmap_task;	/* device task nr */
+		(*dmap[major].dmap_close)(task, &dev_mess);
 	}
-	/* Use the dmap_close entry to do any special processing required. */
-	dev_mess.m_type = DEV_CLOSE;
-	dev_mess.DEVICE = dev;
-	dev_mess.COUNT= rfilp->filp_count - 1;
-		/* Device wants to know how many times this fd is open after
-		 * the close. */
-	major = (dev >> MAJOR) & BYTE;	/* major device nr */
-	task = dmap[major].dmap_task;	/* device task nr */
-	(*dmap[major].dmap_close)(task, &dev_mess);
   }
 
   /* If the inode being closed is a pipe, release everyone hanging on it. */
@@ -376,7 +380,6 @@ PUBLIC int do_close()
 	put_inode(rip);
   }
 
-  fp->fp_cloexec &= ~(1L << fd);
   fp->fp_cloexec &= ~(1L << fd);	/* turn off close-on-exec bit */
   fp->fp_filp[fd] = NIL_FILP;
 
@@ -456,7 +459,7 @@ PUBLIC int do_mkdir()
 
   /* Next make the inode. If that fails, return error code. */
   bits = I_DIRECTORY | (mode & RWX_MODES & fp->fp_umask);
-  rip = new_node(user_path, bits, (zone_t) 0, (off_t) 0);
+  rip = new_node(user_path, bits, (zone_t) 0);
   if (rip == NIL_INODE || err_code == EEXIST) {
 	put_inode(rip);		/* can't make dir: it already exists */
 	put_inode(ldirp);	/* return parent too */

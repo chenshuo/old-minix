@@ -1,4 +1,4 @@
-#define NCALLS		  76	/* number of system calls allowed */
+#define NCALLS		  77	/* number of system calls allowed */
 
 #define EXIT		   1 
 #define FORK		   2 
@@ -51,7 +51,6 @@
 /* The following are not system calls, but are processed like them. */
 #define KSIG		  64	/* kernel detected a signal */
 #define UNPAUSE		  65	/* to MM or FS: check for EINTR */
-#define BRK2		  66	/* to MM: used to say how big FS & INIT are */
 #define REVIVE	 	  67	/* to FS: revive a sleeping process */
 #define TASK_REPLY	  68	/* to FS: reply code from tty task */
 
@@ -59,11 +58,13 @@
 #define	AM_SYSCALL	  69
 
 /* Memory allocation function for tasks */
-#define BRK3		70
+#define BRK3		  70
 
 /* Posix signal handling. */
-#define SIGACTION	71
-#define SIGSUSPEND	72
-#define SIGPENDING	73
-#define SIGPROCMASK	74
-#define SIGRETURN	75
+#define SIGACTION	  71
+#define SIGSUSPEND	  72
+#define SIGPENDING	  73
+#define SIGPROCMASK	  74
+#define SIGRETURN	  75
+
+#define REBOOT		  76

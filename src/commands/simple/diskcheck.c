@@ -25,20 +25,20 @@ short pat1[SHORTS_PER_BLOCK], pat2[SHORTS_PER_BLOCK];
 int blk = -1;			/* number of the block in buf, or -1 */
 int pfd;			/* file descriptor for purging */
 int fd;				/* file descriptor for data I/O */
-unsigned initblock;		/* first block to test */
-unsigned curblock;		/* current block */
-unsigned limit;			/* first block beyond test zone */
-unsigned errors;		/* # errors so far */
-unsigned ct;			/* # blocks read so far */
+unsigned long initblock;	/* first block to test */
+unsigned long curblock;		/* current block */
+unsigned long limit;		/* first block beyond test zone */
+unsigned long errors;		/* # errors so far */
+unsigned long ct;		/* # blocks read so far */
 int intflag;			/* set when signal seen */
 int rawdev;			/* set when I/O done on raw device */
 char *purgefile = "/dev/ram";
 
 _PROTOTYPE(int main, (int argc , char *argv []));
-_PROTOTYPE(int testblock, (unsigned b ));
+_PROTOTYPE(int testblock, (unsigned long b ));
 _PROTOTYPE(void status, (void ));
-_PROTOTYPE(void nonfatal, (char *s , unsigned b ));
-_PROTOTYPE(void fatal, (char *s , unsigned b ));
+_PROTOTYPE(void nonfatal, (char *s , unsigned long b ));
+_PROTOTYPE(void fatal, (char *s , unsigned long b ));
 _PROTOTYPE(void catch, (int sig ));
 _PROTOTYPE(void usage, (void ));
 _PROTOTYPE(int wtest, (off_t pos , short *pat ));
@@ -48,7 +48,7 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
-  unsigned b;
+  unsigned long b;
   int i;
   struct stat s;
 
@@ -68,8 +68,8 @@ char *argv[];
 	printf("Cannot open %s\n", purgefile);
 	exit(1);
   }
-  initblock = atoi(argv[2]);
-  limit = initblock + atoi(argv[3]);
+  initblock = atol(argv[2]);
+  limit = initblock + atol(argv[3]);
   if (limit <= initblock) usage();
 
   for (i = 0; i < SHORTS_PER_BLOCK; i++) {
@@ -99,7 +99,7 @@ char *argv[];
 
 
 int testblock(b)
-unsigned b;
+unsigned long b;
 {
 /* Read block b in, save it in buf.  Then overwrite that block with a
  * known test pattern and read it back.  Finally, replace the block.
@@ -148,23 +148,23 @@ unsigned b;
 
 void status()
 {
-  printf("%8u blocks tested, %u errors detected (last block tested = %5u)\r",
+  printf("%8lu blocks tested, %lu errors detected (last block tested = %5lu)\r",
          ct, errors, curblock);
   fflush(stdout);
 }
 
 void nonfatal(s, b)
 char *s;
-unsigned b;
+unsigned long b;
 {
-  printf("\n%s%u\n", s, b);
+  printf("\n%s%lu\n", s, b);
 }
 
 void fatal(s, b)
 char *s;
-unsigned b;
+unsigned long b;
 {
-  printf("\n%s%u\n", s, b);
+  printf("\n%s%lu\n", s, b);
   status();
   exit(1);
 }
@@ -233,7 +233,7 @@ void purge_cache()
 			break;
 		}
 		printf("ERROR: count=%d  left=%d r=%d.  ", count, left, r);
-		fatal("Cannot purge cache.  errno= ", (unsigned) errno);
+		fatal("Cannot purge cache.  errno= ", (unsigned long) errno);
 	}
 	left -= count;
   }

@@ -152,10 +152,12 @@ typedef struct line LINE;
 #define LINFREE	1		/* entry not in use */
 #define LGLOB	2		/* line marked global */
 
-#define MAXLINE	256		/* max number of chars per line */
+				/* max number of chars per line */
+#define MAXLINE	(sizeof(int) == 2 ? 256 : 8192)
 #define MAXPAT	256		/* max number of chars per replacement
-			 * pattern */
-#define MAXFNAME 256		/* max file name size */
+				 * pattern */
+				/* max file name size */
+#define MAXFNAME (sizeof(int) == 2 ? 256 : 1024)
 
 extern LINE line0;
 extern int curln, lastln, line1, line2, nlines;
@@ -1022,7 +1024,7 @@ int apflg;
   err = 0;
 
   lines = bytes = 0;
-  printf("\"%s\" ", fname);
+  if (diag) printf("\"%s\" ", fname);
   if ((fp = fopen(fname, (apflg ? "a" : "w"))) == NULL) {
 	printf("file open error\n");
 	return(ERR);
@@ -1040,7 +1042,7 @@ int apflg;
 	fputc('\n', fp);
 	lptr = lptr->l_next;
   }
-  printf("%d lines %ld bytes\n", lines, bytes);
+  if (diag) printf("%d lines %ld bytes\n", lines, bytes);
   fclose(fp);
   return(err);
 }

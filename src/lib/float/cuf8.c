@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cuf8.c,v 1.5 89/07/25 14:19:05 ceriel Exp $ */
+/* $Header: cuf8.c,v 1.6 93/01/05 12:04:41 ceriel Exp $ */
 
 /*
 	CONVERT INTEGER TO FLOAT (CUF n 8)
@@ -16,7 +16,7 @@
 
 #include "FP_types.h"
 
-DOUBLE
+void
 cuf8(ss,src)
 int	ss;	/* source size */
 long	src;	/* largest possible integer to convert */
@@ -37,7 +37,7 @@ long	src;	/* largest possible integer to convert */
 	}
 	if (i_src == 0)	{
 		zrf8((DOUBLE *)((void *)&ss));
-		return(*((DOUBLE *) (void *)&ss));
+		return;
 	}
 			/* ESTABLISHED THAT src != 0	*/
 
@@ -51,5 +51,4 @@ long	src;	/* largest possible integer to convert */
 			/* adjust mantissa field	*/
 	nrm_ext(&buf);
 	compact(&buf,(unsigned long *) (void *)&ss,8);
-	return(*((DOUBLE *) (void *)&ss));
 }

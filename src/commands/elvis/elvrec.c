@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include "config.h"
 #include "vi.h"
+#include <sys/stat.h>
 
 void recover(basename, outname)
 	char	*basename;	/* the name of the file to recover */
@@ -24,6 +25,7 @@ void recover(basename, outname)
 	FILE	*from;		/* the /usr/preserve file, or /usr/preserve/Index */
 	FILE	*to;		/* the user's text file */
 	char	*ptr;
+	struct stat st;
 #if OSK
 	int		uid;
 #endif
@@ -77,7 +79,7 @@ void recover(basename, outname)
 		/* If the "preserve" file is missing, then ignore this line
 		 * because it describes a file that has already been recovered.
 		 */
-		if (access(line, 0) < 0)
+		if (stat(line, &st) < 0)
 		{
 			continue;
 		}

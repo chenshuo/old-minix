@@ -1,4 +1,4 @@
-/* Copyright (C) 1992 by Prentice-Hall, Inc.  Permission is hereby granted
+/* Copyright (C) 1995 by Prentice-Hall, Inc.  Permission is hereby granted
  * to redistribute the binary and source programs of this system for
  * educational or research purposes.  For other use, written permission from
  * Prentice-Hall is required.  
@@ -21,19 +21,7 @@
 
 #define NULL     ((void *)0)	/* null pointer */
 #define CPVEC_NR          16	/* max # of entries in a SYS_VCOPY request */
-#if (MACHINE == SUN_4)
-#define LOAD_ADDR     0x4000	/* addr at which the file is loaded (SPARC) */
-				/* DEBUG.  What file?  Is this the same as
-				 * KERNEL_LOAD_ADDRESS for the 8088/386?
-				 * It is 0x600 for the 8088 and for old 386
-				 * versions, 0x700 for the current 386 version,
-				 * and may have to be page-aligned for later
-				 * 386 versions.  It surely belongs in the
-				 * machine-dependent section.
-				 */
-#endif
 
-#define NR_PROCS          32	/* number of slots in proc table */
 #define NR_SEGS            3	/* # segments per process */
 #define T                  0	/* proc[i].mem_map[T] is for text */
 #define D                  1	/* proc[i].mem_map[D] is for data */
@@ -61,17 +49,14 @@
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
 /* Machine dependent stuff. */
-#if INET_KERNEL
-#define INET_TASKS         1	/* Ethernet task */
+#if ENABLE_NETWORKING
+#define NR_INET_TASKS	   1	/* Add one ethernet task */
 #else
-#define INET_TASKS         0
+#define NR_INET_TASKS	   0
 #endif
 
-#if (MACHINE == ATARI)
-#define NR_TASKS (11 + INET_TASKS)	/* number of tasks */
-#else
-#define NR_TASKS (10 + INET_TASKS)	/* number of tasks */
-#endif
+/* Number of tasks. */
+#define NR_TASKS	(11 + NR_INET_TASKS)
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)
@@ -92,7 +77,7 @@
 #define k_to_click(n) ((n) / (CLICK_SIZE / 1024))
 #endif
 
-#if INET_KERNEL
+#if ENABLE_NETWORKING
 #define INET_PROC_NR       2	/* process number of network task */
 #define INIT_PROC_NR       3	/* init -- the process that goes multiuser */
 #define LOW_USER           3	/* first user not part of operating system */

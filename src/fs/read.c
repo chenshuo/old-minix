@@ -92,7 +92,7 @@ int rw_flag;			/* READING or WRITING */
 
   char_spec = (mode_word == I_CHAR_SPECIAL ? 1 : 0);
   block_spec = (mode_word == I_BLOCK_SPECIAL ? 1 : 0);
-  if (block_spec && f_size == 0) f_size = LONG_MAX;
+  if (block_spec) f_size = LONG_MAX;
   rdwt_err = OK;		/* set to EIO if disk error occurs */
 
   /* Check for character special files. */
@@ -136,7 +136,7 @@ int rw_flag;			/* READING or WRITING */
 			chunk = MIN(nbytes, BLOCK_SIZE - off);
 		if (chunk < 0) chunk = BLOCK_SIZE - off;
 
-		if (rw_flag == READING || (block_spec && rw_flag == WRITING)) {
+		if (rw_flag == READING) {
 			bytes_left = f_size - position;
 			if (position >= f_size) break;	/* we are beyond EOF */
 			if (chunk > bytes_left) chunk = (int) bytes_left;
@@ -454,105 +454,104 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
 {
 /* Fetch a block from the cache or the device.  If a physical read is
  * required, prefetch as many more blocks as convenient into the cache.
- * This usually covers bytes_ahead plus any more blocks on the last "track".
- * The device driver may decide it knows better about the track geometry
- * and stop reading at any track boundary (or after an error).
- * Rw_scattered() puts an optional flag on all reads to allow this.
+ * This usually covers bytes_ahead and is at least BLOCKS_MINIMUM.
+ * The device driver may decide it knows better and stop reading at a
+ * cylinder boundary (or after an error).  Rw_scattered() puts an optional
+ * flag on all reads to allow this.
  */
 
-  int block_spec, reading_ahead, read_q_size;
-  unsigned int blocks_ahead, blocks_per_track;
-  unsigned int fragment, limit_bufs_in_use, track, max_track;
-  block_t block;
+/* Minimum number of blocks to prefetch. */
+# define BLOCKS_MINIMUM		(NR_BUFS < 50 ? 18 : 32)
+
+  int block_spec, scale, read_q_size;
+  unsigned int blocks_ahead, fragment;
+  block_t block, blocks_left;
+  off_t ind1_pos;
   dev_t dev;
-  off_t dev_size, file_size;
-  register struct buf *bp;
-  static struct buf *read_q[NR_BUFS];	/* static so it isn't on stack */
+  struct buf *bp;
+  static struct buf *read_q[NR_BUFS];
 
   block_spec = (rip->i_mode & I_TYPE) == I_BLOCK_SPECIAL;
-  if (block_spec)
+  if (block_spec) {
 	dev = (dev_t) rip->i_zone[0];
-  else
+  } else {
 	dev = rip->i_dev;
-  bp = get_block(dev, baseblock, PREFETCH);
+  }
+
+  block = baseblock;
+  bp = get_block(dev, block, PREFETCH);
   if (bp->b_dev != NO_DEV) return(bp);
 
-  /* Guesstimate blocks_per_track.  A bad guess will work but be sub-optimal.
-   * Dev_open may eventually do it properly.
+  /* The best guess for the number of blocks to prefetch:  A lot.
+   * It is impossible to tell what the device looks like, so we don't even
+   * try to guess the geometry, but leave it to the driver.
+   *
+   * The floppy driver can read a full track with no rotational delay, and it
+   * avoids reading partial tracks if it can, so handing it enough buffers to
+   * read two tracks is perfect.  (Two, because some diskette types have
+   * an odd number of sectors per track, so a block may span tracks.)
+   *
+   * The disk drivers don't try to be smart.  With todays disks it is
+   * impossible to tell what the real geometry looks like, so it is best to
+   * read as much as you can.  With luck the caching on the drive allows
+   * for a little time to start the next read.
+   *
+   * The current solution below is a bit of a hack, it just reads blocks from
+   * the current file position hoping that more of the file can be found.  A
+   * better solution must look at the already available zone pointers and
+   * indirect blocks (but don't call read_map!).
    */
-  if (block_spec)
-	dev_size = rip->i_size;
-  else
-#if (MACHINE == ATARI)
-	dev_size =  80L * 2 * 9 * 512;	/* can be 80L*1*9*512 as well */
-#else
-	dev_size =  80L * 2 * 15 * 512;	/* change to your usual floppy size */
-#endif
-  if (dev_size == 0)
-	blocks_per_track = 17;	/* hard disk (17 * nr_heads / 2 is too many) */
-  if (dev_size < 80L * 2 * 15 * 512)
-	blocks_per_track = 9;	/* low-density floppy */
-  else if (dev_size < 80L * 2 * 18 * 512)
-	blocks_per_track = 15;	/* high-density floppy */
-  else
-	blocks_per_track = 18;	/* higher-density floppy */
 
-  file_size = rip->i_size;
-  if (block_spec && file_size == 0) file_size = LONG_MAX;
-  fragment = (unsigned) (position % BLOCK_SIZE);
-  position = position - fragment + BLOCK_SIZE;
-  blocks_ahead = (fragment + bytes_ahead + BLOCK_SIZE - 1) / BLOCK_SIZE - 1;
+  fragment = position % BLOCK_SIZE;
+  position -= fragment;
+  bytes_ahead += fragment;
 
-  /* Set the limit (max + 1) on buffers used. Avoid taking the last 2 buffers
-   * for ordinary files, because the cache will thrash if these are needed
-   * for indirect blocks.  There is no point in stopping earlier for the
-   * immediately-needed part of the read.  Large reads will evict from the
-   * cache all blocks except those for the read and the indirect blocks, no
-   * matter what is done here.
-   */
-  limit_bufs_in_use = block_spec ? NR_BUFS : NR_BUFS - 2;
+  blocks_ahead = (bytes_ahead + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-  max_track = (unsigned) (bp->b_blocknr / blocks_per_track);
-  reading_ahead = FALSE;
-  read_q[0] = bp;		/* first buffer must be read */
-  read_q_size = 1;
+  if (block_spec && rip->i_size == 0) {
+	blocks_left = NR_BUFS;
+  } else {
+	blocks_left = (rip->i_size - position + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
-  /* The next loop has 2 phases, controlled by 'reading_ahead'. */
-  while (TRUE) {
-	if (position >= file_size || bufs_in_use >= limit_bufs_in_use) break;
-  	if (blocks_ahead != 0)
-		--blocks_ahead;
-	else {
-		/* All the immediately-needed blocks have been read.  Give
-		 * up after seeks and partial reads.
-		 */
-		if (reading_ahead || rip->i_seek == ISEEK ||
-		    (fragment + bytes_ahead) % BLOCK_SIZE != 0) break;
-
-		/* Try for more blocks on the last "track".  Try a few more
-		 * than 'blocks_per_track' to allow for blocks out of order.
-		 * Reducing 'limit_bufs_in_use' here might reduce thrashing.
-		 */
-		blocks_ahead = blocks_per_track + 6;
-		reading_ahead = TRUE;
-  	}
-	if (block_spec)
-		block = position / BLOCK_SIZE;
-	else
-		block = read_map(rip, position);
-	position += BLOCK_SIZE;
-	track = (unsigned) (block / blocks_per_track);
-	if (reading_ahead) {
-		if (track != max_track) continue;
-	} else {
-		if (track > max_track) max_track = track;
+	/* Go for the first indirect block if we are in its neighborhood. */
+	if (!block_spec) {
+		scale = rip->i_sp->s_log_zone_size;
+		ind1_pos = (off_t) rip->i_ndzones * (BLOCK_SIZE << scale);
+		if (position <= ind1_pos && rip->i_size > ind1_pos) {
+			blocks_ahead++;
+			blocks_left++;
+		}
 	}
-	if (block_spec || block != NO_BLOCK) {
-		bp = get_block(dev, block, PREFETCH);
-		if (bp->b_dev == NO_DEV)
-			read_q[read_q_size++] = bp;
-		else
-			put_block(bp, FULL_DATA_BLOCK);
+  }
+
+  /* No more than the maximum request. */
+  if (blocks_ahead > NR_BUFS) blocks_ahead = NR_BUFS;
+
+  /* Read at least the minimum number of blocks, but not after a seek. */
+  if (blocks_ahead < BLOCKS_MINIMUM && rip->i_seek == NO_SEEK)
+	blocks_ahead = BLOCKS_MINIMUM;
+
+  /* Can't go past end of file. */
+  if (blocks_ahead > blocks_left) blocks_ahead = blocks_left;
+
+  read_q_size = 0;
+
+  /* Acquire block buffers. */
+  for (;;) {
+	read_q[read_q_size++] = bp;
+
+	if (--blocks_ahead == 0) break;
+
+	/* Don't trash the cache, leave 4 free. */
+	if (bufs_in_use >= NR_BUFS - 4) break;
+
+	block++;
+
+	bp = get_block(dev, block, PREFETCH);
+	if (bp->b_dev != NO_DEV) {
+		/* Oops, block already in the cache, get out. */
+		put_block(bp, FULL_DATA_BLOCK);
+		break;
 	}
   }
   rw_scattered(dev, read_q, read_q_size, READING);

@@ -1,4 +1,5 @@
-ed math.h <<EOS-EOS
+#!/bin/sh
+ed - math.h <<EOS-EOS
 1,1s/^/"/
 1,\$s/\$/\\\\/
 \$,\$d

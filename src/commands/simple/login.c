@@ -55,7 +55,6 @@
 #include <stdlib.h>
 #include <time.h>
 #include <minix/minlib.h>
-#include <stdio.h>
 
 #define MOTD 		    "/etc/motd"
 #define TTY  		         "tty"
@@ -81,6 +80,7 @@ _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void wtmp, (char *line, char *user));
 _PROTOTYPE(void addlog, (char *nam, char *pwd, char *tty));
 _PROTOTYPE(void show_file, (char *nam));
+_PROTOTYPE(void say, (char *s));
 _PROTOTYPE(void Time_out, (int dummy));
 
 void wtmp(line, user)
@@ -88,48 +88,32 @@ char *line;			/* tty device name */
 char *user;			/* user name */
 {
   /* Make entries in /usr/adm/wtmp and /etc/utmp. */
-  struct utmp entry, oldent;
-  char *blank = "               ";
+  struct utmp entry;
   register int fd;
-  register char *sp;
+  register char *p;
   int lineno;
   off_t lineoff;
 
   /* Strip off the /dev part of the TTY name. */
-  sp = strrchr(line, '/');
-  if (sp == NULL)
-	sp = line;
-  else
-	sp++;
+  p = strrchr(line, '/');
+  if (p != NULL) line = p+1;
 
   /* First, read the current UTMP entry. we need some of its
    * parameters! (like PID, ID etc...). */
   if ((fd = open(UTMP, O_RDONLY)) < 0) return;
   lineno = 0;
-  while (read(fd, (char *) &oldent, sizeof(struct utmp))
+  while (read(fd, (char *) &entry, sizeof(struct utmp))
 					== sizeof(struct utmp)) {
-	if (oldent.ut_pid == getpid()) break;
+	if (entry.ut_pid == getpid()) break;
 	lineno++;
   }
   lineoff = lineno * (off_t) sizeof(struct utmp);
 
-  if (lseek(fd, lineoff, SEEK_SET) != (off_t)-1) {
-	read(fd, (char *) &oldent, sizeof(struct utmp));
-  }
   close(fd);
-
-  /* Clear out the new string fields. */
-  strncpy(entry.ut_user, blank, sizeof(entry.ut_user));
-  strncpy(entry.ut_id, blank, sizeof(entry.ut_id));
-  strncpy(entry.ut_line, blank, sizeof(entry.ut_line));
 
   /* Enter new string fields. */
   strncpy(entry.ut_user, user, sizeof(entry.ut_user));
-  strncpy(entry.ut_id, oldent.ut_id, sizeof(entry.ut_id));
-  strncpy(entry.ut_line, sp, sizeof(entry.ut_line));
-
-  /* Copy old numeric fields. */
-  entry.ut_pid = oldent.ut_pid;
+  strncpy(entry.ut_line, line, sizeof(entry.ut_line));
 
   /* Change new numeric fields. */
   entry.ut_type = USER_PROCESS;	/* we are past login... */
@@ -195,6 +179,12 @@ char *nam;
 }
 
 
+void say(s) char *s;
+{
+  write(1, s, strlen(s));
+}
+
+
 int main(argc, argv)
 int argc;
 char *argv[];
@@ -237,8 +227,10 @@ char *argv[];
 		strcpy(name, argv[1]);
 		argc = 1;
 	} else {
+		/* Sync the disk so that one can cut the power at logout. */
+		sync();
 		do {
-			write(1, "login: ", 7);
+			say("login: ");
 			n = read(0, name, 30);
 		} while (n < 2);
 		name[n - 1] = 0;
@@ -251,7 +243,7 @@ char *argv[];
 	if (bad || strlen(pwd->pw_passwd) != 0) {
 		args.sg_flags &= ~ECHO;
 		ioctl(0, TIOCSETP, &args);
-		write(1, "Password: ", 10);
+		say("Password: ");
 
 		time_out = 0;
 		signal(SIGALRM, Time_out);
@@ -265,7 +257,7 @@ char *argv[];
 			bad++;
 		}
 		password[n - 1] = 0;
-		write(1, "\n", 1);
+		say("\n");
 		args.sg_flags |= ECHO;
 		ioctl(0, TIOCSETP, &args);
 
@@ -274,13 +266,13 @@ char *argv[];
 #ifdef BADLOG
 			addlog(name, password, ttyname);
 #endif /* BADLOG */
-			write(1, "Login incorrect\n", 16);
+			say("Login incorrect\n");
 			continue;
 		}
 	}
 	/* Check if the system is going down  */
 	if (access("/etc/nologin", 0) == 0 && strcmp(name, "root") != 0) {
-		write(1, "System going down\n\n", 19);
+		say("System going down\n\n");
 		continue;
 	}
 	/* Write login record to /usr/adm/wtmp and /etc/utmp */
@@ -339,11 +331,11 @@ char *argv[];
 	strcpy(minus_shell + 1, sh2);
 	execve(sh2, argx, env);
 
-	write(1, "login: cannot exec ", 19);
-	write(1, sh, strlen(sh));
-	write(1, " or ", 4);
-	write(1, sh2, strlen(sh2));
-	write(1, "\n", 1);
+	say("login: cannot exec ");
+	say(sh);
+	say(" or ");
+	say(sh2);
+	say("\n");
 	exit(1);
   }
   return(0);

@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: extend.c,v 1.10 89/11/27 16:26:02 ceriel Exp $ */
+/* $Header: extend.c,v 1.11 93/01/05 12:05:05 ceriel Exp $ */
 
 /*
 	CONVERTS FLOATING POINT TO EXTENDED FORMAT

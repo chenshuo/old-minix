@@ -25,8 +25,7 @@
 #endif
 
 #define SHELL "/bin/sh"
-#define MAXARG          256	/* maximum length for an argv            */
-#define NPATHS          256	/* maximum number of paths in path-list */
+#define MAXARG          256	/* maximum length for an argv for -exec  */
 #define BSIZE           512	/* POSIX wants 512 byte blocks           */
 #define SECS_PER_DAY    (24L*60L*60L)	/* check your planet             */
 
@@ -45,17 +44,18 @@
 #define OP_EXEC         13	/* execute command                       */
 #define OP_OK           14	/* execute with confirmation             */
 #define OP_PRINT        15	/* print name                            */
-#define OP_NEWER        16	/* compare modification times            */
-#define OP_AND          17	/* logical and (short circuit)           */
-#define OP_OR           18	/* logical or (short circuit)            */
-#define OP_XDEV         19	/* do not cross file-system boundaries   */
-#define OP_DEPTH        20	/* descend directory before testing      */
-#define OP_PRUNE        21	/* don't descend into current directory  */
-#define OP_NOUSER       22	/* check validity of user id             */
-#define OP_NOGROUP      23	/* check validity of group id            */
-#define LPAR            24	/* left parenthesis                      */
-#define RPAR            25	/* right parenthesis                     */
-#define NOT             26	/* logical not                           */
+#define OP_PRINT0       16	/* print name null terminated            */
+#define OP_NEWER        17	/* compare modification times            */
+#define OP_AND          18	/* logical and (short circuit)           */
+#define OP_OR           19	/* logical or (short circuit)            */
+#define OP_XDEV         20	/* do not cross file-system boundaries   */
+#define OP_DEPTH        21	/* descend directory before testing      */
+#define OP_PRUNE        22	/* don't descend into current directory  */
+#define OP_NOUSER       23	/* check validity of user id             */
+#define OP_NOGROUP      24	/* check validity of group id            */
+#define LPAR            25	/* left parenthesis                      */
+#define RPAR            26	/* right parenthesis                     */
+#define NOT             27	/* logical not                           */
 
 /* Some return values: */
 #define EOI             -1	/* end of expression                     */
@@ -137,6 +137,9 @@ struct oper {
   },
   {
 	"print", OP_PRINT
+  },
+  {
+	"print0", OP_PRINT0
   },
   {
 	"newer", OP_NEWER
@@ -229,7 +232,7 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
-  char *pathlist[NPATHS];
+  char **pathlist, *path, *last;
   int pathcnt = 0, i;
   struct node *pred;
 
@@ -239,8 +242,11 @@ char *argv[];
   (void) umask(um = umask(0));	/* non-destructive get-umask :-)         */
   time(&current_time);		/* get current time                      */
 
-  while (--argc > 0 && lex(*argv) == NONE)	/* copy paths            */
-	pathlist[pathcnt++] = *argv++;
+  pathlist= argv;
+  while (--argc > 0 && lex(*argv) == NONE) {	/* find paths            */
+	pathcnt++;
+	argv++;
+  }
   if (pathcnt == 0)		/* there must be at least one path       */
 	fatal("Usage: path-list [predicate-list]", "");
 
@@ -254,7 +260,9 @@ char *argv[];
 
   for (i = 0; i < pathcnt; i++) {
 	if (xdev_flag) xdev_flag = 2;
-	find(pathlist[i], pred, "");
+	path = pathlist[i];
+	if ((last = strrchr(path, '/')) == NULL) last = path; else last++;
+	find(path, pred, last);
   }
   return 0;
 }
@@ -369,6 +377,9 @@ register struct node *n;
 	return execute(n->n_type, n->n_info.n_exec, path);
     case OP_PRINT:
 	printf("%s\n", path);
+	return 1;
+    case OP_PRINT0:
+	printf("%s", path); putchar(0);
 	return 1;
     case OP_XDEV:
     case OP_DEPTH:
@@ -655,17 +666,15 @@ int t;
 	  case 'f':
 		p->n_info.n_int.n_val = S_IFREG;
 		break;
-#ifdef S_IFLNK
 	  case 'l':
-		p->n_info.n_int.n_val = S_IFLNK;
-		break;
-#endif
-	  default:
 #ifdef S_IFLNK
-		fatal("-type needs b, c, d, f or l", "");
+		p->n_info.n_int.n_val = S_IFLNK;
 #else
-		fatal("-type needs b, c, d or f", "");
+		p->n_info.n_int.n_val = ~0;	/* Always unequal. */
 #endif
+		break;
+	  default:
+		fatal("-type needs b, c, d, f or l", "");
 	}
 	break;
     case OP_USER:
@@ -765,11 +774,13 @@ int t;
     case OP_DEPTH:	depth_flag = 1;	break;
     case OP_PRUNE:
     case OP_PRINT:
+    case OP_PRINT0:
     case OP_NOUSER:	case OP_NOGROUP:	break;
           default:
 	fatal("syntax error, operator expected", "");
   }
-  if ((t == OP_PRINT) || (t == OP_EXEC) || (t == OP_OK)) needprint = 0;
+  if ((t == OP_PRINT) || (t == OP_PRINT0) || (t == OP_EXEC) || (t == OP_OK))
+	needprint = 0;
 
   return p;
 }

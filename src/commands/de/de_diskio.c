@@ -20,6 +20,7 @@
 #include "../../fs/const.h"
 #include "../../fs/type.h"
 #include "../../fs/super.h"
+#include "../../fs/inode.h"
 #include <minix/fslib.h>
 
 #include "de.h"
@@ -130,6 +131,7 @@ void Read_Super_Block( s )
     s->nr_indirects = V1_INDIRECTS;
     s->zone_num_size = V1_ZONE_NUM_SIZE;
     s->zones = super->s_nzones;
+    s->ndzones = V1_NR_DZONES;
     }
   else if ( s->magic == SUPER_V2 )
     {
@@ -140,6 +142,7 @@ void Read_Super_Block( s )
     s->nr_indirects = V2_INDIRECTS;
     s->zone_num_size = V2_ZONE_NUM_SIZE;
     s->zones = super->s_zones;
+    s->ndzones = V2_NR_DZONES;
     }
   else  
     {
@@ -150,9 +153,7 @@ void Read_Super_Block( s )
     else  
       Warning( "Not a Minix file system" );
     Warning( "The file system features will not be available" );  
-    if ( (size = lseek( s->device_d, 0L, SEEK_END )) == -1 )
-      Error( "Error seeking %s", s->device_name );
-    s->zones = s->device_size = size / K;
+    s->zones = 100000L;
     return;
     }
 

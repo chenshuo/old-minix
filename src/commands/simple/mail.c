@@ -176,6 +176,7 @@ char *vec[];
   char lockname[PATHLEN];	/* maildrop lock */
   int locktries;		/* tries when box is locked */
   struct passwd *pw;		/* sender and recipent */
+  int to_console;		/* deliver to console if everything fails */
 
   if (count > MAXRCPT) {
 	fprintf(stderr, "mail: too many recipients\n");
@@ -237,11 +238,20 @@ char *vec[];
 	 * possible (though not very likely) when we have to create
 	 * the maildrop, but not otherwise. If the box is already
 	 * locked, wait awhile and try again. */
-	locktries = created = 0;
+	locktries = created = to_console = 0;
 trylock:
 	if (link(mailbox, lockname) != 0) {
 		if (ENOENT == errno) {	/* user doesn't have a drop yet */
-			if ((dropfd = creat(mailbox, 0600)) < 0) {
+			dropfd = creat(mailbox, 0600);
+			if (dropfd < 0 && errno == ENOENT) {
+				/* Probably missing spool dir; to console. */
+				boxfp = fopen("/dev/console", "w");
+				if (boxfp != NULL) {
+					to_console = 1;
+					goto nobox;
+				}
+			}
+			if (dropfd < 0) {
 				fprintf(stderr, "mail: couln't create a maildrop for user %s\n",
 					vec[i]);
 				++errs;
@@ -279,8 +289,15 @@ trylock:
 		++errs;
 		continue;
 	}
-	(void) time(&now);
-	fprintf(boxfp, "From %s %24.24s\n", sender, ctime(&now));
+nobox:
+	if (to_console) {
+		fprintf(boxfp,
+			"-------------\n| Mail from %s to %s\n-------------\n",
+			sender, vec[i]);
+	} else {
+		(void) time(&now);
+		fprintf(boxfp, "From %s %24.24s\n", sender, ctime(&now));
+	}
 	if (distlist) {
 		fprintf(boxfp, "Dist: ");
 		for (j = 0; j < count; ++j)

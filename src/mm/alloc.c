@@ -201,7 +201,8 @@ PUBLIC phys_clicks max_hole()
 /*===========================================================================*
  *				mem_init				     *
  *===========================================================================*/
-PUBLIC void mem_init()
+PUBLIC void mem_init(total, free)
+phys_clicks *total, *free;		/* memory size summaries */
 {
 /* Initialize hole lists.  There are two lists: 'hole_head' points to a linked
  * list of all the holes (unused memory) in the system; 'free_slots' points to
@@ -224,8 +225,11 @@ PUBLIC void mem_init()
   free_slots = &hole[0];
 
   /* Allocate a hole for each chunk of physical memory. */
-  while ( (size = get_mem(&base, FALSE)) != 0)
+  *free = 0;
+  while (get_mem(&base, &size, total) != 0) {
 	free_mem(base, size);
+	*free += size;
+  }
 }
 
 

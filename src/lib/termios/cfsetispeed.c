@@ -1,11 +1,11 @@
 #include <termios.h>
 
-#undef cfsetospeed
+#undef cfsetispeed
 
-int cfsetospeed(termios_p, speed)
+int cfsetispeed(termios_p, speed)
 struct termios *termios_p;
 speed_t speed;
 {
-    termios_p->_c_ospeed = speed;
+    termios_p->_c_ispeed = speed;
     return 0;
 }

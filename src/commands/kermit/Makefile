@@ -1,11 +1,6 @@
 # Makefile for kermit
-
-# CKUMNX.MAK, Version 2.11, 29 January 1988
 #
-# -- Makefile to build C-Kermit for Minix.  This is a separate file
-# because Minix uses .o instead of .o for its object files. This
-# means that not one line of the file is the same as the standard
-# Unix makefile, so it seems silly to clutter the common file.
+# CKUMNX.MAK, Version 2.11, 29 January 1988
 
 ###########################################################################
 #
@@ -13,30 +8,34 @@
 #
 CC=exec cc
 LNKFLAGS=-i
-CFLAGS=-DV7 -DMINIX -O -wo
-O=s
+CFLAGS=-DV7 -DMINIX -O -wa
 #
 ###########################################################################
 #
 # Dependencies Section:
 #
 
-kermit: ckcmai.$O ckucmd.$O ckuusr.$O ckuus2.$O ckuus3.$O ckcpro.$O ckcfns.$O \
-		 ckcfn2.$O ckucon.$O ckutio.$O ckufio.$O ckudia.$O ckuscr.$O
-	@rm -rf kermit
-	@echo Start linking kermit
-	@$(CC) $(LNKFLAGS) -o kermit ckcmai.$O ckutio.$O \
-		 ckufio.$O ckcfns.$O \
-		 ckcfn2.$O ckcpro.$O ckucmd.$O ckuus2.$O ckuus3.$O ckuusr.$O \
-		 ckucon.$O ckudia.$O ckuscr.$O >/dev/null
-	@chmem =65000 kermit
+all:	kermit
 
-ckcmai.$O: ckcmai.c ckcker.h ckcdeb.h ckcsym.h
-ckuusr.$O: ckuusr.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
-ckuus2.$O: ckuus2.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
-ckuus3.$O: ckuus3.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
-ckucmd.$O: ckucmd.c ckucmd.h ckcdeb.h
-ckcpro.$O: ckcpro.c ckcker.h ckcdeb.h
+kermit: ckcmai.o ckucmd.o ckuusr.o ckuus2.o ckuus3.o ckcpro.o ckcfns.o \
+		 ckcfn2.o ckucon.o ckutio.o ckufio.o ckudia.o ckuscr.o
+	$(CC) $(LNKFLAGS) -o kermit ckcmai.o ckutio.o \
+		 ckufio.o ckcfns.o \
+		 ckcfn2.o ckcpro.o ckucmd.o ckuus2.o ckuus3.o ckuusr.o \
+		 ckucon.o ckudia.o ckuscr.o
+	install -S 32kw $@
+
+install:	/usr/bin/kermit
+
+/usr/bin/kermit:	kermit
+	install -cs -o bin kermit $@
+
+ckcmai.o: ckcmai.c ckcker.h ckcdeb.h ckcsym.h
+ckuusr.o: ckuusr.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
+ckuus2.o: ckuus2.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
+ckuus3.o: ckuus3.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h
+ckucmd.o: ckucmd.c ckucmd.h ckcdeb.h
+ckcpro.o: ckcpro.c ckcker.h ckcdeb.h
 
 # I'm using the distributed copy of ckcpro.c.  Unfortunately
 # wart won't compile.  If you need to change ckcpro.w, you'll have
@@ -45,20 +44,19 @@ ckcpro.$O: ckcpro.c ckcker.h ckcdeb.h
 # ckcpro.c: ckcpro.w wart
 #	./wart ckcpro.w ckcpro.c
 
-ckcfns.$O: ckcfns.c ckcker.h ckcdeb.h ckcsym.h
-ckcfn2.$O: ckcfn2.c ckcker.h ckcdeb.h ckcsym.h
-ckufio.$O: ckufio.c ckcker.h ckcdeb.h
-ckutio.$O: ckutio.c ckcdeb.h
-ckucon.$O: ckucon.c ckcker.h ckcdeb.h
+ckcfns.o: ckcfns.c ckcker.h ckcdeb.h ckcsym.h
+ckcfn2.o: ckcfn2.c ckcker.h ckcdeb.h ckcsym.h
+ckufio.o: ckufio.c ckcker.h ckcdeb.h
+ckutio.o: ckutio.c ckcdeb.h
+ckucon.o: ckucon.c ckcker.h ckcdeb.h
 
-wart: ckwart.$O
-	$(CC) $(LNKFLAGS) -o wart ckwart.$O
+wart: ckwart.o
+	$(CC) $(LNKFLAGS) -o wart ckwart.o
 
-ckwart.$O: ckwart.c
-ckudia.$O: ckudia.c ckcker.h ckcdeb.h ckucmd.h
-ckuscr.$O: ckuscr.c ckcker.h ckcdeb.h
+ckwart.o: ckwart.c
+ckudia.o: ckudia.c ckcker.h ckcdeb.h ckucmd.h
+ckuscr.o: ckuscr.c ckcker.h ckcdeb.h
 
 #Clean up intermediate and object files
 clean:
-	@rm -f *.o *.s *.bak core kermit
-
+	rm -f *.o *.bak core kermit

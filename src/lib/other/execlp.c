@@ -141,14 +141,17 @@ char **argv;
 		 * for "sh" at the beginning.
 		 */
 		i = 0;
-		while (argv[i] != 0) {
-			if (i >= MAX_NUM_ARGS) {
-				/* Copy failed.  Not enough room.  Bad luck. */
-				errno = ENOEXEC;
-				return(-1);
+		if (argv != NULL)
+		{
+			while (argv[i] != 0) {
+				if (i >= MAX_NUM_ARGS) {
+					/* Copy failed.  Not enough room. */
+					errno = ENOEXEC;
+					return(-1);
+				}
+				arg2[i + 1] = argv[i];
+				i++;
 			}
-			arg2[i + 1] = argv[i];
-			i++;
 		}
 		arg2[0] = "sh";		/* exec the shell */
 		arg2[1] = execpath;	/* full path */

@@ -445,6 +445,9 @@ chkspd(x) int x; {
 	case 2400:
 	case 4800:
 	case 9600:
+#ifdef MINIX
+        case 19200:
+#else
 #ifdef apollo
         case 19200:
 #else
@@ -461,6 +464,7 @@ chkspd(x) int x; {
 /* #endif
 /* #endif
 */
+#endif
 #endif
 #endif
 #endif

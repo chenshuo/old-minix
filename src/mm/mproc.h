@@ -26,7 +26,7 @@ EXTERN struct mproc {
   sigset_t mp_sigmask;		/* signals to be blocked */
   sigset_t mp_sigmask2;		/* saved copy of mp_sigmask */
   sigset_t mp_sigpending;	/* signals being blocked */
-  struct sigaction mp_sigact[_NSIG + 1]; /* as in sigact(2) */
+  struct sigaction mp_sigact[_NSIG + 1]; /* as in sigaction(2) */
   vir_bytes mp_sigreturn; 	/* address of C library __sigreturn function */
 
   /* Backwards compatibility for signals. */

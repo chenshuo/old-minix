@@ -420,7 +420,7 @@ f_pshinf()
 
 			if((shellname = getenv("SHELL")) == 0)
 				shellname = "/bin/sh";
-			execl(shellname, "shell", "-i", 0);
+			execl(shellname, shellname, 0);
 #endif /*-V6*/
 			writerr("No shell!");
 			exit(1);

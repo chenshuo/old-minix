@@ -161,5 +161,5 @@ _PROTOTYPE(int yyparse, (void));
 _PROTOTYPE(int yylex, (void)); 
 
 /* Other things... */
-_PROTOTYPE (int getopt, (int, char *[], CONST char *));
+_PROTOTYPE(int getopt, (int, char * const [], const char * ));
 

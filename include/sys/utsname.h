@@ -3,16 +3,13 @@
 #ifndef _UTSNAME_H
 #define _UTSNAME_H
 
-#define _UTSLEN  (8 + 1)
-#define _SNLEN  (14 + 1)
-
 struct utsname {
-  char sysname[_UTSLEN];
-  char nodename[_UTSLEN];
-  char release[_UTSLEN];
-  char version[_UTSLEN];
-  char machine[_UTSLEN];
-  char idnumber[_SNLEN];
+  char sysname[15+1];
+  char nodename[255+1];
+  char release[11+1];
+  char version[7+1];
+  char machine[11+1];
+  char arch[11+1];
 };
 
 /* Function Prototypes. */

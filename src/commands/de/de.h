@@ -189,7 +189,12 @@
 #define   BLOCK    2
 #define   MAP	   3
 
-typedef  unsigned int word_t;		/*  For most user i/o	*/
+typedef  unsigned short word_t;		/*  For most user i/o	*/
+#if _WORD_SIZE == 2
+typedef  unsigned int Word_t;		/*  What it should always be */
+#else
+typedef  int Word_t;			/*  Unsigned promotion under ANSI C */
+#endif
 
 typedef  struct  de_state		/*  State of disk ed.	*/
   {
@@ -217,6 +222,7 @@ typedef  struct  de_state		/*  State of disk ed.	*/
   
   bit_t inodes_in_map;			/*  Bits in i-node map	*/
   bit_t zones_in_map;			/*  Bits in zone map	*/
+  int ndzones;				/*  # direct zones in an inode */
 
   /*  Information from map blocks  */
 
@@ -307,8 +313,9 @@ _PROTOTYPE(void Draw_Offset , (de_state *s ));
 _PROTOTYPE(void Word_Pointers , (off_t old_addr , off_t new_addr ));
 _PROTOTYPE(void Block_Pointers , (off_t old_addr , off_t new_addr ));
 _PROTOTYPE(void Map_Pointers , (off_t old_addr , off_t new_addr ));
-_PROTOTYPE(void Print_Number , (word_t number , int output_base ));
-_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode , int zindex , int zrow ));
+_PROTOTYPE(void Print_Number , (Word_t number , int output_base ));
+_PROTOTYPE(void Draw_Zone_Numbers , (de_state *s , struct inode *inode ,
+						int zindex , int zrow ));
 
 #if __STDC__
 void  Warning( const char *text, ... );
@@ -324,12 +331,13 @@ _PROTOTYPE(void Read_Block , (de_state *s , char *buffer ));
 _PROTOTYPE(void Read_Super_Block , (de_state *s ));
 _PROTOTYPE(void Read_Bit_Maps , (de_state *s ));
 _PROTOTYPE(off_t Search , (de_state *s , char *string ));
-_PROTOTYPE(void Write_Word , (de_state *s , word_t word ));
+_PROTOTYPE(void Write_Word , (de_state *s , Word_t word ));
 
 
 /*  de_recover.c  */
 
-_PROTOTYPE(int Path_Dir_File , (char *path_name , char **dir_name , char **file_name ));
+_PROTOTYPE(int Path_Dir_File , (char *path_name , char **dir_name ,
+							char **file_name ));
 _PROTOTYPE(char *File_Device , (char *file_name ));
 _PROTOTYPE(ino_t Find_Deleted_Entry , (de_state *s , char *path_name ));
 _PROTOTYPE(off_t Recover_Blocks , (de_state *s ));

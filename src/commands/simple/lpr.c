@@ -32,6 +32,8 @@ char *argv[];
 	std_err("lpr: can't open /dev/lp\n");
 	exit(1);
   }
+  setgid(getgid());		/* we've got /dev/lp, lose permissions */
+  setuid(getuid());
   if (argc == 1) {
 	copy(0);		/* standard input only */
   } else {

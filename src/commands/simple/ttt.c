@@ -16,11 +16,12 @@
 
 #include <stdlib.h>
 #include <time.h>
-#include <stdio.h>
 
 #ifdef CURSES
 #include <curses.h>
 #endif
+
+#include <stdio.h>
 
 #ifndef CURSES
 #define printw printf

@@ -1,25 +1,23 @@
 /* Hacks for version 1.6 */					
 
-#define INODES_PER_BLOCK V1_INODES_PER_BLOCK
-#define INODE_SIZE V1_INODE_SIZE
-#define INTS_PER_BLOCK (BLOCK_SIZE / (int) sizeof(int))
-#define MAX_ZONES (V1_NR_DZONES+V1_INDIRECTS+(long)V1_INDIRECTS*V1_INDIRECTS)
-#define NR_DZONE_NUM V1_NR_DZONES
-#define NR_INDIRECTS V1_INDIRECTS
-#define NR_ZONE_NUMS V1_NR_TZONES
-#define ZONE_NUM_SIZE V1_ZONE_NUM_SIZE
-#define bit_nr u16_t	/* perhaps bit_t should be used, although slower */
-#define Bit_nr U16_t
+#define INODES_PER_BLOCK V2_INODES_PER_BLOCK
+#define INODE_SIZE ((int) V2_INODE_SIZE)
+#define WORDS_PER_BLOCK (BLOCK_SIZE / (int) sizeof(bitchunk_t))
+#define MAX_ZONES (V2_NR_DZONES+V2_INDIRECTS+(long)V2_INDIRECTS*V2_INDIRECTS)
+#define NR_DZONE_NUM V2_NR_DZONES
+#define NR_INDIRECTS V2_INDIRECTS
+#define NR_ZONE_NUMS V2_NR_TZONES
+#define ZONE_NUM_SIZE V2_ZONE_NUM_SIZE
+#define bit_nr bit_t
 #define block_nr block_t
-#define d_inode d1_inode
+#define d_inode d2_inode
 #define d_inum d_ino
 #define dir_struct struct direct
-#define i_mode d1_mode
-#define i_nlinks d1_nlinks
-#define i_size d1_size
-#define i_zone d1_zone
-#define zone_nr zone1_t
-#define Zone_nr Zone1_t
+#define i_mode d2_mode
+#define i_nlinks d2_nlinks
+#define i_size d2_size
+#define i_zone d2_zone
+#define zone_nr zone_t
 
 /* fsck - file system checker		Author: Robbert van Renesse */
 
@@ -49,34 +47,43 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/type.h>
-#include "../fs/const.h"
-#include "../fs/inode.h"
-#include "../fs/type.h"
+#include "../../fs/const.h"
+#include "../../fs/inode.h"
+#include "../../fs/type.h"
 #include <minix/fslib.h>
 
 #undef printf			/* defined as printk in "../fs/const.h" */
 
 #include <stdio.h>
 
-#if INTEL_32BITS || (CHIP == SPARC)
-#define BITSHIFT	  5	/* = log2(#bits(int)) */
-#else
 #define BITSHIFT	  4	/* = log2(#bits(int)) */
-#endif
 
 #define MAXPRINT	  8	/* max. number of error lines in chkmap */
 #define MAXDIRSIZE     5000	/* max. size of a reasonable directory */
 #define CINDIR		128	/* number of indirect zno's read at a time */
 #define CDIRECT		 16	/* number of dir entries read at a time */
+
+/* Macros for handling bitmaps.  Now bit_t is long, these are bulky and the
+ * type demotions produce a lot of lint.  The explicit demotion in POWEROFBIT
+ * is for efficiency and assumes 2's complement ints.  Lint should be clever
+ * enough not to warn about it since BITMASK is small, but isn't.  (It would
+ * be easier to get right if bit_t was was unsigned (long) since then there
+ * would be no danger from wierd sign representations.  Lint doesn't know
+ * we only use non-negative bit numbers.) There will usually be an implicit
+ * demotion when WORDOFBIT is used as an array index.  This should be safe
+ * since memory for bitmaps will run out first.
+ */
 #define BITMASK		((1 << BITSHIFT) - 1)
-#define setbit(w, b)	(w[(b) >> BITSHIFT] |= 1 << ((b) & BITMASK))
-#define clrbit(w, b)	(w[(b) >> BITSHIFT] &= ~(1 << ((b) & BITMASK)))
-#define bitset(w, b)	(w[(b) >> BITSHIFT] & (1 << ((b) & BITMASK)))
+#define WORDOFBIT(b)	((b) >> BITSHIFT)
+#define POWEROFBIT(b)	(1 << ((int) (b) & BITMASK))
+#define setbit(w, b)	(w[WORDOFBIT(b)] |= POWEROFBIT(b))
+#define clrbit(w, b)	(w[WORDOFBIT(b)] &= ~POWEROFBIT(b))
+#define bitset(w, b)	(w[WORDOFBIT(b)] & POWEROFBIT(b))
 
 #define ZONE_CT 	360	/* default zones  (when making file system) */
 #define INODE_CT	 95	/* default inodes (when making file system) */
 
-#include "../fs/super.h"
+#include "../../fs/super.h"
 struct super_block sb;
 
 #define STICKY_BIT	01000	/* not defined anywhere else */
@@ -94,7 +101,7 @@ struct super_block sb;
 #define N_IMAP		(sb.s_imap_blocks)
 #define N_ZMAP		(sb.s_zmap_blocks)
 #define N_ILIST		((sb.s_ninodes+INODES_PER_BLOCK-1) / INODES_PER_BLOCK)
-#define N_DATA		(sb.s_nzones - FIRST)
+#define N_DATA		(sb.s_zones - FIRST)
 
 /* Block address of each type */
 #define BLK_SUPER	(SUPER_BLOCK)
@@ -107,15 +114,15 @@ struct super_block sb;
 
 /* Byte address of a zone/of an inode */
 #define zaddr(z)	btoa(ztob(z))
-#define inoaddr(i)	((long) (i - 1) * INODE_SIZE + btoa(BLK_ILIST))
-#define INDCHUNK	(CINDIR * ZONE_NUM_SIZE)
-#define DIRCHUNK	(CDIRECT * DIR_ENTRY_SIZE)
+#define inoaddr(i)	((long) (i - 1) * INODE_SIZE + (long) btoa(BLK_ILIST))
+#define INDCHUNK	((int) (CINDIR * ZONE_NUM_SIZE))
+#define DIRCHUNK	((int) (CDIRECT * DIR_ENTRY_SIZE))
 
 char *prog, *device;		/* program name (fsck), device name */
 int firstcnterr;		/* is this the first inode ref cnt error? */
-unsigned *imap, *spec_imap;	/* inode bit maps */
-unsigned *zmap, *spec_zmap;	/* zone bit maps */
-unsigned *dirmap;		/* directory (inode) bit map */
+bitchunk_t *imap, *spec_imap;	/* inode bit maps */
+bitchunk_t *zmap, *spec_zmap;	/* zone bit maps */
+bitchunk_t *dirmap;		/* directory (inode) bit map */
 char rwbuf[BLOCK_SIZE];		/* one block buffer cache */
 block_nr thisblk;		/* block in buffer cache */
 char nullbuf[BLOCK_SIZE];	/* null buffer */
@@ -134,7 +141,8 @@ int dev;			/* file descriptor of the device */
 
 /* Counters for each type of inode/zone. */
 int nfreeinode, nregular, ndirectory, nblkspec, ncharspec, nbadinode;
-int npipe, nsyml, nfreezone, ztype[NLEVEL];
+int npipe, nsyml, ztype[NLEVEL];
+long nfreezone;
 
 int repair, automatic, listing, listsuper;	/* flags */
 int firstlist;			/* has the listing header been printed? */
@@ -158,22 +166,22 @@ _PROTOTYPE(void devio, (block_nr bno, int dir));
 _PROTOTYPE(void devread, (long offset, char *buf, int size));
 _PROTOTYPE(void devwrite, (long offset, char *buf, int size));
 _PROTOTYPE(void pr, (char *fmt, int cnt, char *s, char *p));
+_PROTOTYPE(void lpr, (char *fmt, long cnt, char *s, char *p));
 _PROTOTYPE(bit_nr getnumber, (char *s));
 _PROTOTYPE(char **getlist, (char ***argv, char *type));
 _PROTOTYPE(void lsuper, (void));
 _PROTOTYPE(void getsuper, (void));
 _PROTOTYPE(void chksuper, (void));
 _PROTOTYPE(void lsi, (char **clist));
-_PROTOTYPE(unsigned *allocbitmap, (int nblk));
-_PROTOTYPE(void loadbitmap, (unsigned *bitmap, block_nr bno, int nblk));
-_PROTOTYPE(void dumpbitmap, (unsigned *bitmap, block_nr bno, int nblk));
-_PROTOTYPE(void initbitmap, (unsigned *bitmap, Bit_nr bit, int nblk));
-_PROTOTYPE(void fillbitmap, (unsigned *bitmap, Bit_nr lwb, Bit_nr upb, char **list));
-_PROTOTYPE(void freebitmap, (unsigned *p));
+_PROTOTYPE(bitchunk_t *allocbitmap, (int nblk));
+_PROTOTYPE(void loadbitmap, (bitchunk_t *bitmap, block_nr bno, int nblk));
+_PROTOTYPE(void dumpbitmap, (bitchunk_t *bitmap, block_nr bno, int nblk));
+_PROTOTYPE(void fillbitmap, (bitchunk_t *bitmap, bit_nr lwb, bit_nr upb, char **list));
+_PROTOTYPE(void freebitmap, (bitchunk_t *p));
 _PROTOTYPE(void getbitmaps, (void));
 _PROTOTYPE(void putbitmaps, (void));
-_PROTOTYPE(void chkword, (unsigned w1, unsigned w2, Bit_nr bit, Bit_nr nbit, char *type, int *n, int *report));
-_PROTOTYPE(void chkmap, (unsigned *cmap, unsigned *dmap, Bit_nr bit, block_nr blkno, int nblk, Bit_nr nbit, char *type));
+_PROTOTYPE(void chkword, (unsigned w1, unsigned w2, bit_nr bit, char *type, int *n, int *report));
+_PROTOTYPE(void chkmap, (bitchunk_t *cmap, bitchunk_t *dmap, bit_nr bit, block_nr blkno, int nblk, char *type));
 _PROTOTYPE(void chkilist, (void));
 _PROTOTYPE(void getcount, (void));
 _PROTOTYPE(void counterror, (Ino_t ino));
@@ -186,19 +194,19 @@ _PROTOTYPE(void make_printable_name, (char *dst, char *src, int n));
 _PROTOTYPE(int chkdots, (Ino_t ino, off_t pos, dir_struct *dp, Ino_t exp));
 _PROTOTYPE(int chkname, (Ino_t ino, dir_struct *dp));
 _PROTOTYPE(int chkentry, (Ino_t ino, off_t pos, dir_struct *dp));
-_PROTOTYPE(int chkdirzone, (Ino_t ino, d_inode *ip, off_t pos, Zone_nr zno));
-_PROTOTYPE(void errzone, (char *mess, Zone_nr zno, int level, off_t pos));
-_PROTOTYPE(int markzone, (Ino_t ino, Zone_nr zno, int level, off_t pos));
-_PROTOTYPE(int chkindzone, (Ino_t ino, d_inode *ip, off_t *pos, Zone_nr zno, int level));
+_PROTOTYPE(int chkdirzone, (Ino_t ino, d_inode *ip, off_t pos, zone_nr zno));
+_PROTOTYPE(void errzone, (char *mess, zone_nr zno, int level, off_t pos));
+_PROTOTYPE(int markzone, (zone_nr zno, int level, off_t pos));
+_PROTOTYPE(int chkindzone, (Ino_t ino, d_inode *ip, off_t *pos, zone_nr zno, int level));
 _PROTOTYPE(off_t jump, (int level));
-_PROTOTYPE(int zonechk, (Ino_t ino, d_inode *ip, off_t *pos, Zone_nr zno, int level));
+_PROTOTYPE(int zonechk, (Ino_t ino, d_inode *ip, off_t *pos, zone_nr zno, int level));
 _PROTOTYPE(int chkzones, (Ino_t ino, d_inode *ip, off_t *pos, zone_nr *zlist, int len, int level));
 _PROTOTYPE(int chkfile, (Ino_t ino, d_inode *ip));
 _PROTOTYPE(int chkdirectory, (Ino_t ino, d_inode *ip));
 _PROTOTYPE(int chklink, (Ino_t ino, d_inode *ip));
+_PROTOTYPE(int chkspecial, (Ino_t ino, d_inode *ip));
 _PROTOTYPE(int chkmode, (Ino_t ino, d_inode *ip));
 _PROTOTYPE(int chkinode, (Ino_t ino, d_inode *ip));
-_PROTOTYPE(int chkspecial, (Ino_t ino, d_inode *ip) );
 _PROTOTYPE(int descendtree, (dir_struct *dp));
 _PROTOTYPE(void chktree, (void));
 _PROTOTYPE(void printtotal, (void));
@@ -236,7 +244,7 @@ int c;
 int yes(question)
 char *question;
 {
-  register c, answer;
+  register int c, answerchar;
 
   if (!repair) {
 	printf("\n");
@@ -248,9 +256,9 @@ char *question;
 	return(1);
   }
   fflush(stdout);
-  if ((c = answer = getchar()) == 'q' || c == 'Q') exit(1);
+  if ((c = answerchar = getchar()) == 'q' || c == 'Q') exit(1);
   while (!eoln(c)) c = getchar();
-  return !(answer == 'n' || answer == 'N');
+  return !(answerchar == 'n' || answerchar == 'N');
 }
 
 /* Convert string to integer.  Representation is octal. */
@@ -298,8 +306,8 @@ unsigned nelem, elsize;
 {
   char *p;
 
-  if ((p = (char *) malloc((size_t)nelem * elsize)) == 0) fatal("out of memory");
-  memset(p, 0, (size_t)nelem * elsize);
+  if ((p = (char *)malloc((size_t)nelem * elsize)) == 0)fatal("out of memory");
+  memset((void *) p, 0, (size_t)nelem * elsize);
   return(p);
 }
 
@@ -377,6 +385,9 @@ int dir;
   if (dir == READING && bno == thisblk) return;
   thisblk = bno;
 
+#if 0
+printf("%s at block %5d\n", dir == READING ? "reading " : "writing", bno);
+#endif
   lseek(dev, (off_t) btoa(bno), SEEK_SET);
   if (dir == READING) {
 	if (read(dev, rwbuf, BLOCK_SIZE) == BLOCK_SIZE)
@@ -403,7 +414,7 @@ char *buf;
 int size;
 {
   devio((block_nr) (offset / BLOCK_SIZE), READING);
-  memmove(buf, &rwbuf[(int) (offset % BLOCK_SIZE)], (size_t)size);
+  memmove(buf, &rwbuf[(int) (offset % BLOCK_SIZE)], (size_t)size);  /* lint but OK */
 }
 
 /* Write `size' bytes to the disk starting at byte `offset'. */
@@ -414,7 +425,7 @@ int size;
 {
   if (!repair) fatal("internal error (devwrite)");
   if (size != BLOCK_SIZE) devio((block_nr) (offset / BLOCK_SIZE), READING);
-  memmove(&rwbuf[(int) (offset % BLOCK_SIZE)], buf, (size_t)size);
+  memmove(&rwbuf[(int) (offset % BLOCK_SIZE)], buf, (size_t)size);  /* lint but OK */
   devio((block_nr) (offset / BLOCK_SIZE), WRITING);
   changed = 1;
 }
@@ -423,6 +434,14 @@ int size;
 void pr(fmt, cnt, s, p)
 char *fmt, *s, *p;
 int cnt;
+{
+  printf(fmt, cnt, cnt == 1 ? s : p);
+}
+
+/* Same as above, but with a long argument */
+void lpr(fmt, cnt, s, p)
+char *fmt, *s, *p;
+long cnt;
 {
   printf(fmt, cnt, cnt == 1 ? s : p);
 }
@@ -466,10 +485,11 @@ void lsuper()
   char buf[80];
 
   do {
+	/* Most of the following atol's enrage lint, for good reason. */  
 	printf("ninodes       = %u", sb.s_ninodes);
 	if (input(buf, 80)) sb.s_ninodes = atol(buf);
-	printf("nzones        = %u", sb.s_nzones);
-	if (input(buf, 80)) sb.s_nzones = atol(buf);
+	printf("nzones        = %ld", sb.s_zones);
+	if (input(buf, 80)) sb.s_zones = atol(buf);
 	printf("imap_blocks   = %u", sb.s_imap_blocks);
 	if (input(buf, 80)) sb.s_imap_blocks = atol(buf);
 	printf("zmap_blocks   = %u", sb.s_zmap_blocks);
@@ -478,7 +498,7 @@ void lsuper()
 	if (input(buf, 80)) sb.s_firstdatazone = atol(buf);
 	printf("log_zone_size = %u", sb.s_log_zone_size);
 	if (input(buf, 80)) sb.s_log_zone_size = atol(buf);
-	printf("maxsize       = %lu", sb.s_max_size);
+	printf("maxsize       = %ld", sb.s_max_size);
 	if (input(buf, 80)) sb.s_max_size = atol(buf);
 	if (yes("ok now")) {
 		devwrite(btoa(BLK_SUPER), (char *) &sb, sizeof(sb));
@@ -493,14 +513,14 @@ void getsuper()
 {
   devread(btoa(BLK_SUPER), (char *) &sb, sizeof(sb));
   if (listsuper) lsuper();
-  if (sb.s_magic == SUPER_V2) fatal("Cannot handle V2 file systems");
-  if (sb.s_magic != SUPER_MAGIC) fatal("bad magic number in super block");
-  if ((short) sb.s_ninodes <= 0) fatal("no inodes");
-  if (sb.s_nzones <= 2) fatal("no zones");
-  if ((short) sb.s_imap_blocks <= 0) fatal("no imap");
-  if ((short) sb.s_zmap_blocks <= 0) fatal("no zmap");
-  if ((short) sb.s_firstdatazone <= 1) fatal("first data zone too small");
-  if ((short) sb.s_log_zone_size < 0) fatal("zone size < block size");
+  if (sb.s_magic == SUPER_MAGIC) fatal("Cannot handle V1 file systems");
+  if (sb.s_magic != SUPER_V2) fatal("bad magic number in super block");
+  if (sb.s_ninodes <= 0) fatal("no inodes");
+  if (sb.s_zones <= 0) fatal("no zones");
+  if (sb.s_imap_blocks <= 0) fatal("no imap");
+  if (sb.s_zmap_blocks <= 0) fatal("no zmap");
+  if (sb.s_firstdatazone <= 4) fatal("first data zone too small");
+  if (sb.s_log_zone_size < 0) fatal("zone size < block size");
   if (sb.s_max_size <= 0) fatal("max. file size <= 0");
 }
 
@@ -511,26 +531,26 @@ void chksuper()
   register off_t maxsize;
 
   n = bitmapsize((bit_t) sb.s_ninodes + 1);
-  if (sb.s_magic != SUPER_MAGIC) fatal("bad magic number in super block");
-  if ((short) sb.s_imap_blocks < n) fatal("too few imap blocks");
+  if (sb.s_magic != SUPER_V2) fatal("bad magic number in super block");
+  if (sb.s_imap_blocks < n) fatal("too few imap blocks");
   if (sb.s_imap_blocks != n) {
 	pr("warning: expected %d imap_block%s", n, "", "s");
 	printf(" instead of %d\n", sb.s_imap_blocks);
   }
-  n = bitmapsize((bit_t) sb.s_nzones);
-  if ((short) sb.s_zmap_blocks < n) fatal("too few zmap blocks");
+  n = bitmapsize((bit_t) sb.s_zones);
+  if (sb.s_zmap_blocks < n) fatal("too few zmap blocks");
   if (sb.s_zmap_blocks != n) {
 	pr("warning: expected %d zmap_block%s", n, "", "s");
 	printf(" instead of %d\n", sb.s_zmap_blocks);
   }
-  if (sb.s_firstdatazone >= sb.s_nzones)
+  if (sb.s_firstdatazone >= sb.s_zones)
 	fatal("first data zone too large");
-  if ((unsigned short) sb.s_log_zone_size >= 8 * sizeof(block_nr))
+  if (sb.s_log_zone_size >= 8 * sizeof(block_nr))
 	fatal("log_zone_size too large");
   if (sb.s_log_zone_size > 8) printf("warning: large log_zone_size (%d)\n",
 	       sb.s_log_zone_size);
   n = (BLK_ILIST + N_ILIST + SCALE - 1) >> sb.s_log_zone_size;
-  if ((short) sb.s_firstdatazone < n) fatal("first data zone too small");
+  if (sb.s_firstdatazone < n) fatal("first data zone too small");
   if (sb.s_firstdatazone != n) {
 	printf("warning: expected first data zone to be %d ", n);
 	printf("instead of %u\n", sb.s_firstdatazone);
@@ -562,7 +582,7 @@ char **clist;
 	do {
 		devread(inoaddr(ino), (char *) ip, INODE_SIZE);
 		printf("inode %u:\n", ino);
-		printf("    mode   = %06o", ip->i_mode);
+		printf("    mode   = %6o", ip->i_mode);
 		if (input(buf, 80)) ip->i_mode = atoo(buf);
 		printf("    nlinks = %6u", ip->i_nlinks);
 		if (input(buf, 80)) ip->i_nlinks = atol(buf);
@@ -577,64 +597,47 @@ char **clist;
 }
 
 /* Allocate `nblk' blocks worth of bitmap. */
-unsigned *allocbitmap(nblk)
+bitchunk_t *allocbitmap(nblk)
 int nblk;
 {
-  register unsigned *bitmap;
+  register bitchunk_t *bitmap;
 
-  bitmap = (unsigned *) alloc(nblk, BLOCK_SIZE);
+  bitmap = (bitchunk_t *) alloc((unsigned) nblk, BLOCK_SIZE);
   *bitmap |= 1;
   return(bitmap);
 }
 
 /* Load the bitmap starting at block `bno' from disk. */
 void loadbitmap(bitmap, bno, nblk)
-unsigned *bitmap;
+bitchunk_t *bitmap;
 block_nr bno;
 int nblk;
 {
   register i;
-  register unsigned *p;
+  register bitchunk_t *p;
 
   p = bitmap;
-  for (i = 0; i < nblk; i++, bno++, p += INTS_PER_BLOCK)
+  for (i = 0; i < nblk; i++, bno++, p += WORDS_PER_BLOCK)
 	devread(btoa(bno), (char *) p, BLOCK_SIZE);
   *bitmap |= 1;
 }
 
 /* Write the bitmap starting at block `bno' to disk. */
 void dumpbitmap(bitmap, bno, nblk)
-unsigned *bitmap;
+bitchunk_t *bitmap;
 block_nr bno;
 int nblk;
 {
   register i;
-  register unsigned *p = bitmap;
+  register bitchunk_t *p = bitmap;
 
-  for (i = 0; i < nblk; i++, bno++, p += INTS_PER_BLOCK)
+  for (i = 0; i < nblk; i++, bno++, p += WORDS_PER_BLOCK)
 	devwrite(btoa(bno), (char *) p, BLOCK_SIZE);
-}
-
-/* Initialize the given bitmap by setting all the bits starting at `bit'. */
-void initbitmap(bitmap, bit, nblk)
-unsigned *bitmap;
-bit_nr bit;
-int nblk;
-{
-  register unsigned *first, *last;
-
-  while (bit & BITMASK) {
-	setbit(bitmap, bit);
-	bit++;
-  }
-  first = &bitmap[bit >> BITSHIFT];
-  last = &bitmap[nblk * INTS_PER_BLOCK];
-  while (first < last) *first++ = ~(unsigned) 0;
 }
 
 /* Set the bits given by `list' in the bitmap. */
 void fillbitmap(bitmap, lwb, upb, list)
-unsigned *bitmap;
+bitchunk_t *bitmap;
 bit_nr lwb, upb;
 char **list;
 {
@@ -644,9 +647,9 @@ char **list;
   while ((bit = getnumber(*list++)) != NO_BIT)
 	if (bit < lwb || bit >= upb) {
 		if (bitmap == spec_imap)
-			printf("inode number %u ", bit);
+			printf("inode number %ld ", bit);
 		else
-			printf("zone number %u ", bit);
+			printf("zone number %ld ", bit);
 		printf("out of range (ignored)\n");
 	} else
 		setbit(bitmap, bit - lwb + 1);
@@ -654,7 +657,7 @@ char **list;
 
 /* Deallocate the bitmap `p'. */
 void freebitmap(p)
-unsigned *p;
+bitchunk_t *p;
 {
   free((char *) p);
 }
@@ -682,44 +685,46 @@ void putbitmaps()
 /* `w1' and `w2' are differing words from two bitmaps that should be
  * identical.  Print what's the matter with them.
  */
-void chkword(w1, w2, bit, nbit, type, n, report)
+void chkword(w1, w2, bit, type, n, report)
 unsigned w1, w2;
 char *type;
-bit_nr bit, nbit;
+bit_nr bit;
 int *n, *report;
 {
-  for (; (w1 | w2) && bit < nbit; w1 >>= 1, w2 >>= 1, bit++)
+  for (; (w1 | w2); w1 >>= 1, w2 >>= 1, bit++)
 	if ((w1 ^ w2) & 1 && ++(*n) % MAXPRINT == 0 && *report &&
 	    (!repair || automatic || yes("stop this listing")))
 		*report = 0;
 	else if (*report)
 		if ((w1 & 1) && !(w2 & 1))
-			printf("%s %u is missing\n", type, bit);
+			printf("%s %ld is missing\n", type, bit);
 		else if (!(w1 & 1) && (w2 & 1))
-			printf("%s %u is not free\n", type, bit);
+			printf("%s %ld is not free\n", type, bit);
 }
 
 /* Check if the given (correct) bitmap is identical with the one that is
  * on the disk.  If not, ask if the disk should be repaired.
  */
-void chkmap(cmap, dmap, bit, blkno, nblk, nbit, type)
-unsigned *cmap, *dmap;
-bit_nr bit, nbit;
+void chkmap(cmap, dmap, bit, blkno, nblk, type)
+bitchunk_t *cmap, *dmap;
+bit_nr bit;
 block_nr blkno;
 int nblk;
 char *type;
 {
-  register unsigned *p = dmap, *q = cmap;
+  register bitchunk_t *p = dmap, *q = cmap;
   int report = 1, nerr = 0;
+  int w = nblk * WORDS_PER_BLOCK;
 
   printf("Checking %s map\n", type);
   loadbitmap(dmap, blkno, nblk);
   do {
-	if (*p != *q) chkword(*p, *q, bit, nbit, type, &nerr, &report);
+	if (*p != *q) chkword(*p, *q, bit, type, &nerr, &report);
 	p++;
 	q++;
-  } while ((bit += 8 * sizeof(unsigned)) < nbit
-	 && bit >= 8 * sizeof(unsigned));	/* += may overflow */
+	bit += 8 * sizeof(bitchunk_t);
+  } while (--w > 0);
+
   if ((!repair || automatic) && !report) printf("etc. ");
   if (nerr > MAXPRINT || nerr > 10) printf("%d errors found. ", nerr);
   if (nerr != 0 && yes("install a new map")) dumpbitmap(cmap, blkno, nblk);
@@ -749,7 +754,7 @@ void chkilist()
 /* Allocate an array to maintain the inode reference counts in. */
 void getcount()
 {
-  count = (nlink_t *) alloc(sb.s_ninodes + 1, sizeof(nlink_t));
+  count = (nlink_t *) alloc((unsigned) (sb.s_ninodes + 1), sizeof(nlink_t));
 }
 
 /* The reference count for inode `ino' is wrong.  Ask if it should be adjusted. */
@@ -763,15 +768,13 @@ ino_t ino;
 	firstcnterr = 0;
   }
   devread(inoaddr(ino), (char *) &inode, INODE_SIZE);
-  count[ino] += inode.i_nlinks;
+  count[ino] += inode.i_nlinks;	/* it was already subtracted; add it back */
   printf("%5u %5u %5u", ino, (unsigned) inode.i_nlinks, count[ino]);
   if (yes(" adjust")) {
 	if ((inode.i_nlinks = count[ino]) == 0) {
 		fatal("internal error (counterror)");
-/* This would be a patch
 		inode.i_mode = I_NOT_ALLOC;
 		clrbit(imap, (bit_nr) ino);
-*/
 	}
 	devwrite(inoaddr(ino), (char *) &inode, INODE_SIZE);
   }
@@ -1038,28 +1041,30 @@ zone_nr zno;
   register dir_struct *dp;
   register n = SCALE * (NR_DIR_ENTRIES / CDIRECT), dirty;
   register long offset = zaddr(zno);
+  register off_t size = 0;
 
   do {
 	devread(offset, (char *) dirblk, DIRCHUNK);
 	dirty = 0;
 	for (dp = dirblk; dp < &dirblk[CDIRECT]; dp++) {
-		if (ip->i_size - pos < DIR_ENTRY_SIZE) {
-			printf("bad format in directory ");
-			printpath(2, 0);
-			if (yes(". truncate")) {
-				setbit(spec_imap, (bit_nr) ino);
-				ip->i_size = pos;
-				dirty = 1;
-			} else
-				return(0);
-		}
 		if (dp->d_inum != NO_ENTRY && !chkentry(ino, pos, dp))
 			dirty = 1;
-		if ((pos += DIR_ENTRY_SIZE) >= ip->i_size) break;
+		pos += DIR_ENTRY_SIZE;
+		if (dp->d_inum != NO_ENTRY) size = pos;
 	}
 	if (dirty) devwrite(offset, (char *) dirblk, DIRCHUNK);
 	offset += DIRCHUNK;
-  } while (--n && pos < ip->i_size);
+  } while (--n);
+
+  if (size > ip->i_size) {
+	printf("size not updated of directory ");
+	printpath(2, 0);
+	if (yes(". extend")) {
+		setbit(spec_imap, (bit_nr) ino);
+		ip->i_size = size;
+		devwrite(inoaddr(ino), (char *) ip, INODE_SIZE);
+	}
+  }
   return(1);
 }
 
@@ -1072,7 +1077,7 @@ off_t pos;
 {
   printf("%s zone in ", mess);
   printpath(1, 0);
-  printf("zno = %u, type = ", zno);
+  printf("zno = %ld, type = ", zno);
   switch (level) {
       case 0:	printf("DATA");	break;
       case 1:	printf("SINGLE INDIRECT");	break;
@@ -1085,8 +1090,7 @@ off_t pos;
 /* Found the given zone in the given inode.  Check it, and if ok, mark it
  * in the zone bitmap.
  */
-int markzone(ino, zno, level, pos)
-ino_t ino;
+int markzone(zno, level, pos)
 zone_nr zno;
 int level;
 off_t pos;
@@ -1094,7 +1098,7 @@ off_t pos;
   register bit_nr bit = (bit_nr) zno - FIRST + 1;
 
   ztype[level]++;
-  if (zno < FIRST || zno >= sb.s_nzones) {
+  if (zno < FIRST || zno >= sb.s_zones) {
 	errzone("out-of-range", zno, level, pos);
 	return(0);
   }
@@ -1183,7 +1187,7 @@ int level;
   for (i = 0; i < len /* && *pos < ip->i_size */ ; i++)
 	if (zlist[i] == NO_ZONE)
 		*pos += jump(level);
-	else if (!markzone(ino, zlist[i], level, *pos)) {
+	else if (!markzone(zlist[i], level, *pos)) {
 		*pos += jump(level);
 		ok = 0;
 	} else if (!zonechk(ino, ip, pos, zlist[i], level))
@@ -1199,9 +1203,9 @@ d_inode *ip;
   register ok, i, level;
   off_t pos = 0;
 
-  ok = chkzones(ino, ip, &pos, (zone_nr *)&ip->i_zone[0], NR_DZONE_NUM, 0);
+  ok = chkzones(ino, ip, &pos, &ip->i_zone[0], NR_DZONE_NUM, 0);
   for (i = NR_DZONE_NUM, level = 1; i < NR_ZONE_NUMS; i++, level++)
-	ok &= chkzones(ino, ip, &pos, (zone_nr *)&ip->i_zone[i], 1, level);
+	ok &= chkzones(ino, ip, &pos, &ip->i_zone[i], 1, level);
   return(ok);
 }
 
@@ -1263,7 +1267,7 @@ d_inode *ip;
 
   ok = 1;
   if ((dev_t) ip->i_zone[0] == NO_DEV) {
-	printf("illegal device number %u for special file ", ip->i_zone[0]);
+	printf("illegal device number %ld for special file ", ip->i_zone[0]);
 	printpath(2, 1);
 	ok = 0;
   }
@@ -1273,7 +1277,7 @@ d_inode *ip;
    */
   for (i = 1; i < NR_ZONE_NUMS; i++)
 	if (ip->i_zone[i] != NO_ZONE) {
-		printf("nonzero zone number %u for special file ",
+		printf("nonzero zone number %ld for special file ",
 		       ip->i_zone[i]);
 		printpath(2, 1);
 		ok = 0;
@@ -1339,8 +1343,9 @@ d_inode *ip;
 	printf("cnt = %u)\n", (unsigned) ip->i_nlinks);
 	count[ino] -= LINK_MAX;
 	setbit(spec_imap, (bit_nr) ino);
-  } else
+  } else {
 	count[ino] -= (unsigned) ip->i_nlinks;
+  }
   return chkmode(ino, ip);
 }
 
@@ -1413,7 +1418,7 @@ void printtotal()
   pr("%6u    Single indirect zone%s\n",	  ztype[1],	 "",   "s");
   pr("%6u    Double indirect zone%s\n",	  ztype[2],	 "",   "s");
 */
-  pr("%6u    Free zone%s\n", nfreezone, "", "s");
+  lpr("%6ld    Free zone%s\n", nfreezone, "", "s");
 }
 
 /* Check the device which name is given by `f'.  The inodes listed by `clist'
@@ -1436,19 +1441,15 @@ char *f, **clist, **ilist, **zlist;
   lsi(clist);
 
   getbitmaps();
-  initbitmap(imap, (bit_nr) sb.s_ninodes + 1, N_IMAP);
-  initbitmap(zmap, (bit_nr) sb.s_nzones - FIRST + 1, N_ZMAP);
 
   fillbitmap(spec_imap, (bit_nr) 1, (bit_nr) sb.s_ninodes + 1, ilist);
-  fillbitmap(spec_zmap, (bit_nr) FIRST, (bit_nr) sb.s_nzones, zlist);
+  fillbitmap(spec_zmap, (bit_nr) FIRST, (bit_nr) sb.s_zones, zlist);
 
   getcount();
   chktree();
-  chkmap(zmap, spec_zmap, (bit_nr) FIRST - 1, BLK_ZMAP, N_ZMAP,
-         (bit_nr) sb.s_nzones, "zone");
+  chkmap(zmap, spec_zmap, (bit_nr) FIRST - 1, BLK_ZMAP, N_ZMAP, "zone");
   chkcount();
-  chkmap(imap, spec_imap, (bit_nr) 0, BLK_IMAP, N_IMAP,
-         (bit_nr) sb.s_ninodes + 1, "inode");
+  chkmap(imap, spec_imap, (bit_nr) 0, BLK_IMAP, N_IMAP, "inode");
   chkilist();
   printtotal();
 
@@ -1468,7 +1469,7 @@ char **argv;
   register devgiven = 0;
   register char *arg;
 
-  if ((1 << BITSHIFT) != 8 * sizeof(int)) {
+  if ((1 << BITSHIFT) != 8 * sizeof(bitchunk_t)) {
 	printf("Fsck was compiled with the wrong BITSHIFT!\n");
 	exit(1);
   }

@@ -16,7 +16,9 @@
 #include <unistd.h>
 #include <stdio.h>
 
+#include <minix/const.h>
 #include "../../fs/const.h"
+#include "../../fs/inode.h"
 
 #include "de.h"
 

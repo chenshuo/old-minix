@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cmf8.c,v 1.8 89/10/25 17:14:33 ceriel Exp $ */
+/* $Header: cmf8.c,v 1.9 93/01/05 12:04:22 ceriel Exp $ */
 
 /*
 	COMPARE	DOUBLES (CMF 8)

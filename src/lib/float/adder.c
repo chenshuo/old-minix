@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: adder.c,v 1.5 88/08/11 14:49:43 ceriel Exp $ */
+/* $Header: adder.c,v 1.6 93/01/05 12:03:17 ceriel Exp $ */
 
 /*
  *	these are the routines the routines to do 32 and  64-bit addition

@@ -583,26 +583,27 @@ outkbind(c, fx)
 
 do_obprof()
 {	register unsigned int rp;	/* Relative "pointer" */
+	struct stored_profile st_prof;
 
-	rp = sizeof(def_prof);		/* Initialize */
+	rp = sizeof(st_prof);		/* Initialize */
 
-	def_prof.chrvec = (char *)rp;
-	def_prof.chrvcnt = chrcnt;
+	prof_pack(st_prof.chrvec, rp);
+	prof_pack(st_prof.chrvcnt, chrcnt);
 	rp += chrcnt;
 
-	def_prof.metavec = (char *)rp;
-	def_prof.metavcnt = mtacnt/2;
+	prof_pack(st_prof.metavec, rp);
+	prof_pack(st_prof.metavcnt, mtacnt/2);
 	rp += mtacnt;
 
-	def_prof.extvec = (char *)rp;
-	def_prof.extvcnt = extcnt/2;
+	prof_pack(st_prof.extvec, rp);
+	prof_pack(st_prof.extvcnt, extcnt/2);
 	rp += extcnt;
 
-	def_prof.menuvec = (char *)rp;
-	def_prof.menuvcnt = mnucnt;
+	prof_pack(st_prof.menuvec, rp);
+	prof_pack(st_prof.menuvcnt, mnucnt);
 	rp += mnucnt;
 
-	fwrite((char *)&def_prof,sizeof(def_prof),1,stdout);
+	fwrite((char *)&st_prof,sizeof(st_prof),1,stdout);
 	fwrite(chrptr,sizeof(char),chrcnt,stdout);
 	if(mtacnt)  fwrite(mtaptr, sizeof(*mtaptr), mtacnt, stdout);
 	if(extcnt)  fwrite(extptr, sizeof(*extptr), extcnt, stdout);

@@ -7,17 +7,20 @@
 #
 
 CFLAGS = -DEXTENDED -O -D_POSIX_SOURCE -D_MINIX
-O=o
 
-OBJ =  main.$O eval.$O serv.$O look.$O misc.$O expr.$O
+OBJ =  main.o eval.o serv.o look.o misc.o expr.o
 INCL =  mdef.h extr.h patchlevel.h
 
-m4: $(OBJ) $(INCL)
-	@rm -rf m4
-	@echo Start linking m4
-	@cc -o m4 $(OBJ) >/dev/null
-	@chmem =8192 m4
+all:	m4
 
+m4: $(OBJ) $(INCL)
+	cc -i -o m4 $(OBJ)
+	install -S 4kw m4
+
+install:	/usr/bin/m4
+
+/usr/bin/m4:	m4
+	install -cs -o bin m4 $@
 
 clean:	
-	@rm -f *.o *.s m4 core *bak
+	rm -f *.o m4 core *bak

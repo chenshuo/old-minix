@@ -5,6 +5,8 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include "bawk.h"
 
 /*
@@ -457,7 +459,7 @@ char *
 getmem( len )
 unsigned len;
 {
-        char *cp, *malloc();
+        char *cp;
 
         if ( cp=malloc( len ) )
                 return cp;
@@ -632,20 +634,6 @@ int count;
 {
         while ( count-- > 0 )
                 *array++ = value;
-}
-
-strncmp( s, t, n )
-char *s, *t;
-int n;
-{
-        while ( --n>0 && *s && *t && *s==*t )
-        {
-                ++s;
-                ++t;
-        }
-        if ( *s || *t )
-                return *s - *t;
-        return 0;
 }
 
 num( c )

@@ -10,12 +10,12 @@
  */
 
 #include "kernel.h"
-#include "protect.h"
-#include "string.h"
+#include <string.h>
 #include <minix/boot.h>
+#include "protect.h"
 
 /* Magic BIOS addresses. */
-#if !INTEL_32BITS
+#if _WORD_SIZE == 2
 
 /* 16 bit real mode. */
 #define BIOS_CSEG		0xF000	/* segment of BIOS code */
@@ -47,7 +47,6 @@ PRIVATE char k_environ[256];	/* environment strings passed by loader */
 
 FORWARD _PROTOTYPE( void db_init, (void) );
 FORWARD _PROTOTYPE( int k_atoi, (char *s) );
-FORWARD _PROTOTYPE( char *k_getenv, (char *name) );
 FORWARD _PROTOTYPE( void rel_vec, (unsigned vec4) );
 
 /*==========================================================================*
@@ -67,7 +66,7 @@ size_t parmsize;		/* boot parameters length */
   unsigned mach_submagic;
 
   /* Record where the kernel is. */
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   register struct segdesc_s *gdtp;
 
   /* Get the code and data base from the gdt set up by the bootstrap. */
@@ -96,12 +95,8 @@ size_t parmsize;		/* boot parameters length */
   if (envp != NIL_PTR) boot_parameters.bp_ramimagedev = k_atoi(envp);
   envp = k_getenv("ramsize");
   if (envp != NIL_PTR) boot_parameters.bp_ramsize = k_atoi(envp);
-  envp = k_getenv("scancode");
-  if (envp != NIL_PTR) boot_parameters.bp_scancode = k_atoi(envp);
   envp = k_getenv("processor");
   if (envp != NIL_PTR) boot_parameters.bp_processor = k_atoi(envp);
-
-  scan_code = boot_parameters.bp_scancode;
 
   /* Type of VDU: */
   envp = k_getenv("chrome");
@@ -123,23 +118,36 @@ size_t parmsize;		/* boot parameters length */
   machine_magic = get_word(MACHINE_TYPE_SEG, (u16_t *) MACHINE_TYPE_OFF);
   mach_submagic = (machine_magic >> 8) & BYTE;
   machine_magic &= BYTE;
+
+  envp = k_getenv("bus");
+  if (envp != NIL_PTR) {
+	/* Variable "bus" overrides the machine type. */
+	if (strcmp(envp, "at") == 0) pc_at = TRUE;
+	if (strcmp(envp, "ps") == 0) ps = TRUE;
+	if (strcmp(envp, "mca") == 0) pc_at = ps_mca = TRUE;
+  } else
   if (machine_magic == PC_AT) {
 	pc_at = TRUE;
 	/* could be a PS/2 Model 50 or 60 -- check submodel byte */
 	if (mach_submagic == PS_50 || mach_submagic == PS_60)   ps_mca = TRUE;
 	if (mach_submagic == PS_50A || mach_submagic == PS_50Z) ps_mca = TRUE;
-  } else if (machine_magic == PS_386)
+  } else
+  if (machine_magic == PS_386) {
 	pc_at = ps_mca = TRUE;
-  else if (machine_magic == PS)
+  } else
+  if (machine_magic == PS) {
 	ps = TRUE;
+  }
 
   /* Decide if mode is protected. */
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   protected_mode = TRUE;
 #else
-  protected_mode = processor >= 286 && !using_bios;
+  protected_mode = processor >= 286;
+#if ENABLE_BIOS_WINI
+  if (sel_wini_task() == bios_winchester_task) protected_mode = FALSE;
 #endif
-  boot_parameters.bp_processor = protected_mode;	/* FS needs to know */
+#endif
 
   /* Prepare for relocation of the vector table.  It may contain pointers into
    * itself.  Fix up only the ones used.
@@ -188,7 +196,7 @@ PRIVATE void db_init()
    * mode entry points.
    */
   if (protected_mode) {
-#if !INTEL_32BITS
+#if _WORD_SIZE == 2
 	break_vector.offset = get_word(break_vector.selector,
 					(u16_t *) break_vector.offset - 1);
 	sstep_vector.offset = get_word(sstep_vector.selector,
@@ -248,7 +256,7 @@ register char *s;
 /*==========================================================================*
  *				k_getenv				    *
  *==========================================================================*/
-PRIVATE char *k_getenv(name)
+PUBLIC char *k_getenv(name)
 char *name;
 {
 /* Get environment value - kernel version of getenv to avoid setting up the
@@ -287,7 +295,7 @@ unsigned vec4;			/* vector to be relocated (times 4) */
   seg = get_word(VEC_TABLE_SEG, (u16_t *) vec4 + 1);
   address = hclick_to_physb(seg) + off;
   if (address != 0 && address < VECTOR_BYTES) {
-	address += data_base + (vir_bytes) vec_table;
+	address += vir2phys(vec_table);
 	seg = physb_to_hclick(address);
 	off = address - hclick_to_physb(seg);
 	put_word(VEC_TABLE_SEG, (u16_t *) vec4, off);

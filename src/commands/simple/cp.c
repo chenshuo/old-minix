@@ -1,600 +1,1274 @@
-/* cp - Copy files					Author: V. Archer */
-
-/* Copyright 1991 by Vincent Archer
- *	You may freely redistribute this software, in source or binary
- *	form, provided that you do not alter this copyright mention in any
- *	way.
+/*	cp 1.7 - copy files				Author: Kees J. Bot
+ *	mv     - move files					20 Jul 1993
+ *	rm     - remove files
+ *	ln     - make a link
+ *	cpdir  - copy a directory tree (cp -psmr)
+ *	clone  - make a link farm (ln -fmr)
  */
-
+#define nil 0
+#include <stdio.h>
 #include <sys/types.h>
-#include <sys/stat.h>
-#include <minix/minlib.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stddef.h>
+#include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <utime.h>
 #include <dirent.h>
 #include <errno.h>
-#include <limits.h>
-#include <string.h>
-#include <stdlib.h>
-#include <utime.h>
-#include <blocksize.h>
-#include <unistd.h>
-#include <stdio.h>
+#ifndef DEBUG
+#define DEBUG	0
+#define NDEBUG	1
+#endif
+#include <assert.h>
 
-#define ALL_MODES (S_IRWXU|S_IRWXG|S_IRWXO)
-#define NONE ((char *)0)
 
-/* A link (for cpdir) descriptor. Link are never un-allocated, this allow
- * race conditions (a user creating links while another is busy copying the
- * hierarchy in which they reside, for example), at the price of memory
- * shortage...
- */
-typedef struct _link_ {
-  struct _link_ *next;
-  dev_t st_dev;
-  ino_t st_ino;
-  char *path;
-} LINK;
+/* Copy files in this size chunks: */
+#if __minix && !__minix_vmd
+#define CHUNK	(8192 * sizeof(char *))
+#else
+#define CHUNK	(1024 << (sizeof(int) + sizeof(char *)))
+#endif
 
-/* A tree (for cp -Rr/cpdir) descriptor. It is used when a directory cannot
- * be opened due to file descriptor shortage. For cp, it would be safe to
- * block on that condition. For mv (which calls cpdir -p), however, P1003.2
- * requires that the copy should NOT fail! Therefore, for each directory to
- * be opened, another might be closed. When we get back to that directory's
- * level, however, we'll have to reopen it and move to our previous position
- * within this directory.
- */
-typedef struct _tree_ {
-  struct _tree_ *next;
-  DIR *dirp;
-  off_t pos;
-  struct stat st;
-} TREE;
 
-int cflag, dflag, fflag, iflag, pflag, rflag, rrflag, vflag;
-int errors;
+#ifndef CONFORMING
+#if !(_KJB_EXT && DEBUG < 2)
+#define CONFORMING	1	/* Precisely POSIX conforming. */
+#else
+#define CONFORMING	0	/* There goes the neighborhood. */
+#endif
+#endif
 
-/* Common variables. The copy buffer is limited to PIPE_BUF to avoid errors
- * in cp -r (lowercase r) while copying from a pipe.
- */
-char *dest;
-char dst_path[PATH_MAX + 1], src_path[PATH_MAX + 1];
-char buffer[PIPE_BUF];
-LINK *links;
-TREE *toplevel;
-struct stat st2;
-uid_t userid;
 
-_PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(int negative, (void));
-_PROTOTYPE(char *octal, (Mode_t num));
-_PROTOTYPE(void doing, (char *what, char *with, char *on));
-_PROTOTYPE(void do_close, (void));
-_PROTOTYPE(void similar, (struct stat *sp));
-_PROTOTYPE(void do_cpfile, (int new, struct stat *st));
-_PROTOTYPE(void do_cpdir, (int new, struct stat *oldmode, TREE *dotdot));
-_PROTOTYPE(int do_cp, (char *source));
-_PROTOTYPE(void usage, (void));
+#define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
+#define arraylimit(a)	((a) + arraysize(a))
 
-extern int optind, opterr;
+char *prog_name;		/* Call name of this program. */
+int ex_code= 0;			/* Final exit code. */
 
-/* Main module. If cp is invoked as "cpdir", the -R flag is automatically
- * turned on. Furthermore, the 'c' pseudo-flag is set, meaning that links
- * to the same source file should be preserved across the copy. 'c' cancels
- * any '-r' invocation.
- * The '-v' flag is maintained for compatibility with old cpdir.
- */
-int main(argc, argv)
-int argc;
-char *argv[];
+typedef enum identity { CP, MV, RM, LN, CPDIR, CLONE } identity_t;
+typedef enum action { COPY, MOVE, REMOVE, LINK } action_t;
+
+identity_t identity;		/* How did the user call me? */
+action_t action;		/* Copying, moving, or linking. */
+int pflag= 0;			/* -p/-s: Make orginal and copy the same. */
+int iflag= 0;			/* -i: Interactive overwriting/deleting. */
+int fflag= 0;			/* -f: Force. */
+int sflag= 0;			/* -s: Make a symbolic link (ln/clone). */
+int Sflag= 0;			/* -S: Make a symlink if across devices. */
+int mflag= 0;			/* -m: Merge trees, no target dir trickery. */
+int rflag= 0;			/* -r/-R: Recursively copy a tree. */
+int vflag= 0;			/* -v: Verbose. */
+int xflag= 0;			/* -x: Don't traverse past mount points. */
+int xdev= 0;			/* Set when moving or linking cross-device. */
+int expand= 0;			/* Expand symlinks, ignore links. */
+int conforming= CONFORMING;	/* Sometimes standards are a pain. */
+
+int fc_mask;			/* File creation mask. */
+int uid, gid;			/* Effective uid & gid. */
+int istty;			/* Can have terminal input. */
+
+#ifndef S_ISLNK
+/* There were no symlinks in medieval times. */
+#define S_ISLNK(mode)			(0)
+#define lstat				stat
+#define symlink(path1, path2)		(errno= ENOSYS, -1)
+#define readlink(path, buf, len)	(errno= ENOSYS, -1)
+#endif
+
+void report(const char *label)
 {
-  char *s;
-  int c;
-  struct stat st;
+	if (action == REMOVE && fflag) return;
+	fprintf(stderr, "%s: %s: %s\n", prog_name, label, strerror(errno));
+	ex_code= 1;
+}
 
-  if ((s = strrchr(*argv, '/')) != NULL)
-	s++;
-  else
-	s = *argv;
-  if (strcmp(s, "cpdir") == 0) {
-	cflag = 1;
-	rflag = 1;
-	rrflag = 1;
-  }
-  opterr = 0;
-  while ((c = getopt(argc, argv, "Rfimprsv")) != EOF) switch (c) {
-	    case 'f':
-		fflag = 1;
-		iflag = 0;
-		break;
-	    case 'i':
-		iflag = 1;
-		fflag = 0;
-		break;
-	    case 'm':
-		break;
-	    case 's':
-	    case 'p':	pflag = 1;	break;
-	    case 'v':	vflag = 1;	break;
-	    case 'R':	rrflag = 1;
-	    case 'r':	rflag = 1;	break;
-	    default:	usage();
+void fatal(const char *label)
+{
+	report(label);
+	exit(1);
+}
+
+void report2(const char *src, const char *dst)
+{
+	fprintf(stderr, "%s %s %s: %s\n", prog_name, src, dst, strerror(errno));
+	ex_code= 1;
+}
+
+#if DEBUG
+size_t nchunks= 0;	/* Number of allocated cells. */
+#endif
+
+void *allocate(void *mem, size_t size)
+/* Like realloc, but with checking of the return value. */
+{
+#if DEBUG
+	if (mem == nil) nchunks++;
+#endif
+	if ((mem= mem == nil ? malloc(size) : realloc(mem, size)) == nil)
+		fatal("malloc()");
+	return mem;
+}
+
+void deallocate(void *mem)
+/* Release a chunk of memory. */
+{
+	if (mem != nil) {
+#if DEBUG
+		nchunks--;
+#endif
+		free(mem);
 	}
-  argc -= optind;
-  if (argc < 2) usage();
-  if (argc > 2 && cflag) usage();
-  argv += optind;
-  dest = argv[--argc];
-  userid = getuid();
+}
 
-  if (!cflag)
-	if (stat(dest, &st)) {
-		if (argc > 1) {
-			perror(dest);
-			return(1);
-		}
-	} else if (S_ISDIR(st.st_mode))
-		dflag = 1;
-	else if (argc > 1 || rflag) {
-		errno = ENOTDIR;
-		perror(dest);
-		return(1);
+typedef struct pathname {
+	char		*path;	/* The actual pathname. */
+	size_t		idx;	/* Index for the terminating null byte. */
+	size_t		lim;	/* Actual length of the path array. */
+} pathname_t;
+
+void path_init(pathname_t *pp)
+/* Initialize a pathname to the null string. */
+{
+	pp->path= allocate(nil, pp->lim= 16);
+	pp->path[pp->idx= 0]= 0;
+}
+
+void path_add(pathname_t *pp, const char *name)
+/* Add a component to a pathname. */
+{
+	size_t lim;
+	char *p;
+
+	lim= pp->idx + strlen(name) + 2;
+
+	if (lim > pp->lim) {
+		pp->lim= lim += lim/2;	/* add an extra 50% growing space. */
+
+		pp->path= allocate(pp->path, lim);
 	}
-  while (argc--) errors |= do_cp(*argv++);
-  return(errors);
-}
 
+	p= pp->path + pp->idx;
+	if (p > pp->path && p[-1] != '/') *p++ = '/';
 
-/* Wait for a user answer from the stdin stream (but do not use stdio which
- * is bulky and unneeded in most tools). An error (or end of file) on file
- * descriptor 0 is assumed to mean a NEGATIVE answer. LC_* locale could be
- * handled here.
- */
-int negative()
-{
-  char c, t;
-
-  if (read(0, &c, 1) != 1) return(1);
-  t = c;
-  while (t != '\n')
-	if (read(0, &t, 1) != 1) break;
-  return(c != 'y' && c != 'Y');
-}
-
-
-/* Quick transformation of a mode_t in 3-digits octal form. */
-char *octal(num)
-mode_t num;
-{
-  static char a[4];
-
-  a[0] = (((num >> 6) & 7) + '0');
-  a[1] = (((num >> 3) & 7) + '0');
-  a[2] = ((num & 7) + '0');
-  a[3] = 0;
-  return(a);
-}
-
-
-/* Verbose output of the operation. mknod4 could be better shown than thru
- * this, but I don't care...
- */
-void doing(what, with, on)
-char *what, *with, *on;
-{
-  std_err(what);
-  std_err(with);
-  if (on) {
-	std_err(" ");
-	std_err(on);
-  }
-  std_err("\n");
-}
-
-
-/* Close a previously opened directory stream when file descriptors are
- * needed. The streams are closed in a First-Open-First-Closed (FIFO) order,
- * because high-level directories are less likely to be needed soon than
- * lower-level directories.
- */
-void do_close()
-{
-  TREE *sweep;
-
-  for (sweep = toplevel; sweep; sweep = sweep->next)
-	if (sweep->dirp) {
-		closedir(sweep->dirp);
-		sweep->dirp = (DIR *) 0;
-		return;
+	while (*name != 0) {
+		if (*name != '/' || p == pp->path || p[-1] != '/')
+			*p++ = *name;
+		name++;
 	}
-  std_err("FATAL:");
-  perror("cpdir");
-  exit(1);
+	*p = 0;
+	pp->idx= p - pp->path;
 }
 
-
-/* This function handles the "-p" option. */
-void similar(sp)
-struct stat *sp;
+void path_trunc(pathname_t *pp, size_t didx)
+/* Delete part of a pathname to a remembered length. */
 {
-  struct utimbuf timer;
-
-  timer.actime = sp->st_atime;
-  timer.modtime = sp->st_mtime;
-  if (utime(dst_path, &timer)) {
-	perror(dst_path);
-	errors = 1;
-  }
-  if (chown(dst_path, sp->st_uid, sp->st_gid) || userid != 0)
-	sp->st_mode &= ALL_MODES;
-  if (chmod(dst_path, sp->st_mode)) {
-	perror(dst_path);
-	errors = 1;
-  }
+	pp->path[pp->idx= didx]= 0;
 }
 
+#if DEBUG
+const char *path_name(const pathname_t *pp)
+/* Return the actual name as a C string. */
+{
+	return pp->path;
+}
 
-/* This copy a directory entry (non-directory inode) to a (possibly new)
- * destination. Prompting, linking and mkfifo/mknod4 are done here.
+size_t path_length(const pathname_t *pp)
+/* The length of the pathname. */
+{
+	return pp->idx;
+}
+
+void path_drop(pathname_t *pp)
+/* Release the storage occupied by the pathname. */
+{
+	deallocate(pp->path);
+}
+
+#else /* !DEBUG */
+#define path_name(pp)		((const char *) (pp)->path)
+#define path_length(pp)		((pp)->idx)
+#define path_drop(pp)		deallocate((void *) (pp)->path)
+#endif /* !DEBUG */
+
+char *basename(const char *path)
+/* Return the last component of a pathname.  (Note: declassifies a const
+ * char * just like strchr.
  */
-void do_cpfile(new, st)
-int new;
-struct stat *st;
 {
-  int fd, fd2, n, m;
-  char *bufp;
-  long s;
-  LINK *linkp;
+	const char *p= path;
 
-  if (!new) {
-	if (iflag) {
-		std_err(dst_path);
-		std_err(": replace ? ");
-		if (negative()) return;
+	for (;;) {
+		while (*p == '/') p++;		/* Trailing slashes? */
+
+		if (*p == 0) break;
+
+		path= p;
+		while (*p != 0 && *p != '/') p++;	/* Skip component. */
 	}
-	if (access(dst_path, 2)) {
-		perror(dst_path);
-		errors = 1;
-		return;
-	}
-  }
-  if (cflag && st->st_nlink > 1) {
-	n = 0;
-	for (linkp = links; linkp; linkp = linkp->next)
-		if (linkp->st_dev == st->st_dev &&
-		    linkp->st_ino == st->st_ino) {
-			if (!new) {
-				if (vflag) doing("unlink ", dst_path, NONE);
-				if (unlink(dst_path)) {
-					perror(dst_path);
-					errors = 1;
-					return;
-				} else
-					new = 1;
+	return (char *) path;
+}
+
+int affirmative(void)
+/* Get a yes/no answer from the suspecting user. */
+{
+	int c;
+	int ok;
+
+	fflush(stdout);
+	fflush(stderr);
+
+	while ((c= getchar()) == ' ') {}
+	ok= (c == 'y' || c == 'Y');
+	while (c != EOF && c != '\n') c= getchar();
+
+	return ok;
+}
+
+int writable(const struct stat *stp)
+/* True iff the file with the given attributes allows writing.  (And we have
+ * a terminal to ask if ok to overwrite.)
+ */
+{
+	if (!istty || uid == 0) return 1;
+	if (stp->st_uid == uid) return stp->st_mode & S_IWUSR;
+	if (stp->st_gid == gid) return stp->st_mode & S_IWGRP;
+	return stp->st_mode & S_IWOTH;
+}
+
+int trylink(const char *src, const char *dst, struct stat *srcst,
+						struct stat *dstst)
+/* Keep the link structure intact if src has been seen before. */
+{
+	typedef struct oldlink {
+		struct oldlink	*next;
+		char		*olddst;
+		dev_t		dev;
+		ino_t		ino;
+		ino_t		count;
+	} oldlink_t;
+	static oldlink_t *oldies[0x100];
+	oldlink_t *op, **pop;
+	int found, linked;
+
+#if DEBUG
+	if (src == nil) {
+		/* Time to clean house (consistency freak on the loose). */
+		for (pop= oldies; pop < arraylimit(oldies); pop++) {
+			while ((op= *pop) != nil) {
+				*pop= op->next;
+				deallocate(op->olddst);
+				deallocate(op);
 			}
-			if (vflag) doing("link ", linkp->path, dst_path);
-			if (!link(linkp->path, dst_path)) {
+		}
+		return 0;
+	}
+#endif
+	if (action == COPY && expand) return 0;
+
+	pop= &oldies[(unsigned) srcst->st_ino % arraysize(oldies)];
+	found= 0;
+
+	while ((op= *pop) != nil && srcst->st_ino <= op->ino) {
+		if (srcst->st_ino == op->ino && srcst->st_dev == op->dev) {
+			found= 1;
+			break;
+		}
+		pop= &op->next;
+	}
+
+	if (!found) {
+		if (srcst->st_nlink > 1) {
+			/* Remember this one for later. */
+			op= allocate(nil, sizeof(*op));
+			op->olddst= allocate(nil,
+				(strlen(dst) + 1) * sizeof(*op->olddst));
+			strcpy(op->olddst, dst);
+			op->ino= srcst->st_ino;
+			op->dev= srcst->st_dev;
+			op->count= srcst->st_nlink;
+			op->next= *pop;
+			*pop= op;
+		}
+		return 0;
+	}
+	/* Try to link the file copied earlier to the new file. */
+	if (dstst->st_ino != 0) (void) unlink(dst);
+
+	if ((linked= (link(op->olddst, dst) == 0)) && vflag)
+		printf("ln %s %s\n", op->olddst, dst);
+
+	if (--op->count == 1) {
+		/* All the links to the file have been seen. */
+		*pop= op->next;
+		deallocate(op->olddst);
+		deallocate(op);
+	}
+	return linked;
+}
+
+int copy(const char *src, const char *dst, struct stat *srcst,
+						struct stat *dstst)
+/* Copy one file to another and copy (some of) the attributes. */
+{
+	char buf[CHUNK];
+	int srcfd, dstfd;
+	ssize_t n;
+
+	assert(srcst->st_ino != 0);
+
+	if (dstst->st_ino == 0) {
+		/* The file doesn't exist yet. */
+
+		if (!S_ISREG(srcst->st_mode)) {
+			/* Making a new mode 666 regular file. */
+			srcst->st_mode= (S_IFREG | 0666) & fc_mask;
+		} else
+		if (!pflag && conforming) {
+			/* Making a new file copying mode with umask applied. */
+			srcst->st_mode &= fc_mask;
+		}
+	} else {
+		/* File exists, ask if ok to overwrite if '-i'. */
+
+		if (iflag || (action == MOVE && !fflag && !writable(dstst))) {
+			fprintf(stderr, "Overwrite %s? (mode = %03o) ",
+						dst, dstst->st_mode & 07777);
+			if (!affirmative()) return 0;
+		}
+
+		if (action == MOVE) {
+			/* Don't overwrite, remove first. */
+			if (unlink(dst) < 0 && errno != ENOENT) {
+				report(dst);
+				return 0;
+			}
+		} else {
+			/* Overwrite. */
+			if (!pflag) {
+				/* Keep the existing mode and ownership. */
+				srcst->st_mode= dstst->st_mode;
+				srcst->st_uid= dstst->st_uid;
+				srcst->st_gid= dstst->st_gid;
+			}
+		}
+	}
+
+	/* Keep the link structure if possible. */
+	if (trylink(src, dst, srcst, dstst)) return 1;
+
+	if ((srcfd= open(src, O_RDONLY)) < 0) {
+		report(src);
+		return 0;
+	}
+
+	dstfd= open(dst, O_WRONLY|O_CREAT|O_TRUNC, srcst->st_mode & 0777);
+	if (dstfd < 0 && fflag && errno == EACCES) {
+		/* Retry adding a "w" bit. */
+		(void) chmod(dst, dstst->st_mode | S_IWUSR);
+		dstfd= open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0);
+	}
+	if (dstfd < 0 && fflag && errno == EACCES) {
+		/* Retry after trying to delete. */
+		(void) unlink(dst);
+		dstfd= open(dst, O_WRONLY|O_CREAT|O_TRUNC, 0);
+	}
+	if (dstfd < 0) {
+		report(dst);
+		close(srcfd);
+		return 0;
+	}
+
+	/* Get current parameters. */
+	if (fstat(dstfd, dstst) < 0) {
+		report(dst);
+		close(srcfd);
+		close(dstfd);
+		return 0;
+	}
+
+	/* Copy the little bytes themselves. */
+	while ((n= read(srcfd, buf, sizeof(buf))) > 0) {
+		if (write(dstfd, buf, n) < 0)
+			fatal(dst);
+	}
+
+	if (n < 0) {
+		report(src);
+		close(srcfd);
+		close(dstfd);
+		return 0;
+	}
+
+	close(srcfd);
+	close(dstfd);
+
+	/* Copy the ownership. */
+	if ((pflag || !conforming)
+		&& S_ISREG(dstst->st_mode)
+		&& (dstst->st_uid != srcst->st_uid
+				|| dstst->st_gid != srcst->st_gid)
+	) {
+		if (chmod(dst, 0) == 0) dstst->st_mode&= ~07777;
+		if (chown(dst, srcst->st_uid, srcst->st_gid) < 0) {
+			if (errno != EPERM) {
+				report(dst);
+				return 0;
+			}
+			/* Suid bits must be cleared in the holy name of
+			 * security (and the assumed user stupidity).
+			 */
+			if (conforming) srcst->st_mode&= ~06000;
+		}
+	}
+
+	/* Copy the mode. */
+	if (S_ISREG(dstst->st_mode) && dstst->st_mode != srcst->st_mode) {
+		if (chmod(dst, srcst->st_mode) < 0) {
+			if (errno != EPERM) {
+				report(dst);
+				return 0;
+			}
+			fprintf(stderr, "%s: Can't change the mode of %s\n",
+				prog_name, dst);
+		}
+	}
+
+	/* Copy the file modification time. */
+	if ((pflag || !conforming) && S_ISREG(dstst->st_mode)) {
+		struct utimbuf ut;
+
+		ut.actime= action == MOVE ? srcst->st_atime : time(nil);
+		ut.modtime= srcst->st_mtime;
+		if (utime(dst, &ut) < 0) {
+			if (errno != EPERM) {
+				report(dst);
+				return 0;
+			}
+			if (pflag) {
+				fprintf(stderr,
+					"%s: Can't set the time of %s\n",
+					prog_name, dst);
+			}
+		}
+	}
+	if (vflag) {
+		printf(action == COPY ? "cp %s %s\n" : "mv %s %s\n", src, dst);
+	}
+	return 1;
+}
+
+void copy1(const char *src, const char *dst, struct stat *srcst,
+							struct stat *dstst)
+/* Inspect the source file and then copy it.  Treatment of symlinks and
+ * special files is a bit complicated.  The filetype and link-structure are
+ * ignored if (expand && !rflag), symlinks and link-structure are ignored
+ * if (expand && rflag), everything is copied precisely if !expand.
+ */
+{
+	int r, linked;
+
+	assert(srcst->st_ino != 0);
+
+	if (srcst->st_ino == dstst->st_ino && srcst->st_dev == dstst->st_dev) {
+		fprintf(stderr, "%s: can't copy %s onto itself\n",
+			prog_name, src);
+		ex_code= 1;
+		return;
+	}
+
+	/* You can forget it if the destination is a directory. */
+	if (dstst->st_ino != 0 && S_ISDIR(dstst->st_mode)) {
+		errno= EISDIR;
+		report(dst);
+		return;
+	}
+
+	if (S_ISREG(srcst->st_mode) || (expand && !rflag)) {
+		if (!copy(src, dst, srcst, dstst)) return;
+
+		if (action == MOVE && unlink(src) < 0) {
+			report(src);
+			return;
+		}
+		return;
+	}
+
+	if (dstst->st_ino != 0) {
+		if (iflag || (action == MOVE && !fflag && !writable(dstst))) {
+			fprintf(stderr, "Replace %s? (mode = %03o) ",
+						dst, dstst->st_mode & 07777);
+			if (!affirmative()) return;
+		}
+		if (unlink(dst) < 0) {
+			report(dst);
+			return;
+		}
+		dstst->st_ino= 0;
+	}
+
+	/* Apply the file creation mask if so required. */
+	if (!pflag && conforming) srcst->st_mode &= fc_mask;
+
+	linked= 0;
+
+	if (S_ISLNK(srcst->st_mode)) {
+		char buf[1024+1];
+
+		if ((r= readlink(src, buf, sizeof(buf)-1)) < 0) {
+			report(src);
+			return;
+		}
+		buf[r]= 0;
+		r= symlink(buf, dst);
+		if (vflag && r == 0)
+			printf("ln -s %s %s\n", buf, dst);
+	} else
+	if (trylink(src, dst, srcst, dstst)) {
+		linked= 1;
+		r= 0;
+	} else
+	if (S_ISFIFO(srcst->st_mode)) {
+		r= mkfifo(dst, srcst->st_mode);
+		if (vflag && r == 0)
+			printf("mkfifo %s\n", dst);
+	} else
+	if (S_ISBLK(srcst->st_mode) || S_ISCHR(srcst->st_mode)) {
+		r= mknod(dst, srcst->st_mode, srcst->st_rdev);
+		if (vflag && r == 0) {
+			printf("mknod %s %c %d %d\n",
+				dst,
+				S_ISBLK(srcst->st_mode) ? 'b' : 'c',
+				(srcst->st_rdev >> 8) & 0xFF,
+				(srcst->st_rdev >> 0) & 0xFF);
+		}
+	} else {
+		fprintf(stderr, "%s: %s: odd filetype %5o (not copied)\n",
+			prog_name, src, srcst->st_mode);
+		ex_code= 1;
+		return;
+	}
+
+	if (r < 0 || lstat(dst, dstst) < 0) {
+		report(dst);
+		return;
+	}
+
+	if (action == MOVE && unlink(src) < 0) {
+		report(src);
+		(void) unlink(dst);	/* Don't want it twice. */
+		return;
+	}
+
+	if (linked) return;
+
+	if (S_ISLNK(srcst->st_mode)) return;
+
+	/* Copy the ownership. */
+	if ((pflag || !conforming)
+		&& (dstst->st_uid != srcst->st_uid
+				|| dstst->st_gid != srcst->st_gid)
+	) {
+		if (chown(dst, srcst->st_uid, srcst->st_gid) < 0) {
+			if (errno != EPERM) {
+				report(dst);
 				return;
 			}
-			if (errno != EXDEV) {
-				std_err(src_path);
-				std_err(", ");
-				perror(dst_path);
-			} else if (!n) {
-				std_err(dst_path);
-				std_err(": cross device link snapped\n");
-			}
-			n = 1;	/* display snap once */
-		}
-	if ((linkp = (LINK *) malloc(sizeof(LINK))) == (LINK *) 0)
-		perror(dst_path);
-	else if ((linkp->path = (char *)malloc(strlen(dst_path) + 1)) == NONE){
-		perror(dst_path);
-		free(linkp);
-	} else {
-		strcpy(linkp->path, dst_path);
-		linkp->st_dev = st->st_dev;
-		linkp->st_ino = st->st_ino;
-		linkp->next = links;
-		links = linkp;
-	}
-  }
-  if (
-#ifdef S_IFLNK
-      S_ISLNK(st->st_mode) ||
-#endif
-      rrflag && (S_ISBLK(st->st_mode) ||
-		S_ISCHR(st->st_mode) || S_ISFIFO(st->st_mode))) {
-	if (!new) {
-		if (vflag) doing("unlink ", dst_path, NONE);
-		if (unlink(dst_path)) {
-			perror(dst_path);
-			errors = 1;
-			return;
 		}
 	}
-	if (S_ISFIFO(st->st_mode)) {
-		if (vflag) doing("mkfifo ", dst_path, octal(st->st_mode));
-		if (mkfifo(dst_path, st->st_mode & ALL_MODES)) {
-			perror(dst_path);
-			errors = 1;
-			return;
-		}
-	} else if (S_ISBLK(st->st_mode) || S_ISCHR(st->st_mode)) {
-		if (vflag) doing("mknod4 ", dst_path, octal(st->st_mode));
-		s = (long) st->st_size / BLOCK_SIZE;
-		if (mknod4(dst_path, st->st_mode, st->st_rdev, s)) {
-			perror(dst_path);
-			errors = 1;
-			return;
-		}
-	}
-#ifdef S_IFLNK
-	else if (S_ISLNK(st->st_mode)) {
-		static char linkname[PATH_MAX + 1];
-		int len;
 
-		len = readlink(src_path, linkname, sizeof(linkname) - 1);
-		if (len < 0) {
-			perror(src_path);
-			errors = 1;
+	/* Copy the file modification time. */
+	if (pflag || !conforming) {
+		struct utimbuf ut;
+
+		ut.actime= action == MOVE ? srcst->st_atime : time(nil);
+		ut.modtime= srcst->st_mtime;
+		if (utime(dst, &ut) < 0) {
+			if (errno != EPERM) {
+				report(dst);
+				return;
+			}
+			fprintf(stderr, "%s: Can't set the time of %s\n",
+				prog_name, dst);
+		}
+	}
+}
+
+void remove1(const char *src, struct stat *srcst)
+{
+	if (iflag || (!fflag && !writable(srcst))) {
+		fprintf(stderr, "Remove %s? (mode = %03o) ", src,
+						srcst->st_mode & 07777);
+		if (!affirmative()) return;
+	}
+	if (unlink(src) < 0) {
+		report(src);
+	} else {
+		if (vflag) printf("rm %s\n", src);
+	}
+}
+
+void link1(const char *src, const char *dst, struct stat *srcst,
+							struct stat *dstst)
+{
+	pathname_t sym;
+	const char *p;
+
+	if (dstst->st_ino != 0 && (iflag || fflag)) {
+		if (srcst->st_ino == dstst->st_ino) {
+			if (fflag) return;
+			fprintf(stderr, "%s: Can't link %s onto itself\n",
+				prog_name, src);
+			ex_code= 1;
 			return;
 		}
-		linkname[len] = 0;
-		if (vflag) doing("symlink ", linkname, dst_path);
-		if (symlink(linkname, dst_path)) {
-			perror(dst_path);
-			errors = 1;
+		if (iflag) {
+			fprintf(stderr, "Remove %s? ", dst);
+			if (!affirmative()) return;
+		}
+		errno= EISDIR;
+		if (S_ISDIR(dstst->st_mode) || unlink(dst) < 0) {
+			report(dst);
 			return;
 		}
 	}
-#endif
-	if (pflag) similar(st);
-	return;
-  }
-  while ((fd = open(src_path, O_RDONLY)) < 0) {
-	if (errno != EMFILE && errno != ENFILE) {
-		perror(src_path);
-		errors = 1;
+
+	if (!sflag && !(rflag && S_ISLNK(srcst->st_mode)) && !(Sflag && xdev)) {
+		/* A normal link. */
+		if (link(src, dst) < 0) {
+			if (!Sflag || errno != EXDEV) {
+				report2(src, dst);
+				return;
+			}
+			/* Can't do a cross-device link, we have to symlink. */
+			xdev= 1;
+		} else {
+			if (vflag) printf("ln %s %s\n", src, dst);
+			return;
+		}
+	}
+
+	/* Do a symlink. */
+	if (!rflag && !Sflag) {
+		/* We can get away with a "don't care if it works" symlink. */
+		if (symlink(src, dst) < 0) {
+			report(dst);
+			return;
+		}
+		if (vflag) printf("ln -s %s %s\n", src, dst);
 		return;
 	}
-	do_close();
-  }
 
-  if (vflag) doing("cp ", src_path, dst_path);
-  if (new) {
-	while ((fd2 = open(dst_path, O_WRONLY | O_CREAT,
-			   st->st_mode & ALL_MODES)) < 0)
-		if (errno == EMFILE || errno == ENFILE)
-			do_close();
-		else
+	/* If the source is a symlink then it is simply copied. */
+	if (S_ISLNK(srcst->st_mode)) {
+		int r;
+		char buf[1024+1];
+
+		if ((r= readlink(src, buf, sizeof(buf)-1)) < 0) {
+			report(src);
+			return;
+		}
+		buf[r]= 0;
+		if (symlink(buf, dst) < 0) {
+			report(dst);
+			return;
+		}
+		if (vflag) printf("ln -s %s %s\n", buf, dst);
+		return;
+	}
+
+	/* Make a symlink that has to work, i.e. we must be able to access the
+	 * source now, and the link must work.
+	 */
+	if (dst[0] == '/' && src[0] != '/') {
+		/* ln -[rsS] relative/path /full/path. */
+		fprintf(stderr,
+	"%s: Symlinking %s to %s can't be made to work, too difficult\n",
+			prog_name, src, dst);
+		exit(1);
+	}
+
+	/* Count the number of subdirectories in the destination file and
+	 * add one '..' for each.
+	 */
+	path_init(&sym);
+	if (src[0] != '/') {
+		p= dst;
+		while (*p != 0) {
+			while (*p != 0 && *p != '/') p++;
+			while (*p == '/') p++;
+			if (*p == 0) break;
+			path_add(&sym, "..");
+		}
+	}
+	path_add(&sym, src);
+
+	if (symlink(path_name(&sym), dst) < 0) {
+		report(dst);
+	} else {
+		if (vflag) printf("ln -s %s %s\n", path_name(&sym), dst);
+	}
+	path_drop(&sym);
+}
+
+typedef struct entrylist {
+	struct entrylist	*next;
+	char			*name;
+} entrylist_t;
+
+int eat_dir(const char *dir, entrylist_t **dlist)
+/* Make a linked list of all the names in a directory. */
+{
+	DIR *dp;
+	struct dirent *entry;
+
+	if ((dp= opendir(dir)) == nil) return 0;
+
+	while ((entry= readdir(dp)) != nil) {
+		if (strcmp(entry->d_name, ".") == 0) continue;
+		if (strcmp(entry->d_name, "..") == 0) continue;
+
+		*dlist= allocate(nil, sizeof(**dlist));
+		(*dlist)->name= allocate(nil, strlen(entry->d_name)+1);
+		strcpy((*dlist)->name, entry->d_name);
+		dlist= &(*dlist)->next;
+	}
+	closedir(dp);
+	*dlist= nil;
+	return 1;
+}
+
+void chop_dlist(entrylist_t **dlist)
+/* Chop an entry of a name list. */
+{
+	entrylist_t *junk= *dlist;
+
+	*dlist= junk->next;
+	deallocate(junk->name);
+	deallocate(junk);
+}
+
+void drop_dlist(entrylist_t *dlist)
+/* Get rid of a whole list. */
+{
+	while (dlist != nil) chop_dlist(&dlist);
+}
+
+void do1(pathname_t *src, pathname_t *dst, int depth)
+/* Perform the appropriate action on a source and destination file. */
+{
+	size_t slashsrc, slashdst;
+	struct stat srcst, dstst;
+	entrylist_t *dlist;
+	static ino_t topdst_ino;
+	static dev_t topdst_dev;
+	static dev_t topsrc_dev;
+
+#if DEBUG
+	if (vflag && depth == 0) {
+		char flags[100], *pf= flags;
+
+		if (pflag) *pf++= 'p';
+		if (iflag) *pf++= 'i';
+		if (fflag) *pf++= 'f';
+		if (sflag) *pf++= 's';
+		if (Sflag) *pf++= 'S';
+		if (mflag) *pf++= 'm';
+		if (rflag) *pf++= 'r';
+		if (vflag) *pf++= 'v';
+		if (xflag) *pf++= 'x';
+		if (expand) *pf++= 'L';
+		if (conforming) *pf++= 'C';
+		*pf= 0;
+		printf(": %s -%s %s %s\n", prog_name, flags,
+					path_name(src), path_name(dst));
+	}
+#endif
+
+	/* st_ino == 0 if not stat()'ed yet, or nonexistent. */
+	srcst.st_ino= 0;
+	dstst.st_ino= 0;
+
+	if (action != LINK || !sflag || rflag) {
+		/* Source must exist unless symlinking. */
+		if ((expand ? stat : lstat)(path_name(src), &srcst) < 0) {
+			report(path_name(src));
+			return;
+		}
+	}
+
+	if (depth == 0) {
+		/* First call: Not cross-device yet, first dst not seen yet,
+		 * remember top device number.
+		 */
+		xdev= 0;
+		topdst_ino= 0;
+		topsrc_dev= srcst.st_dev;
+	}
+
+	/* Inspect the intended destination unless removing. */
+	if (action != REMOVE) {
+		if ((expand ? stat : lstat)(path_name(dst), &dstst) < 0) {
+			if (errno != ENOENT) {
+				report(path_name(dst));
+				return;
+			}
+		}
+	}
+
+	if (action == MOVE && !xdev) {
+		if (dstst.st_ino != 0 && srcst.st_dev != dstst.st_dev) {
+			/* It's a cross-device rename, i.e. copy and remove. */
+			xdev= 1;
+		} else
+		if (!mflag || dstst.st_ino == 0 || !S_ISDIR(dstst.st_mode)) {
+			/* Try to simply rename the file (not merging trees). */
+
+			if (srcst.st_ino == dstst.st_ino) {
+				fprintf(stderr,
+					"%s: Can't move %s onto itself\n",
+					prog_name, path_name(src));
+				ex_code= 1;
+				return;
+			}
+
+			if (dstst.st_ino != 0) {
+				if (iflag || (!fflag && !writable(&dstst))) {
+					fprintf(stderr,
+						"Replace %s? (mode = %03o) ",
+						path_name(dst),
+						dstst.st_mode & 07777);
+					if (!affirmative()) return;
+				}
+				if (!S_ISDIR(dstst.st_mode))
+					(void) unlink(path_name(dst));
+			}
+
+			if (rename(path_name(src), path_name(dst)) == 0) {
+				/* Success. */
+				if (vflag) {
+					printf("mv %s %s\n", path_name(src),
+							path_name(dst));
+				}
+				return;
+			}
+			if (errno == EXDEV) {
+				xdev= 1;
+			} else {
+				report2(path_name(src), path_name(dst));
+				return;
+			}
+		}
+	}
+
+	if (!S_ISDIR(srcst.st_mode)) {
+		/* Copy/move/remove/link a single file. */
+		switch (action) {
+		case COPY:
+		case MOVE:
+			copy1(path_name(src), path_name(dst), &srcst, &dstst);
 			break;
-  } else {
-	while ((fd2 = open(dst_path, O_WRONLY | O_TRUNC)) < 0)
-		if (errno == EMFILE || errno == ENFILE)
-			do_close();
-		else
+		case REMOVE:
+			remove1(path_name(src), &srcst);
 			break;
-  }
-  if (fd2 < 0) {
-	perror(dst_path);
-	close(fd);
-	errors = 1;
-	return;
-  }
-  while ((n = read(fd, buffer, sizeof(buffer))) != 0) {
-	if (n < 0) {
-		perror(src_path);
-		errors = 1;
+		case LINK:
+			link1(path_name(src), path_name(dst), &srcst, &dstst);
+			break;
+		}
+		return;
+	}
+
+	/* Recursively copy/move/remove/link a directory if -r or -R. */
+	if (!rflag) {
+		errno= EISDIR;
+		report(path_name(src));
+		return;
+	}
+
+	/* Ok to remove contents of dir? */
+	if (action == REMOVE) {
+		if (xflag && topsrc_dev != srcst.st_dev) {
+			/* Don't recurse past a mount point. */
+			return;
+		}
+		if (iflag) {
+			fprintf(stderr, "Remove contents of %s? ",
+							path_name(src));
+			if (!affirmative()) return;
+		}
+	}
+
+	/* Gather the names in the source directory. */
+	if (!eat_dir(path_name(src), &dlist)) {
+		report(path_name(src));
+		return;
+	}
+
+	/* Check/create the target directory. */
+	if (action != REMOVE && dstst.st_ino != 0 && !S_ISDIR(dstst.st_mode)) {
+		if (action != MOVE && !fflag) {
+			errno= ENOTDIR;
+			report(path_name(dst));
+			return;
+		}
+		if (iflag) {
+			fprintf(stderr, "Replace %s? ", path_name(dst));
+			if (!affirmative()) {
+				drop_dlist(dlist);
+				return;
+			}
+		}
+		if (unlink(path_name(dst)) < 0) {
+			report(path_name(dst));
+			drop_dlist(dlist);
+			return;
+		}
+		dstst.st_ino= 0;
+	}
+
+	if (action != REMOVE) {
+		if (dstst.st_ino == 0) {
+			/* Create a new target directory. */
+			if (!pflag && conforming) srcst.st_mode&= fc_mask;
+
+			if (mkdir(path_name(dst), srcst.st_mode | S_IRWXU) < 0
+					|| stat(path_name(dst), &dstst) < 0) {
+				report(path_name(dst));
+				drop_dlist(dlist);
+				return;
+			}
+			if (vflag) printf("mkdir %s\n", path_name(dst));
+		} else {
+			/* Target directory already exists. */
+			if (action == MOVE && !mflag) {
+				errno= EEXIST;
+				report(path_name(dst));
+				drop_dlist(dlist);
+				return;
+			}
+			if (!pflag) {
+				/* Keep the existing attributes. */
+				srcst.st_mode= dstst.st_mode;
+				srcst.st_uid= dstst.st_uid;
+				srcst.st_gid= dstst.st_gid;
+				srcst.st_mtime= dstst.st_mtime;
+			}
+		}
+
+		if (topdst_ino == 0) {
+			/* Remember the top destination. */
+			topdst_dev= dstst.st_dev;
+			topdst_ino= dstst.st_ino;
+		}
+
+		if (srcst.st_ino == topdst_ino && srcst.st_dev == topdst_dev) {
+			/* E.g. cp -r /shallow /shallow/deep. */
+			fprintf(stderr,
+				"%s%s %s/ %s/: infinite recursion avoided\n",
+				prog_name, action != MOVE ? " -r" : "",
+				path_name(src), path_name(dst));
+			drop_dlist(dlist);
+			return;
+		}
+
+		if (xflag && topsrc_dev != srcst.st_dev) {
+			/* Don't recurse past a mount point. */
+			drop_dlist(dlist);
+			return;
+		}
+	}
+
+	/* Go down. */
+	slashsrc= path_length(src);
+	slashdst= path_length(dst);
+
+	while (dlist != nil) {
+		path_add(src, dlist->name);
+		if (action != REMOVE) path_add(dst, dlist->name);
+
+		do1(src, dst, depth+1);
+
+		path_trunc(src, slashsrc);
+		path_trunc(dst, slashdst);
+		chop_dlist(&dlist);
+	}
+
+	if (action == MOVE || action == REMOVE) {
+		/* The contents of the source directory should have
+		 * been (re)moved above.  Get rid of the empty dir.
+		 */
+		if (action == REMOVE && iflag) {
+			fprintf(stderr, "Remove directory %s? ",
+							path_name(src));
+			if (!affirmative()) return;
+		}
+		if (rmdir(path_name(src)) < 0) {
+			if (errno != ENOTEMPTY) report(path_name(src));
+			return;
+		}
+		if (vflag) printf("rmdir %s\n", path_name(src));
+	}
+
+	if (action != REMOVE) {
+		/* Set the attributes of a new directory. */
+		struct utimbuf ut;
+
+		/* Copy the ownership. */
+		if ((pflag || !conforming)
+			&& (dstst.st_uid != srcst.st_uid
+				|| dstst.st_gid != srcst.st_gid)
+		) {
+			if (chown(path_name(dst), srcst.st_uid,
+							srcst.st_gid) < 0) {
+				if (errno != EPERM) {
+					report(path_name(dst));
+					return;
+				}
+			}
+		}
+
+		/* Copy the mode. */
+		if (dstst.st_mode != srcst.st_mode) {
+			if (chmod(path_name(dst), srcst.st_mode) < 0) {
+				report(path_name(dst));
+				return;
+			}
+		}
+
+		/* Copy the file modification time. */
+		if (dstst.st_mtime != srcst.st_mtime) {
+			ut.actime= action == MOVE ? srcst.st_atime : time(nil);
+			ut.modtime= srcst.st_mtime;
+			if (utime(path_name(dst), &ut) < 0) {
+				if (errno != EPERM) {
+					report(path_name(dst));
+					return;
+				}
+				fprintf(stderr,
+					"%s: Can't set the time of %s\n",
+					prog_name, path_name(dst));
+			}
+		}
+	}
+}
+
+void usage(void)
+{
+	char *flags1, *flags2;
+
+	switch (identity) {
+	case CP:
+		flags1= "pifsmrRvx";
+		flags2= "pifsrRvx";
+		break;
+	case MV:
+		flags1= "ifsmvx";
+		flags2= "ifsvx";
+		break;
+	case RM:
+		fprintf(stderr, "Usage: rm [-ifrRvx] file ...\n");
+		exit(1);
+	case LN:
+		flags1= "ifsSmrRvx";
+		flags2= "ifsSrRvx";
+		break;
+	case CPDIR:
+		flags1= "ifvx";
+		flags2= nil;
+		break;
+	case CLONE:
+		flags1= "ifsSvx";
+		flags2= nil;
 		break;
 	}
-	bufp = buffer;
-	while (n) {
-		m = write(fd2, bufp, n);
-		if (!m) {
-			m = -1;
-			errno = 0;
-		}
-		if (m < 0) {
-			perror(dst_path);
-			errors = 1;
-			n = -1;
-			break;
-		}
-		n -= m;
-		bufp += m;
-	}
-	if (n < 0) break;
-  }
-
-  close(fd);
-  close(fd2);
-  if (new && pflag) similar(st);
+	fprintf(stderr, "Usage: %s [-%s] file1 file2\n", prog_name, flags1);
+    if (flags2 != nil)
+	fprintf(stderr, "       %s [-%s] file ... dir\n", prog_name, flags2);
+	exit(1);
 }
 
-
-/* Copying a directory's contents is done here. If necessary, the
- * directory will be created, but protected by 'a=,u=rwx' mode until the
- * entire copy is done (or failed, somehow). The mode is the reverted to
- * the "correct" creation mode at the end of the directory copy.
- */
-void do_cpdir(new, oldmode, dotdot)
-int new;
-struct stat *oldmode;
-TREE *dotdot;
+void main(int argc, char **argv)
 {
-  TREE d;
-  char *src, *dst;
-  mode_t oldmask;
-  int new2;
-  struct dirent *entp;
+	int i;
+	char *flags;
+	struct stat st;
+	pathname_t src, dst;
+	size_t slash;
 
-  if (vflag) doing("cpdir ", src_path, dst_path);
-  if (new) {
-	oldmask = umask(0);
-	if (vflag) doing("mkdir ", dst_path, NONE);
-	if (mkdir(dst_path, S_IRWXU)) {
-		perror(dst_path);
-		umask(oldmask);
-		errors = 1;
-		return;
-	}
-	umask(oldmask);
-  }
-  while ((d.dirp = opendir(src_path)) == (DIR *) 0)
-	if (errno == EMFILE || errno == ENFILE || errno == ENOMEM)
-		do_close();
-	else {
-		perror(src_path);
-		if (new) {
-			if (pflag)
-				similar(oldmode);
-			else
-				chmod(dst_path, oldmode->st_mode & ALL_MODES & ~oldmask);
-		}
-		errors = 1;
-		return;
-	}
-
-  src = src_path + strlen(src_path);
-  dst = dst_path + strlen(dst_path);
-  *src++ = '/';
-  *dst++ = '/';
-
-  if (dotdot)
-	dotdot->next = &d;
-  else
-	toplevel = &d;
-
-  d.pos = 0;
-
-  for (;;) {
-	if (d.dirp == (DIR *) 0) {
-		dst[-1] = '\0';
-		if ((d.dirp = opendir(dst_path)) == (DIR *) 0) {
-			perror(dst_path);
-			errors = 1;
-			break;
-		}
-		dst[0] = '/';
-		seekdir(d.dirp, d.pos);
-		if ((entp = readdir(d.dirp)) && entp->d_off == d.pos)
-			entp = readdir(d.dirp);	/* Already processed! */
-	} else
-		entp = readdir(d.dirp);
-
-	if (entp == (struct dirent *) 0) break;
-
-	if (entp->d_name[0] != '.' ||
-	    (entp->d_name[1] &&
-	     (entp->d_name[1] != '.' || entp->d_name[2]))) {
-		strcpy(src, entp->d_name);
-		strcpy(dst, entp->d_name);
-		if (
-#ifdef S_IFLNK
-		    cflag && lstat(src_path, &d.st) ||
-		    !cflag && stat(src_path, &d.st)
-#else
-		    stat(src_path, &d.st)
+#if DEBUG >= 3
+	/* The first argument is the call name while debugging. */
+	if (argc < 2) exit(-1);
+	argv++;
+	argc--;
 #endif
-		   ) {
-			perror(src);
-			errors = 1;
-			continue;
-		}
-		d.pos = entp->d_off;
+#if DEBUG
+	vflag= isatty(1);
+#endif
 
-		if ((new2 = stat(dst_path, &st2)) != 0) {
-			if (S_ISDIR(d.st.st_mode)) {
-				do_cpdir(new2, &d.st, &d);
-				continue;
+	/* Call name of this program. */
+	prog_name= basename(argv[0]);
+
+	/* Required action. */
+	if (strcmp(prog_name, "cp") == 0) {
+		identity= CP;
+		action= COPY;
+		flags= "pifsmrRvx";
+		expand= 1;
+	} else
+	if (strcmp(prog_name, "mv") == 0) {
+		identity= MV;
+		action= MOVE;
+		flags= "ifsmvx";
+		rflag= pflag= 1;
+	} else
+	if (strcmp(prog_name, "rm") == 0) {
+		identity= RM;
+		action= REMOVE;
+		flags= "ifrRvx";
+	} else
+	if (strcmp(prog_name, "ln") == 0) {
+		identity= LN;
+		action= LINK;
+		flags= "ifsSmrRvx";
+	} else
+	if (strcmp(prog_name, "cpdir") == 0) {
+		identity= CPDIR;
+		action= COPY;
+		flags= "pifsmrRvx";
+		rflag= mflag= pflag= 1;
+		conforming= 0;
+	} else
+	if (strcmp(prog_name, "clone") == 0) {
+		identity= CLONE;
+		action= LINK;
+		flags= "ifsSmrRvx";
+		rflag= mflag= fflag= 1;
+	} else {
+		fprintf(stderr,
+	"%s: Identity crisis, not called cp, mv, rm, ln, cpdir, or clone\n",
+			prog_name);
+		exit(1);
+	}
+
+	/* Who am I?, where am I?, how protective am I? */
+	uid= geteuid();
+	gid= getegid();
+	istty= isatty(0);
+	fc_mask= ~umask(0);
+
+	/* Gather flags. */
+	i= 1;
+	while (i < argc && argv[i][0] == '-') {
+		char *opt= argv[i++] + 1;
+
+		if (opt[0] == '-' && opt[1] == 0) break;	/* -- */
+
+		while (*opt != 0) {
+			/* Flag supported? */
+			if (strchr(flags, *opt) == nil) usage();
+
+			switch (*opt++) {
+			case 'p':
+				pflag= 1;
+				break;
+			case 'i':
+				iflag= 1;
+				if (action == MOVE) fflag= 0;
+				break;
+			case 'f':
+				fflag= 1;
+				if (action == MOVE) iflag= 0;
+				break;
+			case 's':
+				if (action == LINK) {
+					sflag= 1;
+				} else {
+					/* Forget about POSIX, do it right. */
+					conforming= 0;
+				}
+				break;
+			case 'S':
+				Sflag= 1;
+				break;
+			case 'm':
+				mflag= 1;
+				break;
+			case 'r':
+				expand= 0;
+				/*FALL THROUGH*/
+			case 'R':
+				rflag= 1;
+				break;
+			case 'v':
+				vflag= 1;
+				break;
+			case 'x':
+				xflag= 1;
+				break;
+			default:
+				assert(0);
 			}
-		} else if (S_ISDIR(d.st.st_mode)) {
-			if (S_ISDIR(st2.st_mode)) {
-				do_cpdir(new2, &d.st, &d);
-				continue;
-			}
-			errno = EISDIR;
-			perror(dst_path);
-			errors = 1;
-			continue;
 		}
-		do_cpfile(new2, &d.st);
 	}
-  }
 
-  closedir(d.dirp);
-  *--src = '\0';
-  *--dst = '\0';
-  if (dotdot)
-	dotdot->next = (TREE *) 0;
-  else
-	toplevel = (TREE *) 0;
-
-  if (new) {
-	if (pflag)
-		similar(oldmode);
-	else
-		chmod(dst_path, oldmode->st_mode & ALL_MODES & ~oldmask);
-  }
-}
-
-
-/* This is called to copy each of the ARGUMENTS (specified in cp) to its
- * destination, either the 2nd argument to cp, or somewhere in the
- * specified directory.
- */
-int do_cp(source)
-char *source;
-{
-  struct stat st, st2;
-  char *s;
-  int newfile;
-
-  if (stat(source, &st)) {
-	perror(source);
-	return(1);
-  }
-  strcpy(dst_path, dest);
-  if (dflag) {
-	if ((s = strrchr(source, '/')) != NULL)
-		strcat(dst_path, s);
-	else {
-		strcat(dst_path, "/");
-		strcat(dst_path, source);
+	switch (action) {
+	case REMOVE:
+		if (i == argc) usage();
+		break;
+	case LINK:
+		/* 'ln dir/file' is to be read as 'ln dir/file .'. */
+		if ((argc - i) == 1 && action == LINK) argv[argc++]= ".";
+		/*FALL THROUGH*/
+	default:
+		if ((argc - i) < 2) usage();
 	}
-  }
-  if (!(newfile = stat(dst_path, &st2)))
-	if (st.st_dev == st2.st_dev && st.st_ino == st2.st_ino) {
-		std_err(source);
-		std_err(",");
-		std_err(dst_path);
-		std_err(": Same file\n");
-		return(1);
-	}
-  strcpy(src_path, source);
-  if (S_ISDIR(st.st_mode)) {
-	if (!rflag) {
-		errno = EISDIR;
-		perror(source);
-		return(1);
-	}
-	if (!newfile && !S_ISDIR(st2.st_mode)) {
-		errno = ENOTDIR;
-		perror(dst_path);
-		return(1);
-	}
-	do_cpdir(newfile, &st, (TREE *) 0);
-	return(0);
-  }
-  do_cpfile(newfile, &st);
-  return(0);
-}
 
+	path_init(&src);
+	path_init(&dst);
 
-/* Posix prototype of the command */
-void usage()
-{
-  std_err(cflag ? "Usage: cpdir [-fipv] source_dir target_dir\n"
-	: "Usage: cp [-R|-r] [-fip] source_file... target\n");
-  exit(1);
+	if (action != REMOVE && !mflag && stat(argv[argc-1], &st) >= 0
+						&& S_ISDIR(st.st_mode)) {
+		/* The last argument is a directory, this means we have to
+		 * throw the whole lot into this directory.  This is the
+		 * Right Thing unless you use -r.
+		 */
+		path_add(&dst, argv[argc-1]);
+		slash= path_length(&dst);
+
+		do {
+			path_add(&src, argv[i]);
+			path_add(&dst, basename(argv[i]));
+
+			do1(&src, &dst, 0);
+
+			path_trunc(&src, 0);
+			path_trunc(&dst, slash);
+		} while (++i < argc-1);
+	} else
+	if (action == REMOVE || (argc - i) == 2) {
+		/* Just two files (or many files for rm). */
+
+		do {
+			path_add(&src, argv[i]);
+			if (action != REMOVE) path_add(&dst, argv[i+1]);
+
+			do1(&src, &dst, 0);
+			path_trunc(&src, 0);
+		} while (action == REMOVE && ++i < argc);
+	} else {
+		usage();
+	}
+	path_drop(&src);
+	path_drop(&dst);
+
+#if DEBUG
+	(void) trylink(nil, nil, nil, nil);
+	if (nchunks != 0) {
+		fprintf(stderr, "(%ld chunks of memory not freed)\n",
+			(long) nchunks);
+	}
+#endif
+	exit(ex_code);
 }

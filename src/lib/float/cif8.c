@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cif8.c,v 1.4 89/07/25 14:18:28 ceriel Exp $ */
+/* $Header: cif8.c,v 1.5 93/01/05 12:04:07 ceriel Exp $ */
 
 /*
 	CONVERT INTEGER TO FLOAT (CIF n 8)
@@ -16,7 +16,7 @@
 
 #include "FP_types.h"
 
-DOUBLE
+void
 cif8(ss,src)
 int	ss;	/* source size */
 long	src;	/* largest possible integer to convert */
@@ -39,7 +39,7 @@ long	src;	/* largest possible integer to convert */
 	}
 	if (i_src == 0)	{
 		zrf8(result);
-		return(*result);
+		return;
 	}
 			/* ESTABLISHED THAT src != 0	*/
 			/* adjust exponent field	*/
@@ -52,5 +52,4 @@ long	src;	/* largest possible integer to convert */
 		buf.m1 <<= 16;
 	nrm_ext(&buf);
 	compact(&buf,&result->d[0],8);
-	return(*result);
 }

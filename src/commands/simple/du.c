@@ -8,6 +8,7 @@
  *			1.5	09 Jul 91	hp@vmars.tuwien.ac.at
  *			1.6	01 Oct 92	kjb@cs.vu.nl
  *			1.7	04 Jan 93	bde
+ *			1.8	19 Sep 94	kjb
  *
  *	Copyright 1987, Joypace Ltd., London UK. All rights reserved.
  *	This code may be freely distributed, provided that this notice
@@ -25,16 +26,13 @@
  *		Count blocks for each dir before printing total for the dir.
  *		Count blocks for all non-special files.
  *		Don't clutter link buffer with directories.
- *  TODO	Report all errors.  Count indirect blocks.  Don't forget
- *		links.
+ *  1.8:	Remember all links.
  */
 
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <blocksize.h>
 #include <fcntl.h>
-#include <blocksize.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -43,11 +41,13 @@
 #include <stdio.h>
 #include <dirent.h>
 
+#define BLOCK_SIZE	1024
+
 extern char *optarg;
 extern int optind;
 
 #define	LINELEN		256
-#define	MAXALREADY	512
+#define	NR_ALREADY	512
 
 #ifdef S_IFLNK
 #define	LSTAT lstat
@@ -55,14 +55,16 @@ extern int optind;
 #define	LSTAT stat
 #endif
 
-typedef struct {
+typedef struct already {
+  struct already *al_next;
   int al_dev;
   ino_t al_inum;
+  nlink_t al_nlink;
 } ALREADY;
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(int makedname, (char *d, char *f, char *out, int outlen));
-_PROTOTYPE(int done, (int dev, Ino_t inum));
+_PROTOTYPE(int done, (int dev, Ino_t inum, Nlink_t nlink));
 _PROTOTYPE(long dodir, (char *d, int thislev));
 
 char *prog;			/* program name */
@@ -71,7 +73,7 @@ int silent = 0;			/* silent mode */
 int all = 0;			/* all directory entries mode */
 char *startdir = ".";		/* starting from here */
 int levels = 20000;		/* # of directory levels to print */
-ALREADY already[MAXALREADY];
+ALREADY *already[NR_ALREADY];
 int alc;
 
 
@@ -100,26 +102,36 @@ int outlen;
 
 /*
  *	done - have we encountered (dev, inum) before? Returns 1 for yes,
- *	0 for no, and remembers (dev, inum).
+ *	0 for no, and remembers (dev, inum, nlink).
  */
-int done(dev, inum)
+int done(dev, inum, nlink)
 int dev;
 ino_t inum;
+nlink_t nlink;
 {
-  register ALREADY *ap;
-  register int i;
-  int ret = 0;
+  register ALREADY **pap, *ap;
 
-  for (i = 0, ap = already; i < alc; ap++, i++)
-	if (ap->al_dev == dev && ap->al_inum == inum) {
-		ret = 1;
-		break;
+  pap = &already[(unsigned) inum % NR_ALREADY];
+  while ((ap = *pap) != NULL) {
+	if (ap->al_inum == inum && ap->al_dev == dev) {
+		if (--ap->al_nlink == 0) {
+			*pap = ap->al_next;
+			free(ap);
+		}
+		return(1);
 	}
-  if (alc < MAXALREADY) {
-	already[alc].al_dev = dev;
-	already[alc++].al_inum = inum;
+	pap = &ap->al_next;
   }
-  return(ret);
+  if ((ap = malloc(sizeof(*ap))) == NULL) {
+	fprintf(stderr, "du: Out of memory\n");
+	exit(1);
+  }
+  ap->al_next = NULL;
+  ap->al_inum = inum;
+  ap->al_dev = dev;
+  ap->al_nlink = nlink - 1;
+  *pap = ap;
+  return(0);
 }
 
 /*
@@ -165,7 +177,7 @@ int thislev;
 	total = 0;
 	/* Fall through. */
     default:
-	if (s.st_nlink > 1 && done(s.st_dev, s.st_ino)) return 0L;
+	if (s.st_nlink > 1 && done(s.st_dev, s.st_ino, s.st_nlink)) return 0L;
 	maybe_print = all;
 	break;
   }

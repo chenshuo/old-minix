@@ -7,8 +7,6 @@
 #include	<stdlib.h>
 #include	<string.h>
 
-_PROTOTYPE(int putenv, (char *name ));
-
 #define	ENTRY_INC	10
 #define	rounded(x)	(((x / ENTRY_INC) + 1) * ENTRY_INC)
 
@@ -16,7 +14,7 @@ extern _CONST char **environ;
 
 int
 putenv(name)
-char *name;
+_CONST char *name;
 {
 	register _CONST char **v = environ;
 	register char *r;
@@ -27,6 +25,7 @@ char *name;
 	 */
 
 	if (!name) return 0;
+	if (environ == NULL) return 1;
 	if (r = strchr(name, '=')) {
 		register _CONST char *p, *q;
 

@@ -8,8 +8,12 @@
 
 int errs;
 
-_PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(void crc, (char *fname));
+#if __STDC__
+int main(int argc, char **argv);
+void crc(char *fname);
+#else
+void crc();
+#endif
 
 int main(argc, argv)
 int argc;

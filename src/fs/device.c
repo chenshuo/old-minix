@@ -130,6 +130,7 @@ message *mess_ptr;
   find_dev(dev);
   ctl = (major << MAJOR) | (r << MINOR);
   if ((! fp->fs_tty) && (r != NO_CTL_TTY)) fp->fs_tty = ctl;
+  mess_ptr->REP_STATUS = OK;
 }
 
 
@@ -187,6 +188,7 @@ message *mess_ptr;
 	mess_ptr->REP_STATUS = ENXIO;
 	return;
   }
+  mess_ptr->REP_STATUS = OK;
 }
 
 
@@ -203,8 +205,6 @@ message *mess_ptr;
  * stdout, and stderr.  For these calls, who = MM, so we use fp-fproc in 
  * dev_io.
  */
-
-  mess_ptr->REP_STATUS = OK;
 }
 
 
@@ -221,7 +221,8 @@ PUBLIC int do_ioctl()
 
   if ( (f = get_filp(ls_fd)) == NIL_FILP) return(err_code);
   rip = f->filp_ino;		/* get inode pointer */
-  if ( (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL) return(ENOTTY);
+  if ( (rip->i_mode & I_TYPE) != I_CHAR_SPECIAL
+	&& (rip->i_mode & I_TYPE) != I_BLOCK_SPECIAL) return(ENOTTY);
   dev = (dev_t) rip->i_zone[0];
   find_dev(dev);
 
@@ -253,9 +254,8 @@ dev_t dev;			/* device */
 
   major = (dev >> MAJOR) & BYTE;	/* major device number */
   minor = (dev >> MINOR) & BYTE;	/* minor device number */
-  if (major == 0 || major >= max_major) {
-	major = NULL_MAJOR;
-	minor = NULL_DEV;
+  if (major >= max_major) {
+	major = minor = 0;		/* will fail with ENODEV */
   }
   task = dmap[major].dmap_task;	/* which task services the device */
 }
@@ -338,7 +338,20 @@ message *m_ptr;			/* message pointer */
 }
 
 
-#if NETWORKING_ENABLED
+/*===========================================================================*
+ *				no_dev					     *
+ *===========================================================================*/
+PUBLIC void no_dev(task_nr, m_ptr)
+int task_nr;			/* not used - for compatibility with dmap_t */
+message *m_ptr;			/* message pointer */
+{
+/* No device there. */
+
+  m_ptr->REP_STATUS = ENODEV;
+}
+
+
+#if ENABLE_NETWORKING
 /*===========================================================================*
  *				net_open				     *
  *===========================================================================*/
@@ -369,6 +382,7 @@ message *mess_ptr;		/* pointer to message to send */
   if (result < 0)
   {
 	put_inode(nrip);
+	mess_ptr->REP_STATUS= result;
 	return;
   }
 
@@ -454,4 +468,3 @@ message *mess_ptr;
   (void) dev_io(DEV_CLOSE, mode, dev, (off_t) 0, ncount, proc, NIL_PTR);
 }
 #endif
-

@@ -230,7 +230,6 @@ struct proc *pt;
   printf("Selector in gdt:			0x%04.4x\n", pt->p_ldt_sel);	/* reg_t */
   printf("Descriptors for code and data:	0x%04.4x\n", pt->p_ldt[2]);	/* struct segdesc_s */
 #endif
-  printf("Lowest legal stack value:		0x%04.4x\n", pt->p_splimit);	/* reg_t */
   printf("Number of this process:			0x%04.4x\n", pt->p_nr);	/* int */
   printf("Nonzero if blocked by busy task:	0x%04.4x\n", pt->p_int_blocked);	/* int */
   printf("Nonzero if held by busy syscall:	0x%04.4x\n", pt->p_int_held);	/* int */
@@ -284,9 +283,6 @@ struct proc *pt;
 
   /* Print the registers */
   dump_stack(&pt->p_reg);
-
-  /* Print some miscellaneous information */
-  printf("\nLowest legal stack value = %04.4x\n", pt->p_splimit);
 
   /* Build up a binary representation of the signal flags */
   uc = (pt->p_pending >> 8) & 0xff;

@@ -469,9 +469,15 @@ Communication line speed for external tty line specified in most recent");
     puts(" 0, 50, 75, 110, 134, 150, 300, 600, 1200, 1800, ");
     puts(" 2400, 3600, 7200, 4800, 9600, 19200, 38400.");
 #else
+#ifdef MINIX
+    puts("\
+'set line' command.  Any of the common baud rates:");
+    puts(" 0, 110, 150, 300, 600, 1200, 1800, 2400, 4800, 9600, 19200.");
+#else
     puts("\
 'set line' command.  Any of the common baud rates:");
     puts(" 0, 110, 150, 300, 600, 1200, 1800, 2400, 4800, 9600.");
+#endif
 #endif
 #endif
     return(0);

@@ -27,9 +27,9 @@
 #include <unistd.h>
 #include <stdlib.h>
 
-#include "../fs/const.h"	/* must be included before stdio.h */
+#include "../../fs/const.h"	/* must be included before stdio.h */
 #undef printf			/* so its define of printf can be undone */
-#include "../fs/type.h"
+#include "../../fs/type.h"
 
 #include <string.h>
 #include <stdio.h>

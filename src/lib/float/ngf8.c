@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: ngf8.c,v 1.7 89/10/25 17:15:21 ceriel Exp $ */
+/* $Header: ngf8.c,v 1.8 93/01/05 12:06:05 ceriel Exp $ */
 
 /*
 		NEGATE A FLOATING POINT (NGF 8)
@@ -15,7 +15,7 @@
 
 #define OFF ((FL_MSL_AT_LOW_ADDRESS ? 0 : 4) + (FL_MSW_AT_LOW_ADDRESS ? 0 : 2) + (FL_MSB_AT_LOW_ADDRESS ? 0 : 1))
 
-DOUBLE
+void
 ngf8(f)
 DOUBLE	f;
 {
@@ -25,5 +25,4 @@ DOUBLE	f;
 		p = (unsigned char *) &f + OFF;
 		*p ^= 0x80;
 	}
-	return f;
 }

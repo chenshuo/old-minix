@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cmf4.c,v 1.5 89/08/15 09:04:20 ceriel Exp $ */
+/* $Header: cmf4.c,v 1.6 93/01/05 12:04:14 ceriel Exp $ */
 
 /*
 	COMPARE	SINGLES (CMF 4)

@@ -51,8 +51,6 @@ static char *ptrmakeflags;
 /* There must be enough 'space' for all possible flags ! */
 static char  makeflags[] = "MAKEFLAGS=                    ";
 
-_PROTOTYPE(int putenv, (char *name ));
-
 void main(argc, argv)
 int    argc;
 char **argv;

@@ -11,7 +11,7 @@
 #endif
 
 #if (CHIP == INTEL)
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
 #define JB_FLAGS	 0
 #define JB_MASK		 4
 #define JB_GS		 8
@@ -32,7 +32,7 @@
 #define JB_PSW		60
 #define JB_SP		64
 #define JB_SS		68
-#else /* !INTEL_32BITS */
+#else /* _WORD_SIZE == 2 */
 #define JB_FLAGS	 0
 #define JB_MASK		 2
 #define JB_ES		 6
@@ -51,7 +51,7 @@
 #define JB_PSW		32
 #define JB_SP		34
 #define JB_SS		36
-#endif /* INTEL_32BITS */
+#endif /* _WORD_SIZE == 2 */
 #else /* !(CHIP == INTEL) */
 #if (CHIP == M68000)
 #define JB_FLAGS	 0

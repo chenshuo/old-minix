@@ -46,6 +46,8 @@
  *  forget inodes when link count expires			EC 6/4/91
  *  don't remember directories *twice*!
  *  added 'p' flag to ignore umask for normal user		KJB 6/10/92
+ *  mknod4(2) out						KJB 30/10/94
+ *  added 'D' flag to not recurse into directories		KJB 19/12/94
  *
  * Bugs:
  *  verbose mode is not reporting consistent
@@ -69,16 +71,10 @@
 #include <utime.h>
 #include <sys/wait.h>
 #include <stdio.h>		/* need NULL */
+#include <errno.h>
 
 #define	POSIX_COMP		/* POSIX compatible */
 #define DIRECT_3		/* use directory(3) routines */
-
-#ifdef _MINIX
-#include <blocksize.h>
-#define MKNOD(p,M,m,s) mknod4(p,M,m, (long)s)
-#else
-#define MKNOD(p,M,m,s) mknod(p,M,m)
-#endif
 
 #ifdef DIRECT_3
 #ifndef BSD
@@ -182,6 +178,7 @@ int verbose_flag = 1;
 int chown_flag = 0;
 int verbose_flag = 0;
 #endif
+int norec_flag = 0;
 
 /* Make sure we don't tar ourselves. marks@mgse Mon Sep 25 12:06:28 CDT 1989 */
 ino_t ar_inode;			/* archive inode number	 */
@@ -199,11 +196,11 @@ _PROTOTYPE(BOOL get_header, (void));
 _PROTOTYPE(void tarfile, (void));
 _PROTOTYPE(void skip_entry, (void));
 _PROTOTYPE(void extract, (char *file));
+_PROTOTYPE(void delete, (char *file));
 _PROTOTYPE(void do_chown, (char *file));
 _PROTOTYPE(void timestamp, (char *file));
 _PROTOTYPE(void copy, (char *file, int from, int to, long bytes));
 _PROTOTYPE(long convert, (char str[], int type));
-_PROTOTYPE(int make_dir, (char *dir_name));
 _PROTOTYPE(int checksum, (void));
 _PROTOTYPE(int is_dir, (char *file));
 _PROTOTYPE(char *path_name, (char *file));
@@ -261,6 +258,9 @@ register char *argv[];
 		break;
 	    case 'p':		/* restore file modes right, ignore umask. */
 		(void) umask(0);
+		break;
+	    case 'D':		/* do not recursively add directories. */
+		norec_flag = TRUE;
 		break;
 	    default:	error(usage, NIL_PTR);
 	}
@@ -371,11 +371,7 @@ void tarfile()
 			strncpy(sizebuf, header.dbuf.size, (size_t) TSIZLEN);
 			sizebuf[TSIZLEN] = 0;
 			string_print(NIL_PTR,
-#ifdef _MINIX
-				     "%s special file major %s minor %s size %s\n",
-#else
 			      "%s special file major %s minor %s\n",
-#endif
 				     (header.dbuf.typeflag == '3' ?
 				      "character" : "block"),
 				     header.dbuf.devmajor,
@@ -414,11 +410,12 @@ void skip_entry()
 void extract(file)
 register char *file;
 {
-  register int fd;
+  register int fd, r;
   char *pd1, *pd2;		/* walk thru failed directory path */
 
   switch (header.dbuf.typeflag) {
       case '1':			/* Link */
+	delete(file);
 	if (link(header.member.m_link, file) < 0)
 		string_print(NIL_PTR, "Cannot link %s to %s\n",
 			     header.member.m_link, file);
@@ -427,60 +424,46 @@ register char *file;
 			     header.member.m_link, file);
 	return;
       case '5':			/* directory */
-	if (make_dir(file) == 0) {
+	if (!(file[0] == '.' && file[1] == '\0')) delete(file);
+	if ((file[0] == '.' && file[1] == '\0') || mkdir(file, 0700) == 0) {
 		do_chown(file);
 		verb_print("created directory", file);
-	}			/* no else: mkdir will print a message if it
-			 * fails */
+	} else {
+		string_print(NIL_PTR, "Can't make directory %s\n", file);
+	}
 	return;
       case '3':			/* character special */
       case '4':			/* block special */
 	{
-		int dmajor, dminor, mode, size;
-		char sizebuf[TSIZLEN + 1];
+		int dmajor, dminor, mode;
 
 		dmajor = (int) convert(header.dbuf.devmajor, INT_TYPE);
 		dminor = (int) convert(header.dbuf.devminor, INT_TYPE);
 		mode = (header.dbuf.typeflag == '3' ? S_IFCHR : S_IFBLK);
-		strncpy(sizebuf, header.dbuf.size, (size_t) TSIZLEN);
-		sizebuf[TSIZLEN] = 0;
-		if (convert(header.dbuf.size, LONG_TYPE) % BLOCK_SIZE != 0)
-			string_print(NIL_PTR,
-			"Warning: %s not a multiple of BLOCK_SIZE\n",
-				     sizebuf);
-		size = (int) (convert(header.dbuf.size, LONG_TYPE) / BLOCK_SIZE);
-		if (MKNOD(file, mode, (dmajor << 8 | dminor), size) == 0) {
+		delete(file);
+		if (mknod(file, mode, (dmajor << 8 | dminor)) == 0) {
 			if (verbose_flag) string_print(NIL_PTR,
-#ifdef _MINIX
-					     "made %s special file major %s minor %s size %s\n",
-#else
-					     "made %s special file major %s minor %s\n",
-#endif
+				     "made %s special file major %s minor %s\n",
 				      (header.dbuf.typeflag == '3' ?
 				       "character" : "block"),
 					     header.dbuf.devmajor,
-					     header.dbuf.devminor,
-					     sizebuf);
+					     header.dbuf.devminor);
 			do_chown(file);
 		}
 		else 
 		{
 			string_print(NIL_PTR,
-#ifdef _MINIX
-					     "cannot make %s special file major %s minor %s size %s\n",
-#else
 					     "cannot make %s special file major %s minor %s\n",
-#endif
 				      (header.dbuf.typeflag == '3' ?
 				       "character" : "block"),
 					     header.dbuf.devmajor,
-					     header.dbuf.devminor,
-					     sizebuf);
+					     header.dbuf.devminor);
 		}
 		return;
 	}
       case '2':			/* symbolic link */
 #ifdef HAVE_SYMLINK
+	delete(file);
 	if (symlink(header.member.m_link, file) < 0)
 		string_print(NIL_PTR, "Cannot make symbolic link %s to %s\n",
 			     header.member.m_link, file);
@@ -494,6 +477,7 @@ register char *file;
 	return;			/* not implemented, but break out */
 #ifdef HAVE_FIFO
       case '6':			/* fifo */
+	delete(file);
 	if (mkfifo(file, 0) == 0) {	/* is chmod'ed in do_chown */
 		do_chown(file);
 		verb_print("made fifo", file);
@@ -526,6 +510,18 @@ register char *file;
   (void) close(fd);
 
   do_chown(file);
+}
+
+void delete(file)
+char *file;
+{
+  /* remove a file or an empty directory */
+  struct stat stbuf;
+
+  if (stat(file, &stbuf) < 0) return;
+
+  if (S_ISDIR(stbuf.st_mode)) (void) rmdir(file); else (void) unlink(file);
+  /* leave error reporting to the create following soon. */
 }
 
 void do_chown(file)
@@ -600,29 +596,6 @@ int type;
   }
 
   return ac;
-}
-
-int make_dir(dir_name)
-char *dir_name;
-{
-  register int pid, w;
-  int ret;
-
-  /* Why not allow to mkdir(../directory)? -- changed now	KS 2/10/89 */
-  if ((dir_name[0] == '.') && (dir_name[1] == '\0')) return 0;
-
-  if ((pid = fork()) < 0) error("Cannot fork().", NIL_PTR);
-
-  if (pid == 0) {
-	execl(MKDIR1, "mkdir", dir_name, (char *) 0);
-	execl(MKDIR2, "mkdir", dir_name, (char *) 0);
-	error("Cannot execute mkdir.", NIL_PTR);
-  }
-  do {
-	w = wait(&ret);
-  } while (w != -1 && w != pid);
-
-  return ret;
 }
 
 int checksum()
@@ -727,12 +700,13 @@ register char *file;
 		header.dbuf.typeflag = '5';
 		string_print(header.member.m_checksum, "%I ", checksum());
 		mwrite(tar_fd, (char *) &header, sizeof(header));
+		verb_print("read directory", file);
+		if (norec_flag) break;
 		if (NULL == getcwd(cwd, (int) sizeof cwd))
 			string_print(NIL_PTR, "Error: cannot getcwd()\n");
 		else if (chdir(file) < 0)
 			string_print(NIL_PTR, "Cannot chdir to %s\n", file);
 		else {
-			verb_print("read directory", file);
 			add_path(file);
 #ifdef	DIRECT_3
 			{
@@ -740,6 +714,8 @@ register char *file;
 				struct direct *dp;
 				struct stat dst;
 
+				add_close(fd);
+				fd= 0;
 				dirp = opendir(".");
 				while (NULL != (dp = readdir(dirp)))
 					if (strcmp(dp->d_name, ".") == 0)
@@ -820,11 +796,7 @@ register char *file;
 			strncpy(sizebuf, header.dbuf.size, (size_t) TSIZLEN);
 			sizebuf[TSIZLEN] = 0;
 			string_print(NIL_PTR,
-#ifdef _MINIX
-				     "read block device %s major %s minor %s size %s\n",
-#else
 			 "read block device %s major %s minor %s\n",
-#endif
 				     file, header.dbuf.devmajor, header.dbuf.devminor, sizebuf);
 		}
 		string_print(header.member.m_checksum, "%I ", checksum());
@@ -873,6 +845,8 @@ struct stat *st;
       ((st->st_mode & S_IFMT) != S_IFDIR))
 	return 0;
   fd = open(file, O_RDONLY);
+  if (fd == -1)
+  	fprintf(stderr, "open failed: %s\n", strerror(errno));
   return fd;
 }
 
@@ -894,11 +868,7 @@ register struct stat *st;
   string_print(header.member.m_mode, "%I ", st->st_mode & 07777);
   string_print(header.member.m_uid, "%I ", st->st_uid);
   string_print(header.member.m_gid, "%I ", st->st_gid);
-  if (
-#ifdef _MINIX
-      (st->st_mode & S_IFMT) == S_IFBLK ||
-#endif
-      (st->st_mode & S_IFMT) == S_IFREG)
+  if ((st->st_mode & S_IFMT) == S_IFREG)
 	string_print(header.member.m_size, "%L ", st->st_size);
   else
 	strncpy(header.dbuf.size, "0", (size_t) TSIZLEN);

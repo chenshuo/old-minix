@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cff4.c,v 1.4 89/07/25 14:17:47 ceriel Exp $ */
+/* $Header: cff4.c,v 1.5 93/01/05 12:03:36 ceriel Exp $ */
 
 /*
 		CONVERT DOUBLE TO SINGLE (CFF 8 4)
@@ -17,7 +17,7 @@
 
 #include	"FP_types.h"
 
-SINGLE
+void
 cff4(src)
 DOUBLE	src;	/* the source itself -	THIS TIME it's DOUBLE */
 {
@@ -25,5 +25,4 @@ DOUBLE	src;	/* the source itself -	THIS TIME it's DOUBLE */
 
 	extend(&src.d[0],&buf,sizeof(DOUBLE));	/* no matter what */
 	compact(&buf,&(src.d[1]),sizeof(SINGLE));
-	return *(SINGLE *)&(src.d[1]);
 }

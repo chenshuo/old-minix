@@ -1,0 +1,105 @@
+#!/bin/sh
+#
+#	mkboot - make boot floppy, make root device bootable, etc.
+#							Author: Kees J. Bot
+
+trap 'e=$?; rm -f /tmp/mkb.$$; exit $e' 0 2
+
+mdec=/usr/mdec	# bootstraps
+
+# Check arguments.
+case "$#:$1" in
+1:bootable | 1:hdinstall | 1:hdtest | 1:fdboot)
+	action=$1
+	;;
+*)	echo "Usage: $0 [bootable | hdinstall | hdtest | fdboot]" >&2
+	exit 1
+esac
+
+# Get the device table.
+. /etc/fstab
+
+# The real root device may be the RAM disk.
+realroot=`printroot -r`
+
+case $action in
+bootable | hdinstall)
+	# We need the root device.
+	if [ $realroot = $root ]
+	then
+		rootdir=
+	else
+		umount $root 2>/dev/null
+		mount $root /root || exit
+		rootdir=/root
+	fi
+esac
+
+case $action in
+bootable)
+	# Install the boot monitor on the root device and make it bootable.
+	install -cs -m 644 $mdec/boot $rootdir/boot || exit
+	sync
+	su root -c "exec installboot -device $root $mdec/bootblock /boot" \
+		|| exit
+	;;
+hdinstall)
+	# Install a new image on the root device.
+	if [ -d $rootdir/minix ]
+	then
+		# /minix is a directory containing images.
+		target=minix/`uname -r`.`uname -v`
+	else
+		# /minix is the image.
+		target=minix
+	fi
+	if [ $rootdir/$target -newer image ]
+	then
+		echo "$root:/$target is up to date"
+	else
+		ps -U ../kernel/kernel ../mm/mm ../fs/fs >/dev/null || exit
+		if [ $realroot != $root ]
+		then
+			install -c /etc/psdatabase $rootdir/etc/psdatabase
+		fi
+		install -c image $rootdir/$target || exit
+		echo "New $root:/$target installed."
+	fi
+	;;
+hdtest)
+	# Turn the hard disk scratch device into a boot disk for testing.
+	su root -c \
+	  "exec installboot -boot $tmp $mdec/bootblock $mdec/boot image" || exit
+
+	# Copy the boot parameters.
+	su root -c "exec edparams $root set" >/tmp/mkb.$$ || exit
+	echo "unset delay; main(){boot}; save" >>/tmp/mkb.$$
+	su root -c "exec edparams $tmp" </tmp/mkb.$$ || exit
+	;;
+fdboot)
+	# Make a boot floppy.
+	echo -n \
+"Finish the name of the floppy device to write (by default 'fd0'): /dev/";
+	read dev
+	case "$dev" in
+	'')	dev=/dev/fd0
+		;;
+	*)	dev=/dev/$dev
+	esac
+	installboot -boot $dev $mdec/bootblock $mdec/boot image || exit
+
+	# Copy the boot parameters.
+	su root -c "exec edparams $root set" >/tmp/mkb.$$ || exit
+	echo "unset delay; save" >>/tmp/mkb.$$
+	su root -c "exec edparams $dev" </tmp/mkb.$$ || exit
+esac
+
+case $action in
+bootable | hdinstall)
+	# Unmount the root device.
+	if [ $realroot != $root ]
+	then
+		umount $root
+	fi
+esac
+: exit 0

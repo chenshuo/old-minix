@@ -30,8 +30,6 @@
 #include "proc.h"
 #include "tty.h"
 
-FORWARD _PROTOTYPE( void ___dummy, (void) );
-
 /* The startup routine of each task is given below, from -NR_TASKS upwards.
  * The order of the names here MUST agree with the numerical values assigned to
  * the tasks in <minix/com.h>.
@@ -41,7 +39,7 @@ FORWARD _PROTOTYPE( void ___dummy, (void) );
 #define	TTY_STACK	(3 * SMALL_STACK)
 #define SYN_ALRM_STACK	SMALL_STACK
 
-#if NETWORKING_ENABLED
+#if ENABLE_NETWORKING
 #define EHW_STACK	SMALL_STACK
 #else
 #define EHW_STACK	0
@@ -56,14 +54,22 @@ FORWARD _PROTOTYPE( void ___dummy, (void) );
 #define	PRINTER_STACK	SMALL_STACK
 
 #if (CHIP == INTEL)
-#define	WINCH_STACK	SMALL_STACK
-#else
 #define	WINCH_STACK	(2 * SMALL_STACK)
+#else
+#define	WINCH_STACK	(3 * SMALL_STACK)
 #endif
+
 #if (MACHINE == ATARI)
+#define	SCSI_STACK	(3 * SMALL_STACK)
+#endif
+
+#if (MACHINE == IBM_PC)
+#if ENABLE_ADAPTEC_SCSI
 #define	SCSI_STACK	(2 * SMALL_STACK)
 #else
-#define	SCSI_STACK	0
+#define	SCSI_STACK	(SMALL_STACK / 2)
+#define scsi_task	nop_task
+#endif
 #endif
 
 #define	FLOP_STACK	(3 * SMALL_STACK)
@@ -74,10 +80,9 @@ FORWARD _PROTOTYPE( void ___dummy, (void) );
 
 
 
-#define	TOT_STACK_SPACE		(TTY_STACK + EHW_STACK + \
+#define	TOT_STACK_SPACE		(TTY_STACK + EHW_STACK + SCSI_STACK + \
 	SYN_ALRM_STACK + IDLE_STACK + HARDWARE_STACK + PRINTER_STACK + \
-	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK + \
-	SCSI_STACK)
+	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK)
 
 /*
  * Some notes about the following table:
@@ -90,12 +95,10 @@ FORWARD _PROTOTYPE( void ___dummy, (void) );
 
 PUBLIC struct tasktab tasktab[] = {
 	tty_task,		TTY_STACK,	"TTY   ",
-#if (MACHINE == ATARI)
-	scsi_task,		SCSI_STACK,	"SCSI  ",
-#endif
-#if NETWORKING_ENABLED
+#if ENABLE_NETWORKING
 	ehw_task,		EHW_STACK,	"DL_ETH",
 #endif
+	scsi_task,		SCSI_STACK,	"SCSI  ",
 	syn_alrm_task,		SYN_ALRM_STACK, "SYN_AL",
 	idle_task,		IDLE_STACK,	"IDLE  ",
 	printer_task,		PRINTER_STACK,	"PRINTR",
@@ -107,7 +110,7 @@ PUBLIC struct tasktab tasktab[] = {
 	0,			HARDWARE_STACK,	"HARDWA",
 	0,			0,		"MM    ",
 	0,			0,		"FS    ",
-#if NETWORKING_ENABLED
+#if ENABLE_NETWORKING
 	0,			0,		"NW_TSK",
 #endif
 	0,			0,		"INIT  "
@@ -118,17 +121,9 @@ PUBLIC char t_stack[TOT_STACK_SPACE + ALIGNMENT - 1];	/* to be aligned */
 /*
  * The number of kernel tasks must be the same as NR_TASKS.
  * If NR_TASKS is not correct then you will get the compile error:
- *   multiple case entry for value 0
- * The function ___dummy is never called.
+ *   "array size is negative"
  */
 
 #define NKT (sizeof tasktab / sizeof (struct tasktab) - (INIT_PROC_NR + 1))
-PRIVATE void ___dummy()
-{
-	switch(0)
-	{
-	case 0:
-	case (NR_TASKS == NKT):
-		;
-	}
-}
+
+extern int ___dummy[NR_TASKS == NKT ? 1 : -1];

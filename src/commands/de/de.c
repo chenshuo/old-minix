@@ -25,9 +25,11 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <minix/const.h>
 #include <minix/type.h>
 #include "../../fs/const.h"
 #include "../../fs/type.h"
+#include "../../fs/inode.h"
 
 #include "de.h"
 

@@ -16,6 +16,9 @@
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void update_mtab, (char *devname));
 _PROTOTYPE(void usage, (void));
+_PROTOTYPE(void tell, (char *this));
+
+static char mountpoint[PATH_MAX+1];
 
 int main(argc, argv)
 int argc;
@@ -30,9 +33,14 @@ char *argv[];
 		perror("umount");
 	exit(1);
   }
-  std_err(argv[1]);
-  std_err(" unmounted\n");
   update_mtab(argv[1]);
+  tell(argv[1]);
+  tell(" unmounted");
+  if (*mountpoint != '\0') {
+	tell(" from ");
+	tell(mountpoint);
+  }
+  tell("\n");
   return(0);
 }
 
@@ -50,7 +58,10 @@ char *devname;
   while (1) {
 	n = get_mtab_entry(special, mounted_on, version, rw_flag);
 	if (n < 0) break;
-	if (strcmp(devname, special) == 0) continue;
+	if (strcmp(devname, special) == 0) {
+		strcpy(mountpoint, mounted_on);
+		continue;
+	}
 	(void) put_mtab_entry(special, mounted_on, version, rw_flag);
   }
   n = rewrite_mtab("umount");
@@ -64,4 +75,10 @@ void usage()
 {
   std_err("Usage: umount special\n");
   exit(1);
+}
+
+void tell(this)
+char *this;
+{
+  write(1, this, strlen(this));
 }

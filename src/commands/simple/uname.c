@@ -1,18 +1,14 @@
 /*  uname - print system name			Author: Earl Chew */
 
-/* The system name is printed based on the file /etc/uname. This should be
- * world readable but only writeable by system administrators. The
- * file contains lines of text. Lines beginning with # are treated
- * as comments. All other lines contain information to be read into
- * the uname structure. The sequence of the lines matches the sequence
- * in which the structure components are declared:
+/* Print the following system information as returned by the uname()
+ * function:
  *
  *	system name		Minix
  *	node name		waddles
  *	release name		1.5
  *	version			10
- *	machine name		IBM_PC
- *	serial number		N/A
+ *	machine name		i86
+ *	arch			i86	(Minix specific)
  */
 
 #include <sys/types.h>
@@ -23,12 +19,13 @@
 #include <unistd.h>
 
 /* Define the uname components. */
-#define ALL	 ((unsigned) ~0x0)
+#define ALL	 ((unsigned) 0x1F)
 #define SYSNAME  ((unsigned) 0x01)
 #define NODENAME ((unsigned) 0x02)
 #define RELEASE  ((unsigned) 0x04)
 #define VERSION  ((unsigned) 0x08)
 #define MACHINE  ((unsigned) 0x10)
+#define ARCH     ((unsigned) 0x20)
 
 _PROTOTYPE(int main, (int argc, char **argv ));
 _PROTOTYPE(void print, (int fd, ... ));
@@ -54,9 +51,11 @@ int fd;
   va_end(argp);
 }
 
+char *name;
+
 void usage()
 {
-  print(STDERR_FILENO, "Usage: uname -amnrsv\n", (char *) NULL);
+  print(STDERR_FILENO, "Usage: ", name, " -snrvmpa\n", (char *) NULL);
   exit(EXIT_FAILURE);
 }
 
@@ -68,6 +67,9 @@ char **argv;
   char *p;
   struct utsname un;
 
+  name = strrchr(argv[0], '/');
+  if (name == NULL) name = argv[0]; else name++;
+
   for (info = 0; argc > 1; argc--, argv++) {
   	if (argv[1][0] == '-') {
   		for (p = &argv[1][1]; *p; p++) {
@@ -78,6 +80,7 @@ char **argv;
 				case 'r': info |= RELEASE;  break;
 				case 's': info |= SYSNAME;  break;
 				case 'v': info |= VERSION;  break;
+				case 'p': info |= ARCH;     break;
 				default: usage();
   			}
 		}
@@ -86,12 +89,14 @@ char **argv;
 	}
   }
 
+  if (info == 0) info = strcmp(name, "arch") == 0 ? ARCH : SYSNAME;
+
   if (uname(&un) != 0) {
 	print(STDERR_FILENO, "unable to determine uname values\n", (char *) NULL);
 	exit(EXIT_FAILURE);
   }
 
-  if (info == 0 || (info & SYSNAME) != 0)
+  if ((info & SYSNAME) != 0)
 	print(STDOUT_FILENO, un.sysname, (char *) NULL);
   if ((info & NODENAME) != 0) {
 	if ((info & (SYSNAME)) != 0)
@@ -112,6 +117,11 @@ char **argv;
 	if ((info & (SYSNAME|NODENAME|RELEASE|VERSION)) != 0)
 		print(STDOUT_FILENO, " ", (char *) NULL);
 	print(STDOUT_FILENO, un.machine, (char *) NULL);
+  }
+  if ((info & ARCH) != 0) {
+	if ((info & (SYSNAME|NODENAME|RELEASE|VERSION|MACHINE)) != 0)
+		print(STDOUT_FILENO, " ", (char *) NULL);
+	print(STDOUT_FILENO, un.arch, (char *) NULL);
   }
   print(STDOUT_FILENO, "\n", (char *) NULL);
   return EXIT_SUCCESS;

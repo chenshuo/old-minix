@@ -130,7 +130,7 @@ Reg1 char *s;
 	s = "Oops";
     t = s;
     while (*t++);
-    rv = malloc((MEM) (t - s));
+    rv = (char *)malloc((MEM) (t - s));
     if (rv == Nullch) {
 	if (using_plan_a)
 	    out_of_mem = TRUE;

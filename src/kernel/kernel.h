@@ -17,6 +17,7 @@
 #include <minix/const.h>
 #include <minix/type.h>
 
+#include <string.h>
 #include <limits.h>
 #include <errno.h>
 

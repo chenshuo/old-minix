@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cfu.c,v 1.4 89/07/25 14:18:12 ceriel Exp $ */
+/* $Header: cfu.c,v 1.5 93/01/05 12:03:55 ceriel Exp $ */
 
 /*
 		CONVERT FLOAT TO UNSIGNED (CFU m n)
@@ -24,7 +24,7 @@ DOUBLE	src;	/* assume worst case */
 {
 	EXTEND	buf;
 	long	new;
-	short	max_exp;
+	short	newint, max_exp;
 
 	extend(&src.d[0],&buf,ss);	/* get extended format	*/
 	if (buf.exp < 0) {	/* no conversion needed	*/
@@ -37,6 +37,7 @@ DOUBLE	src;	/* assume worst case */
 		buf.exp %= max_exp;
 	}
 	new = buf.m1 >> (31-buf.exp);
+done:
 	src.d[ss == 8] = new;
 	return(new);
 }

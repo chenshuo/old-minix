@@ -8,12 +8,12 @@
 
 #undef EXTERN
 #define EXTERN
-#include "/usr/src/mm/const.h"
-#include "/usr/src/mm/type.h"
-#include "/usr/src/mm/mproc.h"
-#include "/usr/src/kernel/const.h"
-#include "/usr/src/kernel/type.h"
-#include "/usr/src/kernel/proc.h"
+#include "../../mm/const.h"
+#include "../../mm/type.h"
+#include "../../mm/mproc.h"
+#include "../../kernel/const.h"
+#include "../../kernel/type.h"
+#include "../../kernel/proc.h"
 #undef printf			/* printf was misdefined by the sys headers */
 
 #include <ctype.h>
@@ -96,7 +96,7 @@ struct proc *p;
   /* Print proc table. */
   printf("\n");
 #if (CHIP == INTEL)
-#if INTEL_32BITS
+#if _WORD_SIZE == 4
   printf("eax=%8lX   ebx=%8lX   ecx=%8lX   edx=%8lX\n",
 	 r.retreg, r.bx, r.cx, r.dx);
   printf("esi=%8lX   edi=%8lX   ebp=%8lX   esp=%8lX   eip=%8lX\n",

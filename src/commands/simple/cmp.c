@@ -21,7 +21,6 @@ int argc;
 char **argv;
 {
   int fd1, fd2;
-  char *opt;
 
   /* Process the '-l' or '-s' option. */
   while (argc > 1 && argv[1][0] == '-' && argv[1][1] != 0) {

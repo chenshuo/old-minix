@@ -83,7 +83,7 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 
 	do_ksig,	/* 64 = KSIG: signals originating in the kernel	*/
 	no_sys,		/* 65 = UNPAUSE	*/
-	do_brk2, 	/* 66 = BRK2 (used to tell MM size of FS,INIT) */
+	no_sys, 	/* 66 = unused  */
 	no_sys,		/* 67 = REVIVE	*/
 	no_sys,		/* 68 = TASK_REPLY	*/
 	no_sys,		/* 69 = AMOEBA SYSTEM CALL */
@@ -93,4 +93,5 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	do_sigpending,	/* 73 = SIGPENDING */
 	do_sigmask,	/* 74 = SIGMASK */
 	do_sigreturn,	/* 75 = SIGRETURN */
+	do_reboot,	/* 76 = REBOOT */
 };

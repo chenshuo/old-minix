@@ -4,9 +4,9 @@
 #define V2_NR_DZONES       7	/* # direct zone numbers in a V2 inode */
 #define V2_NR_TZONES      10	/* total # zone numbers in a V2 inode */
 
-#define NR_FILPS          64	/* # slots in filp table */
+#define NR_FILPS         128	/* # slots in filp table */
 #define NR_INODES         64	/* # slots in "in core" inode table */
-#define NR_SUPERS          6	/* # slots in super block table */
+#define NR_SUPERS          8	/* # slots in super block table */
 #define NR_LOCKS           8	/* # slots in the file locking table */
 
 /* The type of sizeof may be (unsigned) long.  Use the following macro for
@@ -56,7 +56,6 @@
 #define BYTE_SWAP          0	/* tells conv2/conv4 to swap bytes */
 #define DONT_SWAP          1	/* tells conv2/conv4 not to swap bytes */
 
-#define INFO               2	/* where in data_org is info from build */
 #define END_OF_FILE   (-104)	/* eof detected */
 
 #define ROOT_INODE         1	/* inode number for root directory */

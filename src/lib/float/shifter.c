@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: shifter.c,v 1.5 88/08/04 11:15:56 ceriel Exp $ */
+/* $Header: shifter.c,v 1.6 93/01/05 12:06:34 ceriel Exp $ */
 
 # include "FP_types.h"
 

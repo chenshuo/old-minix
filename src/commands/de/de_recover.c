@@ -387,9 +387,9 @@ off_t Recover_Blocks( s )
   int i;
 
 
-  /*  Up to inode->i_ndzones pointers are stored in the i-node.  */
+  /*  Up to s->ndzones pointers are stored in the i-node.  */
 
-  for ( i = 0;  i < inode->i_ndzones;  ++i )
+  for ( i = 0;  i < s->ndzones;  ++i )
     {
     if ( file_size == 0 )
 	return( inode->i_size );
@@ -404,7 +404,7 @@ off_t Recover_Blocks( s )
 
   /*  An indirect block can contain up to inode->i_indirects more blk ptrs.  */
 
-  if ( ! Indirect( s, inode->i_zone[ inode->i_ndzones ], &file_size, 0 ) )
+  if ( ! Indirect( s, inode->i_zone[ s->ndzones ], &file_size, 0 ) )
     return( -1L );
 
   if ( file_size == 0 )
@@ -413,7 +413,7 @@ off_t Recover_Blocks( s )
 
   /*  A double indirect block can contain up to inode->i_indirects blk ptrs. */
 
-  if ( ! Indirect( s, inode->i_zone[ inode->i_ndzones+1 ], &file_size, 1 ) )
+  if ( ! Indirect( s, inode->i_zone[ s->ndzones+1 ], &file_size, 1 ) )
     return( -1L );
 
   if ( file_size == 0 )

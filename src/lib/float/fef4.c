@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: fef4.c,v 1.6 89/08/15 09:04:41 ceriel Exp $ */
+/* $Header: fef4.c,v 1.7 93/01/05 12:05:12 ceriel Exp $ */
 
 /*
 	SEPERATE INTO EXPONENT AND FRACTION (FEF 4)

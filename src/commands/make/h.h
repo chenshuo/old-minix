@@ -310,3 +310,7 @@ _PROTOTYPE(char *gettok, (char **ptr ));
 /* rules.c */
 _PROTOTYPE(bool dyndep, (struct name *np, char **pbasename,char **pinputname));
 _PROTOTYPE(void makerules, (void));
+
+/* archive.c */
+_PROTOTYPE(int is_archive_ref, (char *name));
+_PROTOTYPE(int archive_stat, (char *name, struct stat *stp));

@@ -183,7 +183,11 @@ register int mode;
   return fd;
 }
 
+#if __STDC__
+void catch(int sig)
+#else
 catch()
+#endif
 {
 	unlink(temp_arch);
 	_exit (2);

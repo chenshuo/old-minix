@@ -29,6 +29,7 @@ _PROTOTYPE(void report, (void));
 _PROTOTYPE(void pr, (int f, int n));
 _PROTOTYPE(void option, (char *opt, char *next));
 _PROTOTYPE(int match, (char *s1, char *s2));
+_PROTOTYPE(int interpret, (char *s));
 _PROTOTYPE(void prctl, (int c));
 
 int main(argc, argv)
@@ -80,7 +81,7 @@ void report()
   prctl(args.sg_kill);
   printf("\nerase = ");
   prctl(args.sg_erase);
-  printf("\nint = ");
+  printf("\nintr = ");
   prctl(tch.t_intrc);
   printf("\nquit = ");
   prctl(tch.t_quitc);
@@ -186,22 +187,22 @@ char *opt, *next;
 	return;
   }
   if (match(opt, "kill")) {
-	args.sg_kill = *next;
+	args.sg_kill = interpret(next);
 	k++;
 	return;
   }
   if (match(opt, "erase")) {
-	args.sg_erase = *next;
+	args.sg_erase = interpret(next);
 	k++;
 	return;
   }
-  if (match(opt, "int")) {
-	tch.t_intrc = *next;
+  if (match(opt, "intr")) {
+	tch.t_intrc = interpret(next);
 	k++;
 	return;
   }
   if (match(opt, "quit")) {
-	tch.t_quitc = *next;
+	tch.t_quitc = interpret(next);
 	k++;
 	return;
   }
@@ -319,6 +320,15 @@ char *s1, *s2;
 	s1++;
 	s2++;
   }
+}
+
+int interpret(s)
+char *s;
+{
+  if (s[0] == '^' && s[1] != 0)
+	return(s[1] == '?' ? 0177 : s[1] & 037);
+  else
+	return(s[0]);
 }
 
 void prctl(c)

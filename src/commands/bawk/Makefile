@@ -1,22 +1,29 @@
 # Makefile for bawk - pattern matching language
 
 OPSYS   = MINIX
-CFLAGS  = -D$(OPSYS) -wo
-O=o
+CFLAGS  = -D$(OPSYS)
 
-OBJ     = bawk.$O bawkact.$O bawksym.$O bawkpat.$O bawkdo.$O
+all:	bawk
+
+OBJ     = bawk.o bawkact.o bawksym.o bawkpat.o bawkdo.o
 
 bawk:       $(OBJ)
-	    @rm -rf bawk
-	    @echo Start linking bawk
-	    @cc -i -o bawk $(OBJ) >/dev/null
-	    @chmem =20000 bawk
+	    cc -i -o bawk $(OBJ)
+	    install -S 10kw bawk
 
-bawk.$O:     bawk.h bawk.c
-bawkact.$O:  bawk.h bawkact.c
-bawkpat.$O:  bawk.h bawkpat.c
-bawksym.$O:  bawk.h bawksym.c
-bawkdo.$O:   bawk.h bawkdo.c
+install:	/usr/bin/bawk /usr/bin/awk
+
+/usr/bin/bawk:	bawk
+	install -cs -o bin bawk $@
+
+/usr/bin/awk:	/usr/bin/bawk
+	install -l /usr/bin/bawk $@
+
+bawk.o:     bawk.h bawk.c
+bawkact.o:  bawk.h bawkact.c
+bawkpat.o:  bawk.h bawkpat.c
+bawksym.o:  bawk.h bawksym.c
+bawkdo.o:   bawk.h bawkdo.c
 
 clean:	
-	@rm -f *.bak *.o *.s core bawk
+	rm -f *.bak *.o core bawk

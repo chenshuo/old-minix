@@ -84,14 +84,7 @@ int main(argc, argv) int argc; char *argv[];
 	char *curarg;
 	char dest[FILELEN], buf[LINELEN];
 
-	if (argc < 2) {
-		format("Usage: uud [-n] [-d] [-s dir] [-t dir] input-file\n");
-		Error(1);
-	}
-
-	curarg = argv[1];
-	
-	while (curarg[0] == '-') {
+	while ((curarg = argv[1]) != NULL && curarg[0] == '-') {
 		if (((curarg[1] == 'd') || (curarg[1] == 'D')) &&
 		    (curarg[2] == '\0')) {
 			debug = 1;
@@ -121,20 +114,15 @@ int main(argc, argv) int argc; char *argv[];
 			if (debug)
 				format("Source dir = %s\n",source);
 		} else if (curarg[1] != '\0') {
-			format("uud: Unknown option <%s>\n", curarg);
-			Error(15);
+			format("Usage: uud [-n] [-d] [-s dir] [-t dir] [input-file]\n");
+			Error(1);
 		} else
 			break;
 		argv++;
 		argc--;
-		if (argc < 2) {
-			format("uud: Missing file name.\n");
-			Error(15);
-		}
-		curarg = argv[1];
 	}
 
-	if ((curarg[0] == '-') && (curarg[1] == '\0')) {
+	if (curarg == NULL || ((curarg[0] == '-') && (curarg[1] == '\0'))) {
 		in = stdin;
 		strcpy(ifname, "<stdin>");
 	} else {

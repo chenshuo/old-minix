@@ -15,7 +15,7 @@ char **args;
 char *name;
 
 int digit_seen;
-char a[] = "        . \0";
+char a[] = "12:34:56.78";
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void print_time, (clock_t t));

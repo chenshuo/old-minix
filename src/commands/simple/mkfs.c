@@ -22,12 +22,16 @@
 #include <minix/const.h>
 #include <minix/type.h>
 #include <minix/minlib.h>
-#include "../fs/const.h"
+#include "../../fs/const.h"
+#if (MACHINE == IBM_PC)
+#include <minix/partition.h>
+#include <sys/ioctl.h>
+#endif
 
 #undef EXTERN
 #define EXTERN			/* get rid of EXTERN by making it null */
-#include "../fs/type.h"
-#include "../fs/super.h"
+#include "../../fs/type.h"
+#include "../../fs/super.h"
 #include <minix/fslib.h>
 
 #ifndef DOS
@@ -72,7 +76,7 @@ char *progname;
 long current_time, bin_time;
 char zero[BLOCK_SIZE], *lastp;
 char umap[(N_BLOCKS + 8) / 8];	/* bit map tells if block read yet */
-block_t zone_map = 3;		/* where is zone map? (depends on # inodes) */
+block_t zone_map;		/* where is zone map? (depends on # inodes) */
 int inodes_per_block;
 int fs_version;
 block_t max_nrblocks;
@@ -80,6 +84,7 @@ block_t max_nrblocks;
 FILE *proto;
 
 _PROTOTYPE(int main, (int argc, char **argv));
+_PROTOTYPE(block_t sizeup, (char *device));
 _PROTOTYPE(void super, (zone_t zones, Ino_t inodes));
 _PROTOTYPE(void rootdir, (Ino_t inode));
 _PROTOTYPE(void eat_dir, (Ino_t parent));
@@ -92,7 +97,7 @@ _PROTOTYPE(void add_zone, (Ino_t n, zone_t z, long bytes, long cur_time));
 _PROTOTYPE(void add_z_1, (Ino_t n, zone_t z, long bytes, long cur_time));
 _PROTOTYPE(void add_z_2, (Ino_t n, zone_t z, long bytes, long cur_time));
 _PROTOTYPE(void incr_link, (Ino_t n));
-_PROTOTYPE(void insert_bit, (block_t block, int bit, int count));
+_PROTOTYPE(void insert_bit, (block_t block, int bit));
 _PROTOTYPE(int mode_con, (char *p));
 _PROTOTYPE(void getline, (char line[LINE_LEN], char *parse[MAX_TOKENS]));
 _PROTOTYPE(void check_mtab, (char *devname));
@@ -167,6 +172,9 @@ char *argv[];
 	    case 't':	donttest = 1;	break;
 	    default:	usage();
 	}
+
+  /* Determine the size of the device if not specified as -b or proto. */
+  if (argc - optind == 1 && blocks == 0) blocks = sizeup(argv[optind]);
 
   /* The remaining args must be 'special proto', or just 'special' if the
    * block size has already been specified.
@@ -304,6 +312,26 @@ char *argv[];
 
 
 /*================================================================
+ *                    sizeup  -  determine device size
+ *===============================================================*/
+block_t sizeup(device)
+char *device;
+{
+#if (MACHINE == IBM_PC)
+  int fd;
+  struct part_entry entry;
+
+  if ((fd = open(device, O_RDONLY)) == -1) return 0;
+  if (ioctl(fd, DIOCGETP, &entry) == -1) entry.size = 0;
+  close(fd);
+  return entry.size / (BLOCK_SIZE / 512);
+#else
+  return 0;
+#endif
+}
+
+
+/*================================================================
  *                 super  -  construct a superblock
  *===============================================================*/
 
@@ -316,10 +344,6 @@ ino_t inodes;
   int initblks;
 
   zone_t initzones, nrzones, v1sq, v2sq;
-  bit_t bit_map_len;
-  int b_needed;
-  int b_allocated;
-  int residual;
   zone_t zo;
   struct super_block *sup;
   char buf[BLOCK_SIZE], *cp;
@@ -364,44 +388,11 @@ ino_t inodes;
   next_zone = sup->s_firstdatazone;
   next_inode = 1;
 
-  /* Mark all bits beyond the end of the legal inodes and zones as
-   * allocated. Unfortunately, the coding the bit maps is inconsistent.
-   * The rules are: For inodes:	Every i-node occupies a bit map slot,
-   * even i-node 0 The first i-node on the disk is i-node 1, not 0 For
-   * zones:	Zone map bit 0 is for the last i-node block on disk
-   * The first zone available goes with bit 1 in the map
-   * 
-   * Thus for i-nodes, every i-node, starting at 0 occupies a bit map
-   * slot, but for zones, only those starting with the final i-node
-   * block occupy bit slots.  This is inconsistent.  In retrospect it
-   * would might have been simpler to have bit 0 of the zone map be
-   * zone 0 on the disk.  Although this would have increased the zone
-   * bit map by a few dozen bits, it would have prevented a number of
-   * bugs in the early days.  This is an example of what happens when
-   * one ignores the maxim:  First make it work, then make it optimal.
-   * For both maps, 0 = available, 1 = in use. 
-   */
+  zone_map = INODE_MAP + sup->s_imap_blocks;
 
-  /* Mark bits beyond end of inodes as allocated. */
-  bit_map_len = nrinodes + 1;	/* # bits needed in map */
-  residual = (int) (bit_map_len % (8 * BLOCK_SIZE));	/* lint but OK */
-  if (residual == 0) residual = 8 * BLOCK_SIZE;
-  b_needed = bitmapsize(bit_map_len);
-  zone_map += b_needed - 1;	/* if imap > 1, adjust start of zone map */
-  insert_bit((block_t) INODE_MAP + b_needed - 1, residual, 8 * BLOCK_SIZE - residual);
-
-  bit_map_len = nrzones - initzones + 1;	/* # bits needed in map */
-  residual = (int) (bit_map_len % (8 * BLOCK_SIZE));	/* lint but OK */
-  if (residual == 0) residual = 8 * BLOCK_SIZE;
-  b_needed = bitmapsize(bit_map_len);
-  b_allocated = bitmapsize((bit_t) nrzones);
-  insert_bit(zone_map + b_needed - 1, residual, 8 * BLOCK_SIZE - residual);
-  if (b_needed != b_allocated) {
-	insert_bit(zone_map + b_allocated - 1, 0, 8 * BLOCK_SIZE);
-  }
-  insert_bit(zone_map, 0, 1);	/* bit zero must always be allocated */
-  insert_bit((block_t) INODE_MAP, 0, 1);	/* inode zero not used but
-						 * must be allocated */
+  insert_bit(zone_map, 0);	/* bit zero must always be allocated */
+  insert_bit((block_t) INODE_MAP, 0);	/* inode zero not used but
+					 * must be allocated */
 }
 
 
@@ -768,7 +759,7 @@ int mode, usrid, grpid;
 
   /* Set the bit in the bit map. */
   /* DEBUG FIXME.  This assumes the bit is in the first inode map block. */
-  insert_bit((block_t) INODE_MAP, (int) num, 1);
+  insert_bit((block_t) INODE_MAP, (int) num);
   return(num);
 }
 
@@ -788,7 +779,7 @@ PRIVATE zone_t alloc_zone()
   for (i = 0; i < zone_size; i++)
 	put_block(b + i, zero);	/* give an empty zone */
   /* DEBUG FIXME.  This assumes the bit is in the first zone map block. */
-  insert_bit(zone_map, (int) (z - zoff), 1);	/* lint, NOT OK because
+  insert_bit(zone_map, (int) (z - zoff));	/* lint, NOT OK because
 						 * z hasn't been broken
 						 * up into block +
 						 * offset yet. */
@@ -796,23 +787,19 @@ PRIVATE zone_t alloc_zone()
 }
 
 
-void insert_bit(block, bit, count)
+void insert_bit(block, bit)
 block_t block;
 int bit;
-int count;
 {
   /* Insert 'count' bits in the bitmap */
   int w, s;
-  int i;
   short buf[BLOCK_SIZE / sizeof(short)];
 
   if (block < 0) pexit("insert_bit called with negative argument");
   get_block(block, (char *) buf);
-  for (i = bit; i < bit + count; i++) {
-	w = i / (8 * sizeof(short));
-	s = i % (8 * sizeof(short));
-	buf[w] |= (1 << s);
-  }
+  w = bit / (8 * sizeof(short));
+  s = bit % (8 * sizeof(short));
+  buf[w] |= (1 << s);
   put_block(block, (char *) buf);
 }
 

@@ -14,20 +14,26 @@
 #include <minix/com.h>
 #include "proc.h"
 
-#define SAFETY            32	/* safety margin for stack overflow (bytes) */
 #define CMASK4          0x9E	/* mask for Planar Control Register */
 #define HIGH_INT          17	/* limit of the interrupt vectors */
 
+#if _WORD_SIZE == 2
 typedef _PROTOTYPE( void (*vecaddr_t), (void) );
 
-FORWARD _PROTOTYPE( void set_vec, (int vec_nr, vecaddr_t addr,
-		phys_clicks base_click) );
+FORWARD _PROTOTYPE( void set_vec, (int vec_nr, vecaddr_t addr) );
 
-#if !INTEL_32BITS
 PRIVATE vecaddr_t int_vec[HIGH_INT] = {
   int00, int01, int02, int03, int04, int05, int06, int07,
   int08, int09, int10, int11, int12, int13, int14, int15,
   int16,
+};
+
+PRIVATE vecaddr_t irq0_vec[HIGH_INT] = {
+  hwint00, hwint01, hwint02, hwint03, hwint04, hwint05, hwint06, hwint07,
+};
+
+PRIVATE vecaddr_t irq8_vec[HIGH_INT] = {
+  hwint08, hwint09, hwint10, hwint11, hwint12, hwint13, hwint14, hwint15,
 };
 #endif
 
@@ -41,15 +47,18 @@ PUBLIC void main()
   register struct proc *rp;
   register int t;
   int sizeindex;
-  phys_clicks base_click;
   phys_clicks text_base;
   vir_clicks text_clicks;
   vir_clicks data_clicks;
   phys_bytes phys_b;
   int stack_size;
   reg_t ktsb;			/* kernel task stack base */
+  struct memory *memp;
 
-  /* Interrupts are disabled here.
+  /* Finish initializing 8259 (needs machine type). */
+  init_8259(IRQ0_VECTOR, IRQ8_VECTOR);
+
+  /* Interrupts are still disabled here.
    * They are reenabled when INIT_PSW is loaded by the first restart().
    */
 
@@ -68,10 +77,11 @@ PUBLIC void main()
         (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
   }
 
-#if (CHIP == INTEL)
   /* Finish off initialization of tables for protected mode. */
   if (protected_mode) ldt_init();
-#endif
+
+  /* Interpret memory sizes. */
+  mem_init();
 
   /* Set up proc table entries for tasks and servers.  Be very careful about
    * sp, since in real mode the 3 words prior to it will be clobbered when
@@ -85,21 +95,20 @@ PUBLIC void main()
    * by using the word at 0x0008.
    */
 
-  base_click = code_base >> CLICK_SHIFT;	/* base for tasks */
-
   /* Align stack base suitably. */
   ktsb = ((reg_t) t_stack + (ALIGNMENT - 1)) & ~((reg_t) ALIGNMENT - 1);
 
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp <= BEG_USER_ADDR; ++rp, ++t) {
 	if (t < 0) {
 		stack_size = tasktab[t + NR_TASKS].stksize;
-		rp->p_splimit = ktsb + SAFETY;
 		ktsb += stack_size;
 		rp->p_reg.sp = ktsb;
-		text_base = base_click;	/* tasks are all in the kernel */
+		text_base = code_base >> CLICK_SHIFT;
+					/* tasks are all in the kernel */
 		sizeindex = 0;		/* and use the full kernel sizes */
+		memp = &mem[0];		/* remove from this memory chunk */
 	} else {
-		rp->p_splimit = rp->p_reg.sp = INIT_SP;
+		rp->p_reg.sp = INIT_SP;
 		sizeindex = 2 * t + 2;	/* MM, FS, INIT have their own sizes */
 	}
 	rp->p_reg.pc = (reg_t) tasktab[t + NR_TASKS].initial_pc;
@@ -114,74 +123,38 @@ PUBLIC void main()
 	rp->p_map[S].mem_phys = text_base + text_clicks + data_clicks;
 	rp->p_map[S].mem_vir  = data_clicks;	/* empty - stack is in data */
 	text_base += text_clicks + data_clicks;	/* ready for next, if server */
+	memp->size -= (text_base - memp->base);
+	memp->base = text_base;			/* memory no longer free */
 
+#if _WORD_SIZE == 4
+	/* Servers are loaded in extended memory if in 386 mode. */
+	if (t < 0) {
+		memp = &mem[1];
+		text_base = 0x100000 >> CLICK_SHIFT;
+	}
+#endif
 	if (!isidlehardware(t)) lock_ready(rp);	/* IDLE, HARDWARE neveready */
 	rp->p_flags = 0;
 
-#if (CHIP == INTEL)
 	alloc_segments(rp);
-#endif
   }
 
-  /* Interpret memory sizes. */
-  mem_init();
+  /* Save the old interrupt vectors for *wini.c to peek at. */
+  phys_copy(0L, vir2phys(vec_table), (long) VECTOR_BYTES);
 
-  /* Save the old interrupt vectors. */
-  phys_b = umap(proc_addr(HARDWARE), D, (vir_bytes) vec_table, VECTOR_BYTES);
-  phys_copy(0L, phys_b, (long) VECTOR_BYTES);	/* save all the vectors */
-
-#if !INTEL_32BITS
-  /* For protected mode, the interrupt vectors have already been set up by
-   * prot_init() (with a different vector table).
-   * So this block of code does nothing useful in protected mode.
-   * It is not worth skipping, except for 32-bit mode where it would be too
-   * much trouble to set up the unused functions in int_vec[].
-   * The low-memory vector table was saved mainly for *wini.c to peek at.
-   */
-
-  /* Set up the new interrupt vectors. */
-  for (t = 0; t < HIGH_INT; t++) set_vec(t, int_vec[t], base_click);
-  for (t = HIGH_INT; t < 256; t++) set_vec(t, trp, base_click);
-
-  set_vec(SYS_VECTOR, s_call, base_click);
-  set_vec(CLOCK_VECTOR, clock_int, base_click);
-  set_vec(KEYBOARD_VECTOR, tty_int, base_click);
-  set_vec(SECONDARY_VECTOR, secondary_int, base_click);
-  set_vec(RS232_VECTOR, rs232_int, base_click);
-  set_vec(FLOPPY_VECTOR, disk_int, base_click);
-  set_vec(PRINTER_VECTOR, lpr_int, base_click);
-
-#if NETWORKING_ENABLED
-  /* Overwrite RS232 SECONDARY_VECTOR. */
-  set_vec(ETHER_VECTOR, eth_int, code_base);
-#endif
-
-  if (pc_at) {
-	set_vec(AT_WINI_VECTOR, wini_int, base_click);
-  } else
-	set_vec(XT_WINI_VECTOR, wini_int, base_click);
-  if (ps)
-	set_vec(PS_KEYB_VECTOR, tty_int, base_click);
-#endif /* !INTEL_32BITS */
-
-  /* Put a ptr to proc table in a known place so it can be found in /dev/mem.
-   * This is crufty, and fails if the address of the proc table is >= 64K
-   * (we should write a phys_bytes number, not a u16_t from half a vector!.
-   * However, we need similar hooks for the debugger.  0x600 used to be
-   * code_base - the code base is no longer fixed.
-   */
-  set_vec( (0x600 - 4)/4, (vecaddr_t) proc, (phys_bytes) 0);
+#if _WORD_SIZE == 2
+  if (!protected_mode) {
+	/* Set up the new real mode interrupt vectors. */
+	for (t = 0; t < HIGH_INT; t++) set_vec(t, int_vec[t]);
+	for (t = HIGH_INT; t < 256; t++) set_vec(t, trp);
+	set_vec(SYS_VECTOR, s_call);
+	for (t = 0; t < 8; t++) set_vec(IRQ0_VECTOR + t, irq0_vec[t]);
+	for (t = 0; t < 8; t++) set_vec(IRQ8_VECTOR + t, irq8_vec[t]);
+  }
+#endif /* _WORD_SIZE == 2 */
 
   bill_ptr = proc_addr(IDLE);  /* it has to point somewhere */
   lock_pick_proc();
-
-  /* Finish initializing 8259 (needs machine type). */
-  init_8259(IRQ0_VECTOR, IRQ8_VECTOR);
-
-  /* Unmask second interrupt controller on AT's.
-   * Don't use enable_irq(), because it unlocks interrupts.
-   */
-  if (pc_at) out_byte(INT_CTLMASK, ~(1 << (CASCADE_IRQ & 0x07)));
 
   /* Set planar control registers on PS's.  Fix this.  CMASK4 is magic and
    * probably ought to be set by the individual drivers.
@@ -219,26 +192,23 @@ int n;
   wreboot();
 }
 
-#if (CHIP == INTEL)
+#if _WORD_SIZE == 2
 /*===========================================================================*
  *                                   set_vec                                 *
  *===========================================================================*/
-PRIVATE void set_vec(vec_nr, addr, base_click)
+PRIVATE void set_vec(vec_nr, addr)
 int vec_nr;			/* which vector */
 vecaddr_t addr;			/* where to start */
-phys_clicks base_click;		/* click where kernel sits in memory */
 {
 /* Set up an interrupt vector. */
 
   u16_t vec[2];
-  phys_bytes phys_b;
 
   /* Build the vector in the array 'vec'. */
   vec[0] = (u16_t) addr;
-  vec[1] = (u16_t) click_to_hclick(base_click);
+  vec[1] = (u16_t) physb_to_hclick(code_base);
 
   /* Copy the vector into place. */
-  phys_b = umap(proc_addr(HARDWARE), D, (vir_bytes) vec, (vir_bytes) 4);
-  phys_copy(phys_b, (phys_bytes) (vec_nr * 4), (phys_bytes) 4);
+  phys_copy(vir2phys(vec), (phys_bytes) (vec_nr * 4), (phys_bytes) 4);
 }
-#endif
+#endif /* _WORD_SIZE == 2 */

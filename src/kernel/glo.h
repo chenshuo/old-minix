@@ -22,9 +22,8 @@ EXTERN struct proc *proc_ptr;	/* pointer to currently running process */
 EXTERN int sig_procs;		/* number of procs with p_pending != 0 */
 
 /* Memory sizes. */
-EXTERN phys_clicks mem_base[NR_MEMS];	/* bases of chunks of memory */
-EXTERN phys_clicks mem_size[NR_MEMS];	/* sizes of chunks of memory */
-EXTERN unsigned char mem_type[NR_MEMS];	/* types of chunks of memory */
+EXTERN struct memory mem[NR_MEMS];	/* base and size of chunks of memory */
+EXTERN phys_clicks tot_mem_size;	/* total system memory size */
 
 /* Miscellaneous. */
 EXTERN int rebooting;		/* nonzero while rebooting */
@@ -51,7 +50,6 @@ EXTERN struct farptr_s sstep_vector;	/* debugger single-step hook */
 EXTERN int color;		/* nonzero if console is color, 0 if mono */
 EXTERN int ega;			/* nonzero if console is supports EGA */
 EXTERN int vga;			/* nonzero if console is supports VGA */
-EXTERN int scan_code;		/* scan code of key pressed to start minix */
 EXTERN int snow;		/* nonzero if screen needs snow removal */
 
 /* Memory sizes. */
@@ -61,11 +59,12 @@ EXTERN unsigned low_memsize;
 /* Miscellaneous. */
 EXTERN u16_t Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
 EXTERN u16_t vec_table[VECTOR_BYTES / sizeof(u16_t)]; /* copy of BIOS vectors*/
+EXTERN irq_handler_t irq_table[NR_IRQ_VECTORS];
 
 /* Variables that are initialized elsewhere are just extern here. */
-extern int using_bios;		/* nonzero to force real mode (for bios_wini)*/
 extern struct segdesc_s gdt[];	/* global descriptor table for protected mode*/
 
+EXTERN _PROTOTYPE( void (*level0_func), (void) );
 #endif /* (CHIP == INTEL) */
 
 #if (CHIP == M68000)
@@ -77,4 +76,5 @@ extern struct tty_struct *cur_cons; /* virtual cons currently displayed */
 extern unsigned char font8[];	/* 8 pixel wide font table (initialized) */
 extern unsigned char font12[];	/* 12 pixel wide font table (initialized) */
 extern unsigned char font16[];	/* 16 pixel wide font table (initialized) */
+extern unsigned short resolution; /* screen res; ST_RES_LOW..TT_RES_HIGH */
 #endif

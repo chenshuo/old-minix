@@ -197,7 +197,7 @@ void makerules()
 #ifdef unix
 
   setmacro("CC", "cc");
-  setmacro("CFLAGS", "-O");
+  setmacro("CFLAGS", "");
 
   cp = newcmd("$(CC) -S $(CFLAGS) $<", (struct cmd *)0);
   np = newname(".c.s");
@@ -207,6 +207,7 @@ void makerules()
   np = newname(".c.o");
   newline(np, (struct depend *)0, cp, 0);
 
+#if this_rule_is_a_bit_too_much_of_a_good_thing
 #ifdef MINIXPC
   cp = newcmd("$(CC) $(CFLAGS) -i -o $@ $<", (struct cmd *)0);
 #else
@@ -214,9 +215,9 @@ void makerules()
 #endif /* MINIXPC */
   np = newname(".c");
   newline(np, (struct depend *)0, cp, 0);
+#endif
 
-  setmacro("AS", "as");
-  cp = newcmd("$(AS) -o $@ $<", (struct cmd *)0);
+  cp = newcmd("$(CC) -c $(CFLAGS) $<", (struct cmd *)0);
   np = newname(".s.o");
   newline(np, (struct depend *)0, cp, 0);
 

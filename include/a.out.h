@@ -13,7 +13,7 @@ struct	exec {			/* a.out header */
   long		a_text;		/* size of text segement in bytes */
   long		a_data;		/* size of data segment in bytes */
   long		a_bss;		/* size of bss segment in bytes */
-  long		a_no_entry;	/* in fact: entry point, a_entry */
+  long		a_entry;	/* entry point */
   long		a_total;	/* total memory allocated */
   long		a_syms;		/* size of symbol table */
 
@@ -41,6 +41,8 @@ struct	exec {			/* a.out header */
 
 /* Flags. */
 #define A_UZP	0x01	/* unmapped zero page (pages) */
+#define A_PAL	0x02	/* page aligned executable */
+#define A_NSYM	0x04	/* new style symbol table */
 #define A_EXEC	0x10	/* executable */
 #define A_SEP	0x20	/* separate I/D */
 #define A_PURE	0x40	/* pure text */		/* not used */

@@ -15,6 +15,7 @@
  * Mods for TOPS 20, and more.     08/06/87 by jphd
  *     (remove freopen and rindex...change filename generation...)
  * (A lot more to do about I/O speed, avoiding completely the stdio.h...)
+ * May be called as uuencode.       Oct 2 1993 by Kees J. Bot
  *
  */
 
@@ -60,10 +61,16 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
+  char *prog_name;
   char *fname;
+  int filter;
+
+  prog_name = argv[0] + strlen(argv[0]);
+  while (prog_name > argv[0] && prog_name[-1] != '/') prog_name--;
+  filter = strcmp(prog_name, "uuencode") == 0;
 
   if (argc < 2) {
-	fprintf(stderr, "Usage: uue [-n] inputfile [-]\n");
+	fprintf(stderr, "Usage: %s [-n] inputfile [-]\n", prog_name);
 	exit(2);
   }
   if (argv[1][0] == '-') {
@@ -76,11 +83,17 @@ char *argv[];
 	argv++;
 	argc--;
   }
-  if ((fp = fopen(argv[1], READ)) == NULL) {	/* binary input !!! */
-	fprintf(stderr, "Cannot open %s\n", argv[1]);
-	exit(1);
+  if (filter) {		/* old uuencode reads from standard input */
+	fp = stdin;
+  } else {
+	if ((fp = fopen(argv[1], READ)) == NULL) {	/* binary input !!! */
+		fprintf(stderr, "Cannot open %s\n", argv[1]);
+		exit(1);
+	}
   }
-  strcpy(ofname, argv[1]);
+  fname = argv[1] + strlen(argv[1]);
+  while (fname > argv[1] && fname[-1] != '/') fname--;
+  strcpy(ofname, fname);
   fname = ofname;
   do {
 	if (*fname == '.') *fname = '\0';
@@ -90,7 +103,7 @@ char *argv[];
   if (lenofname > FILE_NAME) ofname[FILE_NAME] = '\0';
   strcat(ofname, ".uue");
   lenofname = strlen(ofname);
-  if (!split && (argc > 2) && (argv[2][0] == '-')) {
+  if (!split && (filter || (argc > 2) && (argv[2][0] == '-'))) {
 	stdo = 1;
 	outp = stdout;
   } else {

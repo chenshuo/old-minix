@@ -1,121 +1,141 @@
-/*  getcwd - get current working directory	Author: Terrence W. Holm */
-
-/* Directly derived from Adri Koppes' pwd(1).
- * Modified by Andy Tanenbaum for POSIX (29 Oct. 1989)
+/*	getcwd() - get the name of the current working directory.
+ *							Author: Kees J. Bot
+ *								30 Apr 1989
  */
-
-#include <lib.h>
-#define getcwd	_getcwd
-#include <sys/dir.h>
+#define nil 0
+#define chdir _chdir
+#define closedir _closedir
+#define getcwd _getcwd
+#define opendir _opendir
+#define readdir _readdir
+#define rewinddir _rewinddir
+#define stat _stat
+#include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <string.h>
+#include <errno.h>
 #include <unistd.h>
+#include <dirent.h>
+#include <limits.h>
+#include <string.h>
 
-#define  DIRECT_SIZE  (sizeof (struct direct))
-
-FORWARD _PROTOTYPE( void go_back, (char *path) );
-
-char *getcwd(buffer, size)
-char *buffer;
-size_t size;
-/* Get current working directory. */
+static int addpath(const char *path, char **ap, const char *entry)
+/* Add the name of a directory entry at the front of the path being built.
+ * Note that the result always starts with a slash.
+ */
 {
-  int same_device, found, fd;
-  char *r, path[PATH_MAX + 1], temp_name[NAME_MAX + 1];
-  struct stat current, parent, dir_entry;
-  struct direct d;
+	const char *e= entry;
+	char *p= *ap;
 
-  if (buffer == (char *) NULL || size <= 0) {
-	errno = EINVAL;
-	return( (char *) NULL);
-  }
-  path[0] = '\0';
+	while (*e != 0) e++;
 
-  /* Get the inode for the current directory  */
-  if (stat(".", &current) < 0) return( (char *) NULL);
-  if ( (current.st_mode & S_IFMT) != S_IFDIR) return( (char *) NULL);
+	while (e > entry && p > path) *--p = *--e;
 
-  /* Run backwards up the directory tree, grabbing dir names on the way. */
-  while (1) {
-	same_device = 0;
-	found = 0;
-
-	/* Get the inode for the parent directory  */
-	if (chdir("..") < 0) return( (char *) NULL);
-	if (stat(".", &parent) < 0) return( (char *) NULL);
-	if ( (parent.st_mode & S_IFMT) != S_IFDIR) return( (char *) NULL);
-	if (current.st_dev == parent.st_dev) same_device = 1;
-
-	/* At the root, "." is the same as ".."  */
-	if (same_device && current.st_ino == parent.st_ino) break;
-
-	/* Search the parent directory for the current entry  */
-	if ( (fd = open(".", O_RDONLY)) < 0) return( (char *) NULL);
-	while (!found && read(fd, (char *)&d, DIRECT_SIZE) == DIRECT_SIZE) {
-		if (d.d_ino == 0L) continue;	/* empty slot */
-		if (same_device) {
-			if (current.st_ino == d.d_ino) found = 1;
-		} else {
-			temp_name[0] = '\0';
-			strncat(temp_name, d.d_name, NAME_MAX);
-			if (stat(temp_name, &dir_entry) < 0) {
-				close(fd);
-				go_back(path);
-				return( (char *) NULL);
-			}
-			if (current.st_dev == dir_entry.st_dev &&
-			    current.st_ino == dir_entry.st_ino)
-				found = 1;
-		}
-	}
-
-	close(fd);
-	if (!found) {
-		go_back(path);
-		return( (char *) NULL);
-	}
-	if (strlen(path) + NAME_MAX + 1 > PATH_MAX) {
-		errno = ERANGE;
-		go_back(path);
-		return( (char *) NULL);
-	}
-	strcat(path, "/");
-	strncat(path, d.d_name, NAME_MAX);
-	current.st_dev = parent.st_dev;
-	current.st_ino = parent.st_ino;
-  }
-
-  /* Copy the reversed path name into <buffer>  */
-  if (strlen(path) + 1 > size) {
-	errno = ERANGE;
-	go_back(path);
-	return( (char *) NULL);
-  }
-  if (strlen(path) == 0) {
-	strcpy(buffer, "/");
-	return(buffer);
-  }
-  *buffer = '\0';
-  while ( (r = strrchr(path, '/')) != (char *) NULL) {
-	strcat(buffer, r);
-	*r = '\0';
-  }
-  return(chdir(buffer) ? (char *) NULL : buffer);
+	if (p == path) return -1;
+	*--p = '/';
+	*ap= p;
+	return 0;
 }
 
-PRIVATE void go_back(path)
-char *path;
-{
-/* If getcwd() gets in trouble and can't complete normally, reverse the
- * path built so far and change there so we end up in the directory that
- * we started in.
+static int recover(char *p)
+/* Undo all those chdir("..")'s that have been recorded by addpath.  This
+ * has to be done entry by entry, because the whole pathname may be too long.
  */
+{
+	int e= errno, slash;
+	char *p0;
 
-  char *r;
+	while (*p != 0) {
+		p0= ++p;
 
-  while ( (r = strrchr(path, '/')) != (char *) NULL) {
-	chdir(r+1);
-	*r = '\0';
-  }
+		do p++; while (*p != 0 && *p != '/');
+		slash= *p; *p= 0;
+
+		if (chdir(p0) < 0) return -1;
+		*p= slash;
+	}
+	errno= e;
+	return 0;
+}
+
+char *getcwd(char *path, size_t size)
+{
+	struct stat above, current, tmp;
+	struct dirent *entry;
+	DIR *d;
+	char *p, *up, *dotdot;
+	int cycle;
+
+	if (path == nil || size <= 2) { errno= EINVAL; return nil; }
+
+	p= path + size;
+	*--p = 0;
+
+	if (stat(".", &current) < 0) return nil;
+
+	while (1) {
+		dotdot= "..";
+		if (stat(dotdot, &above) < 0) { recover(p); return nil; }
+
+		if (above.st_dev == current.st_dev
+					&& above.st_ino == current.st_ino)
+			break;	/* Root dir found */
+
+		if ((d= opendir(dotdot)) == nil) { recover(p); return nil; }
+
+		/* Cycle is 0 for a simple inode nr search, or 1 for a search
+		 * for inode *and* device nr.
+		 */
+		cycle= above.st_dev == current.st_dev ? 0 : 1;
+
+		do {
+			if ((entry= readdir(d)) == nil) {
+				switch (++cycle) {
+				case 1:
+					rewinddir(d);
+					continue;
+				case 2:
+					closedir(d);
+					errno= ENOENT;
+					recover(p);
+					return nil;
+				}
+			}
+			if (strcmp(entry->d_name, ".") == 0) continue;
+			if (strcmp(entry->d_name, "..") == 0) continue;
+
+			switch (cycle) {
+			case 0:
+				/* Simple test on inode nr. */
+				tmp.st_dev= current.st_dev;
+				tmp.st_ino= entry->d_ino;
+				break;
+			case 1: {
+				/* Current is mounted. */
+				char name[3 + NAME_MAX + 1];
+				strcpy(name, "../");
+				strcpy(name+3, entry->d_name);
+				if (stat(name, &tmp) < 0) continue;
+				} break;
+			}
+		} while (tmp.st_ino != current.st_ino
+					|| tmp.st_dev != current.st_dev);
+
+		up= p;
+		if (addpath(path, &up, entry->d_name) < 0) {
+			closedir(d);
+			errno = ERANGE;
+			recover(p);
+			return nil;
+		}
+		closedir(d);
+
+		if (chdir(dotdot) < 0) { recover(p); return nil; }
+		p= up;
+
+		current= above;
+	}
+	if (recover(p) < 0) return nil;	/* Undo all those chdir("..")'s. */
+	if (*p == 0) *--p = '/';	/* Cwd is "/" if nothing added */
+	if (p > path) strcpy(path, p);	/* Move string to start of path. */
+	return path;
 }

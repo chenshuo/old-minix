@@ -1,25 +1,23 @@
 # Makefile for elle
 
-O=o
-CFLAGS = -c -O -DIGN_JOB_CONTROL -D_POSIX_SOURCE -m -wa -I$(INC)
-CC=exec cc
-INC=/include
+CFLAGS = -O -DIGN_JOB_CONTROL -D_POSIX_SOURCE -m -wa
+LDFLAGS= -i
 
-OBJ = eemain.$O eecmds.$O eesite.$O eevini.$O eedisp.$O eeterm.$O eeerr.$O  \
-      eeques.$O eebuff.$O eefile.$O eefed.$O eeedit.$O eebit.$O eef1.$O \
-      eef2.$O eefd.$O eehelp.$O eekmac.$O eef3.$O eesrch.$O eequer.$O \
-      eefill.$O eediag.$O sbstr.$O sbm.$O sberr.$O sbbcpy.$O
+all:	elle ellec
+
+OBJ = eemain.o eecmds.o eesite.o eevini.o eedisp.o eeterm.o eeerr.o  \
+      eeques.o eebuff.o eefile.o eefed.o eeedit.o eebit.o eef1.o \
+      eef2.o eefd.o eehelp.o eekmac.o eef3.o eesrch.o eequer.o \
+      eefill.o eediag.o sbstr.o sbm.o sberr.o sbbcpy.o
 
 # It probably isn't necessary to make all this stuff all the time, but it
 # is fairly easy and makes the whole process simpler.  If this is not done,
 # the dependencies are very complicated because some of the .c and .h files
 # are made dynamically.
 elle:	ellec $(OBJ) $(FUN_OFILES) elle.h eesite.h
-	@rm -rf elle
-	@echo Start linking elle
-#	$(CC) $(CFLAGS) defprf.c	# depends on the new *.h files
-	$(CC) -i -o elle $(OBJ)
-	@echo elle done.
+#	$(CC) $(CFLAGS) -c defprf.c	# depends on the new *.h files
+	$(CC) $(LDFLAGS) -o $@ $(OBJ)
+	install -S 32kw $@
 
 defprf.c:	deffun.e
 	cat deffun.e defprf.e | ellec -Pconf  > defprf.c
@@ -34,7 +32,7 @@ eefidx.h:	deffun.e
 .PRECIOUS: ellec deffun.e defprf.e
 
 # The following files must be recompiled if eefidx.h is changed
-eecmds.$O eebuff.$O eeerr.$O eehelp.$O eejust.$O eemain.$O eeques.$O eef1.$O: eefidx.h
+eecmds.o eebuff.o eeerr.o eehelp.o eejust.o eemain.o eeques.o eef1.o: eefidx.h
 
 # ELLE profile compiler.  
 #	Although eefdef.h and defprf.c are included by ELLEC, they
@@ -43,7 +41,16 @@ eecmds.$O eebuff.$O eeerr.$O eehelp.$O eejust.$O eemain.$O eeques.$O eef1.$O: ee
 #	used when generating the makecf files; it only furnishes default
 #	values needed when an ELLE user compiles a user profile.
 ellec: ellec.c
-	$(CC) -wa -o ellec ellec.c
+	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ ellec.c
+	install -S 32kw $@
+
+install:	/usr/bin/elle /usr/bin/ellec
+
+/usr/bin/elle:	elle
+	install -cs -o bin -S 32kw elle $@
+
+/usr/bin/ellec:	ellec
+	install -cs -o bin -S 32kw ellec $@
 
 clean:	
-	@rm -f *.o *.s *.bak core elle ellec
+	rm -f *.o *.bak core elle ellec

@@ -185,10 +185,12 @@ int proc_nr;			/* tells who got the stack fault */
   vir_bytes new_sp;
 
   rmp = &mproc[proc_nr];
-  sys_getsp((int)(rmp - mproc), &new_sp);
+  sys_getsp(proc_nr, &new_sp);
+
 #if (CHIP == M68000)
   new_sp -= CLICK_SIZE;		/* one click margin between D and S */
 #endif
+
   r = adjust(rmp, rmp->mp_seg[D].mem_len, new_sp);
   if (r == OK) return;
 

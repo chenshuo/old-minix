@@ -7,13 +7,13 @@ hw_conf.h
 
 #define EHW_PORT_NR	1
 
-#define ehw_dp8390port ((union dp8390reg *)0x290)
-#define ehw_eplport ((struct eplusreg *)0x280)
+#define ehw_eplport ((struct eplusreg *)ehw_baseport)
+#define ehw_dp8390port ((union dp8390reg *)(ehw_baseport+0x10))
 #define EHW_LINMEM	EPLUS_BASE
 
 #define ehw_sendpage	0
-#define ehw_startpage	6
-#define ehw_stoppage	32
+#define ehw_startpage(memsize)	6
+#define ehw_stoppage(memsize)	(memsize/EHW_PAGESIZE)
 
 #define EHW_PAGESIZE	256
 

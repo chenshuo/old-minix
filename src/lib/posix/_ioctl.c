@@ -2,14 +2,16 @@
 #define ioctl	_ioctl
 #include <minix/com.h>
 #include <sgtty.h>
+#include <sys/ioctl.h>
 
-PUBLIC int ioctl(fd, request, argp)
+PUBLIC int ioctl(fd, request, data)
 int fd;
 int request;
-struct sgttyb *argp;
+void *data;
 {
   int n;
   long erase, kill, intr, quit, xon, xoff, eof, brk, speed;
+  struct sgttyb *argp;
   struct tchars *argt;
   message m;
 
@@ -18,6 +20,7 @@ struct sgttyb *argp;
 
   switch(request) {
      case TIOCSETP:
+	argp = (struct sgttyb *) data;
 	erase = argp->sg_erase & BYTE;
 	kill = argp->sg_kill & BYTE;
 	speed = ((argp->sg_ospeed & BYTE) << 8) | (argp->sg_ispeed & BYTE);
@@ -26,7 +29,7 @@ struct sgttyb *argp;
 	return(_syscall(FS, IOCTL, &m));
 
      case TIOCSETC:
-	argt = (struct tchars * /* kludge */) argp;
+	argt = (struct tchars *) data;
   	intr = argt->t_intrc & BYTE;
   	quit = argt->t_quitc & BYTE;
   	xon  = argt->t_startc & BYTE;
@@ -39,6 +42,7 @@ struct sgttyb *argp;
 
      case TIOCGETP:
 	n = _syscall(FS, IOCTL, &m);
+	argp = (struct sgttyb *) data;
 	argp->sg_erase = (m.TTY_SPEK >> 8) & BYTE;
 	argp->sg_kill  = (m.TTY_SPEK >> 0) & BYTE;
   	argp->sg_flags = m.TTY_FLAGS & 0xFFFFL;
@@ -49,7 +53,7 @@ struct sgttyb *argp;
 
      case TIOCGETC:
   	n = _syscall(FS, IOCTL, &m);
-	argt = (struct tchars *) argp;
+	argt = (struct tchars *) data;
   	argt->t_intrc  = (m.TTY_SPEK >> 24) & BYTE;
   	argt->t_quitc  = (m.TTY_SPEK >> 16) & BYTE;
   	argt->t_startc = (m.TTY_SPEK >>  8) & BYTE;
@@ -59,11 +63,11 @@ struct sgttyb *argp;
   	return(n);
 
      case TIOCFLUSH:
-	m.TTY_FLAGS = (int /* kludge */) argp;
+	m.TTY_FLAGS = (int /* kludge */) data;
 	return(_syscall(FS, IOCTL, &m));
 
      default:
-	m.ADDRESS = (char *) argp;
+	m.ADDRESS = (char *) data;
 	return(_syscall(FS, IOCTL, &m));
   }
 }

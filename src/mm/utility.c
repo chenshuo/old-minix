@@ -135,7 +135,7 @@ int num;			/* number to go with format string */
   if (num != NO_NUM) printf("%d",num);
   printf("\n");
   tell_fs(SYNC, 0, 0, 0);	/* flush the cache to the disk */
-  sys_abort();
+  sys_abort(2);
 }
 
 
@@ -218,6 +218,23 @@ struct mem_map *ptr;		/* pointer to new map */
 
 
 /*===========================================================================*
+ *				sys_getmap				     *
+ *===========================================================================*/
+PUBLIC void sys_getmap(proc, ptr)
+int proc;			/* process whose map is to be fetched */
+struct mem_map *ptr;		/* pointer to new map */
+{
+/* Want to know map of a process, ask the kernel. */
+
+  message m;
+
+  m.m1_i1 = proc;
+  m.m1_p1 = (char *) ptr;
+  _taskcall(SYSTASK, SYS_GETMAP, &m);
+}
+
+
+/*===========================================================================*
  *				sys_sendsig				     *
  *===========================================================================*/
 PUBLIC void sys_sendsig(proc, smp)
@@ -264,7 +281,7 @@ int proc;
 /*===========================================================================*
  *				sys_sigreturn				     *
  *===========================================================================*/
-PUBLIC void sys_sigreturn(proc, scp, flags)
+PUBLIC int sys_sigreturn(proc, scp, flags)
 int proc;
 vir_bytes scp;
 int flags;
@@ -274,7 +291,7 @@ int flags;
   m.m1_i1 = proc;
   m.m1_i2 = flags;
   m.m1_p1 = (char *) scp;
-  _taskcall(SYSTASK, SYS_SIGRETURN, &m);
+  return(_taskcall(SYSTASK, SYS_SIGRETURN, &m));
 }
 
 /*===========================================================================*

@@ -33,6 +33,7 @@
 
 /* Keep everything for ANSI prototypes. */
 #define	_PROTOTYPE(function, params)	function params
+#define	_ARGS(params)			params
 
 #define	_VOIDSTAR	void *
 #define	_VOID		void
@@ -44,6 +45,7 @@
 
 /* Throw away the parameters for K&R prototypes. */
 #define	_PROTOTYPE(function, params)	function()
+#define	_ARGS(params)			()
 
 #define	_VOIDSTAR	void *
 #define	_VOID		void

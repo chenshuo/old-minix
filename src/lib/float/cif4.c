@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: cif4.c,v 1.4 89/07/25 14:18:20 ceriel Exp $ */
+/* $Header: cif4.c,v 1.5 93/01/05 12:04:01 ceriel Exp $ */
 
 /*
 	CONVERT INTEGER TO SINGLE (CIF n 4)
@@ -16,7 +16,7 @@
 
 #include "FP_types.h"
 
-SINGLE
+void
 cif4(ss,src)
 int	ss;	/* source size */
 long	src;	/* largest possible integer to convert */
@@ -40,7 +40,7 @@ long	src;	/* largest possible integer to convert */
 	}
 	if (i_src == 0)	{
 		*result = (SINGLE) 0L;
-		return(0L);
+		return;
 	}
 			/* ESTABLISHED THAT src != 0	*/
 			/* adjust exponent field	*/
@@ -53,5 +53,4 @@ long	src;	/* largest possible integer to convert */
 		buf.m1 <<= 16;
 	nrm_ext(&buf);		/* adjust mantissa field	*/
 	compact(&buf, result,sizeof(SINGLE));	/* put on stack */
-	return(*result);
 }

@@ -3,15 +3,6 @@
  * Feel free to modify any of this as the need arises.
  */
 
-
-#/*undef	EUNICE		/* no file linking? */
-#/*undef	VMS
-
-#/*undef	index strchr	/* cultural */
-#/*undef	rindex strrchr	/*  differences? */
-
-#/*undef	void int	/* is void to be avoided? */
-
 /* How many register declarations are paid attention to? */
 
 #define Reg1 register
@@ -30,4 +21,3 @@
 #define Reg14 
 #define Reg15 
 #define Reg16 
-

@@ -6,6 +6,7 @@
  */
 
 #include "kernel.h"
+#include <stdlib.h>
 #include <minix/com.h>
 
 #if (CHIP == INTEL)
@@ -27,18 +28,15 @@ PUBLIC void mem_init()
  * for shadowing ROM, but available to Minix if the hardware can be re-mapped.
  * In protected mode, extended memory is accessible assuming CLICK_SIZE is
  * large enough, and is treated as ordinary memory.
- * The magic bits for memory types are:
- *	1: extended
- *	0x80: must be checked since BIOS doesn't and it may not be there.
  */
 
   long ext_clicks;
   phys_clicks max_clicks;
 
   /* Get the size of ordinary memory from the BIOS. */
-  mem_size[0] = k_to_click(low_memsize);	/* 0 base and type */
+  mem[0].size = k_to_click(low_memsize);	/* 0 base and type */
 
-  if (pc_at) {
+  if (pc_at && protected_mode) {
 	/* Get the size of extended memory from the BIOS.  This is special
 	 * except in protected mode, but protected mode is now normal.
 	 * If 16M is present (except on 386), reduce it to 16M so the size
@@ -46,81 +44,93 @@ PUBLIC void mem_init()
 	 */
 	ext_clicks = k_to_click((long) ext_memsize);	/* clicks as a long */
 	max_clicks = USHRT_MAX - (EM_BASE >> CLICK_SHIFT);
-	mem_size[2] = k_to_click(ext_memsize);
-	mem_base[2] = EM_BASE >> CLICK_SHIFT;
+	mem[1].size = k_to_click(ext_memsize);
+	mem[1].base = EM_BASE >> CLICK_SHIFT;
 
-#if !INTEL_32BITS
+#if _WORD_SIZE == 2
 	/* You can't address more memory than you can count in clicks. */
-	if (ext_clicks > max_clicks) mem_size[2] = max_clicks;
+	if (ext_clicks > max_clicks) mem[1].size = max_clicks;
 #endif
 
-	/* Shadow ROM memory. */
-	mem_size[3] = SHADOW_MAX >> CLICK_SHIFT;
-	mem_base[3] = SHADOW_BASE >> CLICK_SHIFT;
-	mem_type[3] = 0x80;
-
-	if (!protected_mode) {
-		mem_type[2] = 1;
-		mem_type[3] |= 1;
+	if (ext_memsize <= (unsigned) ((SHADOW_BASE - EM_BASE) / 1024)
+			&& check_mem(SHADOW_BASE, SHADOW_MAX) == SHADOW_MAX) {
+		/* Shadow ROM memory. */
+		mem[2].size = SHADOW_MAX >> CLICK_SHIFT;
+		mem[2].base = SHADOW_BASE >> CLICK_SHIFT;
 	}
   }
+
+  /* Total system memory. */
+  tot_mem_size = mem[0].size + mem[1].size + mem[2].size;
 }
 #endif /* (CHIP == INTEL) */
 
 
-/*==========================================================================*
- *				do_vrdwt				    *
- *==========================================================================*/
-PUBLIC int do_vrdwt(m_ptr, do_rdwt)
-register message *m_ptr;	/* pointer to read or write message */
-rdwt_t do_rdwt;			/* pointer to function which does the work */
+/*=========================================================================*
+ *				env_parse				   *
+ *=========================================================================*/
+PUBLIC int env_parse(env, fmt, field, param, min, max)
+char *env;		/* environment variable to inspect */
+char *fmt;		/* template to parse it with */
+int field;		/* field number of value to return */
+long *param;		/* address of parameter to get */
+long min, max;		/* minimum and maximum values for the parameter */
 {
-/* Fetch a vector of i/o requests.  Handle requests one at a time.  Return
- * status in the vector.
+/* Parse an environment variable setting, something like "DPETH0=300:3".
+ * Panic if the parsing fails.  Return EP_UNSET if the environment variable
+ * is not set, EP_OFF if it is set to "off", EP_ON if set to "on" or a
+ * field is left blank, or EP_SET if a field is given (return value through
+ * *param).  Commas and colons may be used in the environment and format
+ * string, fields in the environment string may be empty, and punctuation
+ * may be missing to skip fields.  The format string contains characters
+ * 'd', 'o', 'x' and 'c' to indicate that 10, 8, 16, or 0 is used as the
+ * last argument to strtol.
  */
 
-  register struct iorequest_s *iop;
-  static struct iorequest_s iovec[NR_BUFS];
-  phys_bytes iovec_phys;
-  unsigned nr_requests;
-  int request;
-  int result;
-  phys_bytes user_iovec_phys;
-  message vmessage;
-  int proc_nr;
-  int device;
+  char *val, *end;
+  long newpar;
+  int i = 0, radix, r;
 
-  nr_requests = m_ptr->COUNT;
-  proc_nr = m_ptr->PROC_NR;
-  device = m_ptr->DEVICE;
-  if (nr_requests > sizeof iovec / sizeof iovec[0])
-	panic("FS gave some driver too big an i/o vector", nr_requests);
-  iovec_phys = umap(proc_ptr, D, (vir_bytes) iovec, (vir_bytes) sizeof iovec);
-  user_iovec_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-			 (vir_bytes) (nr_requests * sizeof iovec[0]));
-  if (user_iovec_phys == 0)
-	panic("FS gave some driver bad i/o vector", (int) m_ptr->ADDRESS);
-  phys_copy(user_iovec_phys, iovec_phys,
-	    (phys_bytes) nr_requests * sizeof iovec[0]);
+  if ((val = k_getenv(env)) == NIL_PTR) return(EP_UNSET);
+  if (strcmp(val, "off") == 0) return(EP_OFF);
+  if (strcmp(val, "on") == 0) return(EP_ON);
 
-  for (request = 0; request < nr_requests; ++request) {
-	iop = &iovec[request];
-	vmessage.m_type = iop->io_request & ~OPTIONAL_IO;
-	vmessage.DEVICE = device;
-	vmessage.PROC_NR = proc_nr;
-	vmessage.COUNT = iop->io_nbytes;
-	vmessage.POSITION = iop->io_position;
-	vmessage.ADDRESS = iop->io_buf;
-	result = (*do_rdwt)(&vmessage);
-	if (result == 0) break;	/* EOF */
-	if (result < 0) {
-		iop->io_nbytes = result;
-		if (iop->io_request & OPTIONAL_IO) break;  /* abort if opt */
-	} else
-		iop->io_nbytes -= result;
+  r = EP_ON;
+  for (;;) {
+	while (*val == ' ') val++;
+
+	if (*val == 0) return(r);	/* the proper exit point */
+
+	if (*fmt == 0) break;		/* too many values */
+
+	if (*val == ',' || *val == ':') {
+		/* Time to go to the next field. */
+		if (*fmt == ',' || *fmt == ':') i++;
+		if (*fmt++ == *val) val++;
+	} else {
+		/* Environment contains a value, get it. */
+		switch (*fmt) {
+		case 'd':	radix =   10;	break;
+		case 'o':	radix =  010;	break;
+		case 'x':	radix = 0x10;	break;
+		case 'c':	radix =    0;	break;
+		default:	goto badenv;
+		}
+		newpar = strtol(val, &end, radix);
+
+		if (end == val) break;	/* not a number */
+		val = end;
+
+		if (i == field) {
+			/* The field requested. */
+			if (newpar < min || newpar > max) break;
+			*param = newpar;
+			r = EP_SET;
+		}
+	}
   }
-
-  phys_copy(iovec_phys, user_iovec_phys,
-	    (phys_bytes) nr_requests * sizeof iovec[0]);
-  return(OK);
+badenv:
+  printf("Bad environment setting: '%s = %s'\n", env, k_getenv(env));
+  panic("", NO_NUM);
+  /*NOTREACHED*/
 }

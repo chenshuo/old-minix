@@ -143,7 +143,7 @@ int nmonths;			/* Number of months to do	 */
 	}
 	while (outp > outline && outp[-1] == ' ') outp--;
 	*outp = EOS;
-	puts(outline);
+	printf("%s\n", outline);
   }
 }
 

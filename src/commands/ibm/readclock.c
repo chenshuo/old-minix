@@ -9,7 +9,7 @@
 /*		date(1).						*/
 /*									*/
 /*		If the machine ID byte is 0xFC or 0xF8, the device	*/
-/*		/dev/port exists and is a character special file,	*/
+/*		/dev/mem exists and can be opened for reading,		*/
 /*		and no errors in the CMOS RAM are reported by the	*/
 /*		RTC, then the time is read from the clock RAM		*/
 /*		area maintained by the RTC.				*/
@@ -22,8 +22,8 @@
 /*		If the machine ID does not match 0xFC or 0xF8,		*/
 /*		then ``-q'' is written to standard output.		*/
 /*									*/
-/*		If the machine ID is 0xFC or 0xF8 and /dev/port		*/
-/*		is missing, or is not a character special file,		*/
+/*		If the machine ID is 0xFC or 0xF8 and /dev/mem		*/
+/*		is missing, or cannot be accessed,			*/
 /*		then an error message is written to stderr,		*/
 /*		and ``-q'' is written to stdout.			*/
 /*									*/
@@ -120,35 +120,28 @@ _PROTOTYPE(int main, (void));
 _PROTOTYPE(void get_time, (struct time *t));
 _PROTOTYPE(int read_register, (int reg_addr));
 
-/* These little fellers are written in assembler :-(  */
-_PROTOTYPE(int port_out, (int port, int value));
-_PROTOTYPE(int port_in, (int port, int *value));
+/* I/O and memory functions. */
+_PROTOTYPE(unsigned inb, (U16_t _port));
+_PROTOTYPE(void outb, (U16_t _port, U8_t _value));
 _PROTOTYPE(int peek, (int a, int b));
+
 
 int main()
 {
-  struct stat pdev;
   struct time time1;
   struct time time2;
   int i;
   int cpu_type, cmos_state;
 
   cpu_type = peek(CPU_TYPE_SEGMENT, CPU_TYPE_OFFSET);
+  if (cpu_type < 0) {
+	errmsg( "Memory I/O failed.\n" );
+	printf("-q\n");
+	exit(1);
+  }
   if (cpu_type != PS_386 && cpu_type != PC_AT) {
 	errmsg( "Machine ID unknown.\n" );
 	fprintf( stderr, "Machine ID byte = %x\n", cpu_type );
-
-	printf("-q\n");
-	exit(1);
-  }
-  if (stat( "/dev/port", &pdev ) != 0) {
-	errmsg( "/dev/port not found.\n" );
-
-	printf("-q\n");
-	exit(1);
-  }
-  if (!S_ISCHR(pdev.st_mode)) {
-	errmsg( "/dev/port not a character special file.\n" );
 
 	printf("-q\n");
 	exit(1);
@@ -186,6 +179,7 @@ int main()
 	}
   }
 
+  errmsg( "Failed to get an accurate time.\n" );
   printf("-q\n");
   exit(1);
 }
@@ -230,11 +224,6 @@ struct time *t;
 int read_register(reg_addr)
 char reg_addr;
 {
-  int val;
-
-  if (port_out(CLK_ELE, reg_addr) < 0 || port_in(CLK_IO, &val) < 0) {
-	printf("-q\n");
-	exit(1);
-  }
-  return(val);
+  outb(CLK_ELE, reg_addr);
+  return inb(CLK_IO);
 }

@@ -7,12 +7,13 @@
  *
  *	/usr/bin/printroot >/etc/mtab
  *
- *  9 Dec     1989 - clean up for 1.5 - full prototypes (BDE)
- * 15 October 1989 - avoid ACK cc bugs (BDE):
- *		   - sizeof "foo" is 2 (from wrong type char *) instead of 4
- *		   - char foo[10] = "bar"; allocates 4 bytes instead of 10
- *  1 October 1989 - Minor changes by Andy Tanenbaum
- *  5 October 1992 - Use readdir (kjb)
+ *  9 Dec 1989	- clean up for 1.5 - full prototypes (BDE)
+ * 15 Oct 1989	- avoid ACK cc bugs (BDE):
+ *		- sizeof "foo" is 2 (from wrong type char *) instead of 4
+ *		- char foo[10] = "bar"; allocates 4 bytes instead of 10
+ *  1 Oct 1989	- Minor changes by Andy Tanenbaum
+ *  5 Oct 1992	- Use readdir (kjb)
+ * 26 Nov 1994	- Flag -r: print just the root device (kjb)
  */
 
 #include <sys/types.h>
@@ -29,6 +30,7 @@ static char DEV_PATH[] = "/dev/";	/* #define would step on sizeof bug */
 static char MESSAGE[] = " / ";	/* ditto */
 #define UNKNOWN_DEV	"/dev/unknown"
 #define ROOT		"/"
+int rflag;
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void done, (char *name, int status));
@@ -41,6 +43,8 @@ char **argv;
   struct dirent *entry;
   struct stat filestat, rootstat;
   static char namebuf[sizeof DEV_PATH + NAME_MAX];
+
+  rflag = (argc > 1 && strcmp(argv[1], "-r") == 0);
 
   if (stat(ROOT, &rootstat) == 0 && (dp = opendir(DEV_PATH)) != (DIR *) NULL) {
 	while ((entry = readdir(dp)) != (struct dirent *) NULL) {
@@ -62,9 +66,13 @@ int status;
 {
   int v;
 
-  v = fsversion(name, "printroot");	/* determine file system version */
   write(1, name, strlen(name));
+  if (rflag) {
+	write(1, "\n", 1);
+	exit(status);
+  }
   write(1, MESSAGE, sizeof MESSAGE - 1);
+  v = fsversion(name, "printroot");	/* determine file system version */
   if (v == 1)
 	write(1, "1 rw\n", 5);
   else if (v == 2)

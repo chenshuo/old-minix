@@ -1,36 +1,45 @@
-/*
- * mtio.h  - defines for magtape device driver ioctls
- *		for aha_scsi, by James da Silva (jds@cs.umd.edu)
- *		slightly modified by Matthias Pfaller (leo@marco.de)
+/* <sys/mtio.h> magnetic tape commands			Author: Kees J. Bot
  */
 
-#define MTIOCTOP	(('m'<<8) | 1)	/* do operation */
-#define MTIOCGET	(('m'<<8) | 2)	/* get status (not implemented) */
+#ifndef _SYS__MTIO_H
+#define _SYS__MTIO_H
 
-/* data struct for MTIOCTOP */
+/* Tape operations: ioctl(fd, MTIOCTOP, &struct mtop) */
 
 struct mtop {
-	short mt_op;
-	int  mt_count;
+	short	mt_op;		/* Operation (MTWEOF, etc.) */
+	int	mt_count;	/* Repeat count. */
 };
 
-/* values for the mt_op field */
+#define MTWEOF	 0	/* Write End-Of-File Marker */
+#define MTFSF	 1	/* Forward Space File mark */
+#define MTBSF	 2	/* Backward Space File mark */
+#define MTFSR	 3	/* Forward Space Record */
+#define MTBSR	 4	/* Backward Space Record */
+#define MTREW	 5	/* Rewind tape */
+#define MTOFFL	 6	/* Rewind and take Offline */
+#define MTNOP	 7	/* No-Operation, set status only */
+#define MTRETEN	 8	/* Retension (completely wind and rewind) */
+#define MTERASE	 9	/* Erase the tape and rewind */
+#define MTEOM	10	/* Position at End-Of-Media */
+#define MTMODE	11	/* Select tape density */
+#define MTBLKZ	12	/* Select tape block size */
 
-#define MTWEOF	0	/* write EOF marks */
-#define MTFSF	1	/* forward-space filemarks */
-#define MTBSF	2	/* back-space filemarks */
-#define MTFSR	3	/* forward-space records */
-#define MTBSR	4	/* back-space records */
-#define MTREW	5	/* rewind tape */
-#define MTOFFL	6	/* rewind tape and take it offline */
-#define MTNOP	7	/* no operation, sets status only */
-#define MTRETEN	8	/* retension operation */
-#define MTRET	8
-#define MTERASE	9	/* erase the entire tape */
-#define	MTEOM	10	/* position to end of media */
-#define MTAPP	10
-#define MTONL	11	/* put drive online */
-/* default tape device */
+/* Tape status: ioctl(fd, MTIOCGET, &struct mtget) */
 
-#define DEFTAPE "/dev/nrst0"
+struct mtget {
+	short	mt_type;	/* Type of tape device. */
 
+	/* Device dependent "registers". */
+	short	mt_dsreg;	/* Drive status register. */
+	short	mt_erreg;	/* Error register. */
+	short	dummy;		/* (alignment) */
+
+	/* Misc info. */
+	off_t	mt_resid;	/* Residual count. */
+	off_t	mt_fileno;	/* Current File Number. */
+	off_t	mt_blkno;	/* Current Block Number within file. */
+	off_t	mt_blksize;	/* Current block size. */
+};
+
+#endif /* _SYS__MTIO_H */

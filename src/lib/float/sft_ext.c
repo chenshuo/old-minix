@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: sft_ext.c,v 1.4 88/08/04 11:15:46 ceriel Exp $ */
+/* $Header: sft_ext.c,v 1.5 93/01/05 12:06:28 ceriel Exp $ */
 
 /*
 	SHIFT TWO EXTENDED NUMBERS INTO PROPER

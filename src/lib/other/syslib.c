@@ -6,12 +6,14 @@
 		Messages to SYSTASK that are used by both MM and FS
 ----------------------------------------------------------------------------*/
 
-PUBLIC void sys_abort()
+PUBLIC void sys_abort(how)
+int how;			/* 0 = halt, 1 = reboot, 2 = panic! */
 {
 /* Something awful has happened.  Abandon ship. */
 
   message m;
 
+  m.m1_i1 = how;
   _taskcall(SYSTASK, SYS_ABORT, &m);
 }
 

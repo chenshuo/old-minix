@@ -21,11 +21,9 @@
 #	define NO_CTL_TTY  -1	/* returned by DEV_OPEN if no ctl tty exists */
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#define SCSI		-NR_TASKS+1
-
-#if INET_KERNEL
-#define DL_ETH		-10
-#endif /* INET_TASK */
+#ifdef ENABLE_NETWORKING
+#define DL_ETH		-11
+#endif
 
 /* Message type for data link layer reqests. */
 #	define DL_WRITE		3
@@ -52,6 +50,7 @@
 /* Bits in `DL_STAT' field of DL replies. */
 #	define DL_PACK_SEND	0x01
 #	define DL_PACK_RECV	0x02
+#	define DL_READ_IP	0x04
 #	define DL_DISABLED	0x10
 
 /* Bits in `DL_MODE' field of DL requests. */
@@ -68,6 +67,8 @@
 #	define NW_IOCTL		DEV_IOCTL
 #	define NW_CANCEL	CANCEL
 
+#define SCSI		 -10	/* scsi device task */
+
 #define SYN_ALRM_TASK     -9	/* task to send CLOCK_INT messages */
 
 #define IDLE              -8	/* task to run when there's nothing to run */
@@ -83,9 +84,6 @@
 #	define MEM_DEV     1	/* minor device for /dev/mem */
 #	define KMEM_DEV    2	/* minor device for /dev/kmem */
 #	define NULL_DEV    3	/* minor device for /dev/null */
-#if (CHIP == INTEL)
-#	define PORT_DEV    4	/* minor device for /dev/port */
-#endif
 
 #define CLOCK             -3	/* clock class */
 #	define SET_ALARM   1	/* fcn code to CLOCK, set up alarm */
@@ -101,26 +99,27 @@
 				/* synchronous alarm */
 
 #define SYSTASK           -2	/* internal functions */
-#	define SYS_XIT     1	/* fcn code for sys_xit(parent, proc) */
-#	define SYS_GETSP   2	/* fcn code for sys_sp(proc, &new_sp) */
-#	define SYS_OLDSIG  3	/* fcn code for sys_oldsig(proc, sig) */
-#	define SYS_FORK    4	/* fcn code for sys_fork(parent, child) */
-#	define SYS_NEWMAP  5	/* fcn code for sys_newmap(procno, map_ptr) */
-#	define SYS_COPY    6	/* fcn code for sys_copy(ptr) */
-#	define SYS_EXEC    7	/* fcn code for sys_exec(procno, new_sp) */
-#	define SYS_TIMES   8	/* fcn code for sys_times(procno, bufptr) */
-#	define SYS_ABORT   9	/* fcn code for sys_abort() */
-#	define SYS_FRESH  10	/* fcn code for sys_fresh()  (Atari only) */
-#	define SYS_KILL   11	/* fcn code for sys_kill(proc, sig) */
-#	define SYS_GBOOT  12	/* fcn code for sys_gboot(procno, bootptr) */
-#	define SYS_UMAP   13	/* fcn code for sys_umap(procno, etc) */
-#	define SYS_MEM    14	/* fcn code for sys_mem() */
-#	define SYS_TRACE  15	/* fcn code for sys_trace(req,pid,addr,data) */
-#	define SYS_VCOPY  16	/* fnc code for sys_vcopy(src_proc, dest_proc,
+#	define SYS_XIT        1	/* fcn code for sys_xit(parent, proc) */
+#	define SYS_GETSP      2	/* fcn code for sys_sp(proc, &new_sp) */
+#	define SYS_OLDSIG     3	/* fcn code for sys_oldsig(proc, sig) */
+#	define SYS_FORK       4	/* fcn code for sys_fork(parent, child) */
+#	define SYS_NEWMAP     5	/* fcn code for sys_newmap(procno, map_ptr) */
+#	define SYS_COPY       6	/* fcn code for sys_copy(ptr) */
+#	define SYS_EXEC       7	/* fcn code for sys_exec(procno, new_sp) */
+#	define SYS_TIMES      8	/* fcn code for sys_times(procno, bufptr) */
+#	define SYS_ABORT      9	/* fcn code for sys_abort() */
+#	define SYS_FRESH     10	/* fcn code for sys_fresh()  (Atari only) */
+#	define SYS_KILL      11	/* fcn code for sys_kill(proc, sig) */
+#	define SYS_GBOOT     12	/* fcn code for sys_gboot(procno, bootptr) */
+#	define SYS_UMAP      13	/* fcn code for sys_umap(procno, etc) */
+#	define SYS_MEM       14	/* fcn code for sys_mem() */
+#	define SYS_TRACE     15	/* fcn code for sys_trace(req,pid,addr,data) */
+#	define SYS_VCOPY     16	/* fnc code for sys_vcopy(src_proc, dest_proc,
 				   vcopy_s, vcopy_ptr) */
 #	define SYS_SENDSIG   17	/* fcn code for sys_sendsig(&sigmsg) */
 #	define SYS_SIGRETURN 18	/* fcn code for sys_sigreturn(&sigmsg) */
 #	define SYS_ENDSIG    19	/* fcn code for sys_endsig(procno) */
+#	define SYS_GETMAP    20	/* fcn code for sys_getmap(procno, map_ptr) */
 
 #define HARDWARE          -1	/* used as source on interrupt generated msgs*/
 
@@ -135,6 +134,7 @@
 #define DEVICE         m2_i1	/* major-minor device */
 #define PROC_NR        m2_i2	/* which (proc) wants I/O? */
 #define COUNT          m2_i3	/* how many bytes to transfer */
+#define REQUEST        m2_i3	/* ioctl request code */
 #define POSITION       m2_l1	/* file offset */
 #define ADDRESS        m2_p1	/* core buffer address */
 

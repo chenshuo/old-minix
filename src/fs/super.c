@@ -244,21 +244,21 @@ register struct inode *rip;	/* pointer to inode */
 /*===========================================================================*
  *				read_super				     *
  *===========================================================================*/
-PUBLIC void read_super(sp, offset)
+PUBLIC int read_super(sp)
 register struct super_block *sp; /* pointer to a superblock */
-block_t offset;			 /* block number where superblock is */
 {
 /* Read a superblock. */
 
   register struct buf *bp;
   dev_t dev;
   int magic;
-  int version = 0, native = 0;	/* unknown file systems are version zero */
+  int version, native;
 
   dev = sp->s_dev;		/* save device (will be overwritten by copy) */
-  bp = get_block(sp->s_dev, SUPER_BLOCK + offset, NORMAL);
+  bp = get_block(sp->s_dev, SUPER_BLOCK, NORMAL);
   memcpy( (char *) sp, bp->b_data, (size_t) SUPER_SIZE);
-  sp->s_dev = dev;		/* restore device number */
+  put_block(bp, ZUPER_BLOCK);
+  sp->s_dev = NO_DEV;		/* restore later */
   magic = sp->s_magic;		/* determines file system type */
 
   /* Get file system version and type. */
@@ -268,6 +268,8 @@ block_t offset;			 /* block number where superblock is */
   } else if (magic == SUPER_V2 || magic == conv2(BYTE_SWAP, SUPER_V2)) {
 	version = V2;
 	native  = (magic == SUPER_V2);
+  } else {
+	return(EINVAL);
   }
 
   /* If the super block has the wrong byte order, swap the fields; the magic
@@ -302,11 +304,18 @@ block_t offset;			 /* block number where superblock is */
 	sp->s_ndzones = V2_NR_DZONES;
 	sp->s_nindirs = V2_INDIRECTS;
   }
+
   sp->s_isearch = 0;		/* inode searches initially start at 0 */
   sp->s_zsearch = 0;		/* zone searches initially start at 0 */
   sp->s_version = version;
   sp->s_native  = native;
 
-  put_block(bp, ZUPER_BLOCK);
+  /* Make a few basic checks to see if super block looks reasonable. */
+  if (sp->s_imap_blocks < 1 || sp->s_zmap_blocks < 1
+				|| sp->s_ninodes < 1 || sp->s_zones < 1
+				|| (unsigned) sp->s_log_zone_size > 4) {
+	return(EINVAL);
+  }
+  sp->s_dev = dev;		/* restore device number */
+  return(OK);
 }
-

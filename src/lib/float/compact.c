@@ -3,7 +3,7 @@
   See the copyright notice in the ACK home directory, in the file "Copyright".
 */
 
-/* $Header: compact.c,v 1.12 89/11/29 09:56:59 ceriel Exp $ */
+/* $Header: compact.c,v 1.13 93/01/05 12:04:28 ceriel Exp $ */
 
 /*
 	COMPACT EXTEND FORMAT INTO FLOAT OF PROPER SIZE

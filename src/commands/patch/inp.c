@@ -245,8 +245,8 @@ char *filename;
     Fseek(ifp, 0L, 0);		/* rewind file */
     lines_per_buf = BUFFERSIZE / maxlen;
     tireclen = maxlen;
-    tibuf[0] = malloc((MEM)(BUFFERSIZE + 1));
-    tibuf[1] = malloc((MEM)(BUFFERSIZE + 1));
+    tibuf[0] = (char *)malloc((MEM)(BUFFERSIZE + 1));
+    tibuf[1] = (char *)malloc((MEM)(BUFFERSIZE + 1));
     if (tibuf[1] == Nullch)
 	fatal1("Can't seem to get enough memory.\n");
     for (i=1; ; i++) {

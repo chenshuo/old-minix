@@ -38,10 +38,10 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/type.h>
-#include "../fs/const.h"
-#include "../fs/type.h"
-#include "../fs/buf.h"
-#include "../fs/super.h"
+#include "../../fs/const.h"
+#include "../../fs/type.h"
+#include "../../fs/buf.h"
+#include "../../fs/super.h"
 
 #undef printf			/* Definition used only in the kernel */
 #include <stdio.h>

@@ -8,7 +8,7 @@
  *  with <suffix>.
  *
  *  Fold to lower case if "-f" given. Use the file
- *  "dictionary" or /usr/lib/dictionary.
+ *  "dictionary" or /usr/lib/dict/words.
  *
  ******************************************************
  *
@@ -31,7 +31,7 @@
 #ifdef UNIX
 #define  WORDS   "/usr/dict/words"
 #else
-#define  WORDS   "/usr/lib/dictionary"
+#define  WORDS   "/usr/lib/dict/words"
 #endif
 
 #define  MAX_WORD_LENGTH   80	/* including '\0'  */

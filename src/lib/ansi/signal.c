@@ -17,9 +17,7 @@ sighandler_t disp;		/* signal handler, or SIG_DFL, or SIG_IGN */
   }
   sigemptyset(&sa.sa_mask);
 
-#ifdef BASH
-  sa.sa_flags = 0;
-#else
+#ifdef WANT_UNRELIABLE_SIGNALS
   /* Allow the signal being handled to interrupt the signal handler. */
   sa.sa_flags = SA_NODEFER;
 
@@ -27,6 +25,8 @@ sighandler_t disp;		/* signal handler, or SIG_DFL, or SIG_IGN */
    * SIGILL and SIGTRAP.
    */
   if (sig != SIGILL && sig != SIGTRAP) sa.sa_flags |= SA_RESETHAND;
+#else
+  sa.sa_flags = 0;
 #endif
 
   sa.sa_handler = disp;

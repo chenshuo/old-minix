@@ -3,6 +3,8 @@
 #define ioctl	_ioctl
 #include <sgtty.h>
 
+_PROTOTYPE(int gtty, (int, struct sgttyb *));
+
 PUBLIC int gtty(fd, argp)
 int fd;
 struct sgttyb *argp;

@@ -21,6 +21,7 @@
 
 #include "kernel.h"
 #include "driver.h"
+#include "drvlib.h"
 
 #if ENABLE_BIOS_WINI
 
@@ -69,6 +70,7 @@ PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
 PRIVATE int w_opcode;			/* DEV_READ or DEV_WRITE */
 PRIVATE int w_drive;			/* selected drive */
 PRIVATE struct device *w_dv;		/* device's base and size */
+extern unsigned Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
 
 FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
 FORWARD _PROTOTYPE( char *w_name, (void) );
@@ -78,7 +80,7 @@ FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
 FORWARD _PROTOTYPE( void enable_vectors, (void) );
-FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
 
 
 /* Entry points to this driver. */
@@ -457,11 +459,11 @@ PRIVATE void enable_vectors()
 /*============================================================================*
  *				w_geometry				      *
  *============================================================================*/
-PRIVATE void w_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void w_geometry(entry)
+struct partition *entry;
 {
-  chs[0] = w_wn->cylinders;
-  chs[1] = w_wn->heads;
-  chs[2] = w_wn->sectors;
+  entry->cylinders = w_wn->cylinders;
+  entry->heads = w_wn->heads;
+  entry->sectors = w_wn->sectors;
 }
 #endif /* ENABLE_BIOS_WINI */

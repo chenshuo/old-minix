@@ -23,6 +23,7 @@ all install clean:
 	cd elle && $(MAKE) $@
 	cd elvis && $(MAKE) $@
 	cd flex-2.3.7 && $(MAKE) $@
+	cd ftpd && $(MAKE) $@
 	cd ibm && $(MAKE) $@
 	cd ic && $(MAKE) $@
 	cd indent && $(MAKE) $@
@@ -36,5 +37,6 @@ all install clean:
 	cd sh && $(MAKE) $@
 	cd simple && $(MAKE) $@
 	cd telnet && $(MAKE) $@
+	cd telnetd && $(MAKE) $@
 	cd yap && $(MAKE) $@
 	cd zmodem && $(MAKE) $@

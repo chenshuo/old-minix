@@ -26,6 +26,7 @@
 #define _TABLE
 
 #include "kernel.h"
+#include <termios.h>
 #include <minix/com.h>
 #include "proc.h"
 #include "tty.h"
@@ -94,42 +95,41 @@
  *  1) The tty_task should always be first so that other tasks can use printf
  *     if their initialisation has problems.
  *  2) If you add a new kernel task, add it before the printer task.
- *  3) The task name is used for process status (F1 key) and must be six (6)
- *     characters in length.  Pad it with blanks if it is too short.
+ *  3) The task name is used for the process name (p_name).
  */
 
 PUBLIC struct tasktab tasktab[] = {
-	tty_task,		TTY_STACK,	"TTY   ",
+	{ tty_task,		TTY_STACK,	"TTY"		},
 #if ENABLE_NETWORKING
-	dp8390_task,		DP8390_STACK,	"DL_ETH",
+	{ dp8390_task,		DP8390_STACK,	"DP8390"	},
 #endif
 #if ENABLE_CDROM
-	cdrom_task,		CDROM_STACK,	"CDROM ",
+	{ cdrom_task,		CDROM_STACK,	"CDROM"		},
 #endif
 #if ENABLE_AUDIO
-	audio_task,		AUDIO_STACK,	"AUDIO ",
-	mixer_task,		MIXER_STACK,	"MIXER ",
+	{ audio_task,		AUDIO_STACK,	"AUDIO"		},
+	{ mixer_task,		MIXER_STACK,	"MIXER"		},
 #endif
 #if ENABLE_SCSI
-	scsi_task,		SCSI_STACK,	"SCSI  ",
+	{ scsi_task,		SCSI_STACK,	"SCSI"		},
 #endif
 #if ENABLE_WINI
-	winchester_task,	WINCH_STACK,	"WINCHE",
+	{ winchester_task,	WINCH_STACK,	"WINCH"		},
 #endif
-	syn_alrm_task,		SYN_ALRM_STACK, "SYN_AL",
-	idle_task,		IDLE_STACK,	"IDLE  ",
-	printer_task,		PRINTER_STACK,	"PRINTR",
-	floppy_task,		FLOP_STACK,	"FLOPPY",
-	mem_task,		MEM_STACK,	"RAMDSK",
-	clock_task,		CLOCK_STACK,	"CLOCK ",
-	sys_task,		SYS_STACK,	"SYS   ",
-	0,			HARDWARE_STACK,	"HARDWA",
-	0,			0,		"MM    ",
-	0,			0,		"FS    ",
+	{ syn_alrm_task,	SYN_ALRM_STACK, "SYN_AL"	},
+	{ idle_task,		IDLE_STACK,	"IDLE"		},
+	{ printer_task,		PRINTER_STACK,	"PRINTER"	},
+	{ floppy_task,		FLOP_STACK,	"FLOPPY"	},
+	{ mem_task,		MEM_STACK,	"MEMORY"	},
+	{ clock_task,		CLOCK_STACK,	"CLOCK"		},
+	{ sys_task,		SYS_STACK,	"SYS"		},
+	{ 0,			HARDWARE_STACK,	"HARDWAR"	},
+	{ 0,			0,		"MM"		},
+	{ 0,			0,		"FS"		},
 #if ENABLE_NETWORKING
-	0,			0,		"NW_TSK",
+	{ 0,			0,		"INET"		},
 #endif
-	0,			0,		"INIT  "
+	{ 0,			0,		"INIT"		},
 };
 
 /* Stack space for all the task stacks.  (Declared as (char *) to align it.) */

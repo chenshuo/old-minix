@@ -54,8 +54,8 @@ PUBLIC int do_mount()
 
   dev_mess.m_type = DEV_OPEN;		/* distinguish from close */
   dev_mess.DEVICE = dev;		/* Touch the device. */  
-  if (rd_only) dev_mess.TTY_FLAGS = O_RDONLY;
-  else  dev_mess.TTY_FLAGS = O_RDWR;
+  if (rd_only) dev_mess.COUNT = R_BIT;
+  else  dev_mess.COUNT = R_BIT|W_BIT;
 
   major = (dev >> MAJOR) & BYTE;
   if (major <= 0 || major >= max_major) return(ENODEV);

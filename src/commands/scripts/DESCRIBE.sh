@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 1.14 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 1.15 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -88,14 +88,25 @@ do
 		4)	dev=hd${par}d ;;
 		esac
 		;;
-	4,0)	des="console device"
-		case $name in
-		tty0)	dev=$name ;;
-		*)	dev=console ;;
-		esac
+	4,0)	des="console device" dev=console
 		;;
-	4,?)
-		des="serial line $minor" dev=tty$minor
+	4,15)	des="diagnostics device" dev=log
+		;;
+	4,1[6-9])
+		line=`expr $minor - 16`
+		des="serial line $line" dev=tty0$line
+		;;
+	4,12[89]|4,1[3-8]?|4,19[01])
+		p=`expr \\( $minor - 128 \\) / 16 | tr '0123' 'pqrs'`
+		n=`expr $minor % 16`
+		test $n -ge 10 && n=`expr $n - 10 | tr '012345' 'abcdef'`
+		des="pseudo tty `expr $minor - 128`" dev=tty$p$n
+		;;
+	4,???)
+		p=`expr \\( $minor - 192 \\) / 16 | tr '0123' 'pqrs'`
+		n=`expr $minor % 16`
+		test $n -ge 10 && n=`expr $n - 10 | tr '012345' 'abcdef'`
+		des="controller of tty$p$n" dev=pty$p$n
 		;;
 	5,0)	des="anonymous tty" dev=tty
 		;;

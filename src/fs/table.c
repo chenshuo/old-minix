@@ -78,8 +78,8 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 	do_exec,	/* 59 = exece	*/
 	do_umask,	/* 60 = umask	*/
 	do_chroot,	/* 61 = chroot	*/
-	no_sys,		/* 62 = unused	*/
-	no_sys,		/* 63 = unused	*/
+	do_setsid,	/* 62 = setsid	*/
+	no_sys,		/* 63 = getpgrp	*/
 
 	no_sys,		/* 64 = KSIG: signals originating in the kernel	*/
 	do_unpause,	/* 65 = UNPAUSE	*/
@@ -119,13 +119,13 @@ PUBLIC struct dmap dmap[] = {
   DT(1, dev_opcl,  call_task,   dev_opcl,   FLOPPY)      /* 2 = /dev/fd0   */
   DT(ENABLE_WINI,
         dev_opcl,  call_task,   dev_opcl,   WINCHESTER)  /* 3 = /dev/hd0   */
-  DT(1, tty_open,  call_task,   tty_close,  TTY)         /* 4 = /dev/tty0  */
-  DT(1, ctty_open, rw_dev2,     ctty_close, TTY)         /* 5 = /dev/tty   */
-  DT(1, no_call,   call_task,   no_call,    PRINTER)     /* 6 = /dev/lp    */
+  DT(1, tty_open,  call_task,   dev_opcl,   TTY)         /* 4 = /dev/tty00 */
+  DT(1, ctty_open, call_ctty,   ctty_close, TTY)         /* 5 = /dev/tty   */
+  DT(1, dev_opcl,  call_task,   dev_opcl,    PRINTER)     /* 6 = /dev/lp    */
 
 #if (MACHINE == IBM_PC)
   DT(ENABLE_NETWORKING,
-        net_open,  net_rw,      net_close,  INET_PROC_NR)/* 7 = /dev/ip    */
+        net_open,  call_task,   dev_opcl,   INET_PROC_NR)/* 7 = /dev/ip    */
   DT(ENABLE_CDROM,
         dev_opcl,  call_task,   dev_opcl,   CDROM)       /* 8 = /dev/cd0   */
   DT(0, 0,         0,           0,          0)           /* 9 = not used   */

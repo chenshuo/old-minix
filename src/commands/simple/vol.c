@@ -48,7 +48,7 @@ size_t block_size = 0, mult_max = 0;
 size_t buffer_size;
 long volume_size;
 char *str_vol_size;
-int rflag = 0, wflag = 0, variable = 0;
+int rflag = 0, wflag = 0, oneflag = 0, variable = 0;
 
 _PROTOTYPE(int main, (int argc, char **argv));
 _PROTOTYPE(void usage, (void));
@@ -84,6 +84,9 @@ char *argv[];
 			break;
 		case 'w':
 			wflag = 1;
+			break;
+		case '1':
+			oneflag = 1;
 			break;
 		case 'b':
 			if (*p == 0) {
@@ -141,10 +144,12 @@ char *argv[];
   }
   variable = !S_ISCHR(stb.st_mode);
 
-  tty = open("/dev/tty", O_RDONLY);
-  if (tty < 0) {
-	fprintf(stderr, "vol: cannot open /dev/tty\n");
-	exit(1);
+  if (!oneflag) {
+	tty = open("/dev/tty", O_RDONLY);
+	if (tty < 0) {
+		fprintf(stderr, "vol: cannot open /dev/tty\n");
+		exit(1);
+	}
   }
 
   /* Buffer initializations are yet to be done. */
@@ -152,10 +157,19 @@ char *argv[];
 
   while (1) {
 	sleep(1);
-	fprintf(stderr, "\007Please insert %sput volume %d and hit return\n",
-		rflag ? "in" : "out", volume);
-	while (read(tty, &key, sizeof(key)) == 1 && key != '\n') {}
-	volume++;
+	if (oneflag) {
+		if (volume != 1) {
+			if (rflag) exit(0);
+			fprintf(stderr,
+				"vol: can't continue, volume is full\n");
+			exit(1);
+		}
+	} else {
+		fprintf(stderr,
+			"\007Please insert %sput volume %d and hit return\n",
+			rflag ? "in" : "out", volume);
+		while (read(tty, &key, sizeof(key)) == 1 && key != '\n') {}
+	}
 
 	/* Open the special file. */
 	fd = open(name, rflag ? O_RDONLY : O_WRONLY);
@@ -178,6 +192,7 @@ char *argv[];
 		diskio(0, fd, "stdin", name);	/* tar cf - | vol -w */
 	}
 	close(fd);
+	volume++;
   }
 }
 

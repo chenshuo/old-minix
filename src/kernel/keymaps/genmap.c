@@ -42,6 +42,10 @@ int main(void)
 	n++;
   }
 
+  /* Don't store trailing zeros. */
+  while (cm > comprmap && cm[-1] == 0) cm--;
+
+  /* Emit the compressed keymap. */
   if (write(1, comprmap, cm - comprmap) < 0) {
 	int err = errno;
 

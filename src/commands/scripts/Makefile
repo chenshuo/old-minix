@@ -14,6 +14,7 @@ usr:	\
 	/usr/bin/M \
 		/usr/bin/U \
 	/usr/bin/MAKEDEV \
+	/usr/bin/adduser \
 	/usr/bin/checkhier \
 	/usr/bin/instdist \
 	/usr/bin/makewhatis \
@@ -46,6 +47,9 @@ clean:
 	install -l $? $@
 
 /usr/bin/MAKEDEV:	MAKEDEV.sh
+	install -c -o bin $? $@
+
+/usr/bin/adduser:	adduser.sh
 	install -c -o bin $? $@
 
 /usr/bin/checkhier:	checkhier.sh

@@ -1,6 +1,6 @@
 /* passwd - change a passwd			Author: Adri Koppes */
 
-/* Chfn, chsh - change full name, shell		Added by: Kees J. Bot */
+/* chfn, chsh - change full name, shell		Added by: Kees J. Bot */
 
 #include <sys/types.h>
 #include <fcntl.h>
@@ -23,6 +23,7 @@ _PROTOTYPE(int goodchars, (char *s));
 _PROTOTYPE(int main, (int argc, char **argv));
 
 char pw_file[] = "/etc/passwd";
+char sh_file[] = "/etc/shadow";
 char pw_tmp[] = "/etc/ptmp";
 char bad[] = "Permission denied\n";
 char buf[1024];
@@ -91,8 +92,9 @@ char *argv[];
   FILE *fp_tmp;
   time_t salt;
   struct passwd *pwd;
-  char *name, pwname[9], password[14], sl[2];
+  char *name, pwname[9], oldpwd[9], newpwd[9], newcrypted[14], sl[2];
   char *argn;
+  int shadow = 0;
 
   if ((arg0 = strrchr(argv[0], '/')) != 0)
 	arg0++;
@@ -125,22 +127,37 @@ char *argv[];
 
   switch (action) {
       case PASSWD:
-	printf("Changing password for %s\n", name);
+	if (pwd->pw_passwd[0] == '#' && pwd->pw_passwd[1] == '#') {
+		/* The password is found in the shadow password file. */
+		shadow = 1;
+		strncpy(pwname, pwd->pw_passwd + 2, 8);
+		pwname[8] = 0;
+		name = pwname;
+		setpwfile(sh_file);
+		if ((pwd= getpwnam(name)) == NULL) {
+			std_err(bad);
+			exit(1);
+		}
+		printf("Changing the shadow password of %s\n", name);
+	} else {
+		printf("Changing the password of %s\n", name);
+	}
 
+	oldpwd[0] = 0;
 	if (pwd->pw_passwd[0] != '\0' && uid != 0) {
-		if (strcmp(pwd->pw_passwd,
-		    crypt(getpass("Old password:"), pwd->pw_passwd))
-			) {
+		strcpy(oldpwd, getpass("Old password:"));
+		if (strcmp(pwd->pw_passwd, crypt(oldpwd, pwd->pw_passwd)) != 0)
+		{
 			std_err(bad);
 			exit(1);
 		}
 	}
 	for (;;) {
-		strcpy(password, getpass("New password:"));
+		strcpy(newpwd, getpass("New password:"));
 
-		if (password[0] == '\0')
+		if (newpwd[0] == '\0')
 			std_err("Password cannot be null");
-		else if (strcmp(password, getpass("Retype password:")) != 0)
+		else if (strcmp(newpwd, getpass("Retype password:")) != 0)
 			std_err("Passwords don't match");
 		else
 			break;
@@ -154,14 +171,14 @@ char *argv[];
 		if (sl[cn] > '9') sl[cn] += 7;
 		if (sl[cn] > 'Z') sl[cn] += 6;
 	}
-	strcpy(password, crypt(password, sl));
+	strcpy(newcrypted, crypt(newpwd, sl));
 	break;
 
       case CHFN:
       case CHSH:
 	argn = argv[argc - 1];
 
-	if (strlen(argn) > (action == CHFN ? 80 : 60) || !goodchars(argn) ) {
+	if (strlen(argn) > (action == CHFN ? 80 : 60) || !goodchars(argn)) {
 		std_err(bad);
 		exit(1);
 	}
@@ -192,27 +209,34 @@ char *argv[];
 	if (strcmp(name, pwd->pw_name) == 0) {
 		switch (action) {
 		    case PASSWD:
-			pwd->pw_passwd = password;
+			pwd->pw_passwd = newcrypted;
 			break;
 		    case CHFN:
 			pwd->pw_gecos = argn;
 			break;
-		    case CHSH:	pwd->pw_shell = argn;
+		    case CHSH:
+		    	pwd->pw_shell = argn;
+		    	break;
 		}
 	}
 	if (strcmp(pwd->pw_shell, "/bin/sh") == 0
-			    || strcmp(pwd->pw_shell, "/usr/bin/sh") == 0)
+		|| strcmp(pwd->pw_shell, "/usr/bin/sh") == 0
+	)
 		pwd->pw_shell = "";
 
 	fprintf(fp_tmp, "%s:%s:%s:",
 		pwd->pw_name,
 		pwd->pw_passwd,
 		itoa(pwd->pw_uid)
-		);
+	);
 	if (ferror(fp_tmp)) fatal(pw_tmp);
 
-	fprintf(fp_tmp, "%s:%s:%s:%s\n", itoa(pwd->pw_gid), pwd->pw_gecos,
-			  		 pwd->pw_dir, pwd->pw_shell);
+	fprintf(fp_tmp, "%s:%s:%s:%s\n",
+		itoa(pwd->pw_gid),
+		pwd->pw_gecos,
+		pwd->pw_dir,
+		pwd->pw_shell
+	);
 	if (ferror(fp_tmp)) fatal(pw_tmp);
   }
   endpwent();
@@ -221,7 +245,7 @@ char *argv[];
   if (lseek(fd_tmp, (off_t) 0, SEEK_SET) != 0)
 	fatal("Can't reread temp file");
 
-  if ((fd_pwd = creat(pw_file, 0644)) < 0)
+  if ((fd_pwd = open(shadow ? sh_file : pw_file, O_WRONLY | O_TRUNC)) < 0)
 	fatal("Can't recreate password file");
 
   while ((n = read(fd_tmp, buf, sizeof(buf))) != 0) {

@@ -3,7 +3,28 @@
 .extern _modf
 .sect .text
 _modf:
-#if _EM_WSIZE == 2
+#if __i386
+	push	ebp
+	mov	ebp, esp
+	push	12(ebp)
+	push	8(ebp)
+	push	1
+	push	4
+	call	.cif8
+	mov	eax, esp
+	push	eax
+	call	.fif8
+	pop	ecx
+	mov	edx, 16(ebp)
+	pop	ecx
+	pop	ebx
+	mov	0(edx), ecx
+	mov	4(edx), ebx
+	pop	eax
+	pop	edx
+	leave
+	ret
+#else /* i86 */
 	push	bp
 	mov	bp, sp
 	lea	bx, 4(bp)
@@ -25,27 +46,4 @@ _modf:
 	call	.sti
 	call	.ret8
 	jmp	.cret
-#elif _EM_WSIZE == 4
-	push	ebp
-	mov	ebp, esp
-	push	12(ebp)
-	push	8(ebp)
-	push	#1
-	push	#4
-	call	.cif8
-	mov	eax, esp
-	push	eax
-	call	.fif8
-	pop	ecx
-	mov	edx, 16(ebp)
-	pop	ecx
-	pop	ebx
-	mov	0(edx), ecx
-	mov	4(edx), ebx
-	pop	eax
-	pop	edx
-	leave
-	ret
-#else
-#error No _EM_WSIZE?
 #endif

@@ -16,6 +16,7 @@
 
 #include "kernel.h"
 #include "driver.h"
+#include "drvlib.h"
 
 #if ENABLE_XT_WINI
 
@@ -143,7 +144,7 @@ FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
 FORWARD _PROTOTYPE( void copy_param, (char *src, struct wini *dest) );
-FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
 
 
 /* Entry points to this driver. */
@@ -947,11 +948,11 @@ struct wini *dest;
 /*============================================================================*
  *				w_geometry				      *
  *============================================================================*/
-PRIVATE void w_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void w_geometry(entry)
+struct partition *entry;
 {
-  chs[0] = w_wn->wn_cylinders;
-  chs[1] = w_wn->wn_heads;
-  chs[2] = NR_SECTORS;
+  entry->cylinders = w_wn->wn_cylinders;
+  entry->heads = w_wn->wn_heads;
+  entry->sectors = NR_SECTORS;
 }
 #endif /* ENABLE_XT_WINI */

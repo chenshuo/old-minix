@@ -75,12 +75,9 @@ string2long(register const char *nptr, char ** const endptr,
 	}
 
 	if (!ovfl) {
-		/* Overflow is only possible when converting a signed long.
-		 * val is unsigned long, so -LONG_MIN is converted to
-		 * unsigned long.
-		 */
+		/* Overflow is only possible when converting a signed long. */
 		if (is_signed
-		    && (   (sign < 0 && val > -LONG_MIN)
+		    && (   (sign < 0 && val > -(unsigned long)LONG_MIN)
 			|| (sign > 0 && val > LONG_MAX)))
 		    ovfl++;
 	}

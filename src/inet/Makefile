@@ -13,7 +13,7 @@ CC =	exec cc
 CFLAGS = -m -I. -I.. -I$i
 LDFLAGS = -i
 
-OBJ = 	buf.o clock.o mnx_eth.o mq.o nw_task.o sr.o \
+OBJ = 	buf.o clock.o mnx_eth.o mq.o inet.o sr.o \
 	$g/arp.o $g/eth.o $g/icmp.o $g/io.o \
 	$g/ip.o $g/ip_ioctl.o $g/ip_lib.o \
 	$g/ip_read.o $g/ip_write.o $g/ipr.o \
@@ -31,7 +31,7 @@ inet.a:	$(OBJ)
 	aal cr $@ $(OBJ)
 
 clean:
-	rm -f $(OBJ) inet.a putk.o inet *.bak
+	rm -f $(OBJ) inet.a putk.o inet *.bak .all
 
 # Depencencies
 .all:	const.h
@@ -64,7 +64,7 @@ clean:
 .all:	$i/errno.h
 .all:	$i/ansi.h
 .all:	$s/types.h
-.all:	nw_task.h
+.all:	inet.h
 	touch .all
 a =	.all	# Trick to avoid many dependencies (that overload make)
 
@@ -95,23 +95,23 @@ mnx_eth.o:	$a
 mq.o:	mq.h
 mq.o:	$a
 
-nw_task.o:	$i/unistd.h
-nw_task.o:	$g/udp.h
-nw_task.o:	$g/type.h
-nw_task.o:	$g/tcp.h
-nw_task.o:	$g/sr.h
-nw_task.o:	$g/ip.h
-nw_task.o:	$g/eth.h
-nw_task.o:	$g/clock.h
-nw_task.o:	$g/buf.h
-nw_task.o:	$g/arp.h
-nw_task.o:	$g/assert.h
-nw_task.o:	proto.h
-nw_task.o:	mq.h
-nw_task.o:	$h/callnr.h
-nw_task.o:	$i/limits.h
-nw_task.o:	config.h
-nw_task.o:	$a
+inet.o:	$i/unistd.h
+inet.o:	$g/udp.h
+inet.o:	$g/type.h
+inet.o:	$g/tcp.h
+inet.o:	$g/sr.h
+inet.o:	$g/ip.h
+inet.o:	$g/eth.h
+inet.o:	$g/clock.h
+inet.o:	$g/buf.h
+inet.o:	$g/arp.h
+inet.o:	$g/assert.h
+inet.o:	proto.h
+inet.o:	mq.h
+inet.o:	$h/callnr.h
+inet.o:	$i/limits.h
+inet.o:	config.h
+inet.o:	$a
 
 putk.o:	$a
 

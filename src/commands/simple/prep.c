@@ -37,7 +37,7 @@ char *argv[];
 		skipline();
 		continue;
 	}
-	if (c == BACKSLASH) c = backslash();	/* eat troff stuff */
+	while (c == BACKSLASH) c = backslash();	/* eat troff stuff */
 
 	if (isupper(c)) {
 		putchar(tolower(c));
@@ -110,11 +110,16 @@ int backslash()
 		c = getchar();
 		return(c);
 	}
+
       case '(':			/* troff 4-character escape sequence */
 	c1 = getchar();
 	c2 = getchar();
 	if (c1 == 'e' && c2 == 'm') return(' ');
 	if (c1 == 'e' && c2 == 'n') return(' ');
+	c = getchar();
+	return(c);
+
+      case '%':			/* soft hyphen: \% */
 	c = getchar();
 	return(c);
 

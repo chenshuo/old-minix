@@ -1,4 +1,4 @@
-/*	acd 1.8 - A compiler driver			Author: Kees J. Bot
+/*	acd 1.9 - A compiler driver			Author: Kees J. Bot
  *								7 Jan 1993
  * Needs about 25kw heap + stack.
  *
@@ -9,7 +9,7 @@
  * permission from the author.  Use of so called "C beautifiers" is explicitly
  * prohibited.
  */
-char version[] = "1.8";
+char version[] = "1.9";
 
 #define nil 0
 #define _POSIX_SOURCE	1
@@ -282,7 +282,7 @@ cell_t *newcell(void)
 }
 
 #define N_CHARS		(1 + (unsigned char) -1)
-#define HASHDENSE	0x100
+#define HASHDENSE	0x400
 
 cell_t *oblist[HASHDENSE + N_CHARS + N_TYPES];
 
@@ -1853,15 +1853,15 @@ void exec_one(void)
 			if (rule->type == TRANSFORM
 				&& rule->from == q && rule->to == r) break;
 		}
-		dec(q);
-		dec(r);
 		if (rule == nil) {
 			fprintf(stderr,
 				"\"%s\", line %u: no %s %s transformation\n",
-				descr, pc->lineno);
+				descr, pc->lineno, q->name, r->name);
 			action= 0;
-			return;
 		}
+		dec(q);
+		dec(r);
+		if (rule == nil) return;
 
 		/* Save the world. */
 		sav_path= rule->path;
@@ -2078,7 +2078,7 @@ int argmatch(int shift, cell_t *match, cell_t *match1, char *arg1)
 {
 	cell_t *oldval, *v;
 	int m, oldflags;
-	size_t len;
+	size_t i, len;
 	int minus= 0;
 
 	if (shift) {
@@ -2181,10 +2181,11 @@ int argmatch(int shift, cell_t *match, cell_t *match1, char *arg1)
 	}
 
 	/* It can only be a subst in a string now. */
-	if (match1->car->type != SUBST || minus) return 0;
+	len= strlen(arg1);
+	if (match1->car->type != SUBST || minus || len == 0) return 0;
 
-	/* The variable can match from 1 character to all of the argument,
-	 * start greedy.
+	/* The variable can match from 1 character to all of the argument.
+	 * Matching as few characters as possible happens to be the Right Thing.
 	 */
 	v= match1->car->subst;
 	if (v->flags & W_RDONLY) return 0;	/* ouch */
@@ -2193,10 +2194,10 @@ int argmatch(int shift, cell_t *match, cell_t *match1, char *arg1)
 	oldval= v->value;
 
 	m= 0;
-	for (len= strlen(arg1); !m && len >= 1; len--) {
-		v->value= findnword(arg1, len);
+	for (i= match1->cdr == nil ? len : 1; !m && i <= len; i++) {
+		v->value= findnword(arg1, i);
 
-		m= argmatch(0, match, match1->cdr, arg1+len);
+		m= argmatch(0, match, match1->cdr, arg1+i);
 
 		dec(v->value);
 	}

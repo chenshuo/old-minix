@@ -5,7 +5,6 @@ other:*:3:
 tty:*:4:
 uucp:*:5:
 news:*:6:
-mail:*:7:
+ftp:*:7:
 kmem:*:8:
-sysadm:*:9:
 nogroup:*:99:

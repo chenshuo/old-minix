@@ -3,7 +3,7 @@
  *							Author: Kees J. Bot
  *								26 Jan 1995
  * Thise are just stub routines that are call compatible with
- * the asynchio(3) library of Minix-386vm.  See asynchio.h.
+ * the asynchio(3) library of Minix-vmd.  See asynchio.h.
  */
 #define nil 0
 #define alarm	_alarm

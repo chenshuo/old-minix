@@ -15,6 +15,7 @@
 
 #include "kernel.h"
 #include "driver.h"
+#include <sys/ioctl.h>
 
 #define NR_RAMS            4	/* number of RAM-type devices */
 
@@ -25,7 +26,8 @@ FORWARD _PROTOTYPE( struct device *m_prepare, (int device) );
 FORWARD _PROTOTYPE( int m_schedule, (int proc_nr, struct iorequest_s *iop) );
 FORWARD _PROTOTYPE( int m_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void m_init, (void) );
-FORWARD _PROTOTYPE( int do_setup, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( int m_ioctl, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( void m_geometry, (struct partition *entry) );
 
 
 /* Entry points to this driver. */
@@ -33,11 +35,12 @@ PRIVATE struct driver m_dtab = {
   no_name,	/* current device's name */
   m_do_open,	/* open or mount */
   do_nop,	/* nothing on a close */
-  do_setup,	/* specify ram disk geometry */
+  m_ioctl,	/* specify ram disk geometry */
   m_prepare,	/* prepare for I/O on a given minor device */
   m_schedule,	/* do the I/O */
   nop_finish,	/* schedule does the work, no need to be smart */
-  nop_cleanup	/* nothing's dirty */
+  nop_cleanup,	/* nothing's dirty */
+  m_geometry,	/* memory device "geometry" */
 };
 
 
@@ -175,9 +178,9 @@ PRIVATE void m_init()
 
 
 /*===========================================================================*
- *				do_setup				     *
+ *				m_ioctl					     *
  *===========================================================================*/
-PRIVATE int do_setup(dp, m_ptr)
+PRIVATE int m_ioctl(dp, m_ptr)
 struct driver *dp;
 message *m_ptr;			/* pointer to read or write message */
 {
@@ -186,25 +189,62 @@ message *m_ptr;			/* pointer to read or write message */
   unsigned long bytesize;
   unsigned base, size;
   struct memory *memp;
+  static struct psinfo psinfo = { NR_TASKS, NR_PROCS, (vir_bytes) proc, 0, 0 };
+  phys_bytes psinfo_phys;
 
-  if (m_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  switch (m_ptr->REQUEST) {
+  case MIOCRAMSIZE:
+	/* FS sets the RAM disk size. */
+	if (m_ptr->PROC_NR != FS_PROC_NR) return(EPERM);
 
-  /* It must be a server on /dev/ram: */
-  if (m_ptr->PROC_NR >= LOW_USER || m_device != RAM_DEV) return(ENOTTY);
+	bytesize = m_ptr->POSITION * BLOCK_SIZE;
+	size = (bytesize + CLICK_SHIFT-1) >> CLICK_SHIFT;
 
-  bytesize = (unsigned long) m_ptr->COUNT * BLOCK_SIZE;
-  size = (bytesize + CLICK_SHIFT-1) >> CLICK_SHIFT;
+	/* Find a memory chunk big enough for the RAM disk. */
+	memp= &mem[NR_MEMS];
+	while ((--memp)->size < size) {
+		if (memp == mem) panic("RAM disk is too big", NO_NUM);
+	}
+	base = memp->base;
+	memp->base += size;
+	memp->size -= size;
 
-  /* Find a memory chunk big enough for the RAM disk. */
-  memp= &mem[NR_MEMS];
-  while ((--memp)->size < size) {
-	if (memp == mem) panic("RAM disk is too big", NO_NUM);
+	m_geom[RAM_DEV].dv_base = (unsigned long) base << CLICK_SHIFT;
+	m_geom[RAM_DEV].dv_size = bytesize;
+	break;
+  case MIOCSPSINFO:
+	/* MM or FS set the address of their process table. */
+	if (m_ptr->PROC_NR == MM_PROC_NR) {
+		psinfo.mproc = (vir_bytes) m_ptr->ADDRESS;
+	} else
+	if (m_ptr->PROC_NR == FS_PROC_NR) {
+		psinfo.fproc = (vir_bytes) m_ptr->ADDRESS;
+	} else {
+		return(EPERM);
+	}
+	break;
+  case MIOCGPSINFO:
+	/* The ps program wants the process table addresses. */
+	psinfo_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
+							sizeof(psinfo));
+	if (psinfo_phys == 0) return(EFAULT);
+	phys_copy(vir2phys(&psinfo), psinfo_phys, (phys_bytes) sizeof(psinfo));
+	break;
+  default:
+  	return(do_diocntl(&m_dtab, m_ptr));
   }
-  base = memp->base;
-  memp->base += size;
-  memp->size -= size;
-
-  m_geom[RAM_DEV].dv_base = (unsigned long) base << CLICK_SHIFT;
-  m_geom[RAM_DEV].dv_size = bytesize;
   return(OK);
+}
+
+
+/*============================================================================*
+ *				m_geometry				      *
+ *============================================================================*/
+PRIVATE void m_geometry(entry)
+struct partition *entry;
+{
+  /* Memory devices don't have a geometry, but the outside world insists. */
+  entry->cylinders = (m_geom[m_device].dv_size >> SECTOR_SHIFT) / (64 * 32);
+  entry->heads = 64;
+  entry->sectors = 32;
 }

@@ -1,4 +1,4 @@
-/*	cp 1.7 - copy files				Author: Kees J. Bot
+/*	cp 1.8 - copy files				Author: Kees J. Bot
  *	mv     - move files					20 Jul 1993
  *	rm     - remove files
  *	ln     - make a link
@@ -34,11 +34,7 @@
 
 
 #ifndef CONFORMING
-#if !(_KJB_EXT && DEBUG < 2)
 #define CONFORMING	1	/* Precisely POSIX conforming. */
-#else
-#define CONFORMING	0	/* There goes the neighborhood. */
-#endif
 #endif
 
 
@@ -391,8 +387,17 @@ int copy(const char *src, const char *dst, struct stat *srcst,
 
 	/* Copy the little bytes themselves. */
 	while ((n= read(srcfd, buf, sizeof(buf))) > 0) {
-		if (write(dstfd, buf, n) < 0)
+		char *bp = buf;
+		ssize_t r;
+
+		while (n > 0 && (r= write(dstfd, bp, n)) > 0) {
+			bp += r;
+			n -= r;
+		}
+		if (r <= 0) {
+			if (r == 0) break;	/* EOF on write? */
 			fatal(dst);
+		}
 	}
 
 	if (n < 0) {
@@ -417,11 +422,20 @@ int copy(const char *src, const char *dst, struct stat *srcst,
 				report(dst);
 				return 0;
 			}
-			/* Suid bits must be cleared in the holy name of
-			 * security (and the assumed user stupidity).
-			 */
-			if (conforming) srcst->st_mode&= ~06000;
+		} else {
+			dstst->st_uid= srcst->st_uid;
+			dstst->st_gid= srcst->st_gid;
 		}
+	}
+
+	if (conforming && S_ISREG(dstst->st_mode)
+		&& (dstst->st_uid != srcst->st_uid
+				|| dstst->st_gid != srcst->st_gid)
+	) {
+		/* Suid bits must be cleared in the holy name of
+		 * security (and the assumed user stupidity).
+		 */
+		srcst->st_mode&= ~06000;
 	}
 
 	/* Copy the mode. */

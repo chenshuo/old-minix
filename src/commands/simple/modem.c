@@ -219,11 +219,11 @@ char *argv[];
 	st = 0;
 	break;
       case 0:
-	kill(entry.ut_pid, SIGEMT);	/* send SUSPEND signal */
+	kill(entry.ut_pid, SIGUSR1);	/* send SUSPEND signal */
 	st = dialout(tty);		/* put MODEM into DIALOUT */
 	break;
       default:
-	kill(entry.ut_pid, SIGIOT);	/* send RESTART signal */
+	kill(entry.ut_pid, SIGUSR2);	/* send RESTART signal */
 	st = dialin(tty);		/* put MODEM in DIALIN */
   }
   return(st);

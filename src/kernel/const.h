@@ -63,7 +63,6 @@
 #define XT_WINI_IRQ        5	/* xt winchester */
 #define FLOPPY_IRQ         6	/* floppy disk */
 #define PRINTER_IRQ        7
-#define PS_KEYB_IRQ        9	/* keyboard interrupt vector for PS/2 */
 #define AT_WINI_IRQ       14	/* at winchester */
 
 /* Interrupt number to hardware vector. */
@@ -87,15 +86,6 @@
 
 /* Sizes of memory tables. */
 #define NR_MEMS            3	/* number of chunks of memory */
-
-/* Magic memory locations and sizes. */
-#define COLOR_BASE   0xB8000L	/* base of color video memory */
-#define COLOR_SIZE    0x8000L	/* maximum usable color video memory */
-#define MONO_BASE    0xB0000L	/* base of mono video memory */
-#define MONO_SIZE     0x8000L	/* maximum usable mono video memory */
-
-/* Cursor shape is needed by debugger as well as console driver. */
-#define CURSOR_SHAPE      15	/* block cursor for MDA/HGC/CGA/EGA/VGA... */
 
 /* Miscellaneous ports. */
 #define PCR		0x65	/* Planar Control Register */

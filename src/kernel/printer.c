@@ -23,6 +23,7 @@
 #include "kernel.h"
 #include <minix/callnr.h>
 #include <minix/com.h>
+#include "proc.h"
 
 /* Control bits (in port_base + 2).  "+" means positive logic and "-" means
  * negative logic.  Most of the signals are negative logic on the pins but
@@ -83,7 +84,7 @@ PRIVATE int orig_count;		/* original byte count */
 PRIVATE int port_base;		/* I/O port for printer */
 PRIVATE int proc_nr;		/* user requesting the printing */
 PRIVATE int user_left;		/* bytes of output left in user buf */
-PRIVATE phys_bytes user_phys;	/* physical address of remainder of user buf */
+PRIVATE vir_bytes user_vir;	/* address of remainder of user buf */
 PRIVATE int writing;		/* nonzero while write is in progress */
 
 FORWARD _PROTOTYPE( void do_cancel, (message *m_ptr) );
@@ -103,19 +104,22 @@ PUBLIC void printer_task()
 {
 /* Main routine of the printer task. */
 
-  message print_mess;		/* buffer for all incoming messages */
+  message pr_mess;		/* buffer for all incoming messages */
 
   print_init();			/* initialize */
 
   while (TRUE) {
-	receive(ANY, &print_mess);
-	switch(print_mess.m_type) {
-	    case DEV_WRITE:	do_write(&print_mess);	break;
-	    case CANCEL   :	do_cancel(&print_mess);	break;
+	receive(ANY, &pr_mess);
+	switch(pr_mess.m_type) {
+	    case DEV_OPEN:
+	    case DEV_CLOSE:
+		reply(TASK_REPLY, pr_mess.m_source, pr_mess.PROC_NR, OK);
+		break;
+	    case DEV_WRITE:	do_write(&pr_mess);	break;
+	    case CANCEL   :	do_cancel(&pr_mess);	break;
 	    case HARD_INT :	do_done();		break;
-	    default:		reply(TASK_REPLY, print_mess.m_source,
-				      print_mess.PROC_NR, EINVAL);
-							break;
+	    default:
+		reply(TASK_REPLY, pr_mess.m_source, pr_mess.PROC_NR, EINVAL);
 	}
   }
 }
@@ -131,26 +135,27 @@ register message *m_ptr;	/* pointer to the newly arrived message */
 
   register int r;
 
-  r = SUSPEND;			/* if no errors, tell FS to suspend user */
-
-  /* Reject command if last write is not finished or count is not positive. */
-  if (writing) r = EIO;
-  if (m_ptr->COUNT <= 0) r = EINVAL;
-
-  if (r == SUSPEND) {
+  /* Reject command if last write is not finished, count not positive, or
+   * user address bad.
+   */
+  if (writing) {
+  	r = EIO;
+  } else
+  if (m_ptr->COUNT <= 0) {
+  	r = EINVAL;
+  } else
+  if (numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS, m_ptr->COUNT) == 0) {
+	r = EFAULT;
+  } else {
 	/* Save information needed later. */
 	caller = m_ptr->m_source;
 	proc_nr = m_ptr->PROC_NR;
 	user_left = m_ptr->COUNT;
 	orig_count = m_ptr->COUNT;
-	user_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-			  (vir_bytes) m_ptr->COUNT);
-	if (user_phys == 0)
-		r = E_BAD_ADDR;
-	else {
-		pr_start();
-		writing = TRUE;
-	}
+	user_vir = (vir_bytes) m_ptr->ADDRESS;
+	pr_start();
+	writing = TRUE;
+	r = SUSPEND;
   }
 
   /* Reply to FS, no matter what happened. */
@@ -270,10 +275,12 @@ PRIVATE void pr_start()
 /* Start next chunk of printer output. */
 
   register int chunk;
+  phys_bytes user_phys;
 
   if ( (chunk = user_left) > sizeof obuf) chunk = sizeof obuf;
+  user_phys = proc_vir2phys(proc_addr(proc_nr), user_vir);
   phys_copy(user_phys, vir2phys(obuf), (phys_bytes) chunk);
-  user_phys += chunk;
+  user_vir += chunk;
   user_left -= chunk;
   optr = obuf;
   opending = TRUE;

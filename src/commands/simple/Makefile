@@ -94,6 +94,7 @@ all:	bin \
 	bin/fortune \
 	bin/fsck \
 	bin/fsck1 \
+	bin/ftp \
 	bin/gather \
 	bin/getty \
 	bin/gomoku \
@@ -105,6 +106,7 @@ all:	bin \
 	bin/ifconfig \
 	bin/ifdef \
 	bin/in.fingerd \
+	bin/in.rld \
 	bin/in.rshd \
 	bin/inodes \
 	bin/install \
@@ -122,6 +124,7 @@ all:	bin \
 	bin/mail \
 	bin/man \
 	bin/men \
+	bin/mesg \
 	bin/mkdir \
 	bin/mkfifo \
 	bin/mkfs \
@@ -146,8 +149,8 @@ all:	bin \
 	bin/printenv \
 	bin/printroot \
 	bin/proto \
-	bin/ps \
 	bin/pwd \
+	bin/pwdauth \
 	bin/rarpd \
 	bin/rcp \
 	bin/readall \
@@ -179,12 +182,12 @@ all:	bin \
 	bin/tee \
 	bin/termcap \
 	bin/test \
+	bin/tget \
 	bin/time \
 	bin/touch \
 	bin/tr \
 	bin/traverse \
 	bin/treecmp \
-	bin/tset \
 	bin/tsort \
 	bin/ttt \
 	bin/tty \
@@ -431,6 +434,10 @@ bin/fsck1:	fsck1.c
 	$(CCLD) -m -o $@ $?
 	install -S 32kw $@
 
+bin/ftp:	ftp.c
+	$(CCLD) -m -o $@ $?
+	install -S 8kw $@
+
 bin/gather:	gather.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -473,6 +480,10 @@ bin/ifdef:	ifdef.c
 
 bin/in.fingerd:	in.fingerd.c
 	$(CCLD) -o $@ in.fingerd.c
+	install -S 4kw $@
+
+bin/in.rld:	in.rld.c
+	$(CCLD) -m -o $@ in.rld.c
 	install -S 4kw $@
 
 bin/in.rshd:	in.rshd.c
@@ -537,9 +548,13 @@ bin/mail:	mail.c
 
 bin/man:	man.c
 	$(CCLD) -o $@ $?
-	install -S 25kw $@
+	install -S 10kw $@
 
 bin/men:	men.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+bin/mesg:	mesg.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -639,13 +654,11 @@ bin/proto:	proto.c
 	$(CCLD) -o $@ $?
 	install -S 15kw $@
 
-bin/ps:	ps.c /usr/include/minix/config.h ../../kernel/const.h \
-		../../kernel/type.h ../../kernel/proc.h ../../mm/mproc.h \
-		../../fs/fproc.h ../../fs/const.h
-	$(CCLD) -m -o $@ ps.c
+bin/pwd:	pwd.c
+	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/pwd:	pwd.c
+bin/pwdauth:	pwdauth.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -671,7 +684,7 @@ bin/recover:	recover.c
 
 bin/remsync:	remsync.c
 	$(CCLD) -o $@ $?
-	install -S 32kw $@
+	install -S 256k $@
 
 bin/rev:	rev.c
 	$(CCLD) -o $@ $?
@@ -759,7 +772,7 @@ bin/tar:	tar.c
 
 bin/tcpd:	tcpd.c
 	$(CCLD) -o $@ tcpd.c
-	install -S 4kw $@
+	install -S 2kw $@
 
 bin/tee:	tee.c
 	$(CCLD) -o $@ $?
@@ -770,6 +783,10 @@ bin/termcap:	termcap.c
 	install -S 4kw $@
 
 bin/test:	test.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+bin/tget:	tget.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -792,10 +809,6 @@ bin/traverse:	traverse.c
 bin/treecmp:	treecmp.c
 	$(CCLD) -o $@ $?
 	install -S 30kw $@
-
-bin/tset:	tset.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/tsort:	tsort.c
 	$(CCLD) -o $@ $?
@@ -847,7 +860,7 @@ bin/uue:	uue.c
 
 bin/vol:	vol.c
 	$(CCLD) -o $@ $?
-	install -S 272k $@
+	install -S 80k $@	# note: '-S' is upper limit to 'vol -m'
 
 bin/wc:	wc.c
 	$(CCLD) -o $@ $?
@@ -875,7 +888,6 @@ bin/width:	width.c
 
 bin/write:	write.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/xargs:	xargs.c
 	$(CCLD) -o $@ $?
@@ -950,6 +962,7 @@ install:	bin \
 	/usr/bin/fortune \
 	/usr/bin/fsck \
 	/usr/bin/fsck1 \
+	/usr/bin/ftp \
 	/usr/bin/gather \
 	/usr/bin/getty \
 	/usr/bin/gomoku \
@@ -961,6 +974,7 @@ install:	bin \
 	/usr/bin/ifconfig \
 	/usr/bin/ifdef \
 	/usr/bin/in.fingerd \
+	/usr/bin/in.rld \
 	/usr/bin/in.rshd \
 	/usr/bin/inodes \
 	/usr/bin/install \
@@ -980,6 +994,7 @@ install:	bin \
 	/usr/bin/mail \
 	/usr/bin/man \
 	/usr/bin/men \
+	/usr/bin/mesg \
 	/usr/bin/mkdir \
 	/usr/bin/mkfifo \
 	/usr/bin/mkfs \
@@ -1006,8 +1021,8 @@ install:	bin \
 	/usr/bin/printenv \
 	/usr/bin/printroot \
 	/usr/bin/proto \
-	/usr/bin/ps \
 	/usr/bin/pwd \
+	/usr/lib/pwdauth \
 	/usr/bin/rarpd \
 	/usr/bin/rcp \
 	/usr/bin/readall \
@@ -1040,12 +1055,12 @@ install:	bin \
 	/usr/bin/termcap \
 	/usr/bin/test \
 		/usr/bin/[ \
+	/usr/bin/tget \
 	/usr/bin/time \
 	/usr/bin/touch \
 	/usr/bin/tr \
 	/usr/bin/traverse \
 	/usr/bin/treecmp \
-	/usr/bin/tset \
 	/usr/bin/tsort \
 	/usr/bin/ttt \
 	/usr/bin/tty \
@@ -1276,6 +1291,9 @@ install:	bin \
 /usr/bin/fsck1:	bin/fsck1
 	install -cs -o bin $? $@
 
+/usr/bin/ftp:	bin/ftp
+	install -cs -o bin $? $@
+
 /usr/bin/gather:	bin/gather
 	install -cs -o bin $? $@
 
@@ -1307,6 +1325,9 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/in.fingerd:	bin/in.fingerd
+	install -cs -o bin $? $@
+
+/usr/bin/in.rld:	bin/in.rld
 	install -cs -o bin $? $@
 
 /usr/bin/in.rshd:	bin/in.rshd
@@ -1361,6 +1382,9 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/men:	bin/men
+	install -cs -o bin $? $@
+
+/usr/bin/mesg:	bin/mesg
 	install -cs -o bin $? $@
 
 /usr/bin/mkdir:	bin/mkdir
@@ -1438,11 +1462,11 @@ install:	bin \
 /usr/bin/proto:	bin/proto
 	install -cs -o bin $? $@
 
-/usr/bin/ps:	bin/ps
-	install -cs -o bin -g kmem -m 2755 $? $@
-
 /usr/bin/pwd:	bin/pwd
 	install -cs -o bin $? $@
+
+/usr/lib/pwdauth:	bin/pwdauth
+	install -cs -o root -m 4755 $? $@
 
 /usr/bin/rarpd:	bin/rarpd
 	install -cs -o bin $? $@
@@ -1540,6 +1564,9 @@ install:	bin \
 /usr/bin/[:	/usr/bin/test
 	install -l $? $@
 
+/usr/bin/tget:	bin/tget
+	install -cs -o bin $? $@
+
 /usr/bin/time:	bin/time
 	install -cs -o bin $? $@
 
@@ -1553,9 +1580,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/treecmp:	bin/treecmp
-	install -cs -o bin $? $@
-
-/usr/bin/tset:	bin/tset
 	install -cs -o bin $? $@
 
 /usr/bin/tsort:	bin/tsort
@@ -1625,7 +1649,7 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/write:	bin/write
-	install -cs -o bin $? $@
+	install -cs -o bin -g tty -m 2755 $? $@
 
 /usr/bin/xargs:	bin/xargs
 	install -cs -o bin $? $@

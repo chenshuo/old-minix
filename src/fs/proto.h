@@ -23,21 +23,16 @@ _PROTOTYPE( void dev_opcl, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( int dev_io, (int rw_flag, int nonblock, Dev_t dev,
 			off_t pos, int bytes, int proc, char *buff)	);
 _PROTOTYPE( int do_ioctl, (void)					);
-_PROTOTYPE( void no_call, (int task_nr, message *m_ptr)			);
 _PROTOTYPE( void no_dev, (int task_nr, message *m_ptr)			);
-_PROTOTYPE( void rw_dev2, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void tty_close, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( void call_ctty, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void tty_open, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void ctty_close, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void ctty_open, (int task_nr, message *mess_ptr)		);
+_PROTOTYPE( int do_setsid, (void)					);
 #if ENABLE_NETWORKING
 _PROTOTYPE( void net_open, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void net_rw, (int task_nr, message *mess_ptr)		);
-_PROTOTYPE( void net_close, (int task_nr, message *mess_ptr)		);
 #else
 #define net_open  0
-#define net_rw    0
-#define net_close 0
 #endif
 
 /* filedes.c */

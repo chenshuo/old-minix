@@ -1,4 +1,4 @@
-/*	installboot 1.20 - Make a device bootable	Author: Kees J. Bot
+/*	installboot 1.23 - Make a device bootable	Author: Kees J. Bot
  *								21 Dec 1991
  *
  * Either make a device bootable or make an image from kernel, mm, fs, etc.
@@ -39,6 +39,10 @@
 
 #define between(a, c, z)	((unsigned) ((c) - (a)) <= ((z) - (a)))
 #define control(c)		between('\0', (c), '\37')
+
+#if !__minix_vmd
+#define cv64ul(i)	(i)
+#endif
 
 void report(char *label)
 /* installboot: label: No such file or directory */
@@ -359,7 +363,7 @@ void writeblock(off_t blk, char *buf)
 	) fatal(rawdev);
 }
 
-void raw_install(char *file, off_t start, off_t *len)
+int raw_install(char *file, off_t *start, off_t *len)
 /* Copy bootcode or an image to the boot device at the given absolute disk
  * block number.  This "raw" installation is used to place bootcode and
  * image on a disk without a filesystem to make a simple boot disk.  Useful
@@ -372,16 +376,16 @@ void raw_install(char *file, off_t start, off_t *len)
 	off_t sec;
 	unsigned long devsize;
 	static int banner= 0;
-	struct part_entry entry;
+	struct partition entry;
 
 	/* See if the device has a maximum size. */
 	devsize= -1;
-	if (ioctl(rawfd, DIOCGETP, &entry) == 0) devsize= entry.size;
+	if (ioctl(rawfd, DIOCGETP, &entry) == 0) devsize= cv64ul(entry.size);
 
 	if ((f= fopen(file, "r")) == nil) fatal(file);
 
 	/* Copy sectors from file onto the boot device. */
-	sec= start;
+	sec= *start;
 	do {
 		int off= sec % RATIO;
 
@@ -389,13 +393,14 @@ void raw_install(char *file, off_t start, off_t *len)
 			break;
 
 		if (sec >= devsize) {
-			fprintf(stderr, "installboot: %s doesn't fit on %s\n",
+			fprintf(stderr,
+			"installboot: %s can't be attached to %s\n",
 				file, rawdev);
-			exit(1);
+			return 0;
 		}
 
 		if (off == RATIO - 1) writeblock(sec / RATIO, buf);
-	} while (++sec != start + *len);
+	} while (++sec != *start + *len);
 
 	if (ferror(f)) fatal(file);
 	(void) fclose(f);
@@ -407,8 +412,10 @@ void raw_install(char *file, off_t start, off_t *len)
 		printf("  sector  length\n");
 		banner= 1;
 	}
-	*len= sec - start;
-	printf("%8ld%8ld  %s\n", start, *len, file);
+	*len= sec - *start;
+	printf("%8ld%8ld  %s\n", *start, *len, file);
+	*start= sec;
+	return 1;
 }
 
 enum howto { FS, BOOT };
@@ -512,10 +519,9 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 		exit(0);
 	}
 
-	/* Offset and length of boot code if outside the file system. */
-	pos= fssize * RATIO;
-	len= max_sector;
-
+	/* Determine the addresses to the boot code to be patched into the
+	 * boot block.
+	 */
 	bap->count= 0;	/* Trick to get the address recording going. */
 
 	for (sector= 0; sector < max_sector; sector++) {
@@ -600,9 +606,20 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 		}
 	}
 
+	/* Offset to the end of the file system to add boot code and images. */
+	pos= fssize * RATIO;
+
 	if (ino == 0) {
 		/* Place the boot code onto the boot device. */
-		raw_install(bootcode, pos, &len);
+		len= max_sector;
+		if (!raw_install(bootcode, &pos, &len)) {
+			if (how == FS) {
+				fprintf(stderr,
+	"\t(Isn't there a copy of %s on %s that can be used?)\n",
+					bootcode, device);
+			}
+			exit(1);
+		}
 	}
 
 	parmp= buf + SECTOR_SIZE;
@@ -629,13 +646,12 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 			image= labels;
 			labels= nil;
 		}
-		pos+= len;
 		len= 0;
-		raw_install(image, pos, &len);
+		if (!raw_install(image, &pos, &len)) exit(1);
 
 		if (labels == nil) {
 			/* Let this image be the default. */
-			sprintf(parmp, "image=%ld:%ld\n", pos, len);
+			sprintf(parmp, "image=%ld:%ld\n", pos-len, len);
 			parmp+= strlen(parmp);
 		}
 
@@ -651,7 +667,7 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 				label,
 				between('A', label[0], 'Z')
 					? label[0]-'A'+'a' : label[0],
-				label, pos, len, label);
+				label, pos-len, len, label);
 			parmp+= strlen(parmp);
 		}
 
@@ -664,9 +680,8 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 	/* Install boot block. */
 	writeblock((off_t) BOOTBLOCK, buf);
 
-	if (ino == 0 || how == BOOT) {
+	if (pos > fssize * RATIO) {
 		/* Tell the total size of the data on the device. */
-		pos+= len;
 		printf("%16ld  (%ld kb) total\n", pos,
 						(pos + RATIO - 1) / RATIO);
 	}

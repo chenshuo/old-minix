@@ -3,7 +3,6 @@
 u=/usr
 CC=	exec cc
 CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE
-LDFLAGS=
 MDEC=	/usr/mdec
 MAKE=	exec make -$(MAKEFLAGS)
 inet=
@@ -25,8 +24,17 @@ image:	$(PROGRAMS)
 	installboot -image $@ $(PROGRAMS)
 
 init:	init.c
-	$(CC) $(LDFLAGS) $(CFLAGS) init.c -o $@
+	$(CC) $(CFLAGS) init.c -o $@
 	install -S 192w $@
+
+ps:	ps.c /usr/include/minix/config.h ../kernel/const.h \
+		../kernel/type.h ../kernel/proc.h ../mm/mproc.h \
+		../fs/fproc.h ../fs/const.h
+	$(CC) -i $(CFLAGS) -m -o $@ ps.c
+	install -S 16kw $@
+
+/usr/bin/ps:	ps
+	install -cs -o bin -g kmem -m 2755 $? $@
 
 bootable:
 	exec su root mkboot bootable
@@ -40,5 +48,9 @@ all install clean::
 	cd ../fs && $(MAKE) $@
 	cd ../inet && $(MAKE) $@
 
+all::	ps
+
+install::	/usr/bin/ps
+
 clean::
-	rm -f *.bak init image
+	rm -f *.bak init ps image

@@ -5,9 +5,7 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
-#if (CHIP == INTEL)
 #include <minix/partition.h>
-#endif
 
 /* Info about and entry points into the device dependent code. */
 struct driver {
@@ -19,7 +17,7 @@ struct driver {
   _PROTOTYPE( int (*dr_schedule), (int proc_nr, struct iorequest_s *request) );
   _PROTOTYPE( int (*dr_finish), (void) );
   _PROTOTYPE( void (*dr_cleanup), (void) );
-  _PROTOTYPE( void (*dr_geometry), (unsigned *chs) );
+  _PROTOTYPE( void (*dr_geometry), (struct partition *entry) );
 };
 
 #if (CHIP == INTEL)
@@ -47,11 +45,7 @@ _PROTOTYPE( int do_nop, (struct driver *dp, message *m_ptr) );
 _PROTOTYPE( int nop_finish, (void) );
 _PROTOTYPE( void nop_cleanup, (void) );
 _PROTOTYPE( void clock_mess, (int ticks, watchdog_t func) );
-
-#if (CHIP == INTEL)
-_PROTOTYPE( void partition, (struct driver *dr, int device, int style) );
 _PROTOTYPE( int do_diocntl, (struct driver *dr, message *m_ptr) );
-#endif
 
 /* Parameters for the disk drive. */
 #define SECTOR_SIZE      512	/* physical sector size in bytes */
@@ -63,30 +57,7 @@ _PROTOTYPE( int do_diocntl, (struct driver *dr, message *m_ptr) );
 
 #if (CHIP == INTEL)
 extern u8_t *tmp_buf;			/* the DMA buffer */
-extern phys_bytes tmp_phys;		/* phys address of DMA buffer */
-extern u16_t Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
-
-/* BIOS parameter table layout. */
-#define bp_cylinders(t)		(* (u16_t *) (&(t)[0]))
-#define bp_heads(t)		(* (u8_t *)  (&(t)[2]))
-#define bp_reduced_wr(t)	(* (u16_t *) (&(t)[3]))
-#define bp_precomp(t)		(* (u16_t *) (&(t)[5]))
-#define bp_max_ecc(t)		(* (u8_t *)  (&(t)[7]))
-#define bp_ctlbyte(t)		(* (u8_t *)  (&(t)[8]))
-#define bp_landingzone(t)	(* (u16_t *) (&(t)[12]))
-#define bp_sectors(t)		(* (u8_t *)  (&(t)[14]))
-
-/* Miscellaneous. */
-#define DEV_PER_DRIVE	(1 + NR_PARTITIONS)
-#define MINOR_hd1a	128
-#define MINOR_fd0a	(28<<2)
-#define P_FLOPPY	0
-#define P_PRIMARY	1
-#define P_SUB		2
-
-#else /* CHIP != INTEL */
-
+#else
 extern u8_t tmp_buf[];			/* the DMA buffer */
+#endif
 extern phys_bytes tmp_phys;		/* phys address of DMA buffer */
-
-#endif /* CHIP != INTEL */

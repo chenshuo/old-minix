@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 1.6 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 1.8 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -68,6 +68,7 @@ bin/zcat
 lib
 lib/keymaps
 `cd /usr && echo lib/keymaps/*`
+lib/pwdauth
 mdec
 mdec/boot
 mdec/bootblock
@@ -142,7 +143,7 @@ eval "$X_ROOT2"
 
 # Partition the root floppy whether necessary or not.  (Two images can be
 # concatenated later.)
-partition -m /dev/fd$drive 0 81:1200 0:0 81:1200 >/dev/null || exit
+partition -mf /dev/fd$drive 0 81:1200 0:0 81:1200 >/dev/null || exit
 
 if [ "$single" ]
 then
@@ -210,6 +211,7 @@ echo "
 Enter the floppies in drive $drive when asked to.  Mark them with the volume
 numbers!
 "
+sleep 2
 
 if [ `arch` = i86 ]; then bits=13; else bits=16; fi
 

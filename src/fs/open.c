@@ -229,7 +229,7 @@ mode_t omode;
 			dev_mess.m_type = DEV_OPEN;
 			dev = (dev_t) rip->i_zone[0];
 			dev_mess.DEVICE = dev;
-			dev_mess.TTY_FLAGS = bits | (oflags & ~O_ACCMODE);
+			dev_mess.COUNT = bits | (oflags & ~O_ACCMODE);
 			major = (dev >> MAJOR) & BYTE;	/* major device nr */
 			if (major <= 0 || major >= max_major) {
 				r = ENODEV;
@@ -336,10 +336,10 @@ PUBLIC int do_close()
   if ( (rfilp = get_filp(fd)) == NIL_FILP) return(err_code);
   rip = rfilp->filp_ino;	/* 'rip' points to the inode */
 
-  if (rfilp->filp_count - 1 == 0) {
-	  /* Check to see if the file is special. */
-	  mode_word = rip->i_mode & I_TYPE;
-	  if (mode_word == I_CHAR_SPECIAL || mode_word == I_BLOCK_SPECIAL) {
+  if (rfilp->filp_count - 1 == 0 && rfilp->filp_mode != FILP_CLOSED) {
+	/* Check to see if the file is special. */
+	mode_word = rip->i_mode & I_TYPE;
+	if (mode_word == I_CHAR_SPECIAL || mode_word == I_BLOCK_SPECIAL) {
 		dev = (dev_t) rip->i_zone[0];
 		if (mode_word == I_BLOCK_SPECIAL)  {
 			/* Invalidate cache entries unless special is mounted
@@ -353,7 +353,6 @@ PUBLIC int do_close()
 		 */
 		dev_mess.m_type = DEV_CLOSE;
 		dev_mess.DEVICE = dev;
-		dev_mess.COUNT= rfilp->filp_count - 1;
 		major = (dev >> MAJOR) & BYTE;	/* major device nr */
 		task = dmap[major].dmap_task;	/* device task nr */
 		(*dmap[major].dmap_close)(task, &dev_mess);

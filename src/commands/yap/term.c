@@ -20,7 +20,7 @@ static char rcsid[] = "$Header: term.c,v 1.2 92/04/13 13:16:08 philip Exp $";
 #include "keys.h"
 #include "main.h"
 
-#ifdef WINDOW
+#ifdef TIOCGWINSZ
 static struct winsize w;
 #endif
 
@@ -387,9 +387,7 @@ ini_terminal() {
 		(VOID) strcpy(BO,"\r\n");
 	}
 	putline(TI);
-#ifdef WINDOW
 	window();
-#endif
 }
 
 /*
@@ -465,13 +463,14 @@ bottom() {
 	if (!*BO) mgoto(maxpagesize);
 }
 
-#ifdef WINDOW
 int
 window()
 {
+#ifdef TIOCGWINSZ
         if (ioctl(1, TIOCGWINSZ, &w) < 0) return 0;
 
-        if (!w.ws_col || !w.ws_row) return 0;
+        if (w.ws_col == 0) w.ws_col = COLS;
+        if (w.ws_row == 0) w.ws_row = LINES;
         if (w.ws_col != COLS || w.ws_row != LINES) {
 		COLS = w.ws_col;
 		LINES = w.ws_row;
@@ -483,6 +482,6 @@ window()
 		if (scrollsize <= 0) scrollsize = 1;
 		return 1;
         }
+#endif
         return 0;
 }
-#endif

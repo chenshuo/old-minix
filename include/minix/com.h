@@ -28,7 +28,6 @@
 #	define TTY_SETPGRP  9	/* fcn code for setpgroup */
 #	define TTY_EXIT	   10	/* a process group leader has exited */	
 #	define OPTIONAL_IO 16	/* modifier to DEV_* codes within vector */
-#	define NO_CTL_TTY  -1	/* returned by DEV_OPEN if no ctl tty exists */
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
 #define DL_ETH		(CDROM - ENABLE_NETWORKING)
@@ -46,9 +45,6 @@
 /* Message type for data link layer replies. */
 #	define DL_INIT_REPLY	20
 #	define DL_TASK_REPLY	21
-#if XXX
-#	define DL_INT_TASK	22
-#endif
 
 #	define DL_PORT		m2_i1
 #	define DL_PROC		m2_i2
@@ -62,15 +58,9 @@
 #	define DL_PACK_SEND	0x01
 #	define DL_PACK_RECV	0x02
 #	define DL_READ_IP	0x04
-#if XXX
-#	define DL_DISABLED	0x10
-#endif
 
 /* Bits in `DL_MODE' field of DL requests. */
 #	define DL_NOMODE	0x0
-#if XXX
-#	define DL_WRITEINT_REQ	0x1
-#endif
 #	define DL_PROMISC_REQ	0x2
 #	define DL_MULTI_REQ	0x4
 #	define DL_BROAD_REQ	0x8

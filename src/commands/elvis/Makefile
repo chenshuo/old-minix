@@ -39,23 +39,23 @@ elvis:	$(OBJ)
 
 ctags:	ctags.c
 	$(CC) $(CFLAGS) $(SORT) $(LDFLAGS) -o ctags ctags.c
-	install -S 32kw $@
+	install -S 4kw $@
 
 ref:	ref.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o ref ref.c
-	install -S 32kw $@
+	install -S 4kw $@
 
 elvrec:	elvrec.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o elvrec elvrec.c
-	install -S 32kw $@
+	install -S 4kw $@
 
 fmt:	fmt.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o fmt fmt.c
-	install -S 32kw $@
+	install -S 4kw $@
 
 elvprsv:	elvprsv.c
 	$(CC) $(CFLAGS) $(LDFLAGS) -o elvprsv elvprsv.c ctype.o
-	install -S 32kw $@
+	install -S 4kw $@
 
 install:	/usr/bin/elvis /usr/bin/ex /usr/bin/vi \
 		/usr/bin/ctags /usr/bin/ref /usr/bin/fmt \

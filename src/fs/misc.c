@@ -23,6 +23,7 @@
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
+#include "dev.h"
 #include "param.h"
 
 
@@ -176,11 +177,11 @@ PUBLIC int do_fork()
   for (i = 0; i < OPEN_MAX; i++)
 	if (cp->fp_filp[i] != NIL_FILP) cp->fp_filp[i]->filp_count++;
 
-  /* Fill in new process id and, if necessary, process group. */
+  /* Fill in new process id. */
   cp->fp_pid = pid;
-  if (parent == INIT_PROC_NR) {
-	cp->fp_pgrp = pid;
-  }
+
+  /* A child is not a process leader. */
+  cp->fp_sesldr = 0;
 
   /* Record the fact that both root and working dir have another user. */
   dup_inode(cp->fp_rootdir);
@@ -227,6 +228,12 @@ PUBLIC int do_exit()
 /* Perform the file system portion of the exit(status) system call. */
 
   register int i, exitee, task;
+  register struct fproc *rfp;
+  register struct filp *rfilp;
+  register struct inode *rip;
+  int major;
+  dev_t dev;
+  message dev_mess;
 
   /* Only MM may do the EXIT call directly. */
   if (who != MM_PROC_NR) return(EGENERIC);
@@ -255,6 +262,31 @@ PUBLIC int do_exit()
   fp->fp_rootdir = NIL_INODE;
   fp->fp_workdir = NIL_INODE;
 
+  /* If a session leader exits then revoke access to its controlling tty from
+   * all other processes using it.
+   */
+  if (!fp->fp_sesldr) return(OK);		/* not a session leader */
+  fp->fp_sesldr = FALSE;
+  if (fp->fp_tty == 0) return(OK);		/* no controlling tty */
+  dev = fp->fp_tty;
+
+  for (rfp = &fproc[LOW_USER]; rfp < &fproc[NR_PROCS]; rfp++) {
+	if (rfp->fp_tty == dev) rfp->fp_tty = 0;
+
+	for (i = 0; i < OPEN_MAX; i++) {
+		if ((rfilp = rfp->fp_filp[i]) == NIL_FILP) continue;
+		if (rfilp->filp_mode == FILP_CLOSED) continue;
+		rip = rfilp->filp_ino;
+		if ((rip->i_mode & I_TYPE) != I_CHAR_SPECIAL) continue;
+		if ((dev_t) rip->i_zone[0] != dev) continue;
+		dev_mess.m_type = DEV_CLOSE;
+		dev_mess.DEVICE = dev;
+		major = (dev >> MAJOR) & BYTE;	/* major device nr */
+		task = dmap[major].dmap_task;	/* device task nr */
+		(*dmap[major].dmap_close)(task, &dev_mess);
+		rfilp->filp_mode = FILP_CLOSED;
+	}
+  }
   return(OK);
 }
 

@@ -28,6 +28,7 @@ _PROTOTYPE( struct passwd *getpwuid, (Uid_t _uid)			);
 _PROTOTYPE( void endpwent, (void)					);
 _PROTOTYPE( struct passwd *getpwent, (void)				);
 _PROTOTYPE( int setpwent, (void)					);
+_PROTOTYPE( void setpwfile, (const char *_file)				);
 #endif
 
 #endif /* _PWD_H */

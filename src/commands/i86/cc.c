@@ -110,7 +110,7 @@ struct passinfo passinfo[] = {
 };
 
 #define	PREP_FLAGS	"-D_EM_WSIZE=2", "-D_EM_PSIZE=2", "-D_EM_LSIZE=4" \
-			, "-D__ACK__", "-D__minix",
+			, "-D__ACK__", "-D__minix", "-D__i86",
 
 struct pass preprocessor = { "cpp",
 			    { PREP_FLAGS }

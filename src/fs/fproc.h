@@ -13,7 +13,7 @@ EXTERN struct fproc {
   uid_t fp_effuid;		/* effective user id */
   gid_t fp_realgid;		/* real group id */
   gid_t fp_effgid;		/* effective group id */
-  dev_t fs_tty;			/* major/minor of controlling tty */
+  dev_t fp_tty;			/* major/minor of controlling tty */
   int fp_fd;			/* place to save fd if rd/wr can't finish */
   char *fp_buffer;		/* place to save buffer if rd/wr can't finish*/
   int  fp_nbytes;		/* place to save bytes if rd/wr can't finish */
@@ -21,8 +21,8 @@ EXTERN struct fproc {
   char fp_suspended;		/* set to indicate process hanging */
   char fp_revived;		/* set to indicate process being revived */
   char fp_task;			/* which task is proc suspended on */
+  char fp_sesldr;		/* true if proc is a session leader */
   pid_t fp_pid;			/* process id */
-  pid_t fp_pgrp;		/* process group */
   long fp_cloexec;		/* bit map for POSIX Table 6-2 FD_CLOEXEC */
 } fproc[NR_PROCS];
 

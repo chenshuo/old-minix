@@ -58,7 +58,7 @@ $(LIBRARY)(fmod.o):	fmod.c
 	$(CC1) fmod.c
 
 $(LIBRARY)(frexp.o):	frexp.s
-	$(CC1) -Was-ncc frexp.s
+	$(CC1) frexp.s
 
 $(LIBRARY)(hugeval.o):	hugeval.c
 	$(CC1) hugeval.c
@@ -76,7 +76,7 @@ $(LIBRARY)(log10.o):	log10.c
 	$(CC1) log10.c
 
 $(LIBRARY)(modf.o):	modf.s
-	$(CC1) -Was-ncc modf.s
+	$(CC1) modf.s
 
 $(LIBRARY)(pow.o):	pow.c
 	$(CC1) pow.c

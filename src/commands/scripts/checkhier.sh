@@ -26,12 +26,11 @@ drwxr-xr-x	root	operator	/etc
 -rw-r--r--	root	operator	/etc/mtab
 -rw-r--r--	root	operator	/etc/passwd
 -rw-r--r--	root	operator	/etc/profile
--rw-r--r--	bin	operator	/etc/psdatabase
--rw-r--r--	bin	operator	/etc/rc
+-rw-r--r--	root	operator	/etc/rc
 -rw-r--r--	root	operator	/etc/services
+-rw-------	root	operator	/etc/shadow
 -rw-r--r--	root	operator	/etc/termcap
--rw-r--r--	root	operator	/etc/ttys
--rw-r--r--	root	operator	/etc/ttytype
+-rw-r--r--	root	operator	/etc/ttytab
 -rw-r--r--	root	operator	/etc/utmp
 dr-xr-xr-x	root	operator	/fd0
 dr-xr-xr-x	root	operator	/fd1
@@ -40,6 +39,7 @@ dr-xr-xr-x	root	operator	/root
 drwxrwxrwx	root	operator	/tmp
 drwxr-xr-x	root	operator	/usr
 drwxr-xr-x	root	operator	/usr/adm
+-rw-r--r--	root	operator	/usr/adm/lastlog
 -rw-r--r--	root	operator	/usr/adm/wtmp
 drwxr-xr-x	ast	other		/usr/ast
 drwxr-xr-x	bin	operator	/usr/bin

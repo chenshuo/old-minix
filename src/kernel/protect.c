@@ -112,6 +112,8 @@ PUBLIC void prot_init()
   phys_bytes data_bytes;
   struct gate_table_s *gtp;
   struct desctableptr_s *dtp;
+  unsigned ldt_selector;
+  register struct proc *rp;
 
   static struct gate_table_s {
 	_PROTOTYPE( void (*gate), (void) );
@@ -182,11 +184,17 @@ PUBLIC void prot_init()
   init_dataseg(&gdt[ES_286_INDEX], (phys_bytes) 0,
 	       (phys_bytes) MAX_286_SEG_SIZE, TASK_PRIVILEGE);
 
-  /* Build descriptors for video segments. */
-  init_dataseg(&gdt[COLOR_INDEX], (phys_bytes) COLOR_BASE,
-	       (phys_bytes) COLOR_SIZE, TASK_PRIVILEGE);
-  init_dataseg(&gdt[MONO_INDEX], (phys_bytes) MONO_BASE,
-	       (phys_bytes) MONO_SIZE, TASK_PRIVILEGE);
+  /* Build local descriptors in GDT for LDT's in process table.
+   * The LDT's are allocated at compile time in the process table, and
+   * initialized whenever a process' map is initialized or changed.
+   */
+  for (rp = BEG_PROC_ADDR, ldt_selector = FIRST_LDT_INDEX * DESC_SIZE;
+       rp < END_PROC_ADDR; ++rp, ldt_selector += DESC_SIZE) {
+	init_dataseg(&gdt[ldt_selector / DESC_SIZE], vir2phys(rp->p_ldt),
+		     (phys_bytes) sizeof rp->p_ldt, INTR_PRIVILEGE);
+	gdt[ldt_selector / DESC_SIZE].access = PRESENT | LDT;
+	rp->p_ldt_sel = ldt_selector;
+  }
 
   /* Build main TSS.
    * This is used only to record the stack pointer to be used after an
@@ -252,28 +260,6 @@ int privilege;
   sdesc(segdp, base, size);
   segdp->access = (privilege << DPL_SHIFT) | (PRESENT | SEGMENT | WRITEABLE);
 		/* EXECUTABLE = 0, EXPAND_DOWN = 0, ACCESSED = 0 */
-}
-
-/*=========================================================================*
- *				ldt_init				   *
- *=========================================================================*/
-PUBLIC void ldt_init()
-{
-/* Build local descriptors in GDT for LDT's in process table.
- * The LDT's are allocated at compile time in the process table, and
- * initialized whenever a process' map is initialized or changed.
- */
-
-  unsigned ldt_selector;
-  register struct proc *rp;
-
-  for (rp = BEG_PROC_ADDR, ldt_selector = FIRST_LDT_INDEX * DESC_SIZE;
-       rp < END_PROC_ADDR; ++rp, ldt_selector += DESC_SIZE) {
-	init_dataseg(&gdt[ldt_selector / DESC_SIZE], vir2phys(rp->p_ldt),
-		     (phys_bytes) sizeof rp->p_ldt, INTR_PRIVILEGE);
-	gdt[ldt_selector / DESC_SIZE].access = PRESENT | LDT;
-	rp->p_ldt_sel = ldt_selector;
-  }
 }
 
 /*=========================================================================*

@@ -68,9 +68,10 @@ int rw_flag;			/* READING or WRITING */
 
   /* If the file descriptor is valid, get the inode, size and mode. */
   if (nbytes < 0) return(EINVAL);
-  if ( (f = get_filp(fd)) == NIL_FILP) return(err_code);
-  if ( ((f->filp_mode) & (rw_flag == READING ? R_BIT : W_BIT)) == 0)
-	return(EBADF);
+  if ((f = get_filp(fd)) == NIL_FILP) return(err_code);
+  if (((f->filp_mode) & (rw_flag == READING ? R_BIT : W_BIT)) == 0) {
+	return(f->filp_mode == FILP_CLOSED ? EIO : EBADF);
+  }
   if (nbytes == 0) return(0);	/* so char special files need not check for 0*/
   position = f->filp_pos;
   if (position > MAX_FILE_POS) return(EINVAL);

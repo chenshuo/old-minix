@@ -63,7 +63,7 @@ begbss:
 .define	_restart
 .define	save
 
-.define	_divide_error		
+.define	_divide_error
 .define	_single_step_exception
 .define	_nmi
 .define	_breakpoint_exception
@@ -97,7 +97,7 @@ begbss:
 .define	_hwint14
 .define	_hwint15
 
-.define	_s_call			
+.define	_s_call
 .define	_p_s_call
 .define	_level0_call
 
@@ -289,15 +289,11 @@ _general_protection:
 _page_fault:
 	push	PAGE_FAULT_VECTOR
 	jmp	errexception
-  
+
 _copr_error:
 	push	COPROC_ERR_VECTOR
 	jmp	exception
 
-_level0_call:
-	call	save
-	jmp	(_level0_func)
-  
 
 !*===========================================================================*
 !*				exception				     *
@@ -329,9 +325,9 @@ exception1:				! Common for all exceptions.
  sseg	mov	(old_cs), eax
 	mov	eax, 8+4(esp)		! old eflags
  sseg	mov	(old_eflags), eax
- 	pop	eax
- 
- 	call	save
+	pop	eax
+
+	call	save
 	push	(old_eflags)
 	push	(old_cs)
 	push	(old_eip)
@@ -501,12 +497,12 @@ save:
 	mov	esp, k_stktop
 	push	_restart	! build return address for int handler
 	xor	ebp, ebp	! for stacktrace
-	jmp	ERETADR-P_STACKBASE(eax)
+	jmp	RETADR-P_STACKBASE(eax)
 
 	.align	4
 set_restart1:
 	push	restart1
-	jmp	ERETADR-P_STACKBASE(eax)
+	jmp	RETADR-P_STACKBASE(eax)
 
 
 !*===========================================================================*
@@ -539,7 +535,7 @@ _p_s_call:
 	push	ecx		! SEND/RECEIVE/BOTH
 	call	_sys_call	! sys_call(function, src_dest, m_ptr)
 				! caller is now explicitly in proc_ptr
-	mov	EAXREG(esi), eax	! sys_call MUST PRESERVE si
+	mov	AXREG(esi), eax	! sys_call MUST PRESERVE si
 	cli
 
 ! Fall into code to restart proc/task running.
@@ -557,7 +553,7 @@ _restart:
 over_call_unhold:
 	mov	esp, (_proc_ptr)	! will assume P_STACKBASE == 0
 	lldt	P_LDT_SEL(esp)		! enable task`s segment descriptors
-	lea	eax, P3_STACKTOP(esp)	! arrange for next interrupt
+	lea	eax, P_STACKTOP(esp)	! arrange for next interrupt
 	mov	(_tss+TSS3_S_SP0), eax	! to save state in process table
 restart1:
 	decb	(_k_reenter)
@@ -571,9 +567,17 @@ restart1:
 
 
 !*===========================================================================*
-!*				idle					     *
+!*				level0_call				     *
 !*===========================================================================*
-_idle_task:			! executed when there is no work 
+_level0_call:
+	call	save
+	jmp	(_level0_func)
+
+
+!*===========================================================================*
+!*				idle_task				     *
+!*===========================================================================*
+_idle_task:			! executed when there is no work
 	jmp	_idle_task	! a "hlt" before this fails in protected mode
 
 

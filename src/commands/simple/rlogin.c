@@ -137,11 +137,9 @@ int noescape;
 u_char escapechar = '~';
 
 #if !__minix_vmd
-char *speeds[] = {
-	"0", "50", "75", "110", "134", "150", "200", "300", "600", "1200",
-	"1800", "2400", "4800", "9600", "19200", "38400"
-};
-#else /* __minix_vmd */
+typedef int speed_t;
+#endif /* !__minix_vmd */
+
 struct speed
 {
 	speed_t speed;
@@ -151,10 +149,12 @@ struct speed
 	{ B134, "134" }, { B150, "150" }, { B200, "200" }, { B300, "300" }, 
 	{ B600, "600" }, { B1200, "1200" }, { B1800, "1800" }, 
 	{ B2400, "2400" }, { B4800, "4800" }, { B9600, "9600" }, 
-	{ B19200, "19200" }, { B38400, "38400" },
+	{ B19200, "19200" }, { B38400, "38400" }, { B57600, "57600" },
+	{ B115200, "115200" },
 	{ -1, NULL },
 };
 
+#if __minix_vmd
 /* flow control variables */
 int more2read_0;
 int inprogress_0;
@@ -202,9 +202,7 @@ void exit();
 extern int main _ARGS(( int argc, char **argv ));
 static void usage _ARGS(( void ));
 static u_char getescape _ARGS(( char *p ));
-#if __minix_vmd
 static char *speeds2str _ARGS(( speed_t speed ));
-#endif
 static void lostpeer _ARGS(( int sig ));
 static void doit _ARGS(( void ));
 static void setsignal _ARGS(( int sig, void (*act)(int sig) ));
@@ -375,7 +373,7 @@ int main(argc, argv)
 #if !__minix_vmd
 	if (ioctl(0, TIOCGETP, &ttyb) == 0) {
 		(void)strcat(term, "/");
-		(void)strcat(term, speeds[ttyb.sg_ospeed]);
+		(void)strcat(term, speeds2str(ttyb.sg_ospeed));
 	}
 #else /* __minix_vmd */
 	if (tcgetattr(0, &ttyb) == 0) {
@@ -531,7 +529,7 @@ doit()
 	rawattr.c_iflag &= ~(ICRNL | IGNCR | INLCR | ISTRIP | IXOFF | IXON | 
 							PARMRK | IXANY);
 	rawattr.c_oflag &= ~(OPOST);
-	rawattr.c_lflag &= ~(ECHONL | ECHO | ICANON | ISIG);
+	rawattr.c_lflag &= ~(ECHONL | ECHO | ICANON | IEXTEN | ISIG);
 #endif
 	(void)signal(SIGINT, SIG_IGN);
 	setsignal(SIGHUP, exit);
@@ -1325,20 +1323,18 @@ getescape(p)
 	/* NOTREACHED */
 }
 
-#if __minix_vmd
 static char *
 speeds2str(speed)
 	speed_t speed;
 {
 	int i;
-	for (i= 0; speeds[i].name != NULL && speeds[i].speed != speed; i++)
-		; /* nothing */
-	if (speeds[i].name == NULL)
-		return "unknown";
-	else
-		return speeds[i].name;
+	for (i= 0; speeds[i].name != NULL && speeds[i].speed != speed; i++) {
+		if (speeds[i].speed == speed) return speeds[i].name;
+	}
+	return "unknown";
 }
 
+#if __minix_vmd
 static void 
 mark_async(fd)
 	int fd;

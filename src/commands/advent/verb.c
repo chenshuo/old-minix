@@ -229,7 +229,7 @@ void vtake()
     }
     /* Special case for bird. */
     if (object == BIRD && g.prop[BIRD] <= 0) {
-	if (athand(ROD)) {
+	if (!athand(ROD)) {
 	    rspeak(26);
 	    return;
 	}

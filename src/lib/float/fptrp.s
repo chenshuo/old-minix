@@ -3,17 +3,17 @@
 .define __fptrp
 .sect .text
 __fptrp:
-#if _EM_WSIZE == 2
-	push	bp
-	mov	bp, sp
-	mov	ax, 4(bp)
-	call	.Xtrp
-	jmp	.cret
-#else
+#if __i386
 	push	ebp
 	mov	ebp, esp
 	mov	eax, 8(bp)
 	call	.Xtrp
 	leave
 	ret
+#else /* i86 */
+	push	bp
+	mov	bp, sp
+	mov	ax, 4(bp)
+	call	.Xtrp
+	jmp	.cret
 #endif

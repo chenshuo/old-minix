@@ -31,27 +31,23 @@ PUBLIC void mem_init()
  * large enough, and is treated as ordinary memory.
  */
 
-  long ext_clicks;
+  u32_t ext_clicks;
   phys_clicks max_clicks;
 
   /* Get the size of ordinary memory from the BIOS. */
-  mem[0].size = k_to_click(low_memsize);	/* 0 base and type */
+  mem[0].size = k_to_click(low_memsize);	/* base = 0 */
 
   if (pc_at && protected_mode) {
 	/* Get the size of extended memory from the BIOS.  This is special
 	 * except in protected mode, but protected mode is now normal.
-	 * If 16M is present (except on 386), reduce it to 16M so the size
-	 * in clicks fits in a short.
+	 * Note that no more than 16M can be addressed in 286 mode, so make
+	 * sure that the highest memory address fits in a short when counted
+	 * in clicks.
 	 */
-	ext_clicks = k_to_click((long) ext_memsize);	/* clicks as a long */
+	ext_clicks = k_to_click((u32_t) ext_memsize);
 	max_clicks = USHRT_MAX - (EM_BASE >> CLICK_SHIFT);
-	mem[1].size = k_to_click(ext_memsize);
+	mem[1].size = MIN(ext_clicks, max_clicks);
 	mem[1].base = EM_BASE >> CLICK_SHIFT;
-
-#if _WORD_SIZE == 2
-	/* You can't address more memory than you can count in clicks. */
-	if (ext_clicks > max_clicks) mem[1].size = max_clicks;
-#endif
 
 	if (ext_memsize <= (unsigned) ((SHADOW_BASE - EM_BASE) / 1024)
 			&& check_mem(SHADOW_BASE, SHADOW_MAX) == SHADOW_MAX) {

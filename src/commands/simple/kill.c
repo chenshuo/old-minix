@@ -14,29 +14,35 @@ int main(argc, argv)
 int argc;
 char **argv;
 {
-  int proc, signal = SIGTERM;
+  pid_t proc;
+  int ex = 0, signal = SIGTERM;
+  char *end;
+  long l;
+  unsigned long ul;
 
   if (argc < 2) usage();
   if (argc > 1 && *argv[1] == '-') {
-	signal = atoi(&argv[1][1]);
-	if (!signal) usage();
+	ul = strtoul(argv[1] + 1, &end, 10);
+	if (end == argv[1] + 1 || *end != 0 || ul > _NSIG) usage();
+	signal = ul;
 	argv++;
 	argc--;
   }
   while (--argc) {
 	argv++;
-	proc = atoi(*argv);
-	if (!proc && strcmp(*argv, "0")) usage();
-	if (kill(proc, signal)) {
-		printf("kill: %d: %s\n", proc, strerror(errno));
-		exit(1);
+	l = strtoul(*argv, &end, 10);
+	if (end == *argv || *end != 0 || (pid_t) l != l) usage();
+	proc = l;
+	if (kill(proc, signal) < 0) {
+		fprintf(stderr, "kill: %d: %s\n", proc, strerror(errno));
+		ex = 1;
 	}
   }
-  return(0);
+  return(ex);
 }
 
 void usage()
 {
-  printf("Usage: kill [-sig] pid\n");
+  fprintf(stderr, "Usage: kill [-sig] pid\n");
   exit(1);
 }

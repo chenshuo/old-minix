@@ -307,3 +307,15 @@ ts_pause()
 #endif /*SIGTSTP*/
 #endif /*UCB*/
 }
+
+ts_winsize()
+{
+#ifdef TIOCGWINSZ
+	struct winsize winsize;
+
+	if (ioctl(1, TIOCGWINSZ, &winsize) == 0) {
+		if (winsize.ws_row != 0) scr_ht = winsize.ws_row;
+		if (winsize.ws_col != 0) scr_wid = winsize.ws_col;
+	}
+#endif
+}

@@ -14,10 +14,10 @@
 #include <a.out.h>
 #include <minix/config.h>
 #include <minix/const.h>
-#include <minix/partition.h>
 #include <minix/type.h>
 #include <kernel/const.h>
 #include <kernel/type.h>
+#include <ibm/partition.h>
 #include "rawfs.h"
 #include "image.h"
 #include "boot.h"
@@ -199,10 +199,6 @@ u32_t file_vir2sec(u32_t vsec)
 u32_t flat_vir2sec(u32_t vsec)
 /* Simply add an absolute sector offset to vsec. */
 {
-	if (vsec >= image_size) {
-		errno= EIO;
-		return -1;
-	}
 	return lowsec + image_off + vsec;
 }
 

@@ -15,8 +15,6 @@
 #include <minix/com.h>
 #include "proc.h"
 
-#define CMASK4          0x9E	/* mask for Planar Control Register */
-
 
 /*===========================================================================*
  *                                   main                                    *
@@ -32,16 +30,15 @@ PUBLIC void main()
   vir_clicks text_clicks;
   vir_clicks data_clicks;
   phys_bytes phys_b;
-  int stack_size;
   reg_t ktsb;			/* kernel task stack base */
   struct memory *memp;
+  struct tasktab *ttp;
 
-  /* Finish initializing 8259 (needs machine type). */
-  init_8259(IRQ0_VECTOR, IRQ8_VECTOR);
+  /* Initialize the interrupt controller. */
+  intr_init(1);
 
-  /* Interrupts are still disabled here.
-   * They are reenabled when INIT_PSW is loaded by the first restart().
-   */
+  /* Interpret memory sizes. */
+  mem_init();
 
   /* Clear the process table.
    * Set up mappings for proc_addr() and proc_number() macros.
@@ -51,12 +48,6 @@ PUBLIC void main()
 	rp->p_nr = t;		/* proc number from ptr */
         (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
   }
-
-  /* Finish off initialization of tables for protected mode. */
-  if (protected_mode) ldt_init();
-
-  /* Interpret memory sizes. */
-  mem_init();
 
   /* Set up proc table entries for tasks and servers.  The stacks of the
    * kernel tasks are initialized to an array in data space.  The stacks
@@ -69,14 +60,16 @@ PUBLIC void main()
   /* Task stacks. */
   ktsb = (reg_t) t_stack;
 
-  for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp <= BEG_USER_ADDR; ++rp, ++t) {
+  for (t = -NR_TASKS; t <= LOW_USER; ++t) {
+	rp = proc_addr(t);			/* t's process slot */
+	ttp = &tasktab[t + NR_TASKS];		/* t's task attributes */
+	strcpy(rp->p_name, ttp->name);
 	if (t < 0) {
-		stack_size = tasktab[t + NR_TASKS].stksize;
-		if (stack_size > 0) {
+		if (ttp->stksize > 0) {
 			rp->p_stguard = (reg_t *) ktsb;
 			*rp->p_stguard = STACK_GUARD;
 		}
-		ktsb += stack_size;
+		ktsb += ttp->stksize;
 		rp->p_reg.sp = ktsb;
 		text_base = code_base >> CLICK_SHIFT;
 					/* tasks are all in the kernel */
@@ -85,7 +78,7 @@ PUBLIC void main()
 	} else {
 		sizeindex = 2 * t + 2;	/* MM, FS, INIT have their own sizes */
 	}
-	rp->p_reg.pc = (reg_t) tasktab[t + NR_TASKS].initial_pc;
+	rp->p_reg.pc = (reg_t) ttp->initial_pc;
 	rp->p_reg.psw = istaskp(rp) ? INIT_TASK_PSW : INIT_PSW;
 
 	text_clicks = sizes[sizeindex];
@@ -122,13 +115,9 @@ PUBLIC void main()
 	alloc_segments(rp);
   }
 
-  bill_ptr = proc_addr(IDLE);  /* it has to point somewhere */
+  proc[NR_TASKS+INIT_PROC_NR].p_pid = 1;/* INIT of course has pid 1 */
+  bill_ptr = proc_addr(IDLE);		/* it has to point somewhere */
   lock_pick_proc();
-
-  /* Set planar control registers on PS's.  Fix this.  CMASK4 is magic and
-   * probably ought to be set by the individual drivers.
-   */
-  if (ps) out_byte(PCR, CMASK4);
 
   /* Now go to the assembly code to start running the current process. */
   restart();

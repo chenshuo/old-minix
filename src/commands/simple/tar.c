@@ -217,6 +217,8 @@ _PROTOTYPE(void clear_header, (void));
 _PROTOTYPE(void adjust_boundary, (void));
 _PROTOTYPE(void mread, (int fd, char *address, int bytes));
 _PROTOTYPE(void mwrite, (int fd, char *address, int bytes));
+_PROTOTYPE(int bread, (int fd, char *address, int bytes));
+_PROTOTYPE(int bwrite, (int fd, char *address, int bytes));
 _PROTOTYPE(void print, (char *str));
 _PROTOTYPE(char *num_out, (long number));
 _PROTOTYPE(void string_print, (char *buffer, char *fmt,...));
@@ -404,7 +406,7 @@ void skip_entry()
 {
   register int blocks = block_size();
 
-  while (blocks--) (void) read(tar_fd, io_buffer, TBLOCK_SIZE);
+  while (blocks--) (void) bread(tar_fd, io_buffer, TBLOCK_SIZE);
 }
 
 void extract(file)
@@ -574,7 +576,7 @@ register long bytes;
 	string_print(NIL_PTR, "%s, %d tape blocks\n", file, blocks);
 
   while (blocks--) {
-	(void) read(from, io_buffer, TBLOCK_SIZE);
+	(void) bread(from, io_buffer, TBLOCK_SIZE);
 	rest = (bytes > (long) TBLOCK_SIZE) ? TBLOCK_SIZE : (int) bytes;
 	mwrite(to, io_buffer, (to == tar_fd) ? TBLOCK_SIZE : rest);
 	bytes -= (long) rest;
@@ -745,7 +747,7 @@ register char *file;
 					} else
 						break;
 				}
-				while (read(fd, &dir, sizeof(dir)) == sizeof(dir))
+				while (bread(fd, &dir, sizeof(dir)) == sizeof(dir))
 					if (dir.d_ino) {
 						strncpy(namebuf, dir.d_name,
 						   (size_t) DIRSIZ);
@@ -968,17 +970,48 @@ void mread(fd, address, bytes)
 int fd, bytes;
 char *address;
 {
-  if (read(fd, address, bytes) != bytes) error("Tar: read error.", NIL_PTR);
+  if (bread(fd, address, bytes) != bytes) error("Tar: read error.", NIL_PTR);
 }
 
 void mwrite(fd, address, bytes)
 int fd, bytes;
 char *address;
 {
-  if (write(fd, address, bytes) != bytes)
-	error("Tar: write error.", NIL_PTR);
+  if (bwrite(fd, address, bytes) != bytes) error("Tar: write error.", NIL_PTR);
 
   total_blocks++;
+}
+
+int bread(fd, address, bytes)
+int fd, bytes;
+char *address;
+{
+  int n = 0, r;
+
+  while (n < bytes) {
+	if ((r = read(fd, address + n, bytes - n)) <= 0) {
+		if (r < 0) return r;
+		break;
+	}
+	n += r;
+  }
+  return n;
+}
+
+int bwrite(fd, address, bytes)
+int fd, bytes;
+char *address;
+{
+  int n = 0, r;
+
+  while (n < bytes) {
+	if ((r = write(fd, address + n, bytes - n)) <= 0) {
+		if (r < 0) return r;
+		break;
+	}
+	n += r;
+  }
+  return n;
 }
 
 char output[TBLOCK_SIZE];

@@ -7,7 +7,6 @@ CCLD	= $(CC) -i $(CFLAGS)
 MAKE	= exec make -$(MAKEFLAGS)
 
 all:	bin \
-	bin/ar \
 	bin/cdplay \
 	bin/dosread \
 	bin/fdisk \
@@ -28,10 +27,6 @@ all:	bin \
 
 bin:
 	mkdir bin
-
-bin/ar:	ar.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/cdplay:	cdplay.c
 	$(CCLD) -o $@ -m $? -lcurses
@@ -102,7 +97,6 @@ bin/term:	term.c
 	install -S 4kw $@
 
 install:	bin \
-	/usr/bin/ar \
 	/usr/bin/cdplay \
 	/usr/bin/dosread \
 		/usr/bin/dosdir \
@@ -124,9 +118,6 @@ install:	bin \
 	/usr/bin/term \
 	/bin/loadkeys \
 	/bin/readclock \
-
-/usr/bin/ar:	bin/ar
-	install -cs -o bin $? $@
 
 /usr/bin/cdplay:	bin/cdplay
 	install -cs -o bin $? $@

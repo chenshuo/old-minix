@@ -186,7 +186,7 @@ message *m_ptr;			/* pointer to message buffer */
   vhi = (vb + MESS_SIZE - 1) >> CLICK_SHIFT;	/* vir click for top of msg */
   if (vlo < caller_ptr->p_map[D].mem_vir || vlo > vhi ||
       vhi >= caller_ptr->p_map[S].mem_vir + caller_ptr->p_map[S].mem_len)
-        return(E_BAD_ADDR); 
+        return(EFAULT); 
 #else
   /* Check for messages wrapping around top of memory or outside data seg. */
   vb = (vir_bytes) m_ptr;
@@ -194,7 +194,7 @@ message *m_ptr;			/* pointer to message buffer */
   vhi = (vb + MESS_SIZE - 1) >> CLICK_SHIFT;	/* vir click for top of msg */
   if (vhi < vlo ||
       vhi - caller_ptr->p_map[D].mem_vir >= caller_ptr->p_map[D].mem_len)
-	return(E_BAD_ADDR);
+	return(EFAULT);
 #endif
 
   /* Check for deadlock by 'caller_ptr' and 'dest' sending to each other. */

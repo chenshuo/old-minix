@@ -1,4 +1,24 @@
-/* This file header doesn't contain the usual boilerplate. */
+/* This file handles the memory manager's part of debugging, using the 
+ * ptrace system call. Most of the commands are passed on to the system
+ * task for completion.
+ *
+ * The debugging commands available are:
+ * T_STOP	stop the process 
+ * T_OK		enable tracing by parent for this process
+ * T_GETINS	return value from instruction space 
+ * T_GETDATA	return value from data space 
+ * T_GETUSER	return value from user process table
+ * T_SETINS	set value from instruction space
+ * T_SETDATA	set value from data space
+ * T_SETUSER	set value in user process table 
+ * T_RESUME	resume execution 
+ * T_EXIT	exit
+ * T_STEP	set trace bit 
+ * 
+ * The T_OK and T_EXIT commands are handled here, and the T_RESUME and
+ * T_STEP commands are partially handled here and completed by the system
+ * task. The rest are handled entirely by the system task. 
+ */
 
 #include "mm.h"
 #include <sys/ptrace.h>
@@ -11,6 +31,42 @@
 FORWARD _PROTOTYPE( struct mproc *findproc, (pid_t lpid) );
 
 /*===========================================================================*
+ *				do_trace  				     *
+ *===========================================================================*/
+PUBLIC int do_trace()
+{
+  register struct mproc *child;
+
+  if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
+	return(ESRCH);
+  }
+  switch (request) {
+  case T_OK:		/* enable tracing by parent for this process */
+	mp->mp_flags |= TRACED;
+	mm_out.m2_l2 = 0;
+	return(OK);
+  case T_EXIT:		/* exit */
+	mm_exit(child, (int)data);
+	mm_out.m2_l2 = 0;
+	return(OK);
+  case T_RESUME: 
+  case T_STEP: 		/* resume execution */
+	if (data < 0 || data > _NSIG) return(EIO);
+	if (data > 0) {		/* issue signal */
+		child->mp_flags &= ~TRACED;  /* so signal is not diverted */
+		sig_proc(child, (int) data);
+		child->mp_flags |= TRACED;
+	}
+	child->mp_flags &= ~STOPPED;
+  	break;
+  }
+  if (sys_trace(request, (int) (child - mproc), taddr, &data) != OK)
+	return(-errno);
+  mm_out.m2_l2 = data;
+  return(OK);
+}
+
+/*===========================================================================*
  *				findproc  				     *
  *===========================================================================*/
 PRIVATE struct mproc *findproc(lpid)
@@ -21,41 +77,6 @@ pid_t lpid;
   for (rmp = &mproc[INIT_PROC_NR + 1]; rmp < &mproc[NR_PROCS]; rmp++)
 	if (rmp->mp_flags & IN_USE && rmp->mp_pid == lpid) return(rmp);
   return(NIL_MPROC);
-}
-
-/*===========================================================================*
- *				do_trace  				     *
- *===========================================================================*/
-PUBLIC int do_trace()
-{
-  register struct mproc *child;
-
-  if (request == T_OK) {	/* enable tracing by parent for this process */
-	mp->mp_flags |= TRACED;
-	mm_out.m2_l2 = 0;
-	return(OK);
-  }
-  if ((child = findproc(pid)) == NIL_MPROC || !(child->mp_flags & STOPPED)) {
-	return(ESRCH);
-  }
-  if (request == T_EXIT) {	/* exit */
-	mm_exit(child, (int)data);
-	mm_out.m2_l2 = 0;
-	return(OK);
-  }
-  if (request == T_RESUME || request == T_STEP) {	/* resume execution */
-	if (data < 0 || data > _NSIG) return(EIO);
-	if (data > 0) {		/* issue signal */
-		child->mp_flags &= ~TRACED;  /* so signal is not diverted */
-		sig_proc(child, (int) data);
-		child->mp_flags |= TRACED;
-	}
-	child->mp_flags &= ~STOPPED;
-  }
-  if (sys_trace(request, (int) (child - mproc), taddr, &data) != OK)
-	return(-errno);
-  mm_out.m2_l2 = data;
-  return(OK);
 }
 
 /*===========================================================================*

@@ -7,7 +7,6 @@
 
 /* Miscellaneous BSD. */
 _PROTOTYPE(void swab, (char *_from, char *_to, int _count));
-_PROTOTYPE(char *crypt, (char *_pw, char *_salt));
 _PROTOTYPE(char *itoa, (int _n));
 _PROTOTYPE(char *getpass, (const char *_prompt));
 

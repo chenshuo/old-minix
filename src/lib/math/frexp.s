@@ -3,7 +3,22 @@
 .extern _frexp
 .sect .text
 _frexp:
-#if _EM_WSIZE == 2
+#if __i386
+	push	ebp
+	mov	ebp, esp
+	push	12(ebp)
+	push	8(ebp)
+	mov	eax, esp
+	add	eax, -4
+	push	eax
+	call	.fef8
+	mov	eax, 16(ebp)
+	pop	(eax)
+	pop	eax
+	pop	edx
+	leave
+	ret
+#else /* i86 */
 	push	bp
 	mov	bp, sp
 	lea	bx, 4(bp)
@@ -17,21 +32,4 @@ _frexp:
 	pop	(bx)
 	call	.ret8
 	jmp	.cret
-#elif _EM_WSIZE == 4
-	push	ebp
-	mov	ebp, esp
-	push	12(ebp)
-	push	8(ebp)
-	mov	eax, esp
-	add	eax, #-4
-	push	eax
-	call	.fef8
-	mov	eax, 16(ebp)
-	pop	(eax)
-	pop	eax
-	pop	edx
-	leave
-	ret
-#else
-#error No _EM_WSIZE?
 #endif

@@ -317,17 +317,13 @@ char *argv[];
 block_t sizeup(device)
 char *device;
 {
-#if (MACHINE == IBM_PC)
   int fd;
-  struct part_entry entry;
+  struct partition entry;
 
   if ((fd = open(device, O_RDONLY)) == -1) return 0;
   if (ioctl(fd, DIOCGETP, &entry) == -1) entry.size = 0;
   close(fd);
-  return entry.size / (BLOCK_SIZE / 512);
-#else
-  return 0;
-#endif
+  return entry.size / BLOCK_SIZE;
 }
 
 

@@ -12,7 +12,6 @@
 #include <minix/config.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <ar.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <grp.h>
@@ -682,17 +681,9 @@ void Draw_Info( s )
 	unsigned magic  = ((s->buffer[1] & 0xff) << 8) | (s->buffer[0] & 0xff);
 	unsigned second = ((s->buffer[3] & 0xff) << 8) | (s->buffer[2] & 0xff);
 
-        /*  Is this block the start of an "ar" archive?  */
-
-	if ( magic == (unsigned) ARMAG )
-	  {
-          Goto( INFO_COLUMN, INFO_LINE );
-	  printf( "\"ar\" archive" );
-	  }
-
 	/*  Is this block the start of an executable file?  */
 
-	else if ( magic == (unsigned) A_OUT )
+	if ( magic == (unsigned) A_OUT )
 	  {
           Goto( INFO_COLUMN, INFO_LINE );
 	  printf( "executable" );

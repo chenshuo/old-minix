@@ -410,6 +410,7 @@
 #include <limits.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 
 extern int errno;
 int ymax = YMAX;
@@ -1436,6 +1437,7 @@ char *argv[];
 /* mined is the Minix editor. */
 
   register int index;		/* Index in key table */
+  struct winsize winsize;
 
 #ifdef UNIX
   get_term();
@@ -1444,6 +1446,10 @@ char *argv[];
 #else
   string_print(enter_string);			/* Hello world */
 #endif /* UNIX */
+  if (ioctl(STD_OUT, TIOCGWINSZ, &winsize) == 0 && winsize.ws_row != 0) {
+	ymax = winsize.ws_row - 1;
+	screenmax = ymax - 1;
+  }
 
   if (!isatty(0)) {		/* Reading from pipe */
 	if (argc != 1) {

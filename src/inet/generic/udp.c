@@ -2,7 +2,7 @@
 udp.c
 */
 
-#include "nw_task.h"
+#include "inet.h"
 
 #include "assert.h"
 #include "buf.h"

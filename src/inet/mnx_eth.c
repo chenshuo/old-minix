@@ -4,7 +4,7 @@ inet/mnx_eth.c
 Created:	Jan 2, 1992 by Philip Homburg
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "proto.h"
 #include "generic/assert.h"
 #include "generic/buf.h"

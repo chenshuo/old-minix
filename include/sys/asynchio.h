@@ -1,7 +1,7 @@
 /*	asynchio.h - Asynchronous I/O			Author: Kees J. Bot
  *								26 Jan 1995
  * This is just a fake async I/O library to be used for programs
- * written for Minix-386vm that must also run under standard Minix.
+ * written for Minix-vmd that must also run under standard Minix.
  * This limits the number of ugly #ifdefs somewhat.  The programs must
  * be restricted to performing just one service, of course.
  */

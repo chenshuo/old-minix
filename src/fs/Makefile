@@ -84,6 +84,7 @@ lock.o:	param.h
 main.o:	$a
 main.o:	$i/fcntl.h
 main.o:	$i/string.h
+main.o:	$s/ioctl.h
 main.o:	$h/callnr.h
 main.o:	$h/com.h
 main.o:	$h/boot.h
@@ -105,6 +106,7 @@ misc.o:	buf.h
 misc.o:	file.h
 misc.o:	fproc.h
 misc.o:	inode.h
+misc.o:	dev.h
 misc.o:	param.h
 
 mount.o:	$a

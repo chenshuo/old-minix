@@ -37,6 +37,7 @@ ttn.c
 #endif
 
 PROTOTYPE (int main, (int argc, char *argv[]) );
+static int do_read(int fd, char *buf, unsigned len);
 static void screen(void);
 static void keyboard (void);
 static int process_opt (char *bp, int count);
@@ -78,7 +79,7 @@ char *argv[];
 	prog_name= argv[0];
 	if (argc <2 || argc>3)
 	{
-		fprintf(stderr, "USAGE: %s host <port>\r\n", argv[0]);
+		fprintf(stderr, "Usage: %s host <port>\r\n", argv[0]);
 		exit(1);
 	}
 	hostent= gethostbyname(argv[1]);
@@ -188,17 +189,51 @@ fprintf(stderr, "killing %d with %d\r\n", pid, SIGKILL);
 		termios.c_lflag |= ECHO|ICANON|ISIG;
 		tcsetattr(1, TCSANOW, &termios);
 #else
-		gtty (1, &sgttyb);
+		ioctl(1, TIOCGETP, &sgttyb);
 		sgttyb.sg_flags |= ECHO|CRMOD;
 		sgttyb.sg_flags &= ~RAW;
-		stty (1, &sgttyb);
-		gtty (0, &sgttyb);
+		ioctl(1, TIOCSETP, &sgttyb);
+		ioctl(0, TIOCGETP, &sgttyb);
 		sgttyb.sg_flags |= ECHO|CRMOD;
 		sgttyb.sg_flags &= ~RAW;
-		stty (0, &sgttyb);
+		ioctl(0, TIOCSETP, &sgttyb);
 #endif
 		break;
 	}
+}
+
+static int do_read(fd, buf, len)
+int fd;
+char *buf;
+unsigned len;
+{
+#if __minix_vmd
+	nwio_tcpopt_t tcpopt;
+	int count;
+
+	for (;;)
+	{
+		count= read (fd, buf, len);
+		if (count <0)
+		{
+			if (errno == EURG || errno == ENOURG)
+			{
+				/* Toggle urgent mode. */
+				tcpopt.nwto_flags= errno == EURG ?
+					NWTO_RCV_URG : NWTO_RCV_NOTURG;
+				if (ioctl(tcp_fd, NWIOSTCPOPT, &tcpopt) == -1)
+				{
+					return -1;
+				}
+				continue;
+			}
+			return -1;
+		}
+		return count;
+	}
+#else
+	return read(fd, buf, len);
+#endif
 }
 
 static void screen()
@@ -208,7 +243,7 @@ static void screen()
 
 	for (;;)
 	{
-		count= read (tcp_fd, buffer, sizeof(buffer));
+		count= do_read (tcp_fd, buffer, sizeof(buffer));
 #if DEBUG && 0
  { where(); fprintf(stderr, "read %d bytes\r\n", count); }
 #endif
@@ -301,7 +336,7 @@ static void keyboard()
 
 #define next_char(var) \
 	if (offset<count) { (var) = bp[offset++]; } \
-	else if (read(tcp_fd, (char *)&(var), 1) <= 0) \
+	else if (do_read(tcp_fd, (char *)&(var), 1) <= 0) \
 	{ perror ("read"); return -1; }
 
 static int process_opt (char *bp, int count)
@@ -469,10 +504,10 @@ static void will_option (int optsrt)
 			tcsetattr(1, TCSANOW, &termios);
 #else
 			struct sgttyb sgttyb;
-			gtty (1, &sgttyb);
+			ioctl(1, TIOCGETP, &sgttyb);
 			sgttyb.sg_flags &= ~(ECHO|CRMOD);
 			sgttyb.sg_flags |= RAW;
-			stty (1, &sgttyb);
+			ioctl(1, TIOCSETP, &sgttyb);
 #endif
 			DO_echo= TRUE;
 			reply[0]= IAC;

@@ -802,14 +802,14 @@ dpeth_t *dep;
 				if (tsr & TSR_COL) dep->de_stat.ets_collision++;
 				if (tsr & TSR_ABT) dep->de_stat.ets_transAb++;
 				if (tsr & TSR_CRS) dep->de_stat.ets_carrSense++;
-				if (tsr & TSR_FU)
+				if (tsr & TSR_FU
+					&& ++dep->de_stat.ets_fifoUnder <= 10)
 				{
-					dep->de_stat.ets_fifoUnder++;
 					printf("dp8390: fifo underrun\n");
 				}
-				if (tsr & TSR_CDH)
+				if (tsr & TSR_CDH
+					&& ++dep->de_stat.ets_CDheartbeat <= 10)
 				{
-					dep->de_stat.ets_CDheartbeat++;
 					printf(
 					"dp8390: CD heart beat failure\n");
 				}
@@ -1631,7 +1631,7 @@ dp_conf_t *dcp;
 	dep->de_irq= v;
 
 	v= dcp->dpc_mem;
-	(void) env_parse(dcp->dpc_envvar, dpc_fmt, 2, &v, 0xC0000L, 0xFFFFFL);
+	(void) env_parse(dcp->dpc_envvar, dpc_fmt, 2, &v, 0L, LONG_MAX);
 	dep->de_linmem= v;
 }
 

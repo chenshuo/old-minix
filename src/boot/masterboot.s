@@ -1,4 +1,4 @@
-!	masterboot 1.8 - Master boot block code		Author: Kees J. Bot
+!	masterboot 1.9 - Master boot block code		Author: Kees J. Bot
 !
 ! This code may be placed in the first sector (the boot sector) of a floppy,
 ! hard disk or hard disk primary partition.  There it will perform the
@@ -29,7 +29,7 @@
 	PENTRYSIZE =	    16	! Size of one partition table entry
 	MAGIC	   =	   510	! Location of the AA55 magic number
 
-	! minix/partition.h:
+	! <ibm/partition.h>:
 	bootind	   =	     0
 	sysind	   =	     4
 	lowsec	   =	     8

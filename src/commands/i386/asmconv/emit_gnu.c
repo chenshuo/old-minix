@@ -55,7 +55,7 @@ static mnemonic_t mnemtab[] = {
 	{ DOT_ASCIZ,	".asciz"	},
 	{ DOT_ASSERT,	".assert"	},
 	{ DOT_BASE,	".base"		},
-	{ DOT_BSS,	"/*.bss*/"	},
+	{ DOT_BSS,	".bss"		},
 	{ DOT_COMM,	".comm"		},
 	{ DOT_DATA,	".data"		},
 	{ DOT_DATA1,	".byte"		},
@@ -293,15 +293,11 @@ static mnemonic_t mnemtab[] = {
 	{ XOR,		"xor%"		},
 };
 
-/* Support for these is rudimentary, time to kludge. */
-#define farjmp(o)	((o) == JMPF || (o) == CALLF)
-
 static FILE *ef;
 static long eline= 1;
 static char *efile;
 static char *orig_efile;
 static char *opcode2name_tab[N_OPCODES];
-static opcode_t segment= DOT_TEXT;
 
 static void gnu_putchar(int c)
 /* LOOK, this programmer checks the return code of putc!  What an idiot, noone
@@ -333,7 +329,7 @@ void gnu_emit_init(char *file, const char *banner)
 	}
 	orig_efile= file;
 	efile= file;
-	gnu_printf("/* %s */", banner);
+	gnu_printf("/ %s", banner);
 
 	/* Initialize the opcode to mnemonic translation table. */
 	for (mp= mnemtab; mp < arraylimit(mnemtab); mp++) {
@@ -372,13 +368,6 @@ static void gnu_put_expression(asm86_t *a, expression_t *e, int deref)
 
 	switch (e->operator) {
 	case ',':
-		if (farjmp(a->opcode)) {
-			/* Two argument far jumps are not supported, so ...  */
-			gnu_printf("; .long ");
-			gnu_put_expression(a, e->right, 0);
-			gnu_printf("; .short ");
-			gnu_put_expression(a, e->left, 0);
-		} else
 		if (is_pseudo(a->opcode)) {
 			/* Pseudo's are normal. */
 			gnu_put_expression(a, e->left, deref);
@@ -502,11 +491,7 @@ void gnu_emit_instruction(asm86_t *a)
 	if ((a->file != efile && strcmp(a->file, efile) != 0)
 				|| a->line < eline || a->line > eline+10) {
 		gnu_putchar('\n');
-#if GAS_LEARNS_TO_COUNT
 		gnu_printf("# %ld \"%s\"\n", a->line, a->file);
-#else
-		gnu_printf("# %ld \"%s\"\n", a->line - 1, a->file);
-#endif
 		efile= a->file;
 		eline= a->line;
 	} else {
@@ -522,19 +507,7 @@ void gnu_emit_instruction(asm86_t *a)
 
 	if (a->opcode == DOT_LABEL) {
 		assert(a->args->operator == ':');
-		if (segment == DOT_BSS) {
-			/* Foul trick to make a label in bss. */
-			gnu_printf(".lcomm %s, 0", a->args->name);
-		} else {
-			gnu_printf("%s:", a->args->name);
-		}
-	} else
-	if (a->opcode == DOT_SPACE && segment == DOT_BSS) {
-		/* Have to make a hole in bss space. */
-		static int hole= 0;
-
-		gnu_printf(".lcomm\thole%d, ", hole++);
-		gnu_put_expression(a, a->args, 0);
+		gnu_printf("%s:", a->args->name);
 	} else
 	if (a->opcode == DOT_EQU) {
 		assert(a->args->operator == '=');
@@ -564,33 +537,13 @@ void gnu_emit_instruction(asm86_t *a)
 		switch (a->seg) {
 		/* Kludge to avoid knowing where to put the "%es:" */
 		case DEFSEG:	break;
-		case CSEG:	gnu_printf(".byte 0x2e/*cseg*/; ");	break;
-		case DSEG:	gnu_printf(".byte 0x3e/*dseg*/; ");	break;
-		case ESEG:	gnu_printf(".byte 0x26/*eseg*/; ");	break;
-		case FSEG:	gnu_printf(".byte 0x64/*fseg*/; ");	break;
-		case GSEG:	gnu_printf(".byte 0x65/*gseg*/; ");	break;
-		case SSEG:	gnu_printf(".byte 0x36/*sseg*/; ");	break;
+		case CSEG:	gnu_printf(".byte 0x2e; ");	break;
+		case DSEG:	gnu_printf(".byte 0x3e; ");	break;
+		case ESEG:	gnu_printf(".byte 0x26; ");	break;
+		case FSEG:	gnu_printf(".byte 0x64; ");	break;
+		case GSEG:	gnu_printf(".byte 0x65; ");	break;
+		case SSEG:	gnu_printf(".byte 0x36; ");	break;
 		default:	assert(0);
-		}
-
-		switch (a->opcode) {
-		case DOT_TEXT:
-		case DOT_ROM:
-		case DOT_DATA:
-		case DOT_BSS:
-			/* Remember the segment we're in.  BSS does not have
-			 * full citizens rights.
-			 */
-			segment= a->opcode;
-			break;
-		default: ;
-		}
-
-		if (farjmp(a->opcode) && a->args != nil
-					&& a->args->operator == ',') {
-			/* Two argument far jumps are not supported. */
-			if (a->opcode == JMPF) p= ".byte 0xEA /*ljmp*/";
-			if (a->opcode == CALLF) p= ".byte 0x9A /*lcall*/";
 		}
 
 		/* Exceptions, exceptions... */
@@ -603,9 +556,9 @@ void gnu_emit_instruction(asm86_t *a)
 			a->oaz&= ~OPZ;
 		}
 
-		if (a->opcode == RET && a->args != nil) {
-			/* RET with argument not supported. */
-			p=".byte\t0xC2; .short";
+		if (a->opcode == RET || a->opcode == RETF) {
+			/* Argument of RET needs a '$'. */
+			a->optype= WORD;
 		}
 
 		if (a->opcode == MUL && a->args != nil
@@ -618,6 +571,64 @@ void gnu_emit_instruction(asm86_t *a)
 		if (a->oaz & ADZ) gnu_printf(".byte 0x67; ");
 		if (a->oaz & OPZ && strchr(p, '%') == nil)
 			gnu_printf(".byte 0x66; ");
+
+		/* Unsupported instructions that Minix code needs. */
+		if (a->opcode == JMPF && a->args != nil
+					&& a->args->operator == ',') {
+			/* JMPF seg:off. */
+			gnu_printf(".byte 0xEA; .long ");
+			gnu_put_expression(a, a->args->right, 0);
+			gnu_printf("; .short ");
+			gnu_put_expression(a, a->args->left, 0);
+			return;
+		}
+		if (a->opcode == JMPF && a->args != nil
+			&& a->args->operator == 'O'
+			&& a->args->left != nil
+			&& a->args->right == nil
+			&& a->args->middle != nil
+			&& a->args->middle->operator == 'B'
+			&& strcmp(a->args->middle->name, "esp") == 0
+		) {
+			/* JMPF offset(ESP). */
+			gnu_printf(".byte 0xFF,0x6C,0x24,");
+			gnu_put_expression(a, a->args->left, 0);
+			return;
+		}
+		if (a->opcode == MOV && a->args != nil
+			&& a->args->operator == ','
+			&& a->args->left != nil
+			&& a->args->left->operator == 'W'
+			&& (strcmp(a->args->left->name, "ds") == 0
+				|| strcmp(a->args->left->name, "es") == 0)
+			&& a->args->right->operator == 'O'
+			&& a->args->right->left != nil
+			&& a->args->right->right == nil
+			&& a->args->right->middle != nil
+			&& a->args->right->middle->operator == 'B'
+			&& strcmp(a->args->right->middle->name, "esp") == 0
+		) {
+			/* MOV DS, offset(ESP); MOV ES, offset(ESP) */
+			gnu_printf(".byte 0x8E,0x%02X,0x24,",
+				a->args->left->name[0] == 'd' ? 0x5C : 0x44);
+			gnu_put_expression(a, a->args->right->left, 0);
+			return;
+		}
+		if (a->opcode == MOV && a->args != nil
+			&& a->args->operator == ','
+			&& a->args->left != nil
+			&& a->args->left->operator == 'W'
+			&& (strcmp(a->args->left->name, "ds") == 0
+				|| strcmp(a->args->left->name, "es") == 0)
+			&& a->args->right->operator == '('
+			&& a->args->right->middle != nil
+		) {
+			/* MOV DS, (memory); MOV ES, (memory) */
+			gnu_printf(".byte 0x8E,0x%02X; .long ",
+				a->args->left->name[0] == 'd' ? 0x1D : 0x05);
+			gnu_put_expression(a, a->args->right->middle, 0);
+			return;
+		}
 
 		while (*p != 0) {
 			if (*p == '%') {

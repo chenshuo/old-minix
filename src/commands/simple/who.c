@@ -1,101 +1,71 @@
-/* who - see who is logged in			Author: Terrence W. Holm */
-
-/*
- *		The user log-in name, terminal port and log-in time
- *		are displayed for all current users, or restricted
- *		to the specified <USER>, <DEVICE> or the current user.
- *
- * Usage:	who
- *		who <USER>
- *		who <DEVICE>
- *		who am i
- *
- * Version:	1.6	01/08/91
- *
- * Author:	Terrence W. Holm	June 1988
- *		revised for UTMP use	Feb 1989
- *
- *		Fred van Kempen, October 1989
- *		Fred van Kempen, December 1989
- *		Fred van Kempen, January 1990
- *		Sean A Goggin, 	January 1991 	Fixed "ACTIVE" time when TZ set
+/*	who 1.5 - tell who is currently logged in	Author: Kees J. Bot
+ *								9 Jul 1989
  */
-
+#define nil 0
 #include <sys/types.h>
-#include <fcntl.h>
-#include <time.h>
-#include <utmp.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <utmp.h>
+#include <time.h>
+#include <string.h>
 
-static char *Version = "@(#) WHO 1.5 (01/09/90)";
+char PATH_UTMP[] = "/etc/utmp";
 
-_PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(void usage, (void));
+char day[] = "SunMonTueWedThuFriSat";
+char month[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
-void usage()
+int main(int argc, char **argv)
 {
-  fprintf(stderr, "Usage: who [USER | DEVICE | am i]\n");
-  exit(-1);
-}
+	char *tmp= PATH_UTMP;
+	FILE *f;
+	struct utmp ut;
+	struct tm *tm;
+	int slot, wtmp= 0, once= 0;
 
-
-int main(argc, argv)
-int argc;
-char *argv[];
-{
-  struct utmp entry;
-  struct tm *tm;
-  char *fmt = "%02.2d:%02.2d:%02.2d";
-  char logstr[16], actstr[16];
-  char *arg;
-  long login, active;
-  int fd, size, found;
-
-  switch (argc) {
-	case 1:	
-		arg = NULL;	break;
-	case 2:	
-		arg = argv[1];	break;
-	case 3:
-		if (!strcmp(argv[1], "am") && (!strcmp(argv[2], "i") ||
-				       !strcmp(argv[2], "I")))
-			arg = ttyname(0) + 5;
-		else
-			usage();
-		break;
-	default:
-		usage();
-  }
-
-  size = sizeof(struct utmp);
-  found = 0;
-  if ((fd = open(UTMP, O_RDONLY)) < 0) {
-	fprintf(stderr, "%s: user-accouting is not active.\n", argv[0]);
-	exit(0);
-  }
-  while (read(fd, (char *)&entry, size) == size) {
-	if (entry.ut_type == USER_PROCESS) {
-		if (found == 0) {
-			found++;
-			printf("USER     LINE       TIME     ACTIVE   PID\n");
-		}
-		login = entry.ut_time;
-		tm = localtime(&login);
-		sprintf(logstr, fmt, tm->tm_hour, tm->tm_min, tm->tm_sec);
-		time(&active);
-		active -= login;
-		tm = gmtime(&active);
-		sprintf(actstr, fmt, tm->tm_hour, tm->tm_min, tm->tm_sec);
-		printf("%-8.8s %-8.8s %-8.8s  %-8.8s  %d\n",
-		       entry.ut_name, entry.ut_line, logstr,
-		       actstr, entry.ut_pid);
+	if (argc > 3) {
+		fprintf(stderr, "Usage: who <account-file>  |  who am i\n");
+		exit(1);
 	}
-  }
-  close(fd);
-  if (found == 0) printf("No active users.\n");
+	if (argc == 2) {
+		tmp= argv[1];
+		wtmp= 1;
+	}
 
-  return(0);
+	if ((f= fopen(tmp, "r")) == nil) {
+		fprintf(stderr, "who: can't open %s\n", tmp);
+		exit(1);
+	}
+	if (argc == 3) {
+		if ((slot= ttyslot()) < 0) {
+			fprintf(stderr, "who: no access to terminal.\n");
+			exit(1);
+		}
+		fseek(f, (off_t) sizeof(ut) * slot, 0);
+		once= 1;
+	}
+
+	while (fread((char *) &ut, sizeof(ut), 1, f) == 1) {
+		if (!wtmp && ut.ut_name[0] == 0) continue;
+
+		tm= localtime(&ut.ut_time);
+
+		printf("%-9.8s %-9.8s %.3s %.3s %2d %02d:%02d",
+			ut.ut_name,
+			ut.ut_line,
+			day + (3 * tm->tm_wday),
+			month + (3 * tm->tm_mon),
+			tm->tm_mday,
+			tm->tm_hour,
+			tm->tm_min
+		);
+
+		if (ut.ut_host[0] != 0) printf("  (%.*s)",
+				(int) sizeof(ut.ut_host), ut.ut_host);
+
+		printf("\n");
+		if (once) break;
+	}
+	exit(0);
 }

@@ -300,7 +300,7 @@ PUBLIC int do_unpause()
 		/* Tell kernel R or W. Mode is from current call, not open. */
 		mess.COUNT = (rfp->fp_fd & BYTE) == READ ? R_BIT : W_BIT;
 		mess.m_type = CANCEL;
-		fp = rfp;	/* hack - rw_dev2 uses fp */
+		fp = rfp;	/* hack - call_ctty uses fp */
 		(*dmap[(dev >> MAJOR) & BYTE].dmap_rw)(task, &mess);
   }
 

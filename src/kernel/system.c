@@ -7,26 +7,30 @@
  *
  *   SYS_FORK	 informs kernel that a process has forked
  *   SYS_NEWMAP	 allows MM to set up a process memory map
+ *   SYS_GETMAP	 allows MM to get a process' memory map
  *   SYS_EXEC	 sets program counter and stack pointer after EXEC
  *   SYS_XIT	 informs kernel that a process has exited
  *   SYS_GETSP	 caller wants to read out some process' stack pointer
  *   SYS_TIMES	 caller wants to get accounting times for a process
  *   SYS_ABORT	 MM or FS cannot go on; abort MINIX
  *   SYS_FRESH	 start with a fresh process image during EXEC (68000 only)
- *   SYS_OLDSIG	 send a signal to a process
+#if ENABLE_COMPAT
+ *   SYS_OLDSIG	 send a signal to a process (old style)
+#endif
+ *   SYS_SENDSIG send a signal to a process (POSIX style)
+ *   SYS_SIGRETURN complete POSIX-style signalling
  *   SYS_KILL	 cause a signal to be sent via MM
+ *   SYS_ENDSIG	 finish up after SYS_KILL-type signal
  *   SYS_COPY	 request a block of data to be copied between processes
  *   SYS_VCOPY   request a series of data blocks to be copied between procs
  *   SYS_GBOOT	 copies the boot parameters to a process
+ *   SYS_MEM	 returns the next free chunk of physical memory
  *   SYS_UMAP	 compute the physical address for a given virtual address
- *   SYS_MEM	 returns the next free chunk of physical memory 
  *   SYS_TRACE	 request a trace operation
- *   SYS_GETMAP	 allows MM to get a process' memory map
  *
- * Message type m1 is used for all except SYS_OLDSIG and SYS_COPY, both of
- * which need special parameter types.
+ * Message types and parameters:
  *
- *    m_type       PROC1     PROC2      PID     MEM_PTR   
+ *    m_type       PROC1     PROC2      PID     MEM_PTR
  * ------------------------------------------------------
  * | SYS_FORK   | parent  |  child  |   pid   |         |
  * |------------+---------+---------+---------+---------|
@@ -60,15 +64,13 @@
  * | SYS_ENDSIG    | proc nr |         |         |             |
  * -------------------------------------------------------------
  *
- *    m_type       m2_i1     m2_i2     m2_l1     m2_l2     
+ *    m_type       m2_i1     m2_i2     m2_l1     m2_l2
  * ------------------------------------------------------
  * | SYS_TRACE  | proc_nr | request |  addr   |  data   |
  * ------------------------------------------------------
  *
  *
- *    m_type       m6_i1     m6_i2     m6_i3     m6_f1     
- * ------------------------------------------------------
- * | SYS_OLDSIG | proc_nr  |  sig    |         | handler |
+ *    m_type       m6_i1     m6_i2     m6_i3     m6_f1
  * ------------------------------------------------------
  * | SYS_KILL   | proc_nr  |  sig    |         |         |
  * ------------------------------------------------------
@@ -94,12 +96,14 @@
  *   numap:	umap D segment starting from process number instead of pointer
  *   umap:	compute the physical address for a given virtual address
  *   alloc_segments: allocate segments for 8088 or higher processor
+ *   build_sig: put old-style signal info on stack (68000, Intel ver. in klib)
  */
 
 #include "kernel.h"
 #include <signal.h>
 #include <unistd.h>
 #include <sys/sigcontext.h>
+#include <sys/ptrace.h>
 #include <minix/boot.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
@@ -125,7 +129,9 @@ FORWARD _PROTOTYPE( int do_kill, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_mem, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_newmap, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_sendsig, (message *m_ptr) );
+#if ENABLE_COMPAT
 FORWARD _PROTOTYPE( int do_oldsig, (message *m_ptr) );
+#endif
 FORWARD _PROTOTYPE( int do_sigreturn, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_endsig, (message *m_ptr) );
 FORWARD _PROTOTYPE( int do_times, (message *m_ptr) );
@@ -158,6 +164,7 @@ PUBLIC void sys_task()
 	switch (m.m_type) {	/* which system call */
 	    case SYS_FORK:	r = do_fork(&m);	break;
 	    case SYS_NEWMAP:	r = do_newmap(&m);	break;
+	    case SYS_GETMAP:	r = do_getmap(&m);	break;
 	    case SYS_EXEC:	r = do_exec(&m);	break;
 	    case SYS_XIT:	r = do_xit(&m);		break;
 	    case SYS_GETSP:	r = do_getsp(&m);	break;
@@ -166,18 +173,19 @@ PUBLIC void sys_task()
 #if (SHADOWING == 1)
 	    case SYS_FRESH:	r = do_fresh(&m);	break;
 #endif
-	    case SYS_SENDSIG:	r = do_sendsig(&m);	break;
-	    case SYS_ENDSIG:	r = do_endsig(&m);	break;
-	    case SYS_SIGRETURN: r = do_sigreturn(&m);	break;
+#if ENABLE_COMPAT
 	    case SYS_OLDSIG:	r = do_oldsig(&m);	break;
+#endif
+	    case SYS_SENDSIG:	r = do_sendsig(&m);	break;
+	    case SYS_SIGRETURN: r = do_sigreturn(&m);	break;
 	    case SYS_KILL:	r = do_kill(&m);	break;
+	    case SYS_ENDSIG:	r = do_endsig(&m);	break;
 	    case SYS_COPY:	r = do_copy(&m);	break;
             case SYS_VCOPY:	r = do_vcopy(&m);	break;
 	    case SYS_GBOOT:	r = do_gboot(&m);	break;
-	    case SYS_UMAP:	r = do_umap(&m);	break;
 	    case SYS_MEM:	r = do_mem(&m);		break;
+	    case SYS_UMAP:	r = do_umap(&m);	break;
 	    case SYS_TRACE:	r = do_trace(&m);	break;
-	    case SYS_GETMAP:	r = do_getmap(&m);	break;
 	    default:		r = E_BAD_FCN;
 	}
 
@@ -188,7 +196,7 @@ PUBLIC void sys_task()
 
 
 /*===========================================================================*
- *				do_fork					     * 
+ *				do_fork					     *
  *===========================================================================*/
 PRIVATE int do_fork(m_ptr)
 register message *m_ptr;	/* pointer to request message */
@@ -197,7 +205,7 @@ register message *m_ptr;	/* pointer to request message */
 
 #if (CHIP == INTEL)
   reg_t old_ldt_sel;
-#endif 
+#endif
   register struct proc *rpc;
   struct proc *rpp;
 
@@ -209,13 +217,13 @@ register message *m_ptr;	/* pointer to request message */
   /* Copy parent 'proc' struct to child. */
 #if (CHIP == INTEL)
   old_ldt_sel = rpc->p_ldt_sel;	/* stop this being obliterated by copy */
-  memcpy((char *)rpc, (char *)rpp, sizeof(struct proc));
+#endif
+
+  *rpc = *rpp;			/* copy 'proc' struct */
+
+#if (CHIP == INTEL)
   rpc->p_ldt_sel = old_ldt_sel;
-#else
-  /* HACK because structure copy is or was slow. */
-  phys_copy( (phys_bytes)rpp, (phys_bytes)proc_addr(m_ptr->PROC2),
-	     (phys_bytes)sizeof(struct proc));
-#endif 
+#endif
   rpc->p_nr = m_ptr->PROC2;	/* this was obliterated by copy */
 
 #if (SHADOWING == 0)
@@ -240,13 +248,12 @@ register message *m_ptr;	/* pointer to request message */
   mkshadow(rpp, (phys_clicks)m_ptr->m1_p1);	/* run child first */
 #endif
 
-  fork_name(m_ptr->PROC1, m_ptr->PROC2);
   return(OK);
 }
 
 
 /*===========================================================================*
- *				do_newmap				     * 
+ *				do_newmap				     *
  *===========================================================================*/
 PRIVATE int do_newmap(m_ptr)
 message *m_ptr;			/* pointer to request message */
@@ -275,7 +282,7 @@ message *m_ptr;			/* pointer to request message */
 #if (SHADOWING == 0)
 #if (CHIP != M68000)
   alloc_segments(rp);
-#else 
+#else
   pmmu_init_proc(rp);
 #endif
   old_flags = rp->p_flags;	/* save the previous value of the flags */
@@ -288,7 +295,40 @@ message *m_ptr;			/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_exec					     * 
+ *				do_getmap				     *
+ *===========================================================================*/
+PRIVATE int do_getmap(m_ptr)
+message *m_ptr;			/* pointer to request message */
+{
+/* Handle sys_getmap().  Report the memory map to MM. */
+
+  register struct proc *rp;
+  phys_bytes dst_phys;
+  int caller;			/* where the map has to be stored */
+  int k;			/* process whose map is to be loaded */
+  struct mem_map *map_ptr;	/* virtual address of map inside caller (MM) */
+
+  /* Extract message parameters and copy new memory map to MM. */
+  caller = m_ptr->m_source;
+  k = m_ptr->PROC1;
+  map_ptr = (struct mem_map *) m_ptr->MEM_PTR;
+
+  if (!isokprocn(k))
+	panic("do_getmap got bad proc: ", m_ptr->PROC1);
+
+  rp = proc_addr(k);		/* ptr to entry of the map */
+
+  /* Copy the map to MM. */
+  dst_phys = umap(proc_addr(caller), D, (vir_bytes) map_ptr, sizeof(rp->p_map));
+  if (dst_phys == 0) panic("bad call to sys_getmap", NO_NUM);
+  phys_copy(vir2phys(rp->p_map), dst_phys, sizeof(rp->p_map));
+
+  return(OK);
+}
+
+
+/*===========================================================================*
+ *				do_exec					     *
  *===========================================================================*/
 PRIVATE int do_exec(m_ptr)
 register message *m_ptr;	/* pointer to request message */
@@ -297,8 +337,12 @@ register message *m_ptr;	/* pointer to request message */
 
   register struct proc *rp;
   reg_t sp;			/* new sp */
+  phys_bytes phys_name;
+  char *np;
+#define NLEN (sizeof(rp->p_name)-1)
 
   if (!isoksusern(m_ptr->PROC1)) return E_BAD_PROC;
+  /* PROC2 field is used as flag to indicate process is being traced */
   if (m_ptr->PROC2) cause_sig(m_ptr->PROC1, SIGTRAP);
   sp = (reg_t) m_ptr->STACK_PTR;
   rp = proc_addr(m_ptr->PROC1);
@@ -314,14 +358,21 @@ register message *m_ptr;	/* pointer to request message */
   rp->p_alarm = 0;		/* reset alarm timer */
   rp->p_flags &= ~RECEIVING;	/* MM does not reply to EXEC call */
   if (rp->p_flags == 0) lock_ready(rp);
-  set_name(m_ptr->m_source, m_ptr->PROC1, m_ptr->NAME_PTR);
-				/* save command string for F1 display */
+
+  /* Save command name for debugging, ps(1) output, etc. */
+  phys_name = numap(m_ptr->m_source, (vir_bytes) m_ptr->NAME_PTR,
+							(vir_bytes) NLEN);
+  if (phys_name != 0) {
+	phys_copy(phys_name, vir2phys(rp->p_name), (phys_bytes) NLEN);
+	for (np = rp->p_name; (*np & BYTE) >= ' '; np++) {}
+	*np = 0;
+  }
   return(OK);
 }
 
 
 /*===========================================================================*
- *				do_xit					     * 
+ *				do_xit					     *
  *===========================================================================*/
 PRIVATE int do_xit(m_ptr)
 message *m_ptr;			/* pointer to request message */
@@ -352,7 +403,7 @@ message *m_ptr;			/* pointer to request message */
   m_ptr->m1_i2 = (int)size;
 #endif
 
-  set_name(proc_nr, proc_nr, (char *)0);      /* disable cmd printing for F1 */
+  strcpy(rc->p_name, "<noname>");	/* process no longer has a name */
 
   /* If the process being terminated happens to be queued trying to send a
    * message (i.e., the process was killed by a signal, rather than it doing an
@@ -392,7 +443,7 @@ message *m_ptr;			/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_getsp				     * 
+ *				do_getsp				     *
  *===========================================================================*/
 PRIVATE int do_getsp(m_ptr)
 register message *m_ptr;	/* pointer to request message */
@@ -409,7 +460,7 @@ register message *m_ptr;	/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_times				     * 
+ *				do_times				     *
  *===========================================================================*/
 PRIVATE int do_times(m_ptr)
 register message *m_ptr;	/* pointer to request message */
@@ -434,7 +485,7 @@ register message *m_ptr;	/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_abort				     * 
+ *				do_abort				     *
  *===========================================================================*/
 PRIVATE int do_abort(m_ptr)
 message *m_ptr;			/* pointer to request message */
@@ -459,9 +510,9 @@ message *m_ptr;			/* pointer to request message */
 
 #if (SHADOWING == 1)
 /*===========================================================================*
- *				do_fresh				     * 
+ *				do_fresh				     *
  *===========================================================================*/
-PRIVATE int do_fresh(m_ptr)
+PRIVATE int do_fresh(m_ptr)     /* for 68000 only */
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_fresh.  Start with fresh process image during EXEC. */
@@ -487,6 +538,46 @@ message *m_ptr;			/* pointer to request message */
 }
 #endif /* (SHADOWING == 1) */
 
+#if ENABLE_COMPAT
+/*===========================================================================*
+ *				do_oldsig				     *
+ *===========================================================================*/
+PRIVATE int do_oldsig(m_ptr)
+register message *m_ptr;	/* pointer to request message */
+{
+/* Handle sys_oldsig(). Signal a process.  The stack is known to be big enough.
+ */
+
+  register struct proc *rp;
+  phys_bytes dst_phys;
+  vir_bytes new_sp;
+  int sig;			/* signal number, 1 to _NSIG */
+  sighandler_t sig_handler;	/* pointer to the signal handler */
+
+  /* Extract parameters and prepare to build the words that get pushed. */
+  if (!isokusern(m_ptr->PR)) return(E_BAD_PROC);
+  rp = proc_addr(m_ptr->PR);
+  sig = m_ptr->SIGNUM;
+  sig_handler = m_ptr->FUNC;	/* run time system addr for catching sigs */
+  new_sp = (vir_bytes) rp->p_reg.sp;
+
+  /* Actually build the block of words to push onto the stack. */
+  build_sig(sig_stuff, rp, sig);	/* build up the info to be pushed */
+
+  /* Prepare to do the push, and do it. */
+  dst_phys = umap(rp, S, new_sp, (vir_bytes) SIG_PUSH_BYTES);
+  if (dst_phys == 0) panic("do_oldsig can't signal; SP bad", NO_NUM);
+
+  /* Push pc, psw from sig_stuff. */
+  phys_copy(vir2phys(sig_stuff), dst_phys, (phys_bytes) SIG_PUSH_BYTES);
+
+  /* Change process' sp and pc to reflect the interrupt. */
+  rp->p_reg.sp = new_sp;
+  rp->p_reg.pc = (reg_t) sig_handler;	/* bad ptr type */
+  return(OK);
+}
+#endif /* ENABLE_COMPAT */
+
 /*===========================================================================*
  *			      do_sendsig				     *
  *===========================================================================*/
@@ -495,7 +586,11 @@ struct sigframe {
   int sf_signo;
   int sf_code;
   struct sigcontext *sf_scp;
-  struct sigcontext *sf_oldscpcopy;	/* Should be a saved BP. */
+#if ENABLE_COMPAT
+  struct sigcontext *sf_oldscpcopy;
+#else
+  reg_t sf_fp;
+#endif
   _PROTOTYPE( void (*sf_retadr2), (void) );
   struct sigcontext *sf_scpcopy;
 };
@@ -503,6 +598,8 @@ struct sigframe {
 PRIVATE int do_sendsig(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
+/* Handle sys_sendsig, POSIX-style signal */
+
   struct sigmsg smsg;
   register struct proc *rp;
   phys_bytes src_phys, dst_phys;
@@ -541,7 +638,11 @@ message *m_ptr;			/* pointer to request message */
   fr.sf_signo = smsg.sm_signo;
   fr.sf_code = 0;	/* XXX - should be used for type of FP exception */
   fr.sf_scp = scp;
-  fr.sf_oldscpcopy = scp;	/* XXX - backwards compatibility (for now) */
+#if ENABLE_COMPAT
+  fr.sf_oldscpcopy = scp;
+#else
+  fr.sf_fp = rp->p_reg.fp;
+#endif
   fr.sf_scpcopy = scp;
   fr.sf_retadr = (void (*)()) smsg.sm_sigreturn;
 
@@ -563,6 +664,10 @@ message *m_ptr;			/* pointer to request message */
 PRIVATE int do_sigreturn(m_ptr)
 register message *m_ptr;
 {
+/* POSIX style signals require sys_sigreturn to put things in order before the
+ * signalled process can resume execution
+ */
+
   struct sigcontext sc;
   register struct proc *rp;
   phys_bytes src_phys;
@@ -605,52 +710,37 @@ register message *m_ptr;
   /* Restore the registers. */
   memcpy(&rp->p_reg, (char *)&sc.sc_regs, sizeof(struct sigregs));
 
-  return(OK);	
-}
-
-/*===========================================================================*
- *				do_oldsig				     *
- *===========================================================================*/
-PRIVATE int do_oldsig(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Handle sys_sig(). Signal a process.  The stack is known to be big enough. */
-
-  register struct proc *rp;
-  phys_bytes dst_phys;
-  vir_bytes new_sp;
-  int sig;			/* signal number, 1 to _NSIG */
-  sighandler_t sig_handler;	/* pointer to the signal handler */
-
-  /* Extract parameters and prepare to build the words that get pushed. */
-  if (!isokusern(m_ptr->PR)) return(E_BAD_PROC);
-  rp = proc_addr(m_ptr->PR);
-  sig = m_ptr->SIGNUM;
-  sig_handler = m_ptr->FUNC;	/* run time system addr for catching sigs */
-  new_sp = (vir_bytes) rp->p_reg.sp;
-
-  /* Actually build the block of words to push onto the stack. */
-  build_sig(sig_stuff, rp, sig);	/* build up the info to be pushed */
-
-  /* Prepare to do the push, and do it. */
-  dst_phys = umap(rp, S, new_sp, (vir_bytes) SIG_PUSH_BYTES);
-  if (dst_phys == 0) panic("do_oldsig can't signal; SP bad", NO_NUM);
-
-  /* Push pc, psw from sig_stuff. */
-  phys_copy(vir2phys(sig_stuff), dst_phys, (phys_bytes) SIG_PUSH_BYTES);
-
-  /* Change process' sp and pc to reflect the interrupt. */
-  rp->p_reg.sp = new_sp;
-  rp->p_reg.pc = (reg_t) sig_handler;	/* bad ptr type */
   return(OK);
 }
 
 /*===========================================================================*
- *			      do_endsig 				     *
+ *				do_kill					     *
+ *===========================================================================*/
+PRIVATE int do_kill(m_ptr)
+register message *m_ptr;	/* pointer to request message */
+{
+/* Handle sys_kill(). Cause a signal to be sent to a process via MM.
+ * Note that this has nothing to do with the kill (2) system call, this
+ * is how the FS (and possibly other servers) get access to cause_sig to
+ * send a KSIG message to MM
+ */
+
+  if (!isokusern(m_ptr->PR)) return(E_BAD_PROC);
+  cause_sig(m_ptr->PR, m_ptr->SIGNUM);
+  return(OK);
+}
+
+
+/*===========================================================================*
+ *			      do_endsig					     *
  *===========================================================================*/
 PRIVATE int do_endsig(m_ptr)
 register message *m_ptr;	/* pointer to request message */
 {
+/* Finish up after a KSIG-type signal, caused by a SYS_KILL message or a call
+ * to cause_sig by a task
+ */
+
   register struct proc *rp;
 
   if (!isokusern(m_ptr->PROC1)) return(E_BAD_PROC);
@@ -662,129 +752,6 @@ register message *m_ptr;	/* pointer to request message */
 	lock_ready(rp);
   return(OK);
 }
-
-/*===========================================================================*
- *				do_kill					     *
- *===========================================================================*/
-PRIVATE int do_kill(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Handle sys_kill(). Cause a signal to be sent to a process via MM. */
-
-  if (!isokusern(m_ptr->PR)) return(E_BAD_PROC);
-  cause_sig(m_ptr->PR, m_ptr->SIGNUM);
-  return(OK);
-}
-
-
-/*==========================================================================*
- *				do_trace				    *
- *==========================================================================*/
-
-#define TR_PROCNR	(m_ptr->m2_i1)
-#define TR_REQUEST	(m_ptr->m2_i2)
-#define TR_ADDR		((vir_bytes) m_ptr->m2_l1)
-#define TR_DATA		(m_ptr->m2_l2)
-#define TR_VLSIZE	((vir_bytes) sizeof(long))
-
-PRIVATE int do_trace(m_ptr)
-register message *m_ptr;
-{
-  register struct proc *rp;
-  phys_bytes src, dst;
-  int i;
-
-  rp = proc_addr(TR_PROCNR);
-  if (rp->p_flags & P_SLOT_FREE) return(EIO);
-  switch (TR_REQUEST) {
-  case -1:			/* stop process */
-	if (rp->p_flags == 0) lock_unready(rp);
-	rp->p_flags |= P_STOP;
-	rp->p_reg.psw &= ~TRACEBIT;	/* clear trace bit */
-	return(OK);
-
-  case 1:			/* return value from instruction space */
-	if (rp->p_map[T].mem_len != 0) {
-		if ((src = umap(rp, T, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
-		phys_copy(src, vir2phys(&TR_DATA), (phys_bytes) sizeof(long));
-		break;
-	}
-	/* Text space is actually data space - fall through. */
-
-  case 2:			/* return value from data space */
-	if ((src = umap(rp, D, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
-	phys_copy(src, vir2phys(&TR_DATA), (phys_bytes) sizeof(long));
-	break;
-
-  case 3:			/* return value from process table */
-	if ((TR_ADDR & (sizeof(long) - 1)) != 0 ||
-	    TR_ADDR > sizeof(struct proc) - sizeof(long))
-		return(EIO);
-	TR_DATA = *(long *) ((char *) rp + (int) TR_ADDR);
-	break;
-
-  case 4:			/* set value from instruction space */
-	if (rp->p_map[T].mem_len != 0) {
-		if ((dst = umap(rp, T, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
-		phys_copy(vir2phys(&TR_DATA), dst, (phys_bytes) sizeof(long));
-		TR_DATA = 0;
-		break;
-	}
-	/* Text space is actually data space - fall through. */
-
-  case 5:			/* set value from data space */
-	if ((dst = umap(rp, D, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
-	phys_copy(vir2phys(&TR_DATA), dst, (phys_bytes) sizeof(long));
-	TR_DATA = 0;
-	break;
-
-  case 6:			/* set value in process table */
-	if ((TR_ADDR & (sizeof(reg_t) - 1)) != 0 ||
-	     TR_ADDR > sizeof(struct stackframe_s) - sizeof(reg_t))
-		return(EIO);
-	i = (int) TR_ADDR;
-#if (CHIP == INTEL)
-	/* Altering segment registers might crash the kernel when it
-	 * tries to load them prior to restarting a process, so do
-	 * not allow it.
-	 */
-	if (i == (int) &((struct proc *) 0)->p_reg.cs ||
-	    i == (int) &((struct proc *) 0)->p_reg.ds ||
-	    i == (int) &((struct proc *) 0)->p_reg.es ||
-#if _WORD_SIZE == 4
-	    i == (int) &((struct proc *) 0)->p_reg.gs ||
-	    i == (int) &((struct proc *) 0)->p_reg.fs ||
-#endif
-	    i == (int) &((struct proc *) 0)->p_reg.ss)
-		return(EIO);
-#endif
-	if (i == (int) &((struct proc *) 0)->p_reg.psw)
-		/* only selected bits are changeable */
-		SETPSW(rp, TR_DATA);
-	else
-		*(reg_t *) ((char *) &rp->p_reg + i) = (reg_t) TR_DATA;
-	TR_DATA = 0;
-	break;
-
-  case 7:			/* resume execution */
-	rp->p_flags &= ~P_STOP;
-	if (rp->p_flags == 0) lock_ready(rp);
-	TR_DATA = 0;
-	break;
-
-  case 9:			/* set trace bit */
-	rp->p_reg.psw |= TRACEBIT;
-	rp->p_flags &= ~P_STOP;
-	if (rp->p_flags == 0) lock_ready(rp);
-	TR_DATA = 0;
-	break;
-
-  default:
-	return(EIO);
-  }
-  return(OK);
-}
-
 
 /*===========================================================================*
  *				do_copy					     *
@@ -841,7 +808,229 @@ register message *m_ptr;	/* pointer to request message */
 
 
 /*===========================================================================*
- *				cause_sig				     * 
+ *				do_vcopy				     *
+ *===========================================================================*/
+PRIVATE int do_vcopy(m_ptr)
+register message *m_ptr;	/* pointer to request message */
+{
+/* Handle sys_vcopy(). Copy multiple blocks of memory */
+
+  int src_proc, dst_proc, vect_s, i;
+  vir_bytes src_vir, dst_vir, vect_addr;
+  phys_bytes src_phys, dst_phys, bytes;
+  cpvec_t cpvec_table[CPVEC_NR];
+
+  /* Dismember the command message. */
+  src_proc = m_ptr->m1_i1;
+  dst_proc = m_ptr->m1_i2;
+  vect_s = m_ptr->m1_i3;
+  vect_addr = (vir_bytes)m_ptr->m1_p1;
+
+  if (vect_s > CPVEC_NR) return EDOM;
+
+  src_phys= numap (m_ptr->m_source, vect_addr, vect_s * sizeof(cpvec_t));
+  if (!src_phys) return EFAULT;
+  phys_copy(src_phys, vir2phys(cpvec_table),
+				(phys_bytes) (vect_s * sizeof(cpvec_t)));
+
+  for (i = 0; i < vect_s; i++) {
+	src_vir= cpvec_table[i].cpv_src;
+	dst_vir= cpvec_table[i].cpv_dst;
+	bytes= cpvec_table[i].cpv_size;
+	src_phys = numap(src_proc,src_vir,(vir_bytes)bytes);
+	dst_phys = numap(dst_proc,dst_vir,(vir_bytes)bytes);
+	if (src_phys == 0 || dst_phys == 0) return(EFAULT);
+	phys_copy(src_phys, dst_phys, bytes);
+  }
+  return(OK);
+}
+
+
+/*==========================================================================*
+ *				do_gboot				    *
+ *==========================================================================*/
+PUBLIC struct bparam_s boot_parameters;
+
+PRIVATE int do_gboot(m_ptr)
+message *m_ptr;			/* pointer to request message */
+{
+/* Copy the boot parameters.  Normally only called during fs init. */
+
+  phys_bytes dst_phys;
+
+  dst_phys = umap(proc_addr(m_ptr->PROC1), D, (vir_bytes) m_ptr->MEM_PTR,
+				(vir_bytes) sizeof(boot_parameters));
+  if (dst_phys == 0) panic("bad call to SYS_GBOOT", NO_NUM);
+  phys_copy(vir2phys(&boot_parameters), dst_phys,
+				(phys_bytes) sizeof(boot_parameters));
+  return(OK);
+}
+
+
+/*===========================================================================*
+ *				do_mem					     *
+ *===========================================================================*/
+PRIVATE int do_mem(m_ptr)
+register message *m_ptr;	/* pointer to request message */
+{
+/* Return the base and size of the next chunk of memory. */
+
+  struct memory *memp;
+
+  for (memp = mem; memp < &mem[NR_MEMS]; ++memp) {
+	m_ptr->m1_i1 = memp->base;
+	m_ptr->m1_i2 = memp->size;
+	m_ptr->m1_i3 = tot_mem_size;
+	memp->size = 0;
+	if (m_ptr->m1_i2 != 0) break;		/* found a chunk */
+  }
+  return(OK);
+}
+
+
+/*==========================================================================*
+ *				do_umap					    *
+ *==========================================================================*/
+PRIVATE int do_umap(m_ptr)
+register message *m_ptr;	/* pointer to request message */
+{
+/* Same as umap(), for non-kernel processes. */
+
+  m_ptr->SRC_BUFFER = umap(proc_addr((int) m_ptr->SRC_PROC_NR),
+                           (int) m_ptr->SRC_SPACE,
+                           (vir_bytes) m_ptr->SRC_BUFFER,
+                           (vir_bytes) m_ptr->COPY_BYTES);
+  return(OK);
+}
+
+
+/*==========================================================================*
+ *				do_trace				    *
+ *==========================================================================*/
+#define TR_PROCNR	(m_ptr->m2_i1)
+#define TR_REQUEST	(m_ptr->m2_i2)
+#define TR_ADDR		((vir_bytes) m_ptr->m2_l1)
+#define TR_DATA		(m_ptr->m2_l2)
+#define TR_VLSIZE	((vir_bytes) sizeof(long))
+
+PRIVATE int do_trace(m_ptr)
+register message *m_ptr;
+{
+/* Handle the debugging commands supported by the ptrace system call
+ * The commands are:
+ * T_STOP	stop the process
+ * T_OK		enable tracing by parent for this process
+ * T_GETINS	return value from instruction space
+ * T_GETDATA	return value from data space
+ * T_GETUSER	return value from user process table
+ * T_SETINS	set value from instruction space
+ * T_SETDATA	set value from data space
+ * T_SETUSER	set value in user process table
+ * T_RESUME	resume execution
+ * T_EXIT	exit
+ * T_STEP	set trace bit
+ *
+ * The T_OK and T_EXIT commands are handled completely by the memory manager,
+ * all others come here.
+ */
+
+  register struct proc *rp;
+  phys_bytes src, dst;
+  int i;
+
+  rp = proc_addr(TR_PROCNR);
+  if (rp->p_flags & P_SLOT_FREE) return(EIO);
+  switch (TR_REQUEST) {
+  case T_STOP:			/* stop process */
+	if (rp->p_flags == 0) lock_unready(rp);
+	rp->p_flags |= P_STOP;
+	rp->p_reg.psw &= ~TRACEBIT;	/* clear trace bit */
+	return(OK);
+
+  case T_GETINS:		/* return value from instruction space */
+	if (rp->p_map[T].mem_len != 0) {
+		if ((src = umap(rp, T, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
+		phys_copy(src, vir2phys(&TR_DATA), (phys_bytes) sizeof(long));
+		break;
+	}
+	/* Text space is actually data space - fall through. */
+
+  case T_GETDATA:		/* return value from data space */
+	if ((src = umap(rp, D, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
+	phys_copy(src, vir2phys(&TR_DATA), (phys_bytes) sizeof(long));
+	break;
+
+  case T_GETUSER:		/* return value from process table */
+	if ((TR_ADDR & (sizeof(long) - 1)) != 0 ||
+	    TR_ADDR > sizeof(struct proc) - sizeof(long))
+		return(EIO);
+	TR_DATA = *(long *) ((char *) rp + (int) TR_ADDR);
+	break;
+
+  case T_SETINS:		/* set value in instruction space */
+	if (rp->p_map[T].mem_len != 0) {
+		if ((dst = umap(rp, T, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
+		phys_copy(vir2phys(&TR_DATA), dst, (phys_bytes) sizeof(long));
+		TR_DATA = 0;
+		break;
+	}
+	/* Text space is actually data space - fall through. */
+
+  case T_SETDATA:			/* set value in data space */
+	if ((dst = umap(rp, D, TR_ADDR, TR_VLSIZE)) == 0) return(EIO);
+	phys_copy(vir2phys(&TR_DATA), dst, (phys_bytes) sizeof(long));
+	TR_DATA = 0;
+	break;
+
+  case T_SETUSER:			/* set value in process table */
+	if ((TR_ADDR & (sizeof(reg_t) - 1)) != 0 ||
+	     TR_ADDR > sizeof(struct stackframe_s) - sizeof(reg_t))
+		return(EIO);
+	i = (int) TR_ADDR;
+#if (CHIP == INTEL)
+	/* Altering segment registers might crash the kernel when it
+	 * tries to load them prior to restarting a process, so do
+	 * not allow it.
+	 */
+	if (i == (int) &((struct proc *) 0)->p_reg.cs ||
+	    i == (int) &((struct proc *) 0)->p_reg.ds ||
+	    i == (int) &((struct proc *) 0)->p_reg.es ||
+#if _WORD_SIZE == 4
+	    i == (int) &((struct proc *) 0)->p_reg.gs ||
+	    i == (int) &((struct proc *) 0)->p_reg.fs ||
+#endif
+	    i == (int) &((struct proc *) 0)->p_reg.ss)
+		return(EIO);
+#endif
+	if (i == (int) &((struct proc *) 0)->p_reg.psw)
+		/* only selected bits are changeable */
+		SETPSW(rp, TR_DATA);
+	else
+		*(reg_t *) ((char *) &rp->p_reg + i) = (reg_t) TR_DATA;
+	TR_DATA = 0;
+	break;
+
+  case T_RESUME:		/* resume execution */
+	rp->p_flags &= ~P_STOP;
+	if (rp->p_flags == 0) lock_ready(rp);
+	TR_DATA = 0;
+	break;
+
+  case T_STEP:			/* set trace bit */
+	rp->p_reg.psw |= TRACEBIT;
+	rp->p_flags &= ~P_STOP;
+	if (rp->p_flags == 0) lock_ready(rp);
+	TR_DATA = 0;
+	break;
+
+  default:
+	return(EIO);
+  }
+  return(OK);
+}
+
+/*===========================================================================*
+ *				cause_sig				     *
  *===========================================================================*/
 PUBLIC void cause_sig(proc_nr, sig_nr)
 int proc_nr;			/* process to be signalled */
@@ -850,6 +1039,7 @@ int sig_nr;			/* signal to be sent, 1 to _NSIG */
 /* A task wants to send a signal to a process.   Examples of such tasks are:
  *   TTY wanting to cause SIGINT upon getting a DEL
  *   CLOCK wanting to cause SIGALRM when timer expires
+ * FS also uses this to send a signal, via the SYS_KILL message.
  * Signals are handled by sending a message to MM.  The tasks don't dare do
  * that directly, for fear of what would happen if MM were busy.  Instead they
  * call cause_sig, which sets bits in p_pending, and then carefully checks to
@@ -881,7 +1071,7 @@ int sig_nr;			/* signal to be sent, 1 to _NSIG */
 
 
 /*===========================================================================*
- *				inform					     * 
+ *				inform					     *
  *===========================================================================*/
 PUBLIC void inform()
 {
@@ -920,26 +1110,8 @@ PUBLIC void inform()
 }
 
 
-/*==========================================================================*
- *				numap					    *
- *==========================================================================*/
-PUBLIC phys_bytes numap(proc_nr, vir_addr, bytes)
-int proc_nr;			/* process number to be mapped */
-vir_bytes vir_addr;		/* virtual address in bytes within D seg */
-vir_bytes bytes;		/* # of bytes required in segment  */
-{
-/* Do umap() starting from a process number instead of a pointer.  This
- * function is used by device drivers, so they need not know about the
- * process table.  To save time, there is no 'seg' parameter. The segment
- * is always D.
- */
-
-  return(umap(proc_addr(proc_nr), D, vir_addr, bytes));
-}
-
-
 /*===========================================================================*
- *				umap					     * 
+ *				umap					     *
  *===========================================================================*/
 PUBLIC phys_bytes umap(rp, seg, vir_addr, bytes)
 register struct proc *rp;	/* pointer to proc table entry for process */
@@ -948,6 +1120,7 @@ vir_bytes vir_addr;		/* virtual address in bytes within the seg */
 vir_bytes bytes;		/* # of bytes to be copied */
 {
 /* Calculate the physical memory address for a given virtual address. */
+
   vir_clicks vc;		/* the virtual address in clicks */
   phys_bytes pa;		/* intermediate variables as phys_bytes */
 #if (CHIP == INTEL)
@@ -999,6 +1172,24 @@ vir_bytes bytes;		/* # of bytes to be copied */
 }
 
 
+/*==========================================================================*
+ *				numap					    *
+ *==========================================================================*/
+PUBLIC phys_bytes numap(proc_nr, vir_addr, bytes)
+int proc_nr;			/* process number to be mapped */
+vir_bytes vir_addr;		/* virtual address in bytes within D seg */
+vir_bytes bytes;		/* # of bytes required in segment  */
+{
+/* Do umap() starting from a process number instead of a pointer.  This
+ * function is used by device drivers, so they need not know about the
+ * process table.  To save time, there is no 'seg' parameter. The segment
+ * is always D.
+ */
+
+  return(umap(proc_addr(proc_nr), D, vir_addr, bytes));
+}
+
+
 #if (CHIP == INTEL)
 /*==========================================================================*
  *				alloc_segments				    *
@@ -1006,6 +1197,10 @@ vir_bytes bytes;		/* # of bytes to be copied */
 PUBLIC void alloc_segments(rp)
 register struct proc *rp;
 {
+/* This is called only by do_newmap, but is broken out as a separate function
+ * because so much is hardware-dependent.
+ */
+
   phys_bytes code_bytes;
   phys_bytes data_bytes;
   int privilege;
@@ -1042,66 +1237,6 @@ register struct proc *rp;
 #endif /* (CHIP == INTEL) */
 
 
-/*==========================================================================*
- *				do_gboot				    *
- *==========================================================================*/
-PUBLIC struct bparam_s boot_parameters = {	/* overwritten if new boot */
-  DROOTDEV, DRAMIMAGEDEV, DRAMSIZE, DSCANCODE, DPROCESSOR,
-};
-
-PRIVATE int do_gboot(m_ptr)
-message *m_ptr;			/* pointer to request message */
-{
-/* Copy the boot parameters.  Normally only called during fs init. */
-
-  phys_bytes dst_phys;
-
-  dst_phys = umap(proc_addr(m_ptr->PROC1), D, (vir_bytes) m_ptr->MEM_PTR,
-				(vir_bytes) sizeof(boot_parameters));
-  if (dst_phys == 0) panic("bad call to SYS_GBOOT", NO_NUM);
-  phys_copy(vir2phys(&boot_parameters), dst_phys,
-  				(phys_bytes) sizeof(boot_parameters));
-  return(OK);
-}
-
-
-/*==========================================================================*
- *				do_umap					    *
- *==========================================================================*/
-PRIVATE int do_umap(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Same as umap(), for non-kernel processes. */
-
-  m_ptr->SRC_BUFFER = umap(proc_addr((int) m_ptr->SRC_PROC_NR),
-                           (int) m_ptr->SRC_SPACE,
-                           (vir_bytes) m_ptr->SRC_BUFFER,
-                           (vir_bytes) m_ptr->COPY_BYTES);
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				do_mem					     *
- *===========================================================================*/
-PRIVATE int do_mem(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Return the base and size of the next chunk of memory. */
-
-  struct memory *memp;
-
-  for (memp = mem; memp < &mem[NR_MEMS]; ++memp) {
-	m_ptr->m1_i1 = memp->base;
-	m_ptr->m1_i2 = memp->size;
-	m_ptr->m1_i3 = tot_mem_size;
-	memp->size = 0;
-	if (m_ptr->m1_i2 != 0) break;		/* found a chunk */
-  }
-  return(OK);
-}
-
-
 #if (CHIP == M68000)
 /*===========================================================================*
  *                              build_sig                                    *
@@ -1123,74 +1258,3 @@ int sig;
   fp->f_pc = rp->p_reg.pc;
 }
 #endif /* (CHIP == M68000) */
-
-/*===========================================================================*
- *				do_vcopy				     *
- *===========================================================================*/
-PRIVATE int do_vcopy(m_ptr)
-register message *m_ptr;	/* pointer to request message */
-{
-/* Handle sys_vcopy(). */
-
-  int src_proc, dst_proc, vect_s, i;
-  vir_bytes src_vir, dst_vir, vect_addr;
-  phys_bytes src_phys, dst_phys, bytes;
-  cpvec_t cpvec_table[CPVEC_NR];
-
-  /* Dismember the command message. */
-  src_proc = m_ptr->m1_i1;
-  dst_proc = m_ptr->m1_i2;
-  vect_s = m_ptr->m1_i3;
-  vect_addr = (vir_bytes)m_ptr->m1_p1;
-
-  if (vect_s > CPVEC_NR) return EDOM;
-
-  src_phys= numap (m_ptr->m_source, vect_addr, vect_s * sizeof(cpvec_t));
-  if (!src_phys) return E_BAD_ADDR;
-  phys_copy(src_phys, vir2phys(cpvec_table),
-  				(phys_bytes) (vect_s * sizeof(cpvec_t)));
-
-  for (i = 0; i < vect_s; i++) {
-	src_vir= cpvec_table[i].cpv_src;
-	dst_vir= cpvec_table[i].cpv_dst;
-	bytes= cpvec_table[i].cpv_size;
-	src_phys = numap(src_proc,src_vir,(vir_bytes)bytes);
-	dst_phys = numap(dst_proc,dst_vir,(vir_bytes)bytes);
-	if (src_phys == 0 || dst_phys == 0) return(EFAULT);
-	phys_copy(src_phys, dst_phys, bytes);
-  }
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				do_getmap				     *
- *===========================================================================*/
-PRIVATE int do_getmap(m_ptr)
-message *m_ptr;			/* pointer to request message */
-{
-/* Handle sys_getmap().  Report the memory map to MM. */
-
-  register struct proc *rp;
-  phys_bytes dst_phys;
-  int caller;			/* where the map has to be stored */
-  int k;			/* process whose map is to be loaded */
-  struct mem_map *map_ptr;	/* virtual address of map inside caller (MM) */
-
-  /* Extract message parameters and copy new memory map to MM. */
-  caller = m_ptr->m_source;
-  k = m_ptr->PROC1;
-  map_ptr = (struct mem_map *) m_ptr->MEM_PTR;
-
-  if (!isokprocn(k))
-  	panic("do_getmap got bad proc: ", m_ptr->PROC1);
-
-  rp = proc_addr(k);		/* ptr to entry of the map */
-
-  /* Copy the map to MM. */
-  dst_phys = umap(proc_addr(caller), D, (vir_bytes) map_ptr, sizeof(rp->p_map));
-  if (dst_phys == 0) panic("bad call to sys_getmap", NO_NUM);
-  phys_copy(vir2phys(rp->p_map), dst_phys, sizeof(rp->p_map));
-
-  return(OK);
-}

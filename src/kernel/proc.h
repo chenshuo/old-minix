@@ -61,6 +61,8 @@ struct proc {
   struct proc *p_nextready;	/* pointer to next ready process */
   sigset_t p_pending;		/* bit map for pending signals */
   unsigned p_pendcount;		/* count of pending and unfinished signals */
+
+  char p_name[16];		/* name of the process */
 };
 
 /* Guard word for task stacks. */
@@ -93,7 +95,11 @@ struct proc {
 #define istaskp(p)        ((p) < END_TASK_ADDR && (p) != proc_addr(IDLE))
 #define isuserp(p)        ((p) >= BEG_USER_ADDR)
 #define proc_addr(n)      (pproc_addr + NR_TASKS)[(n)]
+#define cproc_addr(n)     (&(proc + NR_TASKS)[(n)])
 #define proc_number(p)    ((p)->p_nr)
+#define proc_vir2phys(p, vir) \
+			  (((phys_bytes)(p)->p_map[D].mem_phys << CLICK_SHIFT) \
+							+ (vir_bytes) (vir))
 #if (SHADOWING == 1)
 #define isshadowp(p)      ((p)->p_shadow != 0)
 #endif

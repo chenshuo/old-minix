@@ -36,6 +36,7 @@ _PROTOTYPE(void main, (int argc, char *argv[]));
 _PROTOTYPE(void test26a, (void));
 _PROTOTYPE(void test26b, (void));
 _PROTOTYPE(void test26c, (void));
+_PROTOTYPE(int stateq, (struct stat *stp1, struct stat *stp2));
 _PROTOTYPE(void makelongnames, (void));
 _PROTOTYPE(void e, (int __n));
 _PROTOTYPE(void quit, (void));
@@ -148,7 +149,7 @@ void test26b()
 	bar[5] = (char) ((nlink / 10) % 10) + '0';
 	bar[6] = (char) (nlink % 10) + '0';
 	Stat(bar, &st2);
-	if (memcmp(&st, &st2, sizeof(struct stat)) != 0) e(6);
+	if (!stateq(&st, &st2)) e(6);
   }
 
   /* Test no more links are possible. */
@@ -165,7 +166,7 @@ void test26b()
 	Stat(bar, &st);
 	if (st.st_nlink != nlink) e(10);
 	Stat("foo", &st2);
-	if (memcmp(&st, &st2, sizeof(struct stat)) != 0) e(11);
+	if (!stateq(&st, &st2)) e(11);
 	if (unlink(bar) != 0) e(12);
   }
   Stat("foo", &st);
@@ -273,6 +274,23 @@ void test26c()
 	if (errno != EPERM) e(65);	/* that ain't w'rkn */
 	if (rmdir("dir") != 0) e(66);	/* that's the way to do it */
   }
+}
+
+int stateq(stp1, stp2)
+struct stat *stp1, *stp2;
+{
+  if (stp1->st_dev != stp2->st_dev) return 0;
+  if (stp1->st_ino != stp2->st_ino) return 0;
+  if (stp1->st_mode != stp2->st_mode) return 0;
+  if (stp1->st_nlink != stp2->st_nlink) return 0;
+  if (stp1->st_uid != stp2->st_uid) return 0;
+  if (stp1->st_gid != stp2->st_gid) return 0;
+  if (stp1->st_rdev != stp2->st_rdev) return 0;
+  if (stp1->st_size != stp2->st_size) return 0;
+  if (stp1->st_atime != stp2->st_atime) return 0;
+  if (stp1->st_mtime != stp2->st_mtime) return 0;
+  if (stp1->st_ctime != stp2->st_ctime) return 0;
+  return 1;
 }
 
 void makelongnames()

@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <unistd.h>
+#include <termios.h>
 
 PUBLIC long fpathconf(fd, name)
 int fd;				/* file descriptor being interrogated */

@@ -10,4 +10,6 @@ EXTERN struct filp {
   off_t filp_pos;		/* file position */
 } filp[NR_FILPS];
 
+#define FILP_CLOSED	0	/* filp_mode: associated device closed */
+
 #define NIL_FILP (struct filp *) 0	/* indicates absence of a filp slot */

@@ -1,4 +1,4 @@
-/*	partition 1.7 - Make a partition table		Author: Kees J. Bot
+/*	partition 1.10 - Make a partition table		Author: Kees J. Bot
  *								27 Apr 1992
  */
 #define nil 0
@@ -10,11 +10,18 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
+#include <ibm/partition.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <limits.h>
+
+#if !__minix_vmd
+#define div64u(i, j)	((i) / (j))
+#endif
+
+#define SECTOR_SIZE	512
 
 #define arraysize(a)	(sizeof(a)/sizeof((a)[0]))
 #define arraylimit(a)	((a) + arraysize(a))
@@ -42,6 +49,7 @@ void fatal(const char *label)
 int aflag;			/* Add a new partition to the current table. */
 int mflag;			/* Minix rules, no need for alignment. */
 int rflag;			/* Report current partitions. */
+int fflag;			/* Force making a table even if too small. */
 
 int cylinders, heads, sectors;	/* Device's geometry */
 int pad;			/* Partitions must be padded. */
@@ -57,16 +65,8 @@ int npart;
 
 #define MINOR_hd1a	128
 
-void dos2chs(unsigned char *dos, int *cyl, int *head, int *sec)
-/* Unscramble the three bytes DOS uses to address a sector. */
-{
-	*cyl= dos[2] | ((dos[1] << 2) & 0x300);
-	*sec= dos[1] & 0x3F;
-	*head= dos[0];
-}
-
 void sec2dos(unsigned long sec, unsigned char *dos)
-/* Scramble a sector into the three bytes DOS uses. */
+/* Translate a sector number into the three bytes DOS uses. */
 {
 	unsigned secspcyl= heads * sectors;
 	unsigned cyl;
@@ -114,15 +114,8 @@ void show_part(struct part_entry *p)
 
 void usage(void)
 {
-#if RSN
 	fprintf(stderr,
-		"Usage: partition [-am] device [type:]length[+*] ...\n");
-	fprintf(stderr,
-		"       partition -r device\n");
-#else
-	fprintf(stderr,
-		"Usage: partition [-m] device [type:]length[+*] ...\n");
-#endif
+		"Usage: partition [-mf] device [type:]length[+*] ...\n");
 	exit(1);
 }
 
@@ -207,19 +200,21 @@ void geometry(char *device)
  */
 {
 	int fd;
+	struct partition geometry;
 
 	if ((fd= open(device, O_RDONLY)) < 0) fatal(device);
 
 	/* Get the geometry of the drive, and the device's base and size. */
-	if (ioctl(fd, DIOCGETP, &primary) < 0) fatal(device);
+	if (ioctl(fd, DIOCGETP, &geometry) < 0) fatal(device);
 	close(fd);
+	primary.lowsec= div64u(geometry.base, SECTOR_SIZE);
+	primary.size= div64u(geometry.size, SECTOR_SIZE);
+	cylinders= geometry.cylinders;
+	heads= geometry.heads;
+	sectors= geometry.sectors;
 
 	/* Is this a primary partition table?  If so then pad partitions. */
 	pad= (!mflag && primary.lowsec == 0);
-
-	dos2chs(&primary.last_head, &cylinders, &heads, &sectors);
-	cylinders++;
-	heads++;
 }
 
 void boundary(struct part_entry *pe, int exp)
@@ -257,6 +252,7 @@ void distribute(char *device)
 			if (pe->bootind & EXPAND_FLAG) exp= pe;
 		}
 		if (count < 0) {
+			if (fflag) break;
 			fprintf(stderr, "%s: %s is %ld sectors too small\n",
 				arg0, device, -count);
 			exit(1);
@@ -321,6 +317,7 @@ int main(int argc, char **argv)
 		case 'a':	aflag= 1;	break;
 		case 'm':	mflag= 1;	break;
 		case 'r':	rflag= 1;	break;
+		case 'f':	fflag= 1;	break;
 		default:	usage();
 		}
 	}

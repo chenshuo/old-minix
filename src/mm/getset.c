@@ -14,9 +14,10 @@
  *===========================================================================*/
 PUBLIC int do_getset()
 {
-/* Handle GETUID, GETGID, GETPID, SETUID, SETGID.  The three GETs return
- * their primary results in 'r'.  GETUID and GETGID also return secondary
- * results (the effective IDs) in 'result2', which is returned to the user.
+/* Handle GETUID, GETGID, GETPID, GETPGRP, SETUID, SETGID, SETSID.  The four
+ * GETs and SETSID return their primary results in 'r'.  GETUID, GETGID, and
+ * GETPID also return secondary results (the effective IDs, or the parent
+ * process ID) in 'result2', which is returned to the user.
  */
 
   register struct mproc *rmp = mp;
@@ -55,10 +56,20 @@ PUBLIC int do_getset()
 		tell_fs(SETGID, who, grpid, grpid);
 		r = OK;
 		break;
+
+	case SETSID:
+		if (rmp->mp_procgrp == rmp->mp_pid) return(EPERM);
+		rmp->mp_procgrp = rmp->mp_pid;
+		tell_fs(SETSID, who, 0, 0);
+		/*FALL THROUGH*/
+
+	case GETPGRP:
+		r = rmp->mp_procgrp;
+		break;
+
 	default:
 		r = EINVAL;
 		break;	
   }
-
   return(r);
 }

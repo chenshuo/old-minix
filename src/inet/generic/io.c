@@ -4,7 +4,7 @@ io.c
 
 #include <stdlib.h>
 
-#include "nw_task.h"
+#include "inet.h"
 #include "io.h"
 
 PUBLIC void writeIpAddr(addr)

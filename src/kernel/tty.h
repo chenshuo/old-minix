@@ -1,125 +1,95 @@
-#define KB_IN_BYTES      200   	/* keyboard input queue size */
-#define RS_IN_BYTES   (1024 + 2 * RS_IBUFSIZE)	/* RS232 input queue size */
-#define TTY_RAM_WORDS    320	/* ram buffer size */
-#define TTY_BUF_SIZE     256	/* unit for copying to/from queues */
-#define TAB_SIZE           8	/* distance between tabs */
-#define TAB_MASK          07	/* mask for tty_column when tabbing */
-#define MAX_ESC_PARMS      2	/* number of escape sequence params allowed */
+/*	tty.h - Terminals	*/
 
-#define ERASE_CHAR      '\b'	/* default erase character */
-#define KILL_CHAR (char) 025	/* default kill character */
-#define INTR_CHAR (char)0177	/* default interrupt character */
-#define QUIT_CHAR (char) 034	/* default quit character */
-#define XOFF_CHAR (char) 023	/* default x-off character (CTRL-S) */
-#define XON_CHAR  (char) 021	/* default x-on character (CTRL-Q) */
-#define EOT_CHAR  (char) 004	/* default eof character (CTRL-D) */
+#define TTY_IN_BYTES     256	/* tty input queue size */
+#define TAB_SIZE           8	/* distance between tab stops */
+#define TAB_MASK           7	/* mask to compute a tab stop position */
 
-/* This MARKER is used as an unambiguous flag for an unescaped end of
- * file character.  It is meaningful only in cooked mode.  0200 should
- * never be used in cooked mode, since that is supposed to be used only
- * for 7-bit ASCII.  Be careful that code only checks
- * for MARKER in cooked mode.  This kludge is needed because
- * chars are stored in char arrays, so there's no way to have a
- * completely out of band value.
- */
-#define MARKER   (char) 0200	/* non-escaped CTRL-D stored as MARKER */
-#define ESC       (char) 033	/* escape */
-#define BRACKET          '['	/* Part of the ESC [ letter escape seq */
+#define ESC             '\33'	/* escape */
 
-#define EVENT_THRESHOLD   64	/* events to accumulate before waking TTY */
-#define RS_IBUFSIZE      256	/* RS232 input buffer size */
+#define O_NOCTTY       00400	/* from <fcntl.h>, or cc will choke */
+#define O_NONBLOCK     04000
 
-typedef _PROTOTYPE( int (*devread_t), (int minor, char **bufindirect,
-		unsigned char *odoneindirect) );
-typedef _PROTOTYPE( void (*devstart_t), (struct tty_struct *tp) );
+typedef _PROTOTYPE( void (*devfun_t), (struct tty *tp) );
+typedef _PROTOTYPE( void (*devfunarg_t), (struct tty *tp, int c) );
 
-EXTERN struct tty_struct {
+typedef struct tty {
+  int tty_events;		/* set when TTY should inspect this line */
+
   /* Input queue.  Typed characters are stored here until read by a program. */
-  char *tty_inbuf;		/* pointer to input buffer */
-  char *tty_inbufend;		/* pointer to place after last in buffer */
-  char *tty_inhead;		/* pointer to place where next char goes */
-  int tty_ihighwater;		/* threshold for queue too full */
-  int tty_ilow_water;		/* threshold for queue not too full */
-  int tty_insize;		/* size of buffer */
-  char *tty_intail;		/* pointer to next char to be given to prog */
-  int tty_incount;		/* # chars in tty_inqueue */
-  int tty_lfct;			/* # line feeds in tty_inqueue */
-  devread_t tty_devread;	/* routine to read from low level buffers */
+  u16_t *tty_inhead;		/* pointer to place where next char goes */
+  u16_t *tty_intail;		/* pointer to next char to be given to prog */
+  int tty_incount;		/* # chars in the input queue */
+  int tty_eotct;		/* number of "line breaks" in input queue */
+  devfun_t tty_devread;		/* routine to read from low level buffers */
+  devfun_t tty_icancel;		/* cancel any device input */
+  int tty_min;			/* minimum requested #chars in input queue */
+  clock_t tty_time;		/* time when the input is available */
+  struct tty *tty_timenext;	/* for a list of ttys with active timers */
 
   /* Output section. */
-  int tty_rwords;		/* number of WORDS (not bytes) in outqueue */
-  int tty_org;			/* location in RAM where 6845 base points */
-  int tty_vid;			/* current position of cursor in video RAM */
-  char tty_esc_state;		/* 0=normal, 1=ESC, 2=ESC[ */
-  char tty_esc_intro;		/* Distinguishing character following ESC */
-  int tty_esc_parmv[MAX_ESC_PARMS];	/* list of escape parameters */
-  int *tty_esc_parmp;		/* pointer to current escape parameter */
-  devstart_t tty_devstart;	/* routine to start actual device output */
-
-  /* Echo buffer. Echoing is also delayed by output in progress. */
-  char *tty_ebufend;		/* end of echo buffer */
-  char *tty_etail;		/* tail of echo buffer (head is fixed) */
+  devfun_t tty_devwrite;	/* routine to start actual device output */
+  devfunarg_t tty_echo;		/* routine to echo characters input */
+  devfun_t tty_ocancel;		/* cancel any ongoing device output */
+  devfun_t tty_break;		/* let the device send a break */
 
   /* Terminal parameters and status. */
-  int tty_mode;			/* terminal mode set by IOCTL */
-  int tty_speed;		/* low byte is ispeed; high byte is ospeed */
-  int tty_column;		/* current column number (0-origin) */
-  int tty_row;			/* current row (0 at top of screen) */
-  char tty_busy;		/* 1 when output in progress, else 0 */
-  char tty_escaped;		/* 1 when '\' just seen, else 0 */
-  char tty_inhibited;		/* 1 when CTRL-S just seen (stops output) */
-  char tty_makebreak;		/* 1 for terminals that interrupt twice/key */
-  char tty_waiting;		/* 1 when output process waiting for reply */
-  int tty_pgrp;			/* slot number of controlling process */
-
-  /* User settable characters: erase, kill, interrupt, quit, x-on; x-off. */
-  char tty_erase;		/* char used to erase 1 char (init ^H) */
-  char tty_kill;		/* char used to erase a line (init @) */
-  char tty_intr;		/* char used to send SIGINT  (init DEL) */
-  char tty_quit;		/* char used for core dump   (init CTRL-\) */
-  char tty_xon;			/* char used to start output (init CTRL-Q)*/
-  char tty_xoff;		/* char used to stop output  (init CTRL-S) */
-  char tty_eof;			/* char used to stop output  (init CTRL-D) */
+  int tty_position;		/* current position on the screen for echoing */
+  char tty_reprint;		/* 1 when echoed input messed up, else 0 */
+  char tty_escaped;		/* 1 when LNEXT (^V) just seen, else 0 */
+  char tty_inhibited;		/* 1 when STOP (^S) just seen (stops output) */
+  char tty_pgrp;		/* slot number of controlling process */
+  char tty_openct;		/* count of number of opens of this tty */
 
   /* Information about incomplete I/O requests is stored here. */
+  char tty_inrepcode;		/* reply code, TASK_REPLY or REVIVE */
   char tty_incaller;		/* process that made the call (usually FS) */
   char tty_inproc;		/* process that wants to read from tty */
-  char *tty_in_vir;		/* virtual address where data is to go */
+  vir_bytes tty_in_vir;		/* virtual address where data is to go */
   int tty_inleft;		/* how many chars are still needed */
-  char tty_otcaller;		/* process that made the call (usually FS) */
+  int tty_incum;		/* # chars input so far */
+  char tty_outrepcode;		/* reply code, TASK_REPLY or REVIVE */
+  char tty_outcaller;		/* process that made the call (usually FS) */
   char tty_outproc;		/* process that wants to write to tty */
-  char *tty_out_vir;		/* virtual address where data comes from */
-  phys_bytes tty_phys;		/* physical address where data comes from */
+  vir_bytes tty_out_vir;	/* virtual address where data comes from */
   int tty_outleft;		/* # chars yet to be output */
-  int tty_cum;			/* # chars output so far */
+  int tty_outcum;		/* # chars output so far */
+  char tty_iocaller;		/* process that made the call (usually FS) */
+  char tty_ioproc;		/* process that wants to do an ioctl */
+  int tty_ioreq;		/* ioctl request code */
+  vir_bytes tty_iovir;		/* virtual address of ioctl buffer */
 
-  /* Cross reference to avoid slow pointer subtraction. */
-  int tty_line;			/* line number of this tty less NR_CONS */
+  /* Miscellaneous. */
+  devfun_t tty_ioctl;		/* set line speed, etc. at the device level */
+  devfun_t tty_close;		/* tell the device that the tty is closed */
+  void *tty_priv;		/* pointer to per device private data */
+  struct termios tty_termios;	/* terminal attributes */
+  struct winsize tty_winsize;	/* window size (#lines and #columns) */
 
-  /* Large arrays moved to end for shorter addresses. */
-  short tty_ramqueue[TTY_RAM_WORDS];	/* buffer for video RAM */
-  char tty_ebuf[32];		/* echo buffer */
-} tty_struct[NR_CONS+NR_RS_LINES];
+  u16_t tty_inbuf[TTY_IN_BYTES];/* tty input buffer */
+} tty_t;
 
+EXTERN tty_t tty_table[NR_CONS+NR_RS_LINES+NR_PTYS];
 
 /* Values for the fields. */
-#define NOT_ESCAPED        0	/* previous character on this line not '\' */
-#define ESCAPED            1	/* previous character on this line was '\' */
-#define RUNNING            0	/* no CRTL-S has been typed to stop the tty */
-#define STOPPED            1	/* CTRL-S has been typed to stop the tty */
-#define INACTIVE           0	/* the tty is not printing */
-#define BUSY               1	/* the tty is printing */
-#define ONE_INT            0	/* regular terminals interrupt once per char */
-#define TWO_INTS           1	/* IBM console interrupts two times per char */
-#define NOT_WAITING        0	/* no output process is hanging */
-#define WAITING            1	/* an output process is waiting for a reply */
-#define SUSPENDED          2	/* like WAITING but different reply type */
+#define NOT_ESCAPED        0	/* previous character is not LNEXT (^V) */
+#define ESCAPED            1	/* previous character was LNEXT (^V) */
+#define RUNNING            0	/* no STOP (^S) has been typed to stop output */
+#define STOPPED            1	/* STOP (^S) has been typed to stop output */
 
-EXTERN char tty_buf[TTY_BUF_SIZE];	/* scratch buffer to/from user space */
+/* Fields and flags on characters in the input queue. */
+#define IN_CHAR       0x00FF	/* low 8 bits are the character itself */
+#define IN_LEN        0x0F00	/* length of char if it has been echoed */
+#define IN_LSHIFT          8	/* lenght = (c & IN_LEN) >> IN_LSHIFT */
+#define IN_EOT        0x1000	/* char is a line break (^D, LF) */
+#define IN_EOF        0x2000	/* char is EOF (^D), do not return to user */
+#define IN_ESC        0x4000	/* escaped by LNEXT (^V), no interpretation */
 
-EXTERN unsigned tty_events;	/* weighted input chars + output completions*/
-EXTERN phys_bytes tty_bphys;	/* physical address of tty_buf buffer */
+/* Times and timeouts. */
+#define TIME_NEVER	((clock_t) -1 < 0 ? (clock_t) LONG_MAX : (clock_t) -1)
+#define force_timeout()	((void) (tty_timeout = 0))
 
-/* Appropiately sized buffers for keyboard and RS232 lines. */
-EXTERN char kb_inbuf[NR_CONS][KB_IN_BYTES];
-EXTERN char rs_inbuf[NR_RS_LINES][RS_IN_BYTES];
+EXTERN tty_t *tty_timelist;	/* list of ttys with active timers */
+
+/* Number of elements and limit of a buffer. */
+#define buflen(buf)	(sizeof(buf) / sizeof((buf)[0]))
+#define bufend(buf)	((buf) + buflen(buf))

@@ -4,7 +4,7 @@ inet/mq.c
 Created:	Jan 3, 1992 by Philip Homburg
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "mq.h"
 
 #define MQ_SIZE		64

@@ -53,12 +53,10 @@ give_prompt() {
 
 	if (startcomm) return;
 	flush();
-#ifdef WINDOW
 	if (window()) {
 		redraw(0);
 		flush();
 	}
-#endif
 	if (!stupid) {
 		/*
 		 * fancy prompt

@@ -119,9 +119,13 @@ int debug;
 /* Old file reading function to map a name to an address. */
 struct hostent *_gethostbyname(char *);
 
-void onalrm(int sig)
+void onsig(int sig)
 {
-	alarm(1);
+	switch (sig) {
+	case SIGALRM:	alarm(1);	break;
+	case SIGUSR1:	debug++;	break;
+	case SIGUSR2:	debug= 0;	break;
+	}
 }
 
 void rarp_request(ethernet_t *ep)
@@ -396,13 +400,16 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	/* Get the IP addresses and netmasks of all configured networks.  The
-	 * addresses may be different then we have set them to!
-	 */
-	sa.sa_handler= onalrm;
+	sa.sa_handler= onsig;
 	sigemptyset(&sa.sa_mask);
 	sa.sa_flags= 0;
 	sigaction(SIGALRM, &sa, NULL);
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
+
+	/* Get the IP addresses and netmasks of all configured networks.  The
+	 * addresses may be different then we have set them to!
+	 */
 	for (i= 0; i < N_ETHS; i++) {
 		ep= &ethernets[i];
 		if (ep->state == SINK) continue;

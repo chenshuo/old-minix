@@ -20,14 +20,11 @@ _PROTOTYPE( FORWARD void flush, (void) );
 PUBLIC void putk(c)
 int c;
 {
-/* Accumulate another character.  If '\n' or buffer full, print it. */
+/* Accumulate another character.  If 0 or buffer full, print it. */
 
-  if (c == 0) {
-	flush();
-	return;
-  }
-  print_buf[buf_count++] = (char) c;
-  if (c == '\n' || buf_count == BUF_SIZE) flush();
+  if (c == 0 || buf_count == BUF_SIZE) flush();
+  if (c == '\n') putk('\r');
+  if (c != 0) print_buf[buf_count++] = c;
 }
 
 

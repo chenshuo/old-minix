@@ -5,6 +5,7 @@
 #ifndef _PTRACE_H
 #define _PTRACE_H
 
+#define T_STOP	       -1	/* stop the process */
 #define T_OK		0	/* enable tracing by parent for this process */
 #define T_GETINS	1	/* return value from instruction space */
 #define T_GETDATA	2	/* return value from data space */

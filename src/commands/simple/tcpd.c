@@ -38,7 +38,7 @@ char *argv[];
 	struct servent *servent;
 	int result, child;
 	int tcp_fd, tmp, count;
-	char *arg0, *program;
+	char *arg0, *program, **args;
 	int debug= 0;
 
 	arg0= argv[0];
@@ -49,9 +49,10 @@ char *argv[];
 		argv++;
 	}
 
-	if (argc != 3)
+	if (argc < 3)
 	{
-		fprintf(stderr, "Usage: %s [-d] port program\n", arg0);
+		fprintf(stderr,
+			"Usage: %s [-d] port program [arg ...]\n", arg0);
 		exit(1);
 	}
 
@@ -81,6 +82,7 @@ char *argv[];
 	}
 
 	program= argv[2];
+	args= argv+2;
 
 	for (;;)
 	{
@@ -152,7 +154,7 @@ char *argv[];
 				dup2(tcp_fd, 0);
 				dup2(tcp_fd, 1);
 				close(tcp_fd);
-				execl(program, program, 0);
+				execv(program, args);
 				printf("Unable to exec %s\n", program);
 				fflush(stdout);
 				_exit(1);

@@ -3,7 +3,7 @@
 
 /* Minix release and version numbers. */
 #define OS_RELEASE "1.7"
-#define OS_VERSION "1"
+#define OS_VERSION "2"
 
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
@@ -17,7 +17,6 @@
 #define MACHINE       IBM_PC	/* Must be one of the names listed below */
 
 #define IBM_PC             1	/* any  8088 or 80x86-based system */
-#define IBM_386_VM         2	/* any 386 (486) with virtual memory enabled */
 #define SUN_4             40	/* any Sun SPARC-based system */
 #define SUN_4_60	  40	/* Sun-4/60 (aka SparcStation 1 or Campus) */
 #define ATARI             60	/* ATARI ST/STe/TT (68000/68030) */
@@ -47,8 +46,8 @@
 #endif
 
 #if (MACHINE == IBM_PC && _WORD_SIZE == 4)
-#define NR_BUFS          200	/* # blocks in the buffer cache */
-#define NR_BUF_HASH      256	/* size of buf hash table; MUST BE POWER OF 2*/
+#define NR_BUFS           80	/* # blocks in the buffer cache */
+#define NR_BUF_HASH      128	/* size of buf hash table; MUST BE POWER OF 2*/
 #endif
 
 #if (MACHINE == SUN_4_60)
@@ -69,10 +68,7 @@
 
 /* Defines for kernel configuration. */
 #define AUTO_BIOS          0	/* xt_wini.c - use Western's autoconfig BIOS */
-#define C_RS232_INT_HANDLERS 0	/* rs232.c - use slower C int handlers */
-#define DEFAULT_CLASS      0	/* floppy.c - 3 or 5 to get only that size */
 #define LINEWRAP           1	/* console.c - wrap lines at column 80 */
-#define NO_HANDSHAKE       1	/* rs232.c - don't use CTS/RTS handshaking */
 #define ALLOW_GAP_MESSAGES 1	/* proc.c - allow messages in the gap between
 				 * the end of bss and lowest stack address */
 
@@ -80,9 +76,8 @@
 #define ENABLE_NETWORKING  0	/* enable TCP/IP code */
 #define ENABLE_AT_WINI     1	/* enable AT winchester driver */
 #define ENABLE_BIOS_WINI   1	/* enable BIOS winchester driver */
-#define ENABLE_PS_WINI     0	/* enable PS/2 winchester driver */
 #define ENABLE_ESDI_WINI   1	/* enable ESDI winchester driver */
-#define ENABLE_XT_WINI     1	/* enable XT winchester driver */
+#define ENABLE_XT_WINI     0	/* enable XT winchester driver */
 #define ENABLE_ADAPTEC_SCSI 1	/* enable ADAPTEC SCSI driver */
 #define ENABLE_MITSUMI_CDROM 0	/* enable Mitsumi CD-ROM driver */
 #define ENABLE_SB_AUDIO    0	/* enable Soundblaster audio driver */
@@ -90,12 +85,18 @@
 /* DMA_SECTORS may be increased to speed up DMA based drivers. */
 #define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
 
+/* Include or exclude backwards compatibility code for old binaries. */
+#define ENABLE_COMPAT      1	/* enable backwards compatibility code */
+
 /* Determine which device to use for pipes. */
 #define PIPE_DEV    ROOT_DEV	/* put pipes on root device */
 
-/* NR_CONS and NR_RS_LINES determine number of consoles and RS232 lines. */
-#define NR_CONS            1	/* how many consoles can system handle */
-#define	NR_RS_LINES	   2	/* how many rs232 terminals can system handle*/
+/* NR_CONS, NR_RS_LINES, and NR_PTYS determine the number of terminals the
+ * system can handle.
+ */
+#define NR_CONS            1	/* # system consoles (fixed at 1) */
+#define	NR_RS_LINES	   2	/* # rs232 terminals (0, 1, or 2) */
+#define	NR_PTYS		   0	/* # pseudo terminals (0 to 64) */
 
 #if (MACHINE == ATARI)
 /* The next define says if you have an ATARI ST or TT */
@@ -165,7 +166,7 @@
 #define CHIP          INTEL
 #define SHADOWING	  0
 #define ENABLE_WINI	(ENABLE_AT_WINI || ENABLE_BIOS_WINI || \
-			ENABLE_PS_WINI || ENABLE_ESDI_WINI || ENABLE_XT_WINI)
+			ENABLE_ESDI_WINI || ENABLE_XT_WINI)
 #define ENABLE_SCSI	(ENABLE_ADAPTEC_SCSI)
 #define ENABLE_CDROM	(ENABLE_MITSUMI_CDROM)
 #define ENABLE_AUDIO	(ENABLE_SB_AUDIO)

@@ -5,6 +5,7 @@
  */
 
 #include "kernel.h"
+#include <termios.h>
 #include <sgtty.h>
 #include <signal.h>
 #include <unistd.h>
@@ -17,25 +18,17 @@
 /* Standard and AT keyboard.  (PS/2 MCA implies AT throughout.) */
 #define KEYBD		0x60	/* I/O port for keyboard data */
 
-/* AT keyboard.  Most of these values are only used for rebooting. */
+/* AT keyboard. */
 #define KB_COMMAND	0x64	/* I/O port for commands on AT */
 #define KB_GATE_A20	0x02	/* bit in output port to enable A20 line */
 #define KB_PULSE_OUTPUT	0xF0	/* base for commands to pulse output port */
 #define KB_RESET	0x01	/* bit in output port to reset CPU */
 #define KB_STATUS	0x64	/* I/O port for status on AT */
-
-/* PS/2 model 30 keyboard. */
-#define PS_KB_STATUS	0x72	/* I/O port for status on ps/2 (?) */
-#define PS_KEYBD	0x68	/* I/O port for data on ps/2 */
-
-/* AT and PS/2 model 30 keyboards. */
 #define KB_ACK		0xFA	/* keyboard ack response */
 #define KB_BUSY		0x02	/* status bit set when KEYBD port ready */
 #define LED_CODE	0xED	/* command to keyboard to set LEDs */
 #define MAX_KB_ACK_RETRIES 0x1000	/* max #times to wait for kb ack */
 #define MAX_KB_BUSY_RETRIES 0x1000	/* max #times to loop while kb busy */
-
-/* All keyboards. */
 #define KBIT		0x80	/* bit used to ack characters to keyboard */
 
 /* Miscellaneous. */
@@ -47,8 +40,8 @@
 #define MEMCHECK_ADR   0x472	/* address to stop memory check after reboot */
 #define MEMCHECK_MAG  0x1234	/* magic number to stop memory check */
 
-#define kb_addr(n)	(&kb_lines[CONSOLE])	/* incorrectly ignore n */
-#define KB_IBUFSIZE	  32	/* size of keyboard input buffer */
+#define kb_addr()	(&kb_lines[0])	/* there is only one keyboard */
+#define KB_IN_BYTES	  32	/* size of keyboard input buffer */
 
 PRIVATE int alt1;		/* left alt key state */
 PRIVATE int alt2;		/* right alt key state */
@@ -62,28 +55,28 @@ PRIVATE int slock;		/* scroll lock key state */
 PRIVATE int slock_off;		/* 1 = normal position, 0 = depressed */
 PRIVATE int shift;		/* shift key state */
 
-PRIVATE char scode_map[] =
+PRIVATE char numpad_map[] =
 		{'H', 'Y', 'A', 'B', 'D', 'C', 'V', 'U', 'G', 'S', 'T', '@'};
 
 /* Keyboard structure, 1 per console. */
 struct kb_s {
-  int minor;			/* minor number of this line (base 0) */
+  char *ihead;			/* next free spot in input buffer */
+  char *itail;			/* scan code to return to TTY */
+  int icount;			/* # codes in buffer */
 
-  char *ibuf;			/* start of input buffer */
-  char *ibufend;		/* end of input buffer */
-  char *iptr;			/* next free spot in input buffer */
-
-  char ibuf1[KB_IBUFSIZE + 1];	/* 1st input buffer, guard at end */
-  char ibuf2[KB_IBUFSIZE + 1];	/* 2nd input buffer (for swapping) */
+  char ibuf[KB_IN_BYTES];	/* input buffer */
 };
 
 PRIVATE struct kb_s kb_lines[NR_CONS];
 
-FORWARD _PROTOTYPE( int kb_ack, (int data_port) );
-FORWARD _PROTOTYPE( int kb_wait, (int status_port) );
+FORWARD _PROTOTYPE( int kb_ack, (void) );
+FORWARD _PROTOTYPE( int kb_wait, (void) );
+FORWARD _PROTOTYPE( int func_key, (int scode) );
 FORWARD _PROTOTYPE( int scan_keyboard, (void) );
+FORWARD _PROTOTYPE( unsigned make_break, (int scode) );
 FORWARD _PROTOTYPE( void set_leds, (void) );
 FORWARD _PROTOTYPE( int kbd_hw_int, (int irq) );
+FORWARD _PROTOTYPE( void kb_read, (struct tty *tp) );
 FORWARD _PROTOTYPE( unsigned map_key, (int scode) );
 
 
@@ -156,12 +149,13 @@ int irq;
   }
 
   /* Store the character in memory so the task can get at it later. */
-  kb = kb_addr(-NR_CONS);
-  if (kb->iptr < kb->ibufend) {
-	*kb->iptr++ = code;
-	lock();			/* protect shared variable */
-	tty_events += EVENT_THRESHOLD;	/* C doesn't guarantee atomic */
-	unlock();
+  kb = kb_addr();
+  if (kb->icount < KB_IN_BYTES) {
+	*kb->ihead++ = code;
+	if (kb->ihead == kb->ibuf + KB_IN_BYTES) kb->ihead = kb->ibuf;
+	kb->icount++;
+	tty_table[CONSOLE].tty_events = 1;
+	force_timeout();
   }
   /* Else it doesn't fit - discard it. */
   return 1;	/* Reenable keyboard interrupt */
@@ -171,91 +165,84 @@ int irq;
 /*==========================================================================*
  *				kb_read					    *
  *==========================================================================*/
-PUBLIC int kb_read(minor, bufindirect, odoneindirect)
-int minor;
-char **bufindirect;
-unsigned char *odoneindirect;
+PRIVATE void kb_read(tp)
+tty_t *tp;
 {
-/* Swap the keyboard input buffers, giving the old one to TTY. */
+/* Process characters from the circular keyboard buffer. */
 
-  register char *ibuf;
-  register struct kb_s *kb;
-  int nread;
+  struct kb_s *kb;
+  char buf[3];
+  int scode;
+  unsigned ch;
 
-  kb = kb_addr(minor);
-  *odoneindirect = FALSE;
-  if (kb->iptr == (ibuf = kb->ibuf)) return 0;
-  *bufindirect = ibuf;
-  lock();
-  nread = kb->iptr - ibuf;
-  tty_events -= nread * EVENT_THRESHOLD;
-  if (ibuf == kb->ibuf1)
-	ibuf = kb->ibuf2;
-  else
-	ibuf = kb->ibuf1;
-  kb->ibufend = ibuf + KB_IBUFSIZE;
-  kb->iptr = ibuf;
-  unlock();
-  kb->ibuf = ibuf;
-  return nread;
-}
+  kb = kb_addr();
 
+  while (kb->icount > 0) {
+	scode = *kb->itail++;			/* take one key scan code */
+	if (kb->itail == kb->ibuf + KB_IN_BYTES) kb->itail = kb->ibuf;
+	lock();
+	kb->icount--;
+	unlock();
 
-/*===========================================================================*
- *				letter_code				     *
- *===========================================================================*/
-PUBLIC int letter_code(scode)
-int scode;			/* scan code from key press */
-{
-/* Convert scan codes from numeric keypad to letters for use in escape seqs. */
+	/* Function keys are being used for debug dumps. */
+	if (func_key(scode)) continue;
 
-  unsigned km;
-  
-  km = map_key(scode);
+	/* Perform make/break processing. */
+	ch = make_break(scode);
 
-  if (km >= HOME && km <= INSRT)
-	return(scode_map[km-HOME]);
-  return 0;
+	if (ch <= 0xFF) {
+		/* A normal character. */
+		buf[0] = ch;
+		(void) in_process(tp, buf, 1);
+	} else
+	if (HOME <= ch && ch <= INSRT) {
+		/* An ASCII escape sequence generated by the numeric pad. */
+		buf[0] = ESC;
+		buf[1] = '[';
+		buf[2] = numpad_map[ch - HOME];
+		(void) in_process(tp, buf, 3);
+	}
+  }
 }
 
 
 /*===========================================================================*
  *				make_break				     *
  *===========================================================================*/
-PUBLIC int make_break(ch)
-int ch;				/* scan code of key just struck or released */
+PRIVATE unsigned make_break(scode)
+int scode;			/* scan code of key just struck or released */
 {
 /* This routine can handle keyboards that interrupt only on key depression,
  * as well as keyboards that interrupt on key depression and key release.
  * For efficiency, the interrupt routine filters out most key releases.
  */
-  int c, make, code;
+  int ch, make;
   static int CAD_count = 0;
 
   /* Check for CTRL-ALT-DEL, and if found, halt the computer. This would
    * be better done in keyboard() in case TTY is hung, except control and
    * alt are set in the high level code.
    */
-  if (control && (alt1 || alt2) && ch == DEL_SCAN)
+  if (control && (alt1 || alt2) && scode == DEL_SCAN)
   {
-  	if (++CAD_count == 2) wreboot(RBT_HALT);
+	if (++CAD_count == 3) wreboot(RBT_HALT);
 	cause_sig(INIT_PROC_NR, SIGABRT);
 	return -1;
   }
 
-  c = ch & 0177;		/* high-order bit set on key release */
-  make = (ch & 0200 ? 0 : 1);	/* 1 when key depressed, 0 when key released */
+  /* High-order bit set on key release. */
+  make = (scode & 0200 ? 0 : 1);	/* 0 = release, 1 = press */
 
-  code = map_key(c);		/* map to ASCII */
+  ch = map_key(scode & 0177);		/* map to ASCII */
 
-  switch (code) {
+  switch (ch) {
   case CTRL:
 	control = make;
-	code = -1;
+	ch = -1;
 	break;
   case SHIFT:
 	shift = make;
-	code = -1;
+	ch = -1;
 	break;
   case ALT:
 	if (make) {
@@ -263,7 +250,7 @@ int ch;				/* scan code of key just struck or released */
 	} else {
 		alt1 = alt2 = 0;
 	}
-	code = -1;
+	ch = -1;
 	break;
   case CALOCK:
 	if (make && caps_off) {
@@ -271,7 +258,7 @@ int ch;				/* scan code of key just struck or released */
 		set_leds();
 	}
 	caps_off = 1 - make;
-	code = -1;
+	ch = -1;
 	break;
   case NLOCK:
 	if (make && num_off) {
@@ -279,7 +266,7 @@ int ch;				/* scan code of key just struck or released */
 		set_leds();
 	}
 	num_off = 1 - make;
-	code = -1;
+	ch = -1;
 	break;
   case SLOCK:
 	if (make & slock_off) {
@@ -287,18 +274,18 @@ int ch;				/* scan code of key just struck or released */
 		set_leds();
 	}
 	slock_off = 1 - make;
-	code = -1;
+	ch = -1;
 	break;
   case EXTKEY:
 	esc = 1;
 	return(-1);
   default:
-	if (!make) code = -1;
+	if (!make) ch = -1;
   }
 
   esc = 0;
 
-  return(code);
+  return(ch);
 }
 
 
@@ -309,43 +296,34 @@ PRIVATE void set_leds()
 {
 /* Set the LEDs on the caps lock and num lock keys */
 
-  int leds, data_port, status_port;
+  unsigned leds;
 
-  if (!pc_at && !ps) return;	/* PC/XT doesn't have LEDs */
+  if (!pc_at) return;	/* PC/XT doesn't have LEDs */
 
   /* encode LED bits */
   leds = (slock << 0) | (numlock << 1) | (capslock << 2);
 
-  if (ps) {
-	data_port = PS_KEYBD;
-	status_port = PS_KB_STATUS;
-  } else {
-	data_port = KEYBD;
-	status_port = KB_STATUS;
-  }
+  kb_wait();			/* wait for buffer empty  */
+  out_byte(KEYBD, LED_CODE);	/* prepare keyboard to accept LED values */
+  kb_ack();			/* wait for ack response  */
 
-  kb_wait(status_port);		/* wait for buffer empty  */
-  out_byte(data_port, LED_CODE);   /* prepare keyboard to accept LED values */
-  kb_ack(data_port);		/* wait for ack response  */
-
-  kb_wait(status_port);		/* wait for buffer empty  */
-  out_byte(data_port, leds);	/* give keyboard LED values */
-  kb_ack(data_port);		/* wait for ack response  */
+  kb_wait();			/* wait for buffer empty  */
+  out_byte(KEYBD, leds);	/* give keyboard LED values */
+  kb_ack();			/* wait for ack response  */
 }
 
 
 /*==========================================================================*
  *				kb_wait					    *
  *==========================================================================*/
-PRIVATE int kb_wait(status_port)
-int status_port;
+PRIVATE int kb_wait()
 {
 /* Wait until the controller is ready; return zero if this times out. */
 
   int retries;
 
   retries = MAX_KB_BUSY_RETRIES + 1;
-  while (--retries != 0 && in_byte(status_port) & KB_BUSY)
+  while (--retries != 0 && in_byte(KB_STATUS) & KB_BUSY)
 	;			/* wait until not busy */
   return(retries);		/* nonzero if ready */
 }
@@ -354,15 +332,14 @@ int status_port;
 /*==========================================================================*
  *				kb_ack					    *
  *==========================================================================*/
-PRIVATE int kb_ack(data_port)
-int data_port;
+PRIVATE int kb_ack()
 {
 /* Wait until kbd acknowledges last command; return zero if this times out. */
 
   int retries;
 
   retries = MAX_KB_ACK_RETRIES + 1;
-  while (--retries != 0 && in_byte(data_port) != KB_ACK)
+  while (--retries != 0 && in_byte(KEYBD) != KB_ACK)
 	;			/* wait for ack */
   return(retries);		/* nonzero if ack received */
 }
@@ -370,23 +347,20 @@ int data_port;
 /*===========================================================================*
  *				kb_init					     *
  *===========================================================================*/
-PUBLIC void kb_init(minor)
-int minor;
+PUBLIC void kb_init(tp)
+tty_t *tp;
 {
 /* Initialize the keyboard driver. */
 
   register struct kb_s *kb;
-  int irq;
 
-  kb = kb_addr(minor);
+  /* Input function. */
+  tp->tty_devread = kb_read;
 
-  /* Record minor number. */
-  kb->minor = minor;
+  kb = kb_addr();
 
   /* Set up input queue. */
-  kb->iptr = kb->ibuf = kb->ibuf1;
-  kb->ibufend = kb->ibuf1 + KB_IBUFSIZE;
-  kb->iptr = kb->ibuf1;
+  kb->ihead = kb->itail = kb->ibuf;
 
   /* Set initial values. */
   caps_off = 1;
@@ -398,25 +372,19 @@ int minor;
 
   scan_keyboard();		/* stop lockup from leftover keystroke */
 
-  irq = ps ? PS_KEYB_IRQ : KEYBOARD_IRQ;
-  put_irq_handler(irq, kbd_hw_int);	/* set the interrupt handler */
-  enable_irq(irq);		/* safe now everything initialised! */
+  put_irq_handler(KEYBOARD_IRQ, kbd_hw_int);	/* set the interrupt handler */
+  enable_irq(KEYBOARD_IRQ);	/* safe now everything initialised! */
 }
 
 
 /*===========================================================================*
  *				kbd_loadmap				     *
  *===========================================================================*/
-PUBLIC int kbd_loadmap(proc_nr, map_vir)
-int proc_nr;
-vir_bytes map_vir;
+PUBLIC int kbd_loadmap(user_phys)
+phys_bytes user_phys;
 {
 /* Load a new keymap. */
 
-  phys_bytes user_phys, kbd_phys;
-
-  user_phys = numap(proc_nr, map_vir, sizeof(keymap));
-  if (user_phys == 0) return(EFAULT);
   phys_copy(user_phys, vir2phys(keymap), (phys_bytes) sizeof(keymap));
   return(OK);
 }
@@ -425,16 +393,16 @@ vir_bytes map_vir;
 /*===========================================================================*
  *				func_key				     *
  *===========================================================================*/
-PUBLIC int func_key(ch)
-char ch;			/* scan code for a function key */
+PRIVATE int func_key(scode)
+int scode;			/* scan code for a function key */
 {
 /* This procedure traps function keys for debugging and control purposes. */
 
   unsigned code;
 
-  code = map_key0(ch);				/* first ignore modifiers */
+  code = map_key0(scode);			/* first ignore modifiers */
   if (code < F1 || code > F12) return(FALSE);	/* not our job */
-  code = map_key(ch);				/* include modifiers */
+  code = map_key(scode);			/* include modifiers */
 
   if (code == F1) p_dmp();		/* print process table */
   if (code == F2) map_dmp();		/* print memory map */
@@ -443,9 +411,9 @@ char ch;			/* scan code for a function key */
 #if ENABLE_NETWORKING
   if (code == F5) dp_dump();		/* network statistics */
 #endif
-  if (code == CF7) sigchar(&tty_struct[CONSOLE], SIGQUIT);
-  if (code == CF8) sigchar(&tty_struct[CONSOLE], SIGINT);
-  if (code == CF9) sigchar(&tty_struct[CONSOLE], SIGKILL);
+  if (code == CF7) sigchar(&tty_table[CONSOLE], SIGQUIT);
+  if (code == CF8) sigchar(&tty_table[CONSOLE], SIGINT);
+  if (code == CF9) sigchar(&tty_table[CONSOLE], SIGKILL);
   return(TRUE);
 }
 
@@ -460,21 +428,10 @@ PRIVATE int scan_keyboard()
   int code;
   int val;
 
-  if (ps) {
-	code = in_byte(PS_KEYBD);	/* get the scan code for key struck */
-	val = in_byte(0x69);	/* acknowledge it in mysterious ways */
-	out_byte(0x69, val ^ 0x10);	/* 0x69 should be equiv to PORT_B */
-	out_byte(0x69, val);	/* XOR looks  fishy */
-	val = in_byte(0x66);	/* what is 0x66? */
-	out_byte(0x66, val & ~0x10);	/* 0x72 for PS_KB_STATUS is fishier */
-	out_byte(0x66, val | 0x10);
-	out_byte(0x66, val & ~0x10);
-  } else {
-	code = in_byte(KEYBD);	/* get the scan code for the key struck */
-	val = in_byte(PORT_B);	/* strobe the keyboard to ack the char */
-	out_byte(PORT_B, val | KBIT);	/* strobe the bit high */
-	out_byte(PORT_B, val);	/* now strobe it low */
-  }
+  code = in_byte(KEYBD);	/* get the scan code for the key struck */
+  val = in_byte(PORT_B);	/* strobe the keyboard to ack the char */
+  out_byte(PORT_B, val | KBIT);	/* strobe the bit high */
+  out_byte(PORT_B, val);	/* now strobe it low */
   return code;
 }
 
@@ -483,7 +440,7 @@ PRIVATE int scan_keyboard()
  *				wreboot					    *
  *==========================================================================*/
 PUBLIC void wreboot(how)
-int how; 		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
+int how;		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 {
 /* Wait for keystrokes for printing debugging info and reboot. */
 
@@ -530,9 +487,9 @@ int how; 		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 
   if (mon_return && how != RBT_RESET) {
 	/* Reinitialize the interrupt controllers to the BIOS defaults. */
-	init_8259(BIOS_IRQ0_VEC, BIOS_IRQ8_VEC);
+	intr_init(0);
 	out_byte(INT_CTLMASK, 0);
-	if (pc_at) out_byte(INT2_CTLMASK, 0);
+	out_byte(INT2_CTLMASK, 0);
 
 	/* Return to the boot monitor. */
 	if (how == RBT_HALT) {
@@ -546,7 +503,7 @@ int how; 		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 
   /* Stop BIOS memory test. */
   phys_copy(vir2phys(&magic), (phys_bytes) MEMCHECK_ADR,
-  						(phys_bytes) sizeof(magic));
+						(phys_bytes) sizeof(magic));
 
   if (protected_mode) {
 	/* Use the AT keyboard controller to reset the processor.
@@ -557,7 +514,7 @@ int how; 		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 	 * is more of a problem if the fake A20 is in use, as it
 	 * would be if the keyboard reset were used for real mode.
 	 */
-	kb_wait(ps ? PS_KB_STATUS : KB_STATUS);
+	kb_wait();
 	out_byte(KB_COMMAND,
 		 KB_PULSE_OUTPUT | (0x0F & ~(KB_GATE_A20 | KB_RESET)));
 	milli_delay(10);

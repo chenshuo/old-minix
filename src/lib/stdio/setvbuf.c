@@ -1,7 +1,7 @@
 /*
  * setbuf.c - control buffering of a stream
  */
-/* $Header: setvbuf.c,v 1.5 90/12/14 14:47:26 eck Exp $ */
+/* $Id: setvbuf.c,v 1.8 1995/12/18 11:02:18 ceriel Exp $ */
 
 #include	<stdio.h>
 #include	<stdlib.h>
@@ -23,16 +23,14 @@ setvbuf(register FILE *stream, char *buf, int mode, size_t size)
 
 	stream->_flags &= ~(_IOMYBUF | _IONBF | _IOLBF);
 
+	if (buf && size <= 0) retval = EOF;
 	if (!buf && (mode != _IONBF)) {
-		if ((buf = (char *) malloc(size)) == NULL) {
+		if (size <= 0 || (buf = (char *) malloc(size)) == NULL) {
 			retval = EOF;
 		} else {
 			stream->_flags |= _IOMYBUF;
 		}
 	}
-
-	if (io_testflag(stream, _IOREADING) || io_testflag(stream, _IOWRITING))
-		retval = EOF;
 
 	stream->_buf = (unsigned char *) buf;
 

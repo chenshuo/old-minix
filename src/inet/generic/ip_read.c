@@ -2,7 +2,7 @@
 ip_read.c
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "buf.h"
 #include "clock.h"
 #include "type.h"

@@ -13,7 +13,7 @@
 
 #include "kernel.h"
 #include "driver.h"
-#include <sys/ioctl.h>
+#include "drvlib.h"
 
 #if ENABLE_AT_WINI
 
@@ -46,7 +46,6 @@
 #define REG_ERROR	    1	/* error code */
 #define	  ERROR_BB		0x80	/* bad block */
 #define	  ERROR_ECC		0x40	/* bad ecc bytes */
-#define	  ERROR_MC		0x20	/* media changed */
 #define	  ERROR_ID		0x10	/* id not found */
 #define	  ERROR_AC		0x04	/* aborted command */
 #define	  ERROR_TK		0x02	/* track zero error */
@@ -63,10 +62,7 @@
 #define   CMD_SEEK		0x70	/* seek cylinder */
 #define   CMD_DIAG		0x90	/* execute device diagnostics */
 #define   CMD_SPECIFY		0x91	/* specify parameters */
-#define   ATA_LOCK		0xDE	/* lock the door */
-#define   ATA_UNLOCK		0xDF	/* unlock the door */
 #define   ATA_IDENTIFY		0xEC	/* identify drive */
-#define   ATA_EJECT		0xED	/* media eject */
 #define REG_CTL		0x206	/* control register */
 #define   CTL_NORETRY		0x80	/* disable access retry */
 #define   CTL_NOECC		0x40	/* disable ecc retry */
@@ -113,9 +109,6 @@ struct command {
 #define INITIALIZED	0x01	/* drive is initialized */
 #define DEAF		0x02	/* controller must be reset */
 #define SMART		0x04	/* drive supports ATA commands */
-#define RMB		0x08	/* removable media device */
-#define EXCL		0x10	/* exclusive use */
-#define EJECT		0x20	/* eject media on close */
 
 
 /* Variables. */
@@ -153,25 +146,24 @@ PRIVATE int w_status;			/* status after interrupt */
 PRIVATE int w_drive;			/* selected drive */
 PRIVATE struct device *w_dv;		/* device's base and size */
 
-FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
-FORWARD _PROTOTYPE( char *w_name, (void) );
+FORWARD _PROTOTYPE( void init_params, (void) );
 FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
 FORWARD _PROTOTYPE( int w_identify, (void) );
+FORWARD _PROTOTYPE( char *w_name, (void) );
 FORWARD _PROTOTYPE( int w_specify, (void) );
 FORWARD _PROTOTYPE( int w_schedule, (int proc_nr, struct iorequest_s *iop) );
 FORWARD _PROTOTYPE( int w_finish, (void) );
-FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
-FORWARD _PROTOTYPE( int w_do_ioctl, (struct driver *dp, message *m_ptr) );
-FORWARD _PROTOTYPE( void w_timeout, (void) );
-FORWARD _PROTOTYPE( void w_need_reset, (void) );
-FORWARD _PROTOTYPE( int w_reset, (void) );
-FORWARD _PROTOTYPE( int com_simple, (struct command *cmd) );
 FORWARD _PROTOTYPE( int com_out, (struct command *cmd) );
+FORWARD _PROTOTYPE( void w_need_reset, (void) );
+FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
+FORWARD _PROTOTYPE( int com_simple, (struct command *cmd) );
+FORWARD _PROTOTYPE( void w_timeout, (void) );
+FORWARD _PROTOTYPE( int w_reset, (void) );
 FORWARD _PROTOTYPE( int w_intr_wait, (void) );
 FORWARD _PROTOTYPE( int w_waitfor, (int mask, int value) );
 FORWARD _PROTOTYPE( int w_handler, (int irq) );
-FORWARD _PROTOTYPE( void init_params, (void) );
-FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry) );
 
 /* w_waitfor loop unrolled once for speed. */
 #define waitfor(mask, value)	\
@@ -184,13 +176,19 @@ PRIVATE struct driver w_dtab = {
   w_name,		/* current device's name */
   w_do_open,		/* open or mount request, initialize device */
   w_do_close,		/* release device */
-  w_do_ioctl,		/* get or set a partition's geometry */
+  do_diocntl,		/* get or set a partition's geometry */
   w_prepare,		/* prepare for I/O on a given minor device */
   w_schedule,		/* precompute cylinder, head, sector, etc. */
   w_finish,		/* do the I/O */
   nop_cleanup,		/* nothing to clean up */
   w_geometry,		/* tell the geometry of the disk */
 };
+
+#if ENABLE_ATAPI
+#include "atapi.c"	/* extra code for ATAPI CD-ROM */
+#else
+#define atapi_identify()	FALSE
+#endif
 
 
 /*===========================================================================*
@@ -203,6 +201,87 @@ PUBLIC void at_winchester_task()
   init_params();
 
   driver_task(&w_dtab);
+}
+
+
+/*============================================================================*
+ *				init_params				      *
+ *============================================================================*/
+PRIVATE void init_params()
+{
+/* This routine is called at startup to initialize the drive parameters. */
+
+  u16_t parv[2];
+  unsigned int vector;
+  int drive, nr_drives, i;
+  struct wini *wn;
+  u8_t params[16];
+  phys_bytes param_phys = vir2phys(params);
+
+  /* Get the number of drives from the BIOS data area */
+  phys_copy(0x475L, param_phys, 1L);
+  if ((nr_drives = params[0]) > 2) nr_drives = 2;
+
+  for (drive = 0, wn = wini; drive < MAX_DRIVES; drive++, wn++) {
+	if (drive < nr_drives) {
+		/* Copy the BIOS parameter vector */
+		vector = drive == 0 ? WINI_0_PARM_VEC : WINI_1_PARM_VEC;
+		phys_copy(vector * 4L, vir2phys(parv), 4L);
+
+		/* Calculate the address of the parameters and copy them */
+		phys_copy(hclick_to_physb(parv[1]) + parv[0], param_phys, 16L);
+
+		/* Copy the parameters to the structures of the drive */
+		wn->lcylinders = bp_cylinders(params);
+		wn->lheads = bp_heads(params);
+		wn->lsectors = bp_sectors(params);
+		wn->precomp = bp_precomp(params) >> 2;
+	}
+	wn->ldhpref = ldh_init(drive);
+	wn->max_count = MAX_SECS << SECTOR_SHIFT;
+	if (drive < 2) {
+		/* Controller 0. */
+		wn->base = REG_BASE0;
+		wn->irq = AT_IRQ0;
+	} else {
+		/* Controller 1. */
+		wn->base = REG_BASE1;
+		wn->irq = AT_IRQ1;
+	}
+  }
+}
+
+
+/*============================================================================*
+ *				w_do_open				      *
+ *============================================================================*/
+PRIVATE int w_do_open(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device open: Initialize the controller and read the partition table. */
+
+  int r;
+  struct wini *wn;
+  struct command cmd;
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  wn = w_wn;
+
+  if (wn->state == 0) {
+	/* Try to identify the device. */
+	if (w_identify() != OK) {
+		printf("%s: probe failed\n", w_name());
+		if (wn->state & DEAF) w_reset();
+		wn->state = 0;
+		return(ENXIO);
+	}
+  }
+  if (wn->open_ct++ == 0) {
+	/* Partition the disk. */
+	partition(&w_dtab, w_drive * DEV_PER_DRIVE, P_PRIMARY);
+  }
+  return(OK);
 }
 
 
@@ -234,77 +313,6 @@ int device;
 
 
 /*===========================================================================*
- *				w_name					     *
- *===========================================================================*/
-PRIVATE char *w_name()
-{
-/* Return a name for the current device. */
-  static char name[] = "at-hd15";
-  unsigned device = w_drive * DEV_PER_DRIVE;
-
-  if (device < 10) {
-	name[5] = '0' + device;
-	name[6] = 0;
-  } else {
-	name[5] = '0' + device / 10;
-	name[6] = '0' + device % 10;
-  }
-  return name;
-}
-
-
-/*============================================================================*
- *				w_do_open				      *
- *============================================================================*/
-PRIVATE int w_do_open(dp, m_ptr)
-struct driver *dp;
-message *m_ptr;
-{
-/* Device open: Initialize the controller and read the partition table. */
-
-  int r;
-  struct wini *wn;
-  struct command cmd;
-
-  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
-  wn = w_wn;
-
-  if (wn->state == 0) {
-	/* Try to identify the device. */
-	if (w_identify() != OK) {
-		printf("%s: probe failed\n", w_name());
-		if (wn->state & DEAF) w_reset();
-		wn->state = 0;
-		return(ENXIO);
-	}
-  }
-  if (wn->open_ct++ == 0) {
-	/* First open. */
-#if CD
-	if (wn->state & RMB) {
-		/* Lock the door. */
-		cmd.ldh     = wn->ldhpref;
-		cmd.command = ATA_LOCK;
-		if (com_simple(&cmd) != OK) {
-			/* Media change? */
-			if (!(in_byte(wn->base + REG_ERROR) & ERROR_MC))
-				return(EIO);
-			/* Try again. */
-			if (com_simple(&cmd) != OK) return(EIO);
-		}
-	}
-#endif
-	/* Partition the disk. */
-	partition(&w_dtab, w_drive * DEV_PER_DRIVE, P_PRIMARY);
-  } else {
-	/* Already open exclusively? */
-	if (wn->state & EXCL) return(EBUSY);
-  }
-  return(OK);
-}
-
-
-/*===========================================================================*
  *				w_identify				     *
  *===========================================================================*/
 PRIVATE int w_identify()
@@ -331,15 +339,13 @@ PRIVATE int w_identify()
   out_byte(wn->base + REG_CYL_LO, ~r);
   if (in_byte(wn->base + REG_CYL_LO) == r) return(ERR);
 
-  /* Looks OK; register IRQ and try an ATA identify command.  Do it twice
-   * to clear a "media changed" condition.
-   */
+  /* Looks OK; register IRQ and try an ATA identify command. */
   put_irq_handler(wn->irq, w_handler);
   enable_irq(wn->irq);
 
   cmd.ldh     = wn->ldhpref;
   cmd.command = ATA_IDENTIFY;
-  if (com_simple(&cmd) == OK || com_simple(&cmd) == OK) {
+  if (com_simple(&cmd) == OK) {
 	/* This is an ATA device. */
 	wn->state |= SMART;
 
@@ -369,20 +375,12 @@ PRIVATE int w_identify()
 		wn->lheads = wn->pheads;
 		wn->lsectors = wn->psectors;
 		while (wn->lcylinders > 1024) {
-			wn->lheads /= 2;
-			wn->lcylinders *= 2;
+			wn->lheads *= 2;
+			wn->lcylinders /= 2;
 		}
 	}
-
-#if CD
-	/* Try to unlock the door to find out if it is a removable media
-	 * device.
-	 */
-	cmd.ldh     = wn->ldhpref;
-	cmd.command = ATA_UNLOCK;
-	if (com_simple(&cmd) == OK) wn->state |= RMB;
-#endif
-  } else {
+  } else
+  if (!atapi_identify()) {
 	/* Not an ATA device; no translations, no special features.  Don't
 	 * touch it unless the BIOS knows about it.
 	 */
@@ -412,6 +410,26 @@ PRIVATE int w_identify()
 
 
 /*===========================================================================*
+ *				w_name					     *
+ *===========================================================================*/
+PRIVATE char *w_name()
+{
+/* Return a name for the current device. */
+  static char name[] = "at-hd15";
+  unsigned device = w_drive * DEV_PER_DRIVE;
+
+  if (device < 10) {
+	name[5] = '0' + device;
+	name[6] = 0;
+  } else {
+	name[5] = '0' + device / 10;
+	name[6] = '0' + device % 10;
+  }
+  return name;
+}
+
+
+/*===========================================================================*
  *				w_specify				     *
  *===========================================================================*/
 PRIVATE int w_specify()
@@ -426,7 +444,7 @@ PRIVATE int w_specify()
   /* Specify parameters: precompensation, number of heads and sectors. */
   cmd.precomp = wn->precomp;
   cmd.count   = wn->psectors;
-  cmd.ldh     = w_wn->ldhpref + wn->pheads - 1;
+  cmd.ldh     = w_wn->ldhpref | (wn->pheads - 1);
   cmd.command = CMD_SPECIFY;		/* Specify some parameters */
 
   if (com_simple(&cmd) != OK) return(ERR);
@@ -567,11 +585,11 @@ PRIVATE int w_finish()
 			secspcyl = wn->pheads * wn->psectors;
 			cylinder = tp->block / secspcyl;
 			head = (tp->block % secspcyl) / wn->psectors;
-			sector = (tp->block % wn->psectors) + 1;
-			cmd.sector  = sector;
+			sector = tp->block % wn->psectors;
+			cmd.sector  = sector + 1;
 			cmd.cyl_lo  = cylinder & BYTE;
 			cmd.cyl_hi  = (cylinder >> 8) & BYTE;
-			cmd.ldh     = wn->ldhpref + head;
+			cmd.ldh     = wn->ldhpref | head;
 		}
 		cmd.command = w_opcode == DEV_WRITE ? CMD_WRITE : CMD_READ;
 
@@ -652,158 +670,6 @@ PRIVATE int w_finish()
 
 
 /*============================================================================*
- *				w_do_close				      *
- *============================================================================*/
-PRIVATE int w_do_close(dp, m_ptr)
-struct driver *dp;
-message *m_ptr;
-{
-/* Device close: Release a device. */
-
-  struct wini *wn;
-  struct command cmd;
-
-  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
-  wn = w_wn;
-
-  if (--wn->open_ct == 0) {
-#if CD
-	if (wn->state & RMB) {
-		/* Unlock the door and/or eject the media. */
-		cmd.ldh     = wn->ldhpref;
-		cmd.command = (wn->state & EJECT) ? ATA_EJECT : ATA_UNLOCK;
-		(void) com_simple(&cmd);
-	}
-	wn->state &= ~(EXCL|EJECT);
-#endif
-  }
-  return(OK);
-}
-
-
-/*============================================================================*
- *				w_do_ioctl				      *
- *============================================================================*/
-PRIVATE int w_do_ioctl(dp, m_ptr)
-struct driver *dp;
-message *m_ptr;
-{
-  struct wini *wn;
-  struct command cmd;
-
-  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
-  wn = w_wn;
-
-  if (m_ptr->REQUEST == DIOCEJECT) {
-	/* Mark device for media eject on close. */
-	if (!(wn->state & RMB)) return(EIO);
-	if (wn->open_ct > 1) return(EBUSY);
-	wn->state |= (EXCL|EJECT);
-	return(OK);
-  }
-  /* Call the common code. */
-  return(do_diocntl(dp, m_ptr));
-}
-
-
-/*===========================================================================*
- *				w_timeout				     *
- *===========================================================================*/
-PRIVATE void w_timeout()
-{
-  struct wini *wn = w_wn;
-
-  switch (w_command) {
-  case CMD_IDLE:
-	break;		/* fine */
-  case CMD_READ:
-  case CMD_WRITE:
-	/* Impossible, but not on PC's:  The controller does not respond. */
-
-	/* Limiting multisector I/O seems to help. */
-	if (wn->max_count > 8 * SECTOR_SIZE) {
-		wn->max_count = 8 * SECTOR_SIZE;
-	} else {
-		wn->max_count = SECTOR_SIZE;
-	}
-	/*FALL THROUGH*/
-  default:
-	/* Some other command. */
-	printf("%s: timeout on command %02x\n", w_name(), w_command);
-	w_need_reset();
-	w_status = 0;
-	interrupt(WINCHESTER);
-  }
-}
-
-
-/*===========================================================================*
- *				w_need_reset				     *
- *===========================================================================*/
-PRIVATE void w_need_reset()
-{
-/* The controller needs to be reset. */
-  struct wini *wn;
-
-  for (wn = wini; wn < &wini[MAX_DRIVES]; wn++) {
-	wn->state |= DEAF;
-	wn->state &= ~INITIALIZED;
-  }
-}
-
-
-/*===========================================================================*
- *				w_reset					     *
- *===========================================================================*/
-PRIVATE int w_reset()
-{
-/* Issue a reset to the controller.  This is done after any catastrophe,
- * like the controller refusing to respond.
- */
-
-  struct wini *wn;
-  int err;
-
-  /* Wait for any internal drive recovery. */
-  milli_delay(RECOVERYTIME);
-
-  /* Strobe reset bit */
-  out_byte(w_wn->base + REG_CTL, CTL_RESET);
-  milli_delay(1);
-  out_byte(w_wn->base + REG_CTL, 0);
-  milli_delay(1);
-
-  /* Wait for controller ready */
-  if (!w_waitfor(STATUS_BSY | STATUS_RDY, STATUS_RDY)) {
-	printf("%s: reset failed, drive busy\n", w_name());
-	return(ERR);
-  }
-
-  /* The error register should be checked now, but some drives mess it up. */
-
-  for (wn = wini; wn < &wini[MAX_DRIVES]; wn++) {
-	if (wn->base == w_wn->base) wn->state &= ~DEAF;
-  }
-  return(OK);
-}
-
-
-/*============================================================================*
- *				com_simple				      *
- *============================================================================*/
-PRIVATE int com_simple(cmd)
-struct command *cmd;		/* Command block */
-{
-/* A simple controller command, only one interrupt and no data-out phase. */
-  int r;
-
-  if ((r = com_out(cmd)) == OK) r = w_intr_wait();
-  w_command = CMD_IDLE;
-  return(r);
-}
-
-
-/*============================================================================*
  *				com_out					      *
  *============================================================================*/
 PRIVATE int com_out(cmd)
@@ -841,6 +707,118 @@ struct command *cmd;		/* Command block */
   w_command = cmd->command;
   w_status = STATUS_BSY;
   unlock();
+  return(OK);
+}
+
+
+/*===========================================================================*
+ *				w_need_reset				     *
+ *===========================================================================*/
+PRIVATE void w_need_reset()
+{
+/* The controller needs to be reset. */
+  struct wini *wn;
+
+  for (wn = wini; wn < &wini[MAX_DRIVES]; wn++) {
+	wn->state |= DEAF;
+	wn->state &= ~INITIALIZED;
+  }
+}
+
+
+/*============================================================================*
+ *				w_do_close				      *
+ *============================================================================*/
+PRIVATE int w_do_close(dp, m_ptr)
+struct driver *dp;
+message *m_ptr;
+{
+/* Device close: Release a device. */
+
+  if (w_prepare(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
+  w_wn->open_ct--;
+  return(OK);
+}
+
+
+/*============================================================================*
+ *				com_simple				      *
+ *============================================================================*/
+PRIVATE int com_simple(cmd)
+struct command *cmd;		/* Command block */
+{
+/* A simple controller command, only one interrupt and no data-out phase. */
+  int r;
+
+  if ((r = com_out(cmd)) == OK) r = w_intr_wait();
+  w_command = CMD_IDLE;
+  return(r);
+}
+
+
+/*===========================================================================*
+ *				w_timeout				     *
+ *===========================================================================*/
+PRIVATE void w_timeout()
+{
+  struct wini *wn = w_wn;
+
+  switch (w_command) {
+  case CMD_IDLE:
+	break;		/* fine */
+  case CMD_READ:
+  case CMD_WRITE:
+	/* Impossible, but not on PC's:  The controller does not respond. */
+
+	/* Limiting multisector I/O seems to help. */
+	if (wn->max_count > 8 * SECTOR_SIZE) {
+		wn->max_count = 8 * SECTOR_SIZE;
+	} else {
+		wn->max_count = SECTOR_SIZE;
+	}
+	/*FALL THROUGH*/
+  default:
+	/* Some other command. */
+	printf("%s: timeout on command %02x\n", w_name(), w_command);
+	w_need_reset();
+	w_status = 0;
+	interrupt(WINCHESTER);
+  }
+}
+
+
+/*===========================================================================*
+ *				w_reset					     *
+ *===========================================================================*/
+PRIVATE int w_reset()
+{
+/* Issue a reset to the controller.  This is done after any catastrophe,
+ * like the controller refusing to respond.
+ */
+
+  struct wini *wn;
+  int err;
+
+  /* Wait for any internal drive recovery. */
+  milli_delay(RECOVERYTIME);
+
+  /* Strobe reset bit */
+  out_byte(w_wn->base + REG_CTL, CTL_RESET);
+  milli_delay(1);
+  out_byte(w_wn->base + REG_CTL, 0);
+  milli_delay(1);
+
+  /* Wait for controller ready */
+  if (!w_waitfor(STATUS_BSY | STATUS_RDY, STATUS_RDY)) {
+	printf("%s: reset failed, drive busy\n", w_name());
+	return(ERR);
+  }
+
+  /* The error register should be checked now, but some drives mess it up. */
+
+  for (wn = wini; wn < &wini[MAX_DRIVES]; wn++) {
+	if (wn->base == w_wn->base) wn->state &= ~DEAF;
+  }
   return(OK);
 }
 
@@ -911,59 +889,13 @@ int irq;
 
 
 /*============================================================================*
- *				init_params				      *
- *============================================================================*/
-PRIVATE void init_params()
-{
-/* This routine is called at startup to initialize the drive parameters. */
-
-  u16_t parv[2];
-  unsigned int vector;
-  int drive, nr_drives, i;
-  struct wini *wn;
-
-  /* Get the number of drives from the BIOS data area */
-  phys_copy(0x475L, tmp_phys, 1L);
-  if ((nr_drives = tmp_buf[0]) > 2) nr_drives = 2;
-
-  for (drive = 0, wn = wini; drive < MAX_DRIVES; drive++, wn++) {
-	if (drive < nr_drives) {
-		/* Copy the BIOS parameter vector */
-		vector = drive == 0 ? WINI_0_PARM_VEC : WINI_1_PARM_VEC;
-		phys_copy(vector * 4L, vir2phys(parv), 4L);
-
-		/* Calculate the address of the parameters and copy them */
-		phys_copy(hclick_to_physb(parv[1]) + parv[0], tmp_phys, 16L);
-
-		/* Copy the parameters to the structures of the drive */
-		wn->lcylinders = bp_cylinders(tmp_buf);
-		wn->lheads = bp_heads(tmp_buf);
-		wn->lsectors = bp_sectors(tmp_buf);
-		wn->precomp = bp_precomp(tmp_buf) >> 2;
-	}
-	wn->ldhpref = ldh_init(drive);
-	wn->max_count = MAX_SECS << SECTOR_SHIFT;
-	if (drive < 2) {
-		/* Controller 0. */
-		wn->base = REG_BASE0;
-		wn->irq = AT_IRQ0;
-	} else {
-		/* Controller 1. */
-		wn->base = REG_BASE1;
-		wn->irq = AT_IRQ1;
-	}
-  }
-}
-
-
-/*============================================================================*
  *				w_geometry				      *
  *============================================================================*/
-PRIVATE void w_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void w_geometry(entry)
+struct partition *entry;
 {
-  chs[0] = w_wn->lcylinders;
-  chs[1] = w_wn->lheads;
-  chs[2] = w_wn->lsectors;
+  entry->cylinders = w_wn->lcylinders;
+  entry->heads = w_wn->lheads;
+  entry->sectors = w_wn->lsectors;
 }
 #endif /* ENABLE_AT_WINI */

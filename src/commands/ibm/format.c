@@ -1,4 +1,4 @@
-/*	format 1.0 - format PC floppy disk		Author: Kees J. Bot
+/*	format 1.1 - format PC floppy disk		Author: Kees J. Bot
  *								5 Mar 1994
  */
 #define nil 0
@@ -12,7 +12,7 @@
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
-#include <minix/diskparm.h>
+#include <ibm/diskparm.h>
 #include <minix/minlib.h>
 
 /* Constants. */
@@ -20,7 +20,7 @@
 #define NR_HEADS	  2
 #define MAX_SECTORS	 18	/* 1.44Mb is the largest. */
 
-/* Name error in <minix/diskparm.h>, left over from the days floppies were
+/* Name error in <ibm/diskparm.h>, left over from the days floppies were
  * single sided.
  */
 #define sectors_per_track	sectors_per_cylinder

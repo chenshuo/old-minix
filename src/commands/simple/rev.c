@@ -2,10 +2,11 @@
 
 #include <sys/types.h>
 #include <fcntl.h>
-#include <blocksize.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <minix/minlib.h>
+
+#define CHUNK_SIZE	4096
 
 #ifndef EOF
 #define	EOF	((char) -1)
@@ -46,20 +47,20 @@ char *argv[];
 
 void rev()
 {
-  char output[BLOCK_SIZE];	/* Contains a reversed line */
+  char output[CHUNK_SIZE];	/* Contains a reversed line */
   register unsigned short i;	/* Index in output array */
 
   do {
-	i = BLOCK_SIZE - 1;
+	i = CHUNK_SIZE - 1;
 	while ((output[i] = nextchar()) != '\n' && output[i] != EOF) i--;
-	write(1, &output[i + 1], BLOCK_SIZE - 1 - i); /* write reversed line */
+	write(1, &output[i + 1], CHUNK_SIZE - 1 - i); /* write reversed line */
 	if (output[i] == '\n')	/* and write a '\n' */
 		write(1, "\n", 1);
   } while (output[i] != EOF);
 }
 
 
-char buf[BLOCK_SIZE];
+char buf[CHUNK_SIZE];
 
 int nextchar()
 {				/* Does a sort of buffered I/O */
@@ -67,7 +68,7 @@ int nextchar()
   static int i;			/* Index in input buffer to next character */
 
   if (--n <= 0) {		/* We've had this block. Read in next block */
-	n = read(fd, buf, BLOCK_SIZE);
+	n = read(fd, buf, CHUNK_SIZE);
 	i = 0;			/* Reset index in array */
   }
   return((n <= 0) ? EOF : buf[i++]);	/* Return -1 on EOF */

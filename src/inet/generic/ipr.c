@@ -2,7 +2,7 @@
 ipr.c
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "clock.h"
 
 #include "assert.h"

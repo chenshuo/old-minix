@@ -20,10 +20,7 @@
 
 #include <sys/types.h>
 #include <signal.h>
-#ifdef SIGWINCH
-#define WINDOW
 #include <sys/ioctl.h>
-#endif
 
 /* Terminal setting */
 

@@ -1,4 +1,4 @@
-/*	nonamed 1.3 - not a name daemon, but plays one on TV.
+/*	nonamed 1.5 - not a name daemon, but plays one on TV.
  *							Author: Kees J. Bot
  *								29 Nov 1994
  */
@@ -514,9 +514,7 @@ int job_listen(void *data, int expired)
 	}
 	if (debug >= 2) printf(": Listen\n");
 
-	/* Immediately resume listening.  Alas we cannot prevent that a connect
-	 * may fail at this moment.  Luckily TCP connections are rare.
-	 */
+	/* Immediately resume listening. */
 	newjob(job_setup_listen, IMMEDIATE, nil);
 
 	/* Set up a connect to the real name daemon in one second. */
@@ -819,7 +817,8 @@ int job_read_udp(void *data, int expired)
 	hp= (dns_hdr_t *) (&u.hdr + 1);
 
 	if (debug >= 1) {
-		printf("%s UDP ", inet_ntoa(u.hdr.uih_src_addr));
+		printf("%s/%u UDP ", inet_ntoa(u.hdr.uih_src_addr),
+					ntohs(u.hdr.uih_src_port));
 		dns_tell((u8_t *) hp, count - sizeof(udp_io_hdr_t));
 	}
 
@@ -855,7 +854,10 @@ int job_read_udp(void *data, int expired)
 		u.hdr.uih_dst_addr= ip;
 		u.hdr.uih_src_port= my_port;
 		u.hdr.uih_dst_port= port;
-		if (debug >= 1) printf("To client %s\n", inet_ntoa(ip));
+		if (debug >= 1) {
+			printf("To client %s/%u\n", inet_ntoa(ip),
+							ntohs(port));
+		}
 		if (write(udp_fd, u.buf, count) < 0) fatal(udp_device);
 	} else
 	if (named_ip != NO_IP) {
@@ -866,7 +868,10 @@ int job_read_udp(void *data, int expired)
 		u.hdr.uih_dst_addr= named_ip;
 		u.hdr.uih_src_port= my_port;
 		u.hdr.uih_dst_port= named_port;
-		if (debug >= 1) printf("To named %s\n", inet_ntoa(named_ip));
+		if (debug >= 1) {
+			printf("To named %s/%u\n", inet_ntoa(named_ip),
+							ntohs(named_port));
+		}
 		if (write(udp_fd, u.buf, count) < 0) fatal(udp_device);
 		if (!expecting()) {
 			start_expect();
@@ -897,7 +902,11 @@ int job_read_udp(void *data, int expired)
 			return 1;
 
 		/* Send a DNS reply. */
-		if (debug >= 1) dns_tell(rbuf + sizeof(udp_io_hdr_t), rsize);
+		if (debug >= 1) {
+			printf("%s/%u UDP ", inet_ntoa(rhdr->uih_dst_addr),
+						ntohs(rhdr->uih_dst_port));
+			dns_tell(rbuf + sizeof(udp_io_hdr_t), rsize);
+		}
 		if (write(udp_fd, rbuf, sizeof(udp_io_hdr_t) + rsize) < 0)
 			fatal(udp_device);
 	}
@@ -905,6 +914,20 @@ int job_read_udp(void *data, int expired)
 }
 
 #if __minix_vmd
+char *tcp_dns_tell(int fd, u8_t *buf)
+/* Tell about a DNS packet on a TCP channel. */
+{
+	nwio_tcpconf_t tcpconf;
+
+	if (ioctl(fd, NWIOGTCPCONF, &tcpconf) < 0) {
+		printf("???/?? TCP ");
+	} else {
+		printf("%s/%u TCP ", inet_ntoa(tcpconf.nwtc_remaddr),
+					ntohs(tcpconf.nwtc_remport));
+	}
+	dns_tell(buf + sizeof(u16_t), ntohs(upack16(buf)));
+}
+
 int job_read_query(void *data, int expired)
 /* Read TCP queries. */
 {
@@ -952,6 +975,7 @@ int job_read_query(void *data, int expired)
 			return 1;
 		}
 	}
+	if (debug >= 1) tcp_dns_tell(data_rw->r_fd, data_rw->buf);
 
 	/* Relay or reply. */
 	count= data_rw->size;
@@ -960,15 +984,6 @@ int job_read_query(void *data, int expired)
 	if (count < sizeof(u16_t) + sizeof(dns_hdr_t)) {
 		close_relay(data_rw);
 		return 1;
-	}
-
-	if (debug >= 1) {
-		nwio_tcpconf_t tcpconf;
-
-		printf("%s TCP ",
-			ioctl(data_rw->r_fd, NWIOGTCPCONF, &tcpconf) < 0
-				? "???" : inet_ntoa(tcpconf.nwtc_remaddr));
-		dns_tell((u8_t *) hp, count - sizeof(u16_t));
 	}
 
 	if (data_rw->w_fd != data_rw->r_fd) {
@@ -988,7 +1003,6 @@ int job_read_query(void *data, int expired)
 		pack16(rbuf, htons(count));
 
 		/* Start a reply write. */
-		if (debug >= 1) dns_tell(rbuf + sizeof(u16_t), count);
 		data_rw->size= sizeof(u16_t) + count;
 		data_rw->buf= allocate(data_rw->buf, data_rw->size);
 		memcpy(data_rw->buf, rbuf, data_rw->size);
@@ -1030,6 +1044,7 @@ int job_write_query(void *data, int expired)
 		newjob(job_write_query, now + LONG_TIMEOUT, data_rw);
 		return 1;
 	}
+	if (debug >= 1) tcp_dns_tell(data_rw->w_fd, data_rw->buf);
 
 	/* Query fully send on, go read more queries. */
 	data_rw->offset= 0;
@@ -1084,13 +1099,9 @@ int job_read_reply(void *data, int expired)
 			return 1;
 		}
 	}
+	if (debug >= 1) tcp_dns_tell(data_rw->r_fd, data_rw->buf);
 
 	/* Reply fully read, send it on. */
-	if (debug >= 1) {
-		printf("%s TCP ", inet_ntoa(named_ip));
-		dns_tell(data_rw->buf + sizeof(u16_t),
-			data_rw->size - sizeof(u16_t));
-	}
 	data_rw->offset= 0;
 	newjob(job_write_reply, now + LONG_TIMEOUT, data_rw);
 	return 1;
@@ -1128,6 +1139,7 @@ int job_write_reply(void *data, int expired)
 		newjob(job_write_reply, now + LONG_TIMEOUT, data_rw);
 		return 1;
 	}
+	if (debug >= 1) tcp_dns_tell(data_rw->w_fd, data_rw->buf);
 
 	/* Reply fully send on, go read more replies (or queries). */
 	data_rw->offset= 0;
@@ -1227,17 +1239,20 @@ int job_expect_named(void *data, int expired)
 
 int force_search;
 
-void sig_search(int sig)
-/* A signal forces a search for a real name daemon. */
+void sig_handler(int sig)
+/* A signal forces a search for a real name daemon, etc. */
 {
-	signal(sig, sig_search);
-	force_search= 1;
+	switch (sig) {
+	case SIGHUP:	force_search= 1;	break;
+	case SIGUSR1:	debug++;		break;
+	case SIGUSR2:	debug= 0;		break;
+	}
 }
 
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: nonamed [-d[level]] [-p port] [-n address[:port]]\n");
+		"Usage: nonamed [-d[level]] [-p port] [-n address[/port]]\n");
 	exit(1);
 }
 
@@ -1247,6 +1262,7 @@ void main(int argc, char **argv)
 	nwio_udpopt_t udpopt;
 	int i;
 	struct servent *servent;
+	struct sigaction sa;
 
 	if ((servent= getservbyname("domain", nil)) == nil) {
 		fprintf(stderr, "nonamed: \"domain\": unknown service\n");
@@ -1283,12 +1299,12 @@ void main(int argc, char **argv)
 				if (i == argc) usage();
 				opt= argv[i++];
 			}
-			if ((p= strchr(opt, ':')) != nil) *p++= 0;
+			if ((p= strchr(opt, '/')) != nil) *p++= 0;
 			if (!inet_aton(opt, &named_ip)) usage();
 			if (p != nil) {
 				named_port= htons(strtoul(p, &end, 0));
 				if (p == end || *end != 0) usage();
-				p[-1]= ':';
+				p[-1]= '/';
 			}
 			stop_searching();
 			break;
@@ -1298,9 +1314,15 @@ void main(int argc, char **argv)
 	}
 	if (i != argc) usage();
 
-	/* Don't die on broken pipes, seek a real name daemon on hangup. */
-	signal(SIGPIPE, SIG_IGN);
-	signal(SIGHUP, sig_search);
+	/* Don't die on broken pipes, seek a real name daemon on hangup, etc. */
+	sa.sa_handler= SIG_IGN;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags= 0;
+	sigaction(SIGPIPE, &sa, nil);
+	sa.sa_handler= sig_handler;
+	sigaction(SIGHUP, &sa, nil);
+	sigaction(SIGUSR1, &sa, nil);
+	sigaction(SIGUSR2, &sa, nil);
 
 	/* TCP and UDP device names. */
 	if ((tcp_device= getenv("TCP_DEVICE")) == nil) tcp_device= TCP_DEVICE;

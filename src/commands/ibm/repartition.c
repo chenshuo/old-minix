@@ -1,4 +1,4 @@
-/*	repartition 1.11 - Load a partition table	Author: Kees J. Bot
+/*	repartition 1.13 - Load a partition table	Author: Kees J. Bot
  *								30 Nov 1991
  */
 #define nil 0
@@ -10,11 +10,17 @@
 #include <fcntl.h>
 #include <minix/config.h>
 #include <minix/const.h>
-#include <minix/partition.h>
 #include <minix/boot.h>
+#include <minix/partition.h>
+#include <ibm/partition.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
+
+#if !__minix_vmd
+#define div64u(i, j)	((i) / (j))
+#define mul64u(i, j)	((i) * (j))
+#endif
 
 #define SECTOR_SIZE	512
 
@@ -103,11 +109,12 @@ char *devname(dev_t dev)
 #define DSETP	0
 #define DGETP	1
 
-int diocntl(dev_t device, int request, struct part_entry *entry)
+int diocntl(dev_t device, int request, struct partition *entry)
 /* Get or set the geometry of a device. */
 {
 	char *name;
 	int r, f, err;
+	struct partition geometry;
 
 	name= devname(device);
 
@@ -119,30 +126,22 @@ int diocntl(dev_t device, int request, struct part_entry *entry)
 	return r;
 }
 
-unsigned cylinders, heads, sectors;	/* Geometry of the device. */
-
-void dos2chs(unsigned char *p, unsigned *c, unsigned *h, unsigned *s)
-/* Unscramble the three bytes DOS uses to address a sector. */
-{
-	*c= p[2] | ((p[1] << 2) & 0x300);
-	*s= p[1] & 0x3F;
-	*h= p[0];
-}
+struct partition geometry;	/* Geometry of the device. */
 
 void print_chs(unsigned long sector)
 {
-	unsigned secspcyl = heads * sectors;
+	unsigned secspcyl = geometry.heads * geometry.sectors;
 	int delta= 0;
 
 	if (sector == -1) { sector= 0; delta= -1; }
 
 	printf("  %4d/%02d/%02d",
 		(int) (sector / secspcyl),
-		(int) (sector % secspcyl) / sectors,
-		(int) (sector % sectors) + delta);
+		(int) (sector % secspcyl) / geometry.sectors,
+		(int) (sector % geometry.sectors) + delta);
 }
 
-void show_part(char *name, struct part_entry *p)
+void show_part(char *name, unsigned long base, unsigned long size)
 {
 	int i;
 	static int len= 0;
@@ -158,22 +157,23 @@ void show_part(char *name, struct part_entry *p)
 	printf("%s", name);
 	for (i = strlen(name); i < len; i++) fputc(' ', stdout);
 
-	print_chs(p->lowsec);
-	print_chs(p->lowsec + p->size - 1);
-	printf("  %8lu  %8lu  %7lu\n",
-		p->lowsec, p->size, p->size / (1024 / SECTOR_SIZE));
+	print_chs(base);
+	print_chs(base + size - 1);
+	printf("  %8lu  %8lu  %7lu\n", base, size, size / (1024/SECTOR_SIZE));
 }
 
 int main(int argc, char **argv)
 {
 	struct stat hdst;
-	struct part_entry entry, table[4];
+	struct partition whole, entry;
+	struct part_entry table[4], *pe;
 	int drive, par, device, incr;
 	int partf;
 	char *table_file;
 	int hd_major, hd_minor;
 	int needsort;
 	int shrink;		/* True if partitions are shrinked to fit. */
+	unsigned long base, size, limit;
 
 	if ((arg0= strrchr(argv[0], '/')) == nil) arg0= argv[0]; else arg0++;
 
@@ -194,10 +194,7 @@ int main(int argc, char **argv)
 	}
 
 	/* Geometry (to print nice numbers.) */
-	if (diocntl(hdst.st_rdev, DGETP, &entry) < 0) fatal(dev_file);
-	dos2chs(&entry.last_head, &cylinders, &heads, &sectors);
-	cylinders++;
-	heads++;
+	if (diocntl(hdst.st_rdev, DGETP, &geometry) < 0) fatal(dev_file);
 
 	if (!S_ISBLK(hdst.st_mode)) {
 		fprintf(stderr, "%s: %s is not a device\n", arg0, dev_file);
@@ -256,32 +253,38 @@ int main(int argc, char **argv)
 	if (needsort) partsort(table);
 
 	/* Show the geometry of the affected drive or partition. */
-	if (diocntl(hdst.st_rdev, DGETP, &entry) < 0) fatal(dev_file);
+	if (diocntl(hdst.st_rdev, DGETP, &whole) < 0) fatal(dev_file);
 
-	show_part(dev_file, &entry);
+	/* Use sector numbers. */
+	base = div64u(whole.base, SECTOR_SIZE);
+	size = div64u(whole.size, SECTOR_SIZE);
+	limit = base + size;
+
+	show_part(dev_file, base, size);
 
 	/* Send the partition table entries to the device driver. */
 	for (par= 0; par < NR_PARTITIONS; par++, device+= incr) {
-		struct part_entry *pe= &table[par];
-
+		pe = &table[par];
 		if (shrink && pe->size != 0) {
-			/* Shrink the partition to fit within the enclosing
-			 * device just like the driver does.
+			/* Shrink the partition entry to fit within the
+			 * enclosing device just like the driver does.
 			 */
-			unsigned long entry_limit= entry.lowsec + entry.size;
-			unsigned long pe_limit= pe->lowsec + pe->size;
+			unsigned long part_limit= pe->lowsec + pe->size;
 
-			if (pe_limit < pe->lowsec) pe_limit= entry_limit;
-			if (pe_limit > entry_limit) pe_limit= entry_limit;
-			if (pe->lowsec < entry.lowsec) pe->lowsec= entry.lowsec;
-			if (pe_limit < pe->lowsec) pe_limit= pe->lowsec;
-			pe->size= pe_limit - pe->lowsec;
+			if (part_limit < pe->lowsec) part_limit= limit;
+			if (part_limit > limit) part_limit= limit;
+			if (pe->lowsec < base) pe->lowsec= base;
+			if (part_limit < pe->lowsec) part_limit= pe->lowsec;
+			pe->size= part_limit - pe->lowsec;
 		}
 
-		if (diocntl(makedev(hd_major, device), DSETP, pe) < 0)
+		entry.base= mul64u(pe->lowsec, SECTOR_SIZE);
+		entry.size= mul64u(pe->size, SECTOR_SIZE);
+		if (diocntl(makedev(hd_major, device), DSETP, &entry) < 0)
 			fatal(dev_file);
 
-		show_part(devname(makedev(hd_major, device)), pe);
+		show_part(devname(makedev(hd_major, device)),
+							pe->lowsec, pe->size);
 	}
 	exit(0);
 }

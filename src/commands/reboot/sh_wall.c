@@ -21,6 +21,7 @@
 static char UTMP[] = "/etc/utmp";	/* Currently logged in users. */
 
 void wall _ARGS(( char *when, char *extra ));
+void crnlcat _ARGS(( char *message, char *more ));
 
 void
 wall(when, extra)
@@ -45,26 +46,22 @@ char *extra;			/* If non-nil, why is the shutdown */
 
   time(&now);
   if (uname(&utsname) != 0) strcpy(utsname.nodename, "?");
-  sprintf(message, "\nBroadcast message from %s@%s (%s) %.24s...\007\007\007\n",
+  sprintf(message, "\r\nBroadcast message from %s@%s (%s) %.24s...\007\007\007\r\n",
 		ourname, utsname.nodename, ourtty, ctime(&now));
 
-  if (strlen(when))
-    strcat (message,when);
-  if (strlen(extra))
-    strcat (message,extra);
+  crnlcat(message, when);
+  crnlcat(message, extra);
 
-  if (!strlen(message))
-    strcpy (message,"System is going down within considerable time\nPlease finish your jobs ASAP\n");
 /* Search the UTMP database for all logged-in users. */
 
-  if ((utmpfd = open(UTMP, O_RDONLY,0)) < 0) {
-	fprintf(stderr, "Cannot open utmp file\n");
+  if ((utmpfd = open(UTMP, O_RDONLY)) < 0) {
+	fprintf(stderr, "Cannot open utmp file\r\n");
 	return;
   }
 
   /* first the console */
   strcpy(utmptty, "/dev/console");
-  if ((ttyfd = open(utmptty, O_WRONLY,0)) < 0) {
+  if ((ttyfd = open(utmptty, O_WRONLY | O_NONBLOCK)) < 0) {
 	perror(utmptty);
   } else {
 	fstat(ttyfd, &con_st);
@@ -78,7 +75,7 @@ char *extra;			/* If non-nil, why is the shutdown */
 
 	strncpy(utmptty+5, utmp.ut_line, sizeof(utmp.ut_line));
 	utmptty[5 + sizeof(utmp.ut_line) + 1] = 0;
-	if ((ttyfd = open(utmptty, O_WRONLY,0)) < 0) {
+	if ((ttyfd = open(utmptty, O_WRONLY | O_NONBLOCK)) < 0) {
 		perror(utmptty);
 		continue;
 	}
@@ -89,4 +86,24 @@ char *extra;			/* If non-nil, why is the shutdown */
   }
   close(utmpfd);
   return;
+}
+
+void
+crnlcat(message, more)
+char *message, *more;
+{
+  char *p = message;
+  char *m = more;
+  char *end = message + 1024 - 1;
+
+  while (p < end && *p != 0) *p++;
+
+  while (p < end && *m != 0) {
+    if (*m == '\n' && (p == message || p[-1] != '\n')) {
+      *p++ = '\r';
+      if (p == end) p--;
+    }
+    *p++ = *m++;
+  }
+  *p = 0;
 }

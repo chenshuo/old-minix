@@ -3,17 +3,13 @@
 #include "kernel.h"
 #include <minix/com.h>
 #include "proc.h"
-#include "tty.h"
 
-#define NSIZE 40
-
-char aout[NR_PROCS][NSIZE + 1];	/* pointers to the program names */
 char *vargv;
 
-FORWARD _PROTOTYPE(void prname, (int i));
+FORWARD _PROTOTYPE(char *proc_name, (int proc_nr));
 
 /*===========================================================================*
- *				DEBUG routines here			     *
+ *				DEBUG routines				     *
  *===========================================================================*/
 #if (CHIP == INTEL)
 PUBLIC void p_dmp()
@@ -21,39 +17,42 @@ PUBLIC void p_dmp()
 /* Proc table dump */
 
   register struct proc *rp;
-  phys_clicks base, size;
-  int index;
+  static struct proc *oldrp = BEG_PROC_ADDR;
+  int n = 0;
+  phys_clicks text, data, size;
+  int proc_nr;
 
-  printf(
-	"\r\nproc  --pid -pc-  -sp- flag -user- --sys-- -base- -size-  recv- command\r\n");
+  printf("\n--pid --pc- ---sp- flag -user --sys-- -text- -data- -size- -recv- command\n");
 
-  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
+  for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
+	proc_nr = proc_number(rp);
 	if (rp->p_flags & P_SLOT_FREE) continue;
-	base = rp->p_map[T].mem_phys;
-	size = rp->p_map[S].mem_phys + rp->p_map[S].mem_len - base;
-	prname(proc_number(rp));
-	printf("%5u %5lx %5lx %2x %7U %7U %5uK %5uK  ",
-	       rp->p_pid,
+	if (++n > 20) break;
+	text = rp->p_map[T].mem_phys;
+	data = rp->p_map[D].mem_phys;
+	size = rp->p_map[T].mem_len
+		+ ((rp->p_map[S].mem_phys + rp->p_map[S].mem_len) - data);
+	printf("%5d %5lx %6lx %2x %7U %7U %5uK %5uK %5uK ",
+	       proc_nr < 0 ? proc_nr : rp->p_pid,
 	       (unsigned long) rp->p_reg.pc,
 	       (unsigned long) rp->p_reg.sp,
 	       rp->p_flags,
 	       rp->user_time, rp->sys_time,
-	       click_to_round_k(base), click_to_round_k(size));
-	if (rp->p_flags == 0)
-		printf("      ");
-	else {
-		if (rp->p_flags & RECEIVING) prname(rp->p_getfrom);
-		if (rp->p_flags & SENDING) {
-			printf("S: ");
-			prname(rp->p_sendto);
-		}
+	       click_to_round_k(text), click_to_round_k(data),
+	       click_to_round_k(size));
+	if (rp->p_flags & RECEIVING) {
+		printf("%-7.7s", proc_name(rp->p_getfrom));
+	} else
+	if (rp->p_flags & SENDING) {
+		printf("S:%-5.5s", proc_name(rp->p_sendto));
+	} else
+	if (rp->p_flags == 0) {
+		printf("       ");
 	}
-	index = proc_number(rp);
-	if (index > LOW_USER) {
-		printf("%s", aout[index]);
-	}
-	printf("\r\n");
+	printf("%s\n", rp->p_name);
   }
+  if (rp == END_PROC_ADDR) rp = BEG_PROC_ADDR; else printf("--more--\r");
+  oldrp = rp;
 }
 
 #endif				/* (CHIP == INTEL) */
@@ -63,20 +62,27 @@ PUBLIC void p_dmp()
 PUBLIC void map_dmp()
 {
   register struct proc *rp;
-  phys_clicks base, size;
+  static struct proc *oldrp = cproc_addr(HARDWARE);
+  int n = 0;
+  phys_clicks size;
 
-  printf("\r\nPROC   -----TEXT-----  -----DATA-----  ----STACK-----  -BASE- -SIZE-\r\n");
-  for (rp = BEG_SERV_ADDR; rp < END_PROC_ADDR; rp++) {
+  printf("\nPROC NAME-  -----TEXT-----  -----DATA-----  ----STACK-----  -SIZE-\n");
+  for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
 	if (rp->p_flags & P_SLOT_FREE) continue;
-	base = rp->p_map[T].mem_phys;
-	size = rp->p_map[S].mem_phys + rp->p_map[S].mem_len - base;
-	prname(proc_number(rp));
-	printf(" %4x %4x %4x  %4x %4x %4x  %4x %4x %4x  %5uK %5uK\r\n",
+	if (++n > 20) break;
+	size = rp->p_map[T].mem_len
+		+ ((rp->p_map[S].mem_phys + rp->p_map[S].mem_len)
+						- rp->p_map[D].mem_phys);
+	printf("%3d %-6.6s  %4x %4x %4x  %4x %4x %4x  %4x %4x %4x  %5uK\n",
+	       proc_number(rp),
+	       rp->p_name,
 	       rp->p_map[T].mem_vir, rp->p_map[T].mem_phys, rp->p_map[T].mem_len,
 	       rp->p_map[D].mem_vir, rp->p_map[D].mem_phys, rp->p_map[D].mem_len,
 	       rp->p_map[S].mem_vir, rp->p_map[S].mem_phys, rp->p_map[S].mem_len,
-	       click_to_round_k(base), click_to_round_k(size));
+	       click_to_round_k(size));
   }
+  if (rp == END_PROC_ADDR) rp = cproc_addr(HARDWARE); else printf("--more--\r");
+  oldrp = rp;
 }
 
 #else
@@ -84,65 +90,72 @@ PUBLIC void map_dmp()
 PUBLIC void map_dmp()
 {
   register struct proc *rp;
+  static struct proc *oldrp = cproc_addr(HARDWARE);
+  int n = 0;
   vir_clicks base, limit;
 
-  printf("\r\nPROC   --TEXT---  --DATA---  --STACK-- SHADOW FLIP P BASE  SIZE\r\n");
-  for (rp = BEG_SERV_ADDR; rp < END_PROC_ADDR; rp++) {
+  printf("\nPROC NAME-  --TEXT---  --DATA---  --STACK-- SHADOW FLIP P BASE  SIZE\n");
+  for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
 	if (rp->p_flags & P_SLOT_FREE) continue;
+	if (++n > 20) break;
 	base = rp->p_map[T].mem_phys;
 	limit = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	prname(proc_number(rp));
-	printf(" %4x %4x  %4x %4x  %4x %4x   %4x %4d %d %4uK %4uK\r\n",
+	printf("%3d %-6.6s  %4x %4x  %4x %4x  %4x %4x   %4x %4d %d %4uK\n",
+	       proc_number(rp),
+	       rp->p_name,
 	       rp->p_map[T].mem_phys, rp->p_map[T].mem_len,
 	       rp->p_map[D].mem_phys, rp->p_map[D].mem_len,
 	       rp->p_map[S].mem_phys, rp->p_map[S].mem_len,
 	       rp->p_shadow, rp->p_nflips, rp->p_physio,
 	       click_to_round_k(base), click_to_round_k(limit));
   }
+  if (rp == END_PROC_ADDR) rp = cproc_addr(HARDWARE); else printf("--more--\r");
+  oldrp = rp;
 }
 
 #endif
 
 #if (CHIP == M68000)
+FORWARD _PROTOTYPE(void mem_dmp, (char *adr, int len));
+
 PUBLIC void p_dmp()
 {
 /* Proc table dump */
 
   register struct proc *rp;
+  static struct proc *oldrp = BEG_PROC_ADDR;
+  int n = 0;
   vir_clicks base, limit;
-  int index;
 
   printf(
-         "\r\nproc    pid     pc     sp  splow flag  user    sys   recv  command\r\n");
+         "\nproc pid     pc     sp  splow flag  user    sys   recv   command\n");
 
-  for (rp = BEG_PROC_ADDR; rp < END_PROC_ADDR; rp++) {
+  for (rp = oldrp; rp < END_PROC_ADDR; rp++) {
 	if (rp->p_flags & P_SLOT_FREE) continue;
+	if (++n > 20) break;
 	base = rp->p_map[T].mem_phys;
 	limit = rp->p_map[S].mem_phys + rp->p_map[S].mem_len;
-	prname(proc_number(rp));
-	printf(" %4u %6lx %6lx %6lx %4x %5U %6U   ",
+	printf("%4u %4u %6lx %6lx %6lx %4x %5U %6U   ",
+	       proc_number(rp),
 	       rp->p_pid,
 	       (unsigned long) rp->p_reg.pc,
 	       (unsigned long) rp->p_reg.sp,
 	       (unsigned long) rp->p_splow,
 	       rp->p_flags,
 	       rp->user_time, rp->sys_time);
-	if (rp->p_flags == 0)
-		printf("      ");
-	else {
-		if (rp->p_flags & RECEIVING) prname(rp->p_getfrom);
-		if (rp->p_flags & SENDING) {
-			printf("S: ");
-			prname(rp->p_sendto);
-		}
+	if (rp->p_flags & RECEIVING) {
+		printf("%-7.7s", proc_name(rp->p_getfrom));
+	} else
+	if (rp->p_flags & SENDING) {
+		printf("S:%-5.5s", proc_name(rp->p_sendto));
+	} else
+	if (rp->p_flags == 0) {
+		printf("       ");
 	}
-
-	index = proc_number(rp);
-	if (index > LOW_USER) {
-		printf("%s", aout[index]);
-	}
-	printf("\r\n");
+	printf("%s\n", rp->p_name);
   }
+  if (rp == END_PROC_ADDR) rp = BEG_PROC_ADDR; else printf("--more--\r");
+  oldrp = rp;
 }
 
 
@@ -157,13 +170,13 @@ struct proc *rp;
   reg_t *regptr = (reg_t *) & rp->p_reg;
 
   printf("reg = %08lx, ", rp);
-  printf("ksp = %08lx\r\n", (long) &rp + sizeof(rp));
+  printf("ksp = %08lx\n", (long) &rp + sizeof(rp));
   printf(" pc = %08lx, ", rp->p_reg.pc);
   printf(" sr =     %04x, ", rp->p_reg.psw);
-  printf("trp =       %2x\r\n", rp->p_trap);
+  printf("trp =       %2x\n", rp->p_trap);
   for (i = 0; i < NR_REGS; i++) 
-	printf("%3s = %08lx%s",regs[i], *regptr++, (i&3) == 3 ? "\r\n" : ", ");
-  printf(" a7 = %08lx\r\n", rp->p_reg.sp);
+	printf("%3s = %08lx%s",regs[i], *regptr++, (i&3) == 3 ? "\n" : ", ");
+  printf(" a7 = %08lx\n", rp->p_reg.sp);
 #if (SHADOWING == 1)
     mem_dmp((char *) (((long) rp->p_reg.pc & ~31L) - 96), 128);
     mem_dmp((char *) (((long) rp->p_reg.sp & ~31L) - 32), 256);
@@ -175,10 +188,8 @@ struct proc *rp;
 #endif
 }
 
-#endif				/* (CHIP == M68000) */
 
-
-PUBLIC void mem_dmp(adr, len)
+PRIVATE void mem_dmp(adr, len)
 char *adr;
 int len;
 {
@@ -187,56 +198,22 @@ int len;
 
   for (i = 0, p = (long *) adr; i < len; i += 4) {
 #if (CHIP == M68000)
-	if ((i & 31) == 0) printf("\r\n%lX:", p);
+	if ((i & 31) == 0) printf("\n%lX:", p);
 	printf(" %8lX", *p++);
 #else
-	if ((i & 31) == 0) printf("\r\n%X:", p);
+	if ((i & 31) == 0) printf("\n%X:", p);
 	printf(" %8X", *p++);
 #endif /* (CHIP == M68000) */
   }
-  printf("\r\n");
+  printf("\n");
 }
 
+#endif				/* (CHIP == M68000) */
 
-PRIVATE void prname(i)
-int i;
+
+PRIVATE char *proc_name(proc_nr)
+int proc_nr;
 {
-  if (i == ANY)
-	printf("ANY   ");
-  else if ((unsigned) (i + NR_TASKS) <= LOW_USER + NR_TASKS)
-	printf("%s", tasktab[i + NR_TASKS].name);
-  else
-	printf("%4d  ", i);
-}
-
-
-PUBLIC void set_name(source_nr, proc_nr, ptr)
-int source_nr, proc_nr;
-char *ptr;
-{
-/* When an EXEC call is done, the kernel is told about the stack pointer.
- * It uses the stack pointer to find the command line, for dumping
- * purposes.
- */
-
-  phys_bytes src;
-  char *np;
-
-  aout[proc_nr][0] = 0;
-  if (!ptr) return;
-
-  src = numap(source_nr, (vir_bytes) ptr, (vir_bytes) NSIZE);
-  if (!src) return;
-  phys_copy(src, vir2phys(aout[proc_nr]), (phys_bytes) NSIZE);
-
-  aout[proc_nr][NSIZE] = 0;
-  for (np = &aout[proc_nr][0]; np < &aout[proc_nr][NSIZE]; np++)
-	if (*np <= ' ' || *np >= 0177) *np = 0;
-}
-
-
-PUBLIC void fork_name(p1, p2)
-int p1, p2;
-{
-  memcpy(aout[p2], aout[p1], NSIZE + 1);
+  if (proc_nr == ANY) return "ANY";
+  return proc_addr(proc_nr)->p_name;
 }

@@ -1022,10 +1022,12 @@ char *stype;
 
 	/* Now get the number/flag stuff that ELLE needs. */
 	tc_am = tgetflag("am");		/* auto wrap */
+	if (tgetflag("xn")) tc_am = 0;	/* auto wrap at 81st char, nice! */
 	tc_km = (tgetflag("km")		/* TTY has meta key */
 		|| tgetflag("MT"));	/* Alternate version of "km"?? */
 	scr_ht = tgetnum("li");		/* Set screen height (# lines) */
 	scr_wid = tgetnum("co");	/* Set screen width (# cols) */
+	ts_winsize();
 
 	/* Now initialize the stupid external vars that TERMCAP rtns want. */
 	if(TC_pc) PC = *TC_pc;	/* Pad char */

@@ -23,7 +23,7 @@ kermit: ckcmai.o ckucmd.o ckuusr.o ckuus2.o ckuus3.o ckcpro.o ckcfns.o \
 		 ckufio.o ckcfns.o \
 		 ckcfn2.o ckcpro.o ckucmd.o ckuus2.o ckuus3.o ckuusr.o \
 		 ckucon.o ckudia.o ckuscr.o
-	install -S 32kw $@
+	install -S 40k $@
 
 install:	/usr/bin/kermit
 

@@ -17,7 +17,7 @@ OBJ = eemain.o eecmds.o eesite.o eevini.o eedisp.o eeterm.o eeerr.o  \
 elle:	ellec $(OBJ) $(FUN_OFILES) elle.h eesite.h
 #	$(CC) $(CFLAGS) -c defprf.c	# depends on the new *.h files
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
-	install -S 32kw $@
+	install -S 64k $@
 
 defprf.c:	deffun.e
 	cat deffun.e defprf.e | ellec -Pconf  > defprf.c
@@ -42,15 +42,15 @@ eecmds.o eebuff.o eeerr.o eehelp.o eejust.o eemain.o eeques.o eef1.o: eefidx.h
 #	values needed when an ELLE user compiles a user profile.
 ellec: ellec.c
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ ellec.c
-	install -S 32kw $@
+	install -S 4kw $@
 
 install:	/usr/bin/elle /usr/bin/ellec
 
 /usr/bin/elle:	elle
-	install -cs -o bin -S 32kw elle $@
+	install -cs -o bin elle $@
 
 /usr/bin/ellec:	ellec
-	install -cs -o bin -S 32kw ellec $@
+	install -cs -o bin ellec $@
 
 clean:	
 	rm -f *.o *.bak core elle ellec

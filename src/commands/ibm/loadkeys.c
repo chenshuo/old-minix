@@ -25,7 +25,7 @@ void tell(char *s)
 }
 
 
-void report(char *say)
+void fatal(char *say)
 {
   int err = errno;
   tell("loadkeys: ");
@@ -35,6 +35,7 @@ void report(char *say)
   }
   tell(strerror(err));
   tell("\n");
+  exit(1);
 }
 
 
@@ -54,22 +55,9 @@ int main(int argc, char *argv[])
   if (argc != 2)
 	usage();
 
-  if ((fd = open(argv[1], O_RDONLY)) < 0) {
-	report(argv[1]);
-	exit(1);
-  }
+  if ((fd = open(argv[1], O_RDONLY)) < 0) fatal(argv[1]);
 
-  if ((n = read(fd, comprmap, sizeof(comprmap))) <
-  					4 + NR_SCAN_CODES * MAP_COLS * 9/8) {
-	if (n < 0) {
-		report(argv[1]);
-	} else {
-		tell("loadkeys: ");
-		tell(argv[1]);
-		tell(": too short\n");
-	}
-	exit(1);
-  }
+  if (read(fd, comprmap, sizeof(comprmap)) < 0) fatal(argv[1]);
 
   if (memcmp(comprmap, KEY_MAGIC, 4) != 0) {
 	tell("loadkeys: ");
@@ -96,17 +84,11 @@ int main(int argc, char *argv[])
   }
 
 #if __minix_vmd
-  if ((fd = open(KBD_DEVICE,O_WRONLY)) < 0) {
-	report(KBD_DEVICE);
-	exit(1);
-  }
+  if ((fd = open(KBD_DEVICE, O_WRONLY)) < 0) fatal(KBD_DEVICE);
 #else
   fd = 0;
 #endif
 
-  if (ioctl(fd, KIOCSMAP, keymap) < 0) {
-	report(KBD_DEVICE);
-	exit(1);
-  }
+  if (ioctl(fd, KIOCSMAP, keymap) < 0) fatal(KBD_DEVICE);
   exit(0);
 }

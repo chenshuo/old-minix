@@ -3,6 +3,12 @@
 #ifndef _SGTTY_H
 #define _SGTTY_H
 
+/* Should not be used, nor extended. Termios.h is the replacement for
+ * sgtty.h for tty functions, and ioctl replaced code should be moved to
+ * sys/ioctl.h and specific header files in the sys, or minix directory.
+ */
+#include <sys/ioctl.h>		/* Ouch. */
+
 struct sgttyb {
   char sg_ispeed;		/* input speed */
   char sg_ospeed;		/* output speed */
@@ -19,6 +25,8 @@ struct tchars {
   char t_eofc;			/* EOF (initially CTRL-D) */
   char t_brkc;			/* input delimiter (like nl) */
 };
+
+#if !_SYSTEM			/* the kernel doesn't want to see the rest */
 
 /* Field names */
 #define XTABS	     0006000	/* do tab expansion */
@@ -45,16 +53,9 @@ struct tchars {
 #define B4800		  48
 #define B9600 		  96
 #define B19200		 192
-#define B28800		 196
 #define B38400		 195
 #define B57600		 194
 #define B115200		 193
-
-#define TIOCGETP (('t'<<8) | 8)
-#define TIOCSETP (('t'<<8) | 9)
-#define TIOCGETC (('t'<<8) | 18)
-#define TIOCSETC (('t'<<8) | 17)
-#define TIOCFLUSH (('t'<<8) | 16)
 
 /* Things Minix supports but not properly */
 /* the divide-by-100 encoding ain't too hot */
@@ -79,10 +80,13 @@ struct tchars {
 #define BSDELAY      0100000
 #define ALLDELAY     0177400
 
-#include <ansi.h>
-
-_PROTOTYPE( int gtty, (int _fd, struct sgttyb *_argp)			);
-_PROTOTYPE( int ioctl, (int _fd, int _request, void *_data)		);
-_PROTOTYPE( int stty, (int _fd, struct sgttyb *_argp)			);
-
+/* Copied from termios.h: */
+struct winsize
+{
+	unsigned short	ws_row;		/* rows, in characters */
+	unsigned short	ws_col;		/* columns, in characters */
+	unsigned short	ws_xpixel;	/* horizontal size, pixels */
+	unsigned short	ws_ypixel;	/* vertical size, pixels */
+};
+#endif /* !_SYSTEM */
 #endif /* _SGTTY_H */

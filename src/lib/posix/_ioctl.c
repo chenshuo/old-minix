@@ -62,10 +62,6 @@ void *data;
   	argt->t_brkc   = (m.TTY_FLAGS >> 0) & BYTE;
   	return(n);
 
-     case TIOCFLUSH:
-	m.TTY_FLAGS = (int /* kludge */) data;
-	return(_syscall(FS, IOCTL, &m));
-
      default:
 	m.ADDRESS = (char *) data;
 	return(_syscall(FS, IOCTL, &m));

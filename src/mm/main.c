@@ -14,6 +14,8 @@
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -114,6 +116,7 @@ PRIVATE void mm_init()
   phys_clicks ram_clicks, total_clicks, minix_clicks, free_clicks, dummy;
   message mess;
   struct mem_map kernel_map[NR_SEGS];
+  int mem;
 
   /* Build the set of signals which cause core dumps.
    * (core_bits is now misnamed.  DEBUG.)
@@ -161,4 +164,10 @@ PRIVATE void mm_init()
   /* Tell FS to continue. */
   if (send(FS_PROC_NR, &mess) != OK)
 	panic("MM can't sync up with FS", NO_NUM);
+
+  /* Tell the memory task where my process table is for the sake of ps(1). */
+  if ((mem = open("/dev/mem", O_RDWR)) != -1) {
+	ioctl(mem, MIOCSPSINFO, (void *) mproc);
+	close(mem);
+  }
 }

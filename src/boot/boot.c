@@ -1,4 +1,4 @@
-/*	boot 2.1.4 - Load and start Minix.		Author: Kees J. Bot
+/*	boot 2.3.1 - Load and start Minix.		Author: Kees J. Bot
  *								27 Dec 1991
  *
  * Copyright 1994 Kees J. Bot, All rights reserved.
@@ -8,7 +8,7 @@
  * author.  Use of so called "C beautifiers" is explicitly prohibited.
  */
 
-char version[]=		"2.1";
+char version[]=		"2.3";
 
 #define nil 0
 #define _POSIX_SOURCE	1
@@ -25,9 +25,9 @@ char version[]=		"2.1";
 #include <minix/const.h>
 #include <minix/type.h>
 #include <minix/minlib.h>
-#include <minix/partition.h>
 #include <kernel/const.h>
 #include <kernel/type.h>
+#include <ibm/partition.h>
 #include "rawfs.h"
 #undef EXTERN
 #define EXTERN	/* Empty */
@@ -723,6 +723,9 @@ void get_parameters(void)
 	char params[SECTOR_SIZE + 1];
 	token **acmds;
 	int r, fundef= 0;
+	static char bus_type[][4] = {
+		"xt", "at", "mca"
+	};
 	static char vid_type[][4] = {
 		"mda", "cga", "ega", "ega", "vga", "vga"
 	};
@@ -735,6 +738,7 @@ void get_parameters(void)
 	b_setvar(E_SPECIAL|E_VAR|E_DEV, "ramimagedev", "bootdev");
 	b_setvar(E_SPECIAL|E_VAR, "ramsize", "0");
 	b_setvar(E_SPECIAL|E_VAR, "processor", u2a(getprocessor()));
+	b_setvar(E_SPECIAL|E_VAR, "bus", bus_type[get_bus()]);
 	b_setvar(E_SPECIAL|E_VAR, "memsize", u2a(get_memsize()));
 	b_setvar(E_SPECIAL|E_VAR, "emssize", u2a(get_ext_memsize()));
 	b_setvar(E_SPECIAL|E_VAR, "video", vid_type[get_video()]);
@@ -1020,7 +1024,6 @@ int exec_bootstrap(dev_t dev)
 	if (dirty && (r= writesectors(mon2abs(master), masterpos, 1)) != 0)
 		return r;
 
-	reset_video(get_video() & 1 ? COLOR_MODE : MONO_MODE);
 	bootstrap(device, active);
 }
 
@@ -1411,7 +1414,7 @@ void execute(void)
 		if (strcmp(cmd, "save") == 0) { save_parameters(); ok= 1; }
 		if (strcmp(cmd, "set") == 0) { show_env(); ok= 1; }
 		if (strcmp(cmd, "help") == 0) { help(); ok= 1; }
-		if (strcmp(cmd, "exit") == 0) exit(0);
+		if (strcmp(cmd, "exit") == 0) { exit(0); }
 
 		/* Command to check bootparams: */
 		if (strcmp(cmd, ":") == 0) ok= 1;

@@ -1,6 +1,6 @@
 # Makefile for lib/end.
 
-CC1	= $(CC) -c -Was-ncc
+CC1	= $(CC) -c
 
 LIBRARY	= ../end.a
 all:	$(LIBRARY)

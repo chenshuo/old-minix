@@ -56,11 +56,6 @@ hdinstall)
 	then
 		echo "$root:/$target is up to date"
 	else
-		ps -U ../kernel/kernel ../mm/mm ../fs/fs >/dev/null || exit
-		if [ $realroot != $root ]
-		then
-			install -c /etc/psdatabase $rootdir/etc/psdatabase
-		fi
 		install -c image $rootdir/$target || exit
 		echo "New $root:/$target installed."
 	fi

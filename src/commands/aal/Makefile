@@ -25,6 +25,7 @@ OFILES=	archiver.o \
 
 aal: $(OFILES)
 	$(CC) $(LDFLAGS) -o aal $(OFILES)
+	install -S 64k $@
 
 install:	/usr/bin/aal
 

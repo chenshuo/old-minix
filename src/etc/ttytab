@@ -1,0 +1,10 @@
+# ttytab - terminals
+#
+# Device	Type		Program		Init
+console		minix		getty
+tty00		unknown
+tty01		unknown
+ttyp0		network
+ttyp1		network
+ttyp2		network
+ttyp3		network

@@ -37,7 +37,6 @@ PUBLIC int do_fork()
   register struct mproc *rmp;	/* pointer to parent */
   register struct mproc *rmc;	/* pointer to child */
   int i, child_nr, t;
-  char *sptr, *dptr;
   phys_clicks prog_clicks, child_base = 0;
   phys_bytes prog_bytes, parent_abs, child_abs;	/* Intel only */
 
@@ -48,11 +47,12 @@ PUBLIC int do_fork()
   if (procs_in_use == NR_PROCS) return(EAGAIN);
   if (procs_in_use >= NR_PROCS-LAST_FEW && rmp->mp_effuid != 0)return(EAGAIN);
 
-  /* Determine how much memory to allocate. */
+  /* Determine how much memory to allocate.  Only the data and stack need to
+   * be copied, because the text segment is either shared or of zero length.
+   */
   prog_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
   prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
 #if (SHADOWING == 0)
-  if (rmp->mp_flags & SEPARATE) prog_clicks += rmp->mp_seg[T].mem_len;
   prog_bytes = (phys_bytes) prog_clicks << CLICK_SHIFT;
 #endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
@@ -60,9 +60,9 @@ PUBLIC int do_fork()
 #if (SHADOWING == 0)
   /* Create a copy of the parent's core image for the child. */
   child_abs = (phys_bytes) child_base << CLICK_SHIFT;
-  parent_abs = (phys_bytes) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
+  parent_abs = (phys_bytes) rmp->mp_seg[D].mem_phys << CLICK_SHIFT;
   i = sys_copy(ABS, 0, parent_abs, ABS, 0, child_abs, prog_bytes);
-  if ( i < 0) panic("do_fork can't copy", i);
+  if (i < 0) panic("do_fork can't copy", i);
 #endif
 
   /* Find a slot in 'mproc' for the child process.  A slot must exist. */
@@ -72,18 +72,18 @@ PUBLIC int do_fork()
   /* Set up the child and its memory map; copy its 'mproc' slot from parent. */
   child_nr = (int)(rmc - mproc);	/* slot number of the child */
   procs_in_use++;
-  sptr = (char *) rmp;		/* pointer to parent's 'mproc' slot */
-  dptr = (char *) rmc;		/* pointer to child's 'mproc' slot */
-  i = sizeof(struct mproc);	/* number of bytes in a proc slot. */
-  while (i--) *dptr++ = *sptr++;/* copy from parent slot to child's */
+  *rmc = *rmp;			/* copy parent's process slot to child's */
 
   rmc->mp_parent = who;		/* record child's parent */
   rmc->mp_flags &= ~TRACED;	/* child does not inherit trace status */
 #if (SHADOWING == 0)
-  rmc->mp_seg[T].mem_phys = child_base;
-  rmc->mp_seg[D].mem_phys = child_base + rmc->mp_seg[T].mem_len;
+  /* A separate I&D child keeps the parents text segment.  The data and stack
+   * segments must refer to the new copy.
+   */
+  if (!(rmc->mp_flags & SEPARATE)) rmc->mp_seg[T].mem_phys = child_base;
+  rmc->mp_seg[D].mem_phys = child_base;
   rmc->mp_seg[S].mem_phys = rmc->mp_seg[D].mem_phys + 
-			(rmp->mp_seg[S].mem_phys - rmp->mp_seg[D].mem_phys);
+			(rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
 #endif
   rmc->mp_exitstatus = 0;
   rmc->mp_sigstatus = 0;
@@ -99,9 +99,6 @@ PUBLIC int do_fork()
 		}
 	rmc->mp_pid = next_pid;	/* assign pid to child */
   } while (t);
-
-  /* Set process group. */
-  if (who == INIT_PROC_NR) rmc->mp_procgrp = rmc->mp_pid;
 
   /* Tell kernel and file system about the (now successful) FORK. */
   sys_fork(who, child_nr, rmc->mp_pid, child_base); /* child_base is 68K only*/
@@ -146,10 +143,13 @@ int exit_status;		/* the process' exit status (for parent) */
 
   register int proc_nr;
   int parent_waiting, right_child;
-  pid_t pidarg;
-  phys_clicks base, size, s;	/* base and size used on 68000 only */
+  pid_t pidarg, procgrp;
+  phys_clicks base, size, s;		/* base and size used on 68000 only */
 
   proc_nr = (int) (rmp - mproc);	/* get process slot number */
+
+  /* Remember a session leader's process group. */
+  procgrp = (rmp->mp_pid == mp->mp_procgrp) ? mp->mp_procgrp : 0;
 
   /* If the exited process has a timer pending, kill it. */
   if (rmp->mp_flags & ALARM_ON) set_alarm(proc_nr, (unsigned) 0);
@@ -163,10 +163,13 @@ int exit_status;		/* the process' exit status (for parent) */
 
 #if (SHADOWING == 0)
   /* Release the memory occupied by the child. */
-  s = (phys_clicks) rmp->mp_seg[S].mem_len;
-  s += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-  if (rmp->mp_flags & SEPARATE) s += rmp->mp_seg[T].mem_len;
-  free_mem(rmp->mp_seg[T].mem_phys, s);	/* free the memory */
+  if (find_share(rmp, rmp->mp_ino, rmp->mp_dev, rmp->mp_ctime) == NULL) {
+	/* No other process shares the text segment, so free it. */
+	free_mem(rmp->mp_seg[T].mem_phys, rmp->mp_seg[T].mem_len);
+  }
+  /* Free the data and stack segments. */
+  free_mem(rmp->mp_seg[D].mem_phys,
+      rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir);
 #endif
 
   /* The process slot can only be freed if the parent has done a WAIT. */
@@ -178,7 +181,7 @@ int exit_status;		/* the process' exit status (for parent) */
   else
 	right_child = FALSE;		/* child fails all 3 tests */
   if (parent_waiting && right_child)
-	cleanup(rmp);		/* tell parent and release child slot */
+	cleanup(rmp);			/* tell parent and release child slot */
   else
 	rmp->mp_flags |= HANGING;	/* parent not waiting, suspend child */
 
@@ -191,6 +194,9 @@ int exit_status;		/* the process' exit status (for parent) */
 		if (parent_waiting && (rmp->mp_flags & HANGING)) cleanup(rmp);
 	}
   }
+
+  /* Send a hangup to the process' process group if it was a session leader. */
+  if (procgrp != 0) check_sig(-procgrp, SIGHUP);
 }
 
 

@@ -11,7 +11,7 @@ anm:	anm.c
 
 asize:	asize.c
 	$(CCLD) -o $@ $?
-	install -S 32kw $@
+	install -S 4kw $@
 
 install:	/usr/bin/anm /usr/bin/asize
 

@@ -16,11 +16,10 @@
 #define TSS_INDEX        8	/* kernel TSS */
 #define DS_286_INDEX     9	/* scratch 16-bit source segment */
 #define ES_286_INDEX    10	/* scratch 16-bit destination segment */
-#define COLOR_INDEX     11	/* color screen segment */
-#define MONO_INDEX      12	/* mono screen segment */
-#define DP_ETH0_INDEX	13	/* Western Digital Etherplus buffer */
-#define DP_ETH1_INDEX	14	/* Western Digital Etherplus buffer */
-#define FIRST_LDT_INDEX 15	/* rest of descriptors are LDT's */
+#define VIDEO_INDEX     11	/* video memory segment */
+#define DP_ETH0_INDEX	12	/* Western Digital Etherplus buffer */
+#define DP_ETH1_INDEX	13	/* Western Digital Etherplus buffer */
+#define FIRST_LDT_INDEX 14	/* rest of descriptors are LDT's */
 
 #define GDT_SELECTOR      0x08	/* (GDT_INDEX * DESC_SIZE) bad for asld */
 #define IDT_SELECTOR      0x10	/* (IDT_INDEX * DESC_SIZE) */
@@ -33,10 +32,9 @@
 #define TSS_SELECTOR      0x40	/* (TSS_INDEX * DESC_SIZE) */
 #define DS_286_SELECTOR   0x49	/* (DS_286_INDEX * DESC_SIZE + 1) */
 #define ES_286_SELECTOR   0x51	/* (ES_286_INDEX * DESC_SIZE + 1) */
-#define COLOR_SELECTOR    0x59	/* (COLOR_INDEX * DESC_SIZE + 1) */
-#define MONO_SELECTOR     0x61	/* (MONO_INDEX * DESC_SIZE + 1) */
-#define DP_ETH0_SELECTOR  0x69	/* (DP_ETH0_INDEX * DESC_SIZE) */
-#define DP_ETH1_SELECTOR  0x71	/* (DP_ETH1_INDEX * DESC_SIZE) */
+#define VIDEO_SELECTOR    0x59	/* (VIDEO_INDEX * DESC_SIZE + 1) */
+#define DP_ETH0_SELECTOR  0x61	/* (DP_ETH0_INDEX * DESC_SIZE) */
+#define DP_ETH1_SELECTOR  0x69	/* (DP_ETH1_INDEX * DESC_SIZE) */
 
 /* Fixed local descriptors. */
 #define CS_LDT_INDEX     0	/* process CS */

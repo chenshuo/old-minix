@@ -20,7 +20,8 @@
 
 #include "kernel.h"
 #include "driver.h"
-#include <minix/diskparm.h>
+#include "drvlib.h"
+#include <ibm/diskparm.h>
 
 /* I/O Ports used by floppy disk task. */
 #define DOR            0x3F2	/* motor drive control bits */
@@ -249,7 +250,7 @@ FORWARD _PROTOTYPE( void f_timeout, (void) );
 FORWARD _PROTOTYPE( int read_id, (struct floppy *fp) );
 FORWARD _PROTOTYPE( int f_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int test_read, (int density) );
-FORWARD _PROTOTYPE( void f_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void f_geometry, (struct partition *entry));
 
 
 /* Entry points to this driver. */
@@ -1195,10 +1196,10 @@ int density;
 /*============================================================================*
  *				f_geometry				      *
  *============================================================================*/
-PRIVATE void f_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void f_geometry(entry)
+struct partition *entry;
 {
-  chs[0] = nr_blocks[d] / (NR_HEADS * f_sectors);
-  chs[1] = NR_HEADS;
-  chs[2] = f_sectors;
+  entry->cylinders = nr_blocks[d] / (NR_HEADS * f_sectors);
+  entry->heads = NR_HEADS;
+  entry->sectors = f_sectors;
 }

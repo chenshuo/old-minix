@@ -39,13 +39,7 @@ int uname(name) struct utsname *name;
 	}
   }
 
-#if (CHIP == INTEL)
-#if _WORD_SIZE == 4
-  strcpy(name->sysname, "Minix-386");
-#else
   strcpy(name->sysname, "Minix");
-#endif
-#endif
   strcpy(name->release, OS_RELEASE);
   strcpy(name->version, OS_VERSION);
 #if (CHIP == INTEL)

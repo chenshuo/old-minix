@@ -41,6 +41,7 @@ exec.o:	$s/stat.h
 exec.o:	$h/callnr.h
 exec.o:	$i/a.out.h
 exec.o:	$i/signal.h
+exec.o:	$i/string.h
 exec.o:	mproc.h
 exec.o:	param.h
 
@@ -61,6 +62,8 @@ main.o:	$a
 main.o:	$h/callnr.h
 main.o:	$h/com.h
 main.o:	$i/signal.h
+main.o:	$i/fcntl.h
+main.o:	$s/ioctl.h
 main.o:	mproc.h
 main.o:	param.h
 

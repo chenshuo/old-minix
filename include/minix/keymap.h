@@ -133,7 +133,7 @@
 #define ASF12	(0x1B + ALT + SHIFT)
 
 #define MAP_COLS	6	/* Number of columns in keymap */
-#define NR_SCAN_CODES	0x69	/* Number of scan codes (rows in keymap) */
+#define NR_SCAN_CODES	0x80	/* Number of scan codes (rows in keymap) */
 
 typedef unsigned short keymap_t[NR_SCAN_CODES * MAP_COLS];
 

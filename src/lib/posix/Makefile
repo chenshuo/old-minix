@@ -10,6 +10,10 @@ OBJECTS	= \
 	$(LIBRARY)(__exit.o) \
 	$(LIBRARY)(_access.o) \
 	$(LIBRARY)(_alarm.o) \
+	$(LIBRARY)(_cfgetispeed.o) \
+	$(LIBRARY)(_cfgetospeed.o) \
+	$(LIBRARY)(_cfsetispeed.o) \
+	$(LIBRARY)(_cfsetospeed.o) \
 	$(LIBRARY)(_chdir.o) \
 	$(LIBRARY)(_chmod.o) \
 	$(LIBRARY)(_chown.o) \
@@ -30,6 +34,7 @@ OBJECTS	= \
 	$(LIBRARY)(_geteuid.o) \
 	$(LIBRARY)(_getgid.o) \
 	$(LIBRARY)(_getgroups.o) \
+	$(LIBRARY)(_getpgrp.o) \
 	$(LIBRARY)(_getpid.o) \
 	$(LIBRARY)(_getppid.o) \
 	$(LIBRARY)(_getuid.o) \
@@ -56,6 +61,7 @@ OBJECTS	= \
 	$(LIBRARY)(_rewinddir.o) \
 	$(LIBRARY)(_rmdir.o) \
 	$(LIBRARY)(_setgid.o) \
+	$(LIBRARY)(_setsid.o) \
 	$(LIBRARY)(_setuid.o) \
 	$(LIBRARY)(_sigaction.o) \
 	$(LIBRARY)(_sigpending.o) \
@@ -69,6 +75,12 @@ OBJECTS	= \
 	$(LIBRARY)(_stime.o) \
 	$(LIBRARY)(_stty.o) \
 	$(LIBRARY)(_sync.o) \
+	$(LIBRARY)(_tcdrain.o) \
+	$(LIBRARY)(_tcflow.o) \
+	$(LIBRARY)(_tcflush.o) \
+	$(LIBRARY)(_tcgetattr.o) \
+	$(LIBRARY)(_tcsendbreak.o) \
+	$(LIBRARY)(_tcsetattr.o) \
 	$(LIBRARY)(_time.o) \
 	$(LIBRARY)(_times.o) \
 	$(LIBRARY)(_umask.o) \
@@ -92,6 +104,18 @@ $(LIBRARY)(_access.o):	_access.c
 
 $(LIBRARY)(_alarm.o):	_alarm.c
 	$(CC1) _alarm.c
+
+$(LIBRARY)(_cfgetispeed.o):	_cfgetispeed.c
+	$(CC1) _cfgetispeed.c
+
+$(LIBRARY)(_cfgetospeed.o):	_cfgetospeed.c
+	$(CC1) _cfgetospeed.c
+
+$(LIBRARY)(_cfsetispeed.o):	_cfsetispeed.c
+	$(CC1) _cfsetispeed.c
+
+$(LIBRARY)(_cfsetospeed.o):	_cfsetospeed.c
+	$(CC1) _cfsetospeed.c
 
 $(LIBRARY)(_chdir.o):	_chdir.c
 	$(CC1) _chdir.c
@@ -152,6 +176,9 @@ $(LIBRARY)(_getgid.o):	_getgid.c
 
 $(LIBRARY)(_getgroups.o):	_getgroups.c
 	$(CC1) _getgroups.c
+
+$(LIBRARY)(_getpgrp.o):	_getpgrp.c
+	$(CC1) _getpgrp.c
 
 $(LIBRARY)(_getpid.o):	_getpid.c
 	$(CC1) _getpid.c
@@ -231,6 +258,9 @@ $(LIBRARY)(_rmdir.o):	_rmdir.c
 $(LIBRARY)(_setgid.o):	_setgid.c
 	$(CC1) _setgid.c
 
+$(LIBRARY)(_setsid.o):	_setsid.c
+	$(CC1) _setsid.c
+
 $(LIBRARY)(_setuid.o):	_setuid.c
 	$(CC1) _setuid.c
 
@@ -269,6 +299,24 @@ $(LIBRARY)(_stty.o):	_stty.c
 
 $(LIBRARY)(_sync.o):	_sync.c
 	$(CC1) _sync.c
+
+$(LIBRARY)(_tcdrain.o):	_tcdrain.c
+	$(CC1) _tcdrain.c
+
+$(LIBRARY)(_tcflow.o):	_tcflow.c
+	$(CC1) _tcflow.c
+
+$(LIBRARY)(_tcflush.o):	_tcflush.c
+	$(CC1) _tcflush.c
+
+$(LIBRARY)(_tcgetattr.o):	_tcgetattr.c
+	$(CC1) _tcgetattr.c
+
+$(LIBRARY)(_tcsendbreak.o):	_tcsendbreak.c
+	$(CC1) _tcsendbreak.c
+
+$(LIBRARY)(_tcsetattr.o):	_tcsetattr.c
+	$(CC1) _tcsetattr.c
 
 $(LIBRARY)(_time.o):	_time.c
 	$(CC1) _time.c

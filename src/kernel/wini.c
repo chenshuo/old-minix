@@ -24,10 +24,6 @@ struct hdmap {
   { "bios",	bios_winchester_task	},
 #endif
 
-#if ENABLE_PS_WINI
-  { "ps",	ps_winchester_task	},
-#endif
-
 #if ENABLE_ESDI_WINI
   { "esdi",	esdi_winchester_task	},
 #endif

@@ -1,4 +1,4 @@
-/*	part 1.37 - Partition table editor		Author: Kees J. Bot
+/*	part 1.41 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 20k heap+stack.
  */
@@ -22,11 +22,15 @@
 #include <minix/config.h>
 #include <minix/const.h>
 #include <minix/partition.h>
-#include <minix/boot.h>
+#include <ibm/partition.h>
 #if __minix_vmd
 #include <termios.h>
 #else
 #include <sgtty.h>
+#endif
+
+#if !__minix_vmd
+#define div64u(i, j)	((i) / (j))
 #endif
 
 /* Template:
@@ -40,8 +44,10 @@ Num Sort   Type        Cyl Head Sec   Cyl Head Sec      Base      Size       Kb
  4  hd4  00 None         0    0   0     0    0  -1         0         0        0
 
  */
-#define MAXSIZE		(1024L * 255 * 63)	/* Max cyls*heads*sectors */
+#define MAXSIZE		99999999L	/* Will 100 G be enough this year? */
 #define SECTOR_SIZE	512
+#define DEV_FD0		0x200		/* Device number of /dev/fd0 */
+#define DEV_HD0		0x300		/* Device number of /dev/hd0 */
 
 #define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
 #define arraylimit(a)	((a) + arraysize(a))
@@ -250,6 +256,7 @@ void newdevice(char *name, int scanning)
 		switch (major(st.st_rdev)) {
 		case 0:
 		case 1:
+		case 15:
 			return;
 		case 2:
 			if (minor(st.st_rdev) >= 4) return;
@@ -387,16 +394,6 @@ void sort(void)
 	for (i= 1; i <= NR_PARTITIONS; i++) sort_index[idx[i]]= i;
 }
 
-#ifdef DIOCGETP
-/* Hard disk driver supports an ioctl to report the base and size of a
- * device as a partition table entry.
- */
-#define diocntl(device, request, entry) \
-			ioctl((device), (request), (void *) (entry))
-#else
-#define diocntl(d, r, e)		(errno= ENOTTY, -1)
-#endif
-
 void dos2chs(unsigned char *dos, unsigned *ac, unsigned *ah, unsigned *as)
 /* Extract cylinder, head and sector from the three bytes DOS uses to address
  * a sector.  Note that bits 8 & 9 of the cylinder number come from bit 6 & 7
@@ -431,7 +428,7 @@ void recompute0(void)
 	} else
 	if (!precise && offset == 0) {
 		table[0].lowsec= 0;
-		table[0].size= cylinders * heads * sectors;
+		table[0].size= (unsigned long) cylinders * heads * sectors;
 	}
 	table[0].sysind= device < 0 ? NO_PART : MINIX_PART;
 	secpcyl= heads * sectors;
@@ -451,6 +448,7 @@ void geometry(void)
 	static char fl_secs[]=   {  9, 15,  9,  9,  9,  9, 18 };
 	struct stat dst;
 	int err= 0;
+	struct partition geometry;
 
 	if (submerged) {
 		/* Geometry already known. */
@@ -478,13 +476,14 @@ void geometry(void)
 	if (S_ISBLK(dst.st_mode) || S_ISCHR(dst.st_mode)) {
 		/* Try to get the drive's geometry from the driver. */
 
-		if (diocntl(device, DIOCGETP, &table[0]) < 0)
+		if (ioctl(device, DIOCGETP, &geometry) < 0)
 			err= errno;
 		else {
-			dos2chs(&table[0].last_head,
-						&cylinders, &heads, &sectors);
-			cylinders++;
-			heads++;
+			table[0].lowsec= div64u(geometry.base, SECTOR_SIZE);
+			table[0].size= div64u(geometry.size, SECTOR_SIZE);
+			cylinders= geometry.cylinders;
+			heads= geometry.heads;
+			sectors= geometry.sectors;
 			precise= 1;
 		}
 	} else
@@ -521,8 +520,12 @@ void geometry(void)
 	/* Show the base and size of the device instead of the whole drive.
 	 * This makes sense for subpartitioning primary partitions.
 	 */
-	if (precise && diocntl(device, DIOCGETP, &table[0]) < 0)
+	if (precise && ioctl(device, DIOCGETP, &geometry) >= 0) {
+		table[0].lowsec= div64u(geometry.base, SECTOR_SIZE);
+		table[0].size= div64u(geometry.size, SECTOR_SIZE);
+	} else {
 		precise= 0;
+	}
 	recompute0();
 	sort();
 }
@@ -1504,6 +1507,22 @@ void m_out(int ev, object_t *op)
 	if (diving == nil) submerged= 0;	/* We surfaced. */
 }
 
+int seek_sector(int device, unsigned long sector)
+/* Seek to the given sector. */
+{
+#if __minix_vmd
+	if (fcntl(device, F_SEEK, mul64u(offset, SECTOR_SIZE)) == 0)
+		return 0;
+#endif
+	if ((off_t)(offset * SECTOR_SIZE) / SECTOR_SIZE != sector) {
+		errno= EINVAL;
+		return -1;
+	}
+	if (lseek(device, (off_t) offset * SECTOR_SIZE, SEEK_SET) == -1)
+		return -1;
+	return 0;
+}
+
 void m_read(int ev, object_t *op)
 /* Read the partition table from the current device. */
 {
@@ -1519,11 +1538,12 @@ void m_read(int ev, object_t *op)
 	if (((device= open(curdev->name, mode= O_RDWR|O_CREAT, 0666)) < 0
 		    && (errno != EACCES
 			|| (device= open(curdev->name, mode= O_RDONLY)) < 0))
-		|| lseek(device, (off_t) offset * SECTOR_SIZE, SEEK_SET) == -1
+		|| seek_sector(device, offset) < 0
 	) {
 		stat_start(1);
 		printf("%s: %s", curdev->name, strerror(errno));
 		stat_end(5);
+		if (device >= 0) { close(device); device= -1; }
 		return;
 	}
 
@@ -1554,7 +1574,7 @@ void m_read(int ev, object_t *op)
 	memcpy(table+1, bootblock+PART_TABLE_OFF,
 					NR_PARTITIONS * sizeof(table[1]));
 	for (i= 1; i <= NR_PARTITIONS; i++) {
-		if (table[i].lowsec > MAXSIZE) break;
+		if ((table[i].bootind & ~ACTIVE_FLAG) != 0) break;
 	}
 	if (i <= NR_PARTITIONS || bootblock[510] != 0x55
 				|| bootblock[511] != 0xAA) {
@@ -1640,7 +1660,7 @@ void m_write(int ev, object_t *op)
 	bootblock[510]= 0x55;
 	bootblock[511]= 0xAA;
 
-	if (lseek(device, (off_t) offset * SECTOR_SIZE, SEEK_SET) == -1
+	if (seek_sector(device, offset) < 0
 		|| write(device, bootblock, SECTOR_SIZE) < 0
 	) {
 		stat_start(1);
@@ -1933,7 +1953,7 @@ int main(int argc, char **argv)
 	op= newobject(O_LSEC,  0, 3, 49,  2); op->entry= &table[0];
 	op= newobject(O_BASE,  0, 3, 59,  8); op->entry= &table[0];
 	op= newobject(O_SIZE,  0, 3, 69,  8); op->entry= &table[0];
-	op= newobject(O_KB,    0, 3, 78,  7); op->entry= &table[0];
+	op= newobject(O_KB,    0, 3, 78,  8); op->entry= &table[0];
 
 	/* Objects for each partition: */
 	for (r= 4, pe= table+1; r <= 7; r++, pe++) {
@@ -1949,7 +1969,7 @@ int main(int argc, char **argv)
 		op= newobject(O_LSEC,   OF_MOD, r, 49,  2); op->entry= pe;
 		op= newobject(O_BASE,   OF_MOD, r, 59,  8); op->entry= pe;
 		op= newobject(O_SIZE,   OF_MOD, r, 69,  8); op->entry= pe;
-		op= newobject(O_KB,     OF_MOD, r, 78,  7); op->entry= pe;
+		op= newobject(O_KB,     OF_MOD, r, 78,  8); op->entry= pe;
 	}
 
 	for (i= 1; i < argc; i++) newdevice(argv[i], 0);

@@ -47,18 +47,14 @@
 #define EXEC		  59
 #define UMASK		  60 
 #define CHROOT		  61 
+#define SETSID		  62
+#define GETPGRP		  63
 
 /* The following are not system calls, but are processed like them. */
 #define KSIG		  64	/* kernel detected a signal */
 #define UNPAUSE		  65	/* to MM or FS: check for EINTR */
 #define REVIVE	 	  67	/* to FS: revive a sleeping process */
 #define TASK_REPLY	  68	/* to FS: reply code from tty task */
-
-/* The following IS a system call for amoeba transactions */
-#define	AM_SYSCALL	  69
-
-/* Memory allocation function for tasks */
-#define BRK3		  70
 
 /* Posix signal handling. */
 #define SIGACTION	  71

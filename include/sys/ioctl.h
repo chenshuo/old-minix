@@ -4,10 +4,10 @@
 #define _IOCTL_H
 
 #if _EM_WSIZE >= 4
-/* ioctl's have the command encoded in the low-order word, and the size
+/* Ioctls have the command encoded in the low-order word, and the size
  * of the parameter in the high-order word. The 3 high bits of the high-
  * order word are used to encode the in/out/void status of the parameter.
-*/
+ */
 
 #define _IOCPARM_MASK	0x1FFF
 #define _IOC_VOID	0x20000000
@@ -33,7 +33,40 @@
 #endif
 
 
-/* Network ioctl's. */
+/* Terminal ioctls. */
+#define TCGETS		_IOR('T',  8, struct termios) /* tcgetattr */
+#define TCSETS		_IOW('T',  9, struct termios) /* tcsetattr, TCSANOW */
+#define TCSETSW		_IOW('T', 10, struct termios) /* tcsetattr, TCSADRAIN */
+#define TCSETSF		_IOW('T', 11, struct termios) /* tcsetattr, TCSAFLUSH */
+#define TCSBRK		_IOW('T', 12, int)	      /* tcsendbreak */
+#define TCDRAIN		_IO ('T', 13)		      /* tcdrain */
+#define TCFLOW		_IOW('T', 14, int)	      /* tcflow */
+#define TCFLSH		_IOW('T', 15, int)	      /* tcflush */
+#define	TIOCGWINSZ	_IOR('T', 16, struct winsize)
+#define	TIOCSWINSZ	_IOW('T', 17, struct winsize)
+#define	TIOCGPGRP	_IOW('T', 18, int)
+#define	TIOCSPGRP	_IOW('T', 19, int)
+#define TIOCSFON	_IOW('T', 20, u8_t [8192])
+
+#if _SYSTEM
+#define TIOCGETP	_IOR('t',  1, struct sgttyb)
+#define TIOCSETP	_IOW('t',  2, struct sgttyb)
+#define TIOCGETC	_IOR('t',  3, struct tchars)
+#define TIOCSETC	_IOW('t',  4, struct tchars)
+#else
+/* The next Minix version will use the above TIOC* calls that now only the
+ * kernel uses.  Until then these old definitions below are used.  The net
+ * effect is that executables compiled under this Minix will still run under
+ * older Minix versions.  Let's take one step at the time.
+ */
+#define TIOCGETP (('t'<<8) | 8)
+#define TIOCSETP (('t'<<8) | 9)
+#define TIOCGETC (('t'<<8) | 18)
+#define TIOCSETC (('t'<<8) | 17)
+#endif
+
+
+/* Network ioctls. */
 #define NWIOSETHOPT	_IOW('n', 16, struct nwio_ethopt)
 #define NWIOGETHOPT	_IOR('n', 17, struct nwio_ethopt)
 #define NWIOGETHSTAT	_IOR('n', 18, struct nwio_ethstat)
@@ -59,25 +92,27 @@
 #define NWIOSUDPOPT	_IOW('n', 64, struct nwio_udpopt)
 #define NWIOGUDPOPT	_IOR('n', 65, struct nwio_udpopt)
 
-/* Terminal ioctl's */
-#define TIOCSFON	_IOW('T', 20, u8_t [8192])
-
-/* Disk ioctl's */
-#define DIOCSETP	_IOW('d', 3, struct part_entry)
-#define DIOCGETP	_IOR('d', 4, struct part_entry)
+/* Disk ioctls. */
 #define DIOCEJECT	_IO ('d', 5)
+#define DIOCSETP	_IOW('d', 6, struct partition)
+#define DIOCGETP	_IOR('d', 7, struct partition)
 
-/* Keyboard ioctl's. */
+/* Keyboard ioctls. */
 #define KIOCSMAP	_IOW('k', 3, keymap_t)
 
-/* Magnetic tape ioctls */
+/* Memory ioctls. */
+#define MIOCRAMSIZE	_IOW('m', 3, u32_t)	/* Size of the ramdisk */
+#define MIOCSPSINFO	_IOW('m', 4, void *)
+#define MIOCGPSINFO	_IOR('m', 5, struct psinfo)
+
+/* Magnetic tape ioctls. */
 #define MTIOCTOP	_IOW('M', 1, struct mtop)
 #define MTIOCGET	_IOR('M', 2, struct mtget)
 
-/* SCSI command */
+/* SCSI command. */
 #define SCIOCCMD	_IOW('S', 1, struct scsicmd)
 
-/* Cdrom ioctls */
+/* CD-ROM ioctls. */
 #define	CDIOPLAYTI	_IOR('c', 1, struct cd_play_track)
 #define CDIOPLAYMSS	_IOR('c', 2, struct cd_play_mss)
 #define CDIOREADTOCHDR	_IOW('c', 3, struct cd_toc_entry)
@@ -88,7 +123,7 @@
 #define CDIORESUME	_IO ('c', 12)
 #define CDIOEJECT	DIOCEJECT
 
-/* Soundcard DSP ioctls */
+/* Soundcard DSP ioctls. */
 #define	DSPIORATE	_IOR('s', 1, unsigned int)
 #define DSPIOSTEREO	_IOR('s', 2, unsigned int)
 #define DSPIOSIZE	_IOR('s', 3, unsigned int)
@@ -97,7 +132,7 @@
 #define DSPIOMAX	_IOW('s', 6, unsigned int)
 #define DSPIORESET	_IO ('s', 7)
 
-/* Soundcard mixer ioctls */
+/* Soundcard mixer ioctls. */
 #define MIXIOGETVOLUME		_IORW('s', 10, struct volume_level)
 #define MIXIOGETINPUTLEFT	_IORW('s', 11, struct inout_ctrl)
 #define MIXIOGETINPUTRIGHT	_IORW('s', 12, struct inout_ctrl)

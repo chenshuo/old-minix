@@ -17,14 +17,16 @@ int argc;
 char *argv[];
 {
   register char *name, *password;
-  char *shell = "/bin/sh";
-  char *shell2 = "/usr/bin/sh";
-  int nr;
+  char *shell;
+  char arg0[20];
+  static char shell1[] = "/bin/sh";
+  static char shell2[] = "/usr/bin/sh";
+  int nr, login_shell = 0;
   register struct passwd *pwd;
   static char USER[20], LOGNAME[25], HOME[100], SHELL[100];
 
   if (argc > 1 && strcmp(argv[1], "-") == 0) {
-	if (argv[0][0] != 0) argv[0][0] = '-';	/* Read .profile */
+	login_shell = 1;		/* Read .profile */
 	argv[1] = argv[0];
 	argv++;
 	argc--;
@@ -33,8 +35,9 @@ char *argv[];
 	name = argv[1];
 	argv[1] = argv[0];
 	argv++;
-  } else
+  } else {
 	name = "root";
+  }
 
   if ((pwd = getpwnam(name)) == 0) {
 	std_err("Unknown id: ");
@@ -42,21 +45,26 @@ char *argv[];
 	std_err("\n");
 	exit(1);
   }
-  if (pwd->pw_passwd[0] != '\0' && !privileged()) {
+  if (!privileged() && strcmp(pwd->pw_passwd, crypt("", pwd->pw_passwd)) != 0) {
 	password = getpass("Password:");
 	if (strcmp(pwd->pw_passwd, crypt(password, pwd->pw_passwd))) {
 		std_err("Sorry\n");
 		exit(2);
 	}
   }
-  setgid(pwd->pw_gid);
-  setuid(pwd->pw_uid);
-  if (pwd->pw_shell[0] != '\0')
-	shell = pwd->pw_shell;
-  else {
-	if (access(shell, 0) < 0) shell = shell2;
+  if (login_shell) {
+	if ((shell = pwd->pw_shell)[0] == 0) shell = shell1;
+  } else {
+	if ((shell = getenv("SHELL")) == NULL) shell = shell1;
   }
-  if (argv[0][0] == '-') {
+  if (access(shell, 0) < 0) shell = shell2;
+  if ((argv[0] = strrchr(shell, '/')) == NULL) argv[0] = shell; else argv[0]++;
+
+  if (login_shell) {
+	arg0[0] = '-';
+	strncpy(arg0+1, argv[0], sizeof(arg0)-2);
+	arg0[sizeof(arg0)-1] = 0;
+	argv[0] = arg0;
 	strcpy(USER, "USER=");
 	strcpy(USER + 5, name);
 	putenv(USER);
@@ -71,6 +79,8 @@ char *argv[];
 	putenv(HOME);
 	(void) chdir(pwd->pw_dir);
   }
+  setgid(pwd->pw_gid);
+  setuid(pwd->pw_uid);
   execv(shell, argv);
   std_err("No shell\n");
   return(3);

@@ -1,6 +1,6 @@
 # Makefile for lib/syscall.
 
-CC1	= $(CC) -Was-ncc -c
+CC1	= $(CC) -c
 
 LIBRARY	= ../libc.a
 all:	$(LIBRARY)
@@ -10,6 +10,10 @@ OBJECTS	= \
 	$(LIBRARY)(access.o) \
 	$(LIBRARY)(alarm.o) \
 	$(LIBRARY)(brk.o) \
+	$(LIBRARY)(cfgetispeed.o) \
+	$(LIBRARY)(cfgetospeed.o) \
+	$(LIBRARY)(cfsetispeed.o) \
+	$(LIBRARY)(cfsetospeed.o) \
 	$(LIBRARY)(chdir.o) \
 	$(LIBRARY)(chmod.o) \
 	$(LIBRARY)(chown.o) \
@@ -32,6 +36,7 @@ OBJECTS	= \
 	$(LIBRARY)(geteuid.o) \
 	$(LIBRARY)(getgid.o) \
 	$(LIBRARY)(getgroups.o) \
+	$(LIBRARY)(getpgrp.o) \
 	$(LIBRARY)(getpid.o) \
 	$(LIBRARY)(getppid.o) \
 	$(LIBRARY)(getuid.o) \
@@ -61,6 +66,7 @@ OBJECTS	= \
 	$(LIBRARY)(sbrk.o) \
 	$(LIBRARY)(seekdir.o) \
 	$(LIBRARY)(setgid.o) \
+	$(LIBRARY)(setsid.o) \
 	$(LIBRARY)(setuid.o) \
 	$(LIBRARY)(sigaction.o) \
 	$(LIBRARY)(sigaddset.o) \
@@ -77,6 +83,12 @@ OBJECTS	= \
 	$(LIBRARY)(stime.o) \
 	$(LIBRARY)(stty.o) \
 	$(LIBRARY)(sync.o) \
+	$(LIBRARY)(tcdrain.o) \
+	$(LIBRARY)(tcflow.o) \
+	$(LIBRARY)(tcflush.o) \
+	$(LIBRARY)(tcgetattr.o) \
+	$(LIBRARY)(tcsendbreak.o) \
+	$(LIBRARY)(tcsetattr.o) \
 	$(LIBRARY)(time.o) \
 	$(LIBRARY)(times.o) \
 	$(LIBRARY)(umask.o) \
@@ -103,6 +115,18 @@ $(LIBRARY)(alarm.o):	alarm.s
 
 $(LIBRARY)(brk.o):	brk.s
 	$(CC1) brk.s
+
+$(LIBRARY)(cfgetispeed.o):	cfgetispeed.s
+	$(CC1) cfgetispeed.s
+
+$(LIBRARY)(cfgetospeed.o):	cfgetospeed.s
+	$(CC1) cfgetospeed.s
+
+$(LIBRARY)(cfsetispeed.o):	cfsetispeed.s
+	$(CC1) cfsetispeed.s
+
+$(LIBRARY)(cfsetospeed.o):	cfsetospeed.s
+	$(CC1) cfsetospeed.s
 
 $(LIBRARY)(chdir.o):	chdir.s
 	$(CC1) chdir.s
@@ -169,6 +193,9 @@ $(LIBRARY)(getgid.o):	getgid.s
 
 $(LIBRARY)(getgroups.o):	getgroups.s
 	$(CC1) getgroups.s
+
+$(LIBRARY)(getpgrp.o):	getpgrp.s
+	$(CC1) getpgrp.s
 
 $(LIBRARY)(getpid.o):	getpid.s
 	$(CC1) getpid.s
@@ -257,6 +284,9 @@ $(LIBRARY)(seekdir.o):	seekdir.s
 $(LIBRARY)(setgid.o):	setgid.s
 	$(CC1) setgid.s
 
+$(LIBRARY)(setsid.o):	setsid.s
+	$(CC1) setsid.s
+
 $(LIBRARY)(setuid.o):	setuid.s
 	$(CC1) setuid.s
 
@@ -304,6 +334,24 @@ $(LIBRARY)(stty.o):	stty.s
 
 $(LIBRARY)(sync.o):	sync.s
 	$(CC1) sync.s
+
+$(LIBRARY)(tcdrain.o):	tcdrain.s
+	$(CC1) tcdrain.s
+
+$(LIBRARY)(tcflow.o):	tcflow.s
+	$(CC1) tcflow.s
+
+$(LIBRARY)(tcflush.o):	tcflush.s
+	$(CC1) tcflush.s
+
+$(LIBRARY)(tcgetattr.o):	tcgetattr.s
+	$(CC1) tcgetattr.s
+
+$(LIBRARY)(tcsendbreak.o):	tcsendbreak.s
+	$(CC1) tcsendbreak.s
+
+$(LIBRARY)(tcsetattr.o):	tcsetattr.s
+	$(CC1) tcsetattr.s
 
 $(LIBRARY)(time.o):	time.s
 	$(CC1) time.s

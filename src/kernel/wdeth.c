@@ -44,6 +44,9 @@ dpeth_t *dep;
 {
 	int sum;
 
+	if (dep->de_linmem == 0)
+		return 0;	/* No shared memory, so no WD board */
+
 	sum = inb_we(dep, EPL_EA0) + inb_we(dep, EPL_EA1) +
 		inb_we(dep, EPL_EA2) + inb_we(dep, EPL_EA3) +
 		inb_we(dep, EPL_EA4) + inb_we(dep, EPL_EA5) +

@@ -57,6 +57,7 @@
  */
 #include "kernel.h"
 #include "driver.h"
+#include "drvlib.h"
 #if ENABLE_ADAPTEC_SCSI
 #include <fcntl.h>
 #include <sys/ioctl.h>
@@ -228,6 +229,7 @@ typedef struct {
 #define SENSE_UNIT_ATT		0x06
 #define SENSE_BLANK_CHECK	0x08
 #define SENSE_VENDOR		0x09
+#define SENSE_ABORTED_CMD	0x0B
 
 /* SCSI Inquiry Information */
 typedef struct {
@@ -306,17 +308,17 @@ typedef struct {
 #define SCSI_TIMEOUT	 250	/* SCSI selection timeout (ms), 0 = none */
 #define AHA_TIMEOUT	 500	/* max msec wait for controller reset */
 
-#define MAX_DEVICES	  8	/* 8 devices for the 8 SCSI targets */
+#define MAX_DEVICES	   8	/* 8 devices for the 8 SCSI targets */
 #define NR_DISKDEVS	 (MAX_DEVICES * DEV_PER_DRIVE)
 #define NR_TAPEDEVS	 (MAX_DEVICES * 2)
 #define NR_GENDEVS	 (MAX_DEVICES)
 #define SUB_PER_DRIVE	 (NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	 (MAX_DEVICES * SUB_PER_DRIVE)
-#define MINOR_st0	 64
+#define MINOR_st0	  64
 
-#define TYPE_SD		  0	/* disk device number */
-#define TYPE_NRST	  1	/* non rewind-on-close tape device */
-#define TYPE_RST	  2	/* rewind-on-close tape device */
+#define TYPE_SD		   0	/* disk device number */
+#define TYPE_NRST	   1	/* non rewind-on-close tape device */
+#define TYPE_RST	   2	/* rewind-on-close tape device */
 
 
 /* Variables */
@@ -406,8 +408,8 @@ PRIVATE int aha_model;		/* board model */
 PRIVATE struct scsi *s_sp;	/* active SCSI device struct */
 PRIVATE struct device *s_dv;	/* active partition */
 PRIVATE int s_type;		/* sd, rst, nrst? */
-PRIVATE unsigned long s_nextpos;  /* next byte on the device to transfer */
-PRIVATE unsigned long s_buf_pos;  /* disk postition of bytes in tmp_buf */
+PRIVATE unsigned long s_nextpos;/* next byte on the device to transfer */
+PRIVATE unsigned long s_buf_blk;/* disk block currently in tmp_buf */
 PRIVATE int s_opcode;		/* DEV_READ or DEV_WRITE */
 PRIVATE int s_must;		/* must finish the current request? */
 PRIVATE int aha_irq;		/* configured IRQ */
@@ -466,7 +468,7 @@ FORWARD _PROTOTYPE( void dump_scsi_cmd, (void) );
 #define dump_scsi_cmd()
 #endif
 
-FORWARD _PROTOTYPE( void s_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void s_geometry, (struct partition *entry));
 
 
 /* Entry points to this driver. */
@@ -524,7 +526,7 @@ int device;
 
   rq->count = 0;	/* no requests as yet */
   s_must = TRUE;	/* the first transfers must be done */
-  s_buf_pos = -1;	/* invalidate s_buf_pos */
+  s_buf_blk = -1;	/* invalidate s_buf_blk */
 
   if (device < NR_DISKDEVS) {			/* sd0, sd1, ... */
 	s_type = TYPE_SD;
@@ -1114,8 +1116,9 @@ retry:
 	if (key == SENSE_NO_SENSE) {
 		/* fine */;
 	} else
-	if (key == SENSE_UNIT_ATT) {
-		/* Check condition?  Bus reset most likely.  Retry? */
+	if (key == SENSE_UNIT_ATT || key == SENSE_ABORTED_CMD) {
+		/* Check condition?  Bus reset most likely. */
+		/* Aborted command?  Maybe retrying will help. */
 		if (--rq->retry > 0) goto retry;
 		return(iop->io_nbytes = EIO);
 	} else
@@ -1230,11 +1233,12 @@ phys_bytes user_phys;		/* user address */
  */
   struct scsi *sp = s_sp;
   int r, key;
-  unsigned count;
+  unsigned offset, count;
   unsigned long block;
 
-  /* Only do read-only devices. */
-  if (!(sp->state & S_RDONLY)) return(iop->io_nbytes = EINVAL);
+  /* Only do reads. */
+  if ((iop->io_request & ~OPTIONAL_IO) != DEV_READ)
+	return(iop->io_nbytes = EINVAL);
 
   /* Finish any outstanding I/O. */
   if ((r = s_finish()) != OK) return(r);
@@ -1243,32 +1247,32 @@ phys_bytes user_phys;		/* user address */
 	/* Probe a device that isn't ready. */
 	if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
 
-	if (s_buf_pos <= pos && pos < s_buf_pos + sp->block_size) {
+	block = pos / sp->block_size;
+	if (block == s_buf_blk) {
 		/* Some of the requested bytes are in the buffer. */
-		count = s_buf_pos + sp->block_size - pos;
+		offset = pos % sp->block_size;
+		count = sp->block_size - offset;
 		if (count > nbytes) count = nbytes;
-		phys_copy(tmp_phys + (pos - s_buf_pos), user_phys,
-							(phys_bytes) count);
+		phys_copy(tmp_phys + offset, user_phys, (phys_bytes) count);
 		pos += count;
 		user_phys += count;
 		nbytes -= count;
 		iop->io_nbytes -= count;
 	} else {
 		/* Read a block that contains (some of) the bytes wanted. */
-		block = pos / sp->block_size;
-		group1();
-		rq->ccb.opcode = CCB_INIT;
-		ccb_cmd1(rq).scsi_op = SCSI_READ1;
-		h2b32(ccb_cmd1(rq).lba, block);
-		h2b16(ccb_cmd1(rq).nblocks, 1);
 		rq->retry = 2;
 		do {
+			group1();
+			rq->ccb.opcode = CCB_INIT;
+			ccb_cmd1(rq).scsi_op = SCSI_READ1;
+			h2b32(ccb_cmd1(rq).lba, block);
+			h2b16(ccb_cmd1(rq).nblocks, 1);
 			key = scsi_command(tmp_phys, sp->block_size);
 		} while (key == SENSE_UNIT_ATT && --rq->retry > 0);
 
 		if (key != SENSE_NO_SENSE) return(iop->io_nbytes = EIO);
 
-		s_buf_pos = block * sp->block_size;
+		s_buf_blk = block;	/* remember block in buffer */
 	}
   } while (nbytes > 0);
   return(OK);
@@ -1296,18 +1300,24 @@ message *m_ptr;
 
   /* Write filemark if writes have been done. */
   if (sp->need_eof && sp->tstat.mt_dsreg != DS_ERR) {
-	if (scsi_simple(SCSI_WREOF, 1) != SENSE_NO_SENSE) return(EIO);
-	sp->tstat.mt_dsreg = DS_OK;
-	sp->tstat.mt_blkno = 0;
-	sp->tstat.mt_fileno++;
+	if (scsi_simple(SCSI_WREOF, 1) != SENSE_NO_SENSE) {
+		printf("%s: failed to add filemark\n", s_name());
+	} else {
+		sp->tstat.mt_dsreg = DS_OK;
+		sp->tstat.mt_blkno = 0;
+		sp->tstat.mt_fileno++;
+	}
   }
 
   /* Rewind if rewind device. */
   if (s_type == TYPE_RST) {
-	if (scsi_simple(SCSI_REWIND, 1) != SENSE_NO_SENSE) return(EIO);
-	sp->tstat.mt_dsreg = DS_OK;
-	sp->tstat.mt_blkno = 0;
-	sp->tstat.mt_fileno = 0;
+	if (scsi_simple(SCSI_REWIND, 1) != SENSE_NO_SENSE) {
+		printf("%s: failed to rewind\n", s_name());
+	} else {
+		sp->tstat.mt_dsreg = DS_OK;
+		sp->tstat.mt_blkno = 0;
+		sp->tstat.mt_fileno = 0;
+	}
   }
   return(OK);
 }
@@ -1837,7 +1847,7 @@ PRIVATE int aha_reset()
   /* Reset controller, wait for self test to complete. */
   out_byte(AHA_CNTLREG, AHA_HRST);
   milli_start(&ms);
-  while (in_byte(AHA_STATREG) & AHA_STST) {
+  while ((stat = in_byte(AHA_STATREG)) & AHA_STST) {
 	if (milli_elapsed(&ms) >= AHA_TIMEOUT) {
 		printf("aha0: AHA154x controller not responding\n");
 		return(0);
@@ -1845,8 +1855,8 @@ PRIVATE int aha_reset()
   }
 
   /* Check for self-test failure. */
-  stat = in_byte(AHA_STATREG);
-  if (stat & AHA_DIAGF) {
+  if ((stat & (AHA_DIAGF | AHA_INIT | AHA_IDLE | AHA_CDF | AHA_DF))
+						!= (AHA_INIT | AHA_IDLE)) {
 	printf("aha0: AHA154x controller failed self-test\n");
 	return(0);
   }
@@ -2145,8 +2155,8 @@ PRIVATE void dump_scsi_cmd()
 /*============================================================================*
  *				s_geometry				      *
  *============================================================================*/
-PRIVATE void s_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void s_geometry(entry)
+struct partition *entry;
 {
 /* The geometry of a SCSI drive is a complete fake, the Adaptec onboard BIOS
  * makes the drive look like a regular drive on the outside.  A DOS program
@@ -2168,8 +2178,8 @@ unsigned *chs;			/* {cylinder, head, sector} */
 	heads = 255;
 	sectors = 63;
   }
-  chs[0] = (size >> SECTOR_SHIFT) / (heads * sectors);
-  chs[1] = heads;
-  chs[2] = sectors;
+  entry->cylinders = (size >> SECTOR_SHIFT) / (heads * sectors);
+  entry->heads = heads;
+  entry->sectors = sectors;
 }
 #endif /* !ENABLE_ADAPTEC_SCSI */

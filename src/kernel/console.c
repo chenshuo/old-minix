@@ -1,31 +1,48 @@
-/* Code and data for the IBM console driver. */
+/* Code and data for the IBM console driver.
+ *
+ * The 6845 video controller used by the IBM PC shares its video memory with
+ * the CPU somewhere in the 0xB0000 memory bank.  To the 6845 this memory
+ * consists of 16-bit words.  Each word has a character code in the low byte
+ * and a so-called attribute byte in the high byte.  The CPU directly modifies
+ * video memory to display characters, and sets two registers on the 6845 that
+ * specify the video origin and the cursor position.  The video origin is the
+ * place in video memory where the first character (upper left corner) can
+ * be found.  Moving the origin is a fast way to scroll the screen.  Some
+ * video adapters wrap around the top of video memory, so the origin can
+ * move without bounds.  For other adapters screen memory must sometimes be
+ * moved to reset the origin.  All computations on video memory use character
+ * (word) addresses for simplicity and assume there is no wrapping.  The
+ * assembly support functions translate the word addresses to byte addresses
+ * and the scrolling function worries about wrapping.
+ */
 
 #include "kernel.h"
+#include <termios.h>
 #include <sgtty.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "protect.h"
 #include "tty.h"
+#include "proc.h"
 
 /* Definitions used by the console driver. */
-#define C_VID_MASK    0x3FFF	/* mask for 16K video RAM */
-#define M_VID_MASK    0x0FFF	/* mask for  4K video RAM */
-#define C_RETRACE     0x0300	/* how many characters to display at once */
-#define M_RETRACE     0x7000	/* how many characters to display at once */
-#define BLANK         0x0700	/* determines  cursor color on blank screen */
-#define LINE_WIDTH        80	/* # characters on a line */
-#define SCR_LINES         25	/* # lines on the screen */
-#define SCR_BYTES	8000	/* size video RAM. multiple of 2*LINE_WIDTH */
-#define GO_FORWARD         0	/* scroll forward */
-#define GO_BACKWARD        1	/* scroll backward */
+#define MONO_BASE    0xB0000L	/* base of mono video memory */
+#define COLOR_BASE   0xB8000L	/* base of color video memory */
+#define MONO_SIZE     0x1000L	/* 4K mono video memory */
+#define COLOR_SIZE    0x4000L	/* 16K color video memory */
+#define BLANK_COLOR   0x0700	/* determines cursor color on blank screen */
+#define SCROLL_UP          0	/* scroll forward */
+#define SCROLL_DOWN        1	/* scroll backward */
+#define BLANK_MEM ((u16_t *) 0)	/* tells mem_vid_copy() to blank the screen */
+#define CONS_RAM_WORDS    80	/* video ram buffer size */
+#define MAX_ESC_PARMS      2	/* number of escape sequence params allowed */
 
 /* Constants relating to the controller chips. */
-#define M_6845         0x3B0	/* port for 6845 mono */
-#define C_6845         0x3D0	/* port for 6845 color */
-#define EGA            0x3C0	/* port for EGA card */
-#define INDEX              4	/* 6845's index register */
-#define DATA               5	/* 6845's data register */
-#define CUR_SIZE          10	/* 6845's cursor size register */
+#define M_6845         0x3B4	/* port for 6845 mono */
+#define C_6845         0x3D4	/* port for 6845 color */
+#define EGA            0x3C4	/* port for EGA card */
+#define INDEX              0	/* 6845's index register */
+#define DATA               1	/* 6845's data register */
 #define VID_ORG           12	/* 6845's origin register */
 #define CURSOR            14	/* 6845's cursor register */
 
@@ -34,39 +51,63 @@
 #define B_TIME		   3	/* length of CTRL-G beep is ticks */
 
 /* Global variables used by the console driver. */
-PUBLIC int vid_mask;		/* 037777 for color (16K) or 07777 for mono */
-PUBLIC int vid_port;		/* I/O port for accessing 6845 */
-PUBLIC int blank_color = 0x0700; /* display code for blank */
+PUBLIC unsigned vid_seg;	/* video ram selector (0xB0000 or 0xB8000) */
+PUBLIC unsigned vid_size;	/* 0x2000 for color or 0x0800 for mono */
+PUBLIC unsigned vid_mask;	/* 0x1FFF for color or 0x07FF for mono */
+PUBLIC unsigned blank_color = BLANK_COLOR; /* display code for blank */
 
 /* Private variables used by the console driver. */
-PRIVATE vid_retrace;		/* how many characters to display per burst */
+PRIVATE int vid_port;		/* I/O port for accessing 6845 */
 PRIVATE int softscroll;		/* 1 = software scrolling, 0 = hardware */
 PRIVATE unsigned vid_base;	/* base of video ram (0xB000 or 0xB800) */
-PRIVATE int one_con_attribute;	/* current attribute byte << 8 */
+PRIVATE unsigned attribute = BLANK_COLOR; /* current attribute byte << 8 */
+PRIVATE int beeping;		/* speaker is beeping? */
+#define scr_width	80	/* # characters on a line */
+#define scr_lines	25	/* # lines on the screen */
+#define scr_size	(80*25)	/* # characters on the screen */
+
+/* Per console data. */
+typedef struct console {
+  tty_t *c_tty;			/* associated TTY struct */
+  int c_column;			/* current column number (0-origin) */
+  int c_row;			/* current row (0 at top of screen) */
+  int c_rwords;			/* number of WORDS (not bytes) in outqueue */
+  unsigned c_org;		/* location in RAM where 6845 base points */
+  unsigned c_cur;		/* current position of cursor in video RAM */
+  char c_esc_state;		/* 0=normal, 1=ESC, 2=ESC[ */
+  char c_esc_intro;		/* Distinguishing character following ESC */
+  int *c_esc_parmp;		/* pointer to current escape parameter */
+  int c_esc_parmv[MAX_ESC_PARMS];	/* list of escape parameters */
+  u16_t c_ramqueue[CONS_RAM_WORDS];	/* buffer for video RAM */
+} console_t;
+
+PRIVATE console_t cons_table[NR_CONS];
+
+/* Color if using a color controller; hardware can wrap if MDA or CGA. */
+#define color	(vid_port == C_6845)
+#define wrap	(!ega)
 
 /* Map from ANSI colors to the attributes used by the PC */
 PRIVATE int ansi_colors[8] = {0, 4, 2, 6, 1, 5, 3, 7};
 
-FORWARD _PROTOTYPE( void beep, (void) );
-FORWARD _PROTOTYPE( void do_escape, (struct tty_struct *tp, int c) );
-FORWARD _PROTOTYPE( void l_scr_up, (unsigned int base, int src, int dst,
-								int count) );
-FORWARD _PROTOTYPE( void l_scr_down, (unsigned int base, int src, int dst, 
-								int count) );
-FORWARD _PROTOTYPE( void long_vid_copy, (char *src, unsigned int base,
-				unsigned int offset, unsigned int count) );
-FORWARD _PROTOTYPE( void move_to, (struct tty_struct *tp, int x, int y) );
-FORWARD _PROTOTYPE( void parse_escape, (struct tty_struct *tp, int c) );
-FORWARD _PROTOTYPE( void scroll_screen, (struct tty_struct *tp, int dir) );
-FORWARD _PROTOTYPE( void set_6845, (int reg, int val) );
-FORWARD _PROTOTYPE( void stop_beep, (void) );
-FORWARD _PROTOTYPE( void cons_org0, (void) );
+FORWARD _PROTOTYPE( void cons_write, (struct tty *tp)			);
+FORWARD _PROTOTYPE( void cons_echo, (tty_t *tp, int c)			);
+FORWARD _PROTOTYPE( void out_char, (console_t *cons, int c)		);
+FORWARD _PROTOTYPE( void beep, (void)					);
+FORWARD _PROTOTYPE( void do_escape, (console_t *cons, int c)		);
+FORWARD _PROTOTYPE( void flush, (console_t *cons)			);
+FORWARD _PROTOTYPE( void parse_escape, (console_t *cons, int c)		);
+FORWARD _PROTOTYPE( void scroll_screen, (console_t *cons, int dir)	);
+FORWARD _PROTOTYPE( void set_6845, (int reg, unsigned val)		);
+FORWARD _PROTOTYPE( void stop_beep, (void)				);
+FORWARD _PROTOTYPE( void cons_org0, (void)				);
+
 
 /*===========================================================================*
- *				console					     *
+ *				cons_write				     *
  *===========================================================================*/
-PUBLIC void console(tp)
-register struct tty_struct *tp;	/* tells which terminal is to be used */
+PRIVATE void cons_write(tp)
+register struct tty *tp;	/* tells which terminal is to be used */
 {
 /* Copy as much data as possible to the output queue, then start I/O.  On
  * memory-mapped terminals, such as the IBM console, the I/O will also be
@@ -74,71 +115,84 @@ register struct tty_struct *tp;	/* tells which terminal is to be used */
  */
 
   int count;
-  int remaining;
   register char *tbuf;
+  char buf[64];
+  phys_bytes user_phys;
+  console_t *cons = tp->tty_priv;
 
   /* Check quickly for nothing to do, so this can be called often without
    * unmodular tests elsewhere.
    */
-  if ( (remaining = tp->tty_outleft) == 0 || tp->tty_inhibited == STOPPED)
-	return;
+  if ((count = tp->tty_outleft) == 0 || tp->tty_inhibited) return;
 
-  /* Copy the user bytes to tty_buf for decent addressing. Loop over the
-   * copies, since the user buffer may be much larger than tty_buf.
+  /* Copy the user bytes to buf[] for decent addressing. Loop over the
+   * copies, since the user buffer may be much larger than buf[].
    */
   do {
-	if (remaining > sizeof tty_buf) remaining = sizeof tty_buf;
-	phys_copy(tp->tty_phys, tty_bphys, (phys_bytes) remaining);
-	tbuf = tty_buf;
-
-	/* Output each byte of the copy to the screen.  This is the inner loop
-	 * of the output routine, so attempt to make it fast. A more serious
-	 * attempt should produce
-	 *	while (easy_cases-- != 0 && *tbuf >= ' ') {
-	 *		*outptr++ = *tbuf++;
-	 *		*outptr++ = one_con_attribute;
-	 *	}
-	 */
-	do {
-		if (*tbuf < ' ' || tp->tty_esc_state > 0 ||
-		    tp->tty_column >= LINE_WIDTH - 1 ||
-		    tp->tty_rwords >= TTY_RAM_WORDS) {
-			out_char(tp, *tbuf++);
-		} else {
-			tp->tty_ramqueue[tp->tty_rwords++] =
-				one_con_attribute | (*tbuf++ & BYTE);
-			tp->tty_column++;
-		}
-	}
-	while (--remaining != 0 && tp->tty_inhibited == RUNNING);
+	if (count > sizeof(buf)) count = sizeof(buf);
+	user_phys = proc_vir2phys(proc_addr(tp->tty_outproc), tp->tty_out_vir);
+	phys_copy(user_phys, vir2phys(buf), (phys_bytes) count);
+	tbuf = buf;
 
 	/* Update terminal data structure. */
-	count = tbuf - tty_buf;	/* # characters printed */
-	tp->tty_phys += count;	/* advance physical data pointer */
-	tp->tty_cum += count;	/* number of characters printed */
+	tp->tty_out_vir += count;
+	tp->tty_outcum += count;
 	tp->tty_outleft -= count;
-	if (remaining != 0) break;	/* inhibited while in progress */
-  }
-  while ( (remaining = tp->tty_outleft) != 0 && tp->tty_inhibited == RUNNING);
-  flush(tp);			/* transfer anything buffered to the screen */
 
-  /* If output was not inhibited early, send the appropiate completion reply.
-   * Otherwise, let TTY handle suspension.
-   */
-  if (tp->tty_outleft == 0) finish(tp, tp->tty_cum);
+	/* Output each byte of the copy to the screen.  Avoid calling
+	 * out_char() for the "easy" characters, put them into the buffer
+	 * directly.
+	 */
+	do {
+		if ((unsigned) *tbuf < ' ' || cons->c_esc_state > 0
+			|| cons->c_column >= scr_width
+			|| cons->c_rwords >= buflen(cons->c_ramqueue))
+		{
+			out_char(cons, *tbuf++);
+		} else {
+			cons->c_ramqueue[cons->c_rwords++] =
+					attribute | (*tbuf++ & BYTE);
+			cons->c_column++;
+		}
+	} while (--count != 0);
+  } while ((count = tp->tty_outleft) != 0 && !tp->tty_inhibited);
+
+  flush(cons);			/* transfer anything buffered to the screen */
+
+  /* Reply to the writer if all output is finished. */
+  if (tp->tty_outleft == 0) {
+	tty_reply(tp->tty_outrepcode, tp->tty_outcaller, tp->tty_outproc,
+							tp->tty_outcum);
+	tp->tty_outcum = 0;
+  }
+}
+
+
+/*===========================================================================*
+ *				cons_echo				     *
+ *===========================================================================*/
+PRIVATE void cons_echo(tp, c)
+register tty_t *tp;		/* pointer to tty struct */
+int c;				/* character to be echoed */
+{
+/* Echo keyboard input (print & flush). */
+  console_t *cons = tp->tty_priv;
+
+  out_char(cons, c);
+  flush(cons);
 }
 
 
 /*===========================================================================*
  *				out_char				     *
  *===========================================================================*/
-PUBLIC void out_char(tp, c)
-register struct tty_struct *tp;	/* pointer to tty struct */
-char c;				/* character to be output */
+PRIVATE void out_char(cons, c)
+register console_t *cons;	/* pointer to console struct */
+int c;				/* character to be output */
 {
 /* Output a character on the console.  Check for escape sequences first. */
-  if (tp->tty_esc_state > 0) {
-	parse_escape(tp, c);
+  if (cons->c_esc_state > 0) {
+	parse_escape(cons, c);
 	return;
   }
 
@@ -147,186 +201,168 @@ char c;				/* character to be output */
 		return;		/* better not do anything */
 
 	case 007:		/* ring the bell */
-		flush(tp);	/* print any chars queued for output */
+		flush(cons);	/* print any chars queued for output */
 		beep();
 		return;
 
-	case 013:		/* CTRL-K */
-		move_to(tp, tp->tty_column, tp->tty_row - 1);
-		return;
-
-	case 014:		/* CTRL-L */
-		move_to(tp, tp->tty_column + 1, tp->tty_row);
-		return;
-
-	case 016:		/* CTRL-N */
-		move_to(tp, tp->tty_column + 1, tp->tty_row);
-		return;
-
 	case '\b':		/* backspace */
-		move_to(tp, tp->tty_column - 1, tp->tty_row);
+		if (--cons->c_column < 0) {
+			if (--cons->c_row >= 0) cons->c_column += scr_width;
+		}
+		flush(cons);
 		return;
 
 	case '\n':		/* line feed */
-		if (tp->tty_mode & CRMOD) move_to(tp, 0, tp->tty_row);
-		if (tp->tty_row == SCR_LINES-1)
-			scroll_screen(tp, GO_FORWARD);
-		else
-			tp->tty_row++;
-		move_to(tp, tp->tty_column, tp->tty_row);
+		if ((cons->c_tty->tty_termios.c_oflag & (OPOST|ONLCR))
+						== (OPOST|ONLCR)) {
+			cons->c_column = 0;
+		}
+		/*FALL THROUGH*/
+	case 013:		/* CTRL-K */
+	case 014:		/* CTRL-L */
+		if (cons->c_row == scr_lines-1) {
+			scroll_screen(cons, SCROLL_UP);
+		} else {
+			cons->c_row++;
+		}
+		flush(cons);
 		return;
 
 	case '\r':		/* carriage return */
-		move_to(tp, 0, tp->tty_row);
+		cons->c_column = 0;
+		flush(cons);
 		return;
 
 	case '\t':		/* tab */
-		if ( (tp->tty_mode & XTABS) == XTABS) {
-			do {
-				if (tp->tty_column >= LINE_WIDTH - 1 ||
-				    tp->tty_rwords >= TTY_RAM_WORDS) {
-					out_char(tp, ' ');
-				} else {
-					tp->tty_ramqueue[tp->tty_rwords++] =
-						one_con_attribute | ' ';
-					tp->tty_column++;
-				}
-			} while (tp->tty_column & TAB_MASK);
-			return;
+		cons->c_column = (cons->c_column + TAB_SIZE) & ~TAB_MASK;
+		if (cons->c_column > scr_width) {
+			cons->c_column -= scr_width;
+			if (cons->c_row == scr_lines-1) {
+				scroll_screen(cons, SCROLL_UP);
+			} else {
+				cons->c_row++;
+			}
 		}
-		/* Ignore tab if XTABS is off--video RAM has no hardware tab */
+		flush(cons);
 		return;
 
 	case 033:		/* ESC - start of an escape sequence */
-		flush(tp);	/* print any chars queued for output */
-		tp->tty_esc_state = 1;	/* mark ESC as seen */
+		flush(cons);	/* print any chars queued for output */
+		cons->c_esc_state = 1;	/* mark ESC as seen */
 		return;
 
 	default:		/* printable chars are stored in ramqueue */
-#if !LINEWRAP
-		if (tp->tty_column >= LINE_WIDTH) return;	/* long line */
-#endif
-#if LINEWRAP
- 		if (tp->tty_column >= LINE_WIDTH) {
- 			flush(tp);
- 			if (tp->tty_row == SCR_LINES-1)
- 				scroll_screen(tp, GO_FORWARD);
- 			else
- 				tp->tty_row++;
- 			move_to(tp, 0, tp->tty_row);
- 		}
-#endif /* LINEWRAP */
-		if (tp->tty_rwords == TTY_RAM_WORDS) flush(tp);
-		tp->tty_ramqueue[tp->tty_rwords++]=one_con_attribute|(c&BYTE);
-		tp->tty_column++;	/* next column */
+		if (cons->c_column >= scr_width) {
+			if (!LINEWRAP) return;
+			if (cons->c_row == scr_lines-1) {
+				scroll_screen(cons, SCROLL_UP);
+			} else {
+				cons->c_row++;
+			}
+			cons->c_column = 0;
+			flush(cons);
+		}
+		if (cons->c_rwords == buflen(cons->c_ramqueue)) flush(cons);
+		cons->c_ramqueue[cons->c_rwords++] = attribute | (c & BYTE);
+		cons->c_column++;			/* next column */
 		return;
   }
 }
+
 
 /*===========================================================================*
  *				scroll_screen				     *
  *===========================================================================*/
-PRIVATE void scroll_screen(tp, dir)
-register struct tty_struct *tp;	/* pointer to tty struct */
-int dir;			/* GO_FORWARD or GO_BACKWARD */
+PRIVATE void scroll_screen(cons, dir)
+register console_t *cons;	/* pointer to console struct */
+int dir;			/* SCROLL_UP or SCROLL_DOWN */
 {
-  int offset, bytes;
+  unsigned new_line, chars;
 
-  flush(tp);
-  bytes = 2 * (SCR_LINES - 1) * LINE_WIDTH;	/* 2 * 24 * 80 bytes */
+  flush(cons);
+  chars = scr_size - scr_width;		/* one screen minus one line */
 
   /* Scrolling the screen is a real nuisance due to the various incompatible
-   * video cards.  This driver supports hardware scrolling (mono and CGA cards)
-   * and software scrolling (EGA cards).
+   * video cards.  This driver supports software scrolling (Hercules?),
+   * hardware scrolling (mono and CGA cards) and hardware scrolling without
+   * wrapping (EGA cards).  In the latter case we must make sure that
+   *		0 <= tty_org && tty_org + scr_size <= vid_size
+   * holds, because EGA doesn't wrap around the end of video memory.
    */
-  if (softscroll) {
-	/* Software scrolling for non-IBM compatible EGA cards. */
-	if (dir == GO_FORWARD) {
-		scr_up(vid_base, LINE_WIDTH * 2, 0,
-		       (SCR_LINES - 1) * LINE_WIDTH);
-		offset = tp->tty_org + bytes;
+  if (dir == SCROLL_UP) {
+	/* Scroll one line up in 3 ways: soft, avoid wrap, use origin. */
+	if (softscroll) {
+		vid_vid_copy(scr_width, 0, chars);
+	} else
+	if (!wrap && cons->c_org + scr_size + scr_width >= vid_size) {
+		vid_vid_copy(cons->c_org + scr_width, 0, chars);
+		cons->c_org = 0;
 	} else {
-		scr_down(vid_base,
-			 (SCR_LINES - 1) * LINE_WIDTH * 2 - 2,
-			 SCR_LINES * LINE_WIDTH * 2 - 2,
-			 (SCR_LINES - 1) * LINE_WIDTH);
-		offset = tp->tty_org;
+		cons->c_org = (cons->c_org + scr_width) & vid_mask;
 	}
+	new_line = (cons->c_org + chars) & vid_mask;
   } else {
-	/* Use video origin, but don't assume EGA can wrap */
-	if (dir == GO_FORWARD) {
-		/* after we scroll by one line, end of screen */
-		offset = tp->tty_org + (SCR_LINES + 1) * LINE_WIDTH * 2;
-		if (offset > vid_mask && ega) {
-			scr_up(vid_base, tp->tty_org + LINE_WIDTH * 2, 0, 
-			       (SCR_LINES - 1) * LINE_WIDTH);
-			tp->tty_org = 0;
-		} else {
-			tp->tty_org = (tp->tty_org + 2 * LINE_WIDTH) & vid_mask;
-		}
-		offset = (tp->tty_org + bytes) & vid_mask;
-	} else {  /* scroll backwards */
-		offset = tp->tty_org - 2 * LINE_WIDTH;
-		if (offset < 0 && ega) {
-			scr_down(vid_base, 
-			   tp->tty_org + (SCR_LINES - 1) * LINE_WIDTH * 2 - 2,
-			   vid_mask - 1,
-			   (SCR_LINES - 1) * LINE_WIDTH);
-			tp->tty_org = vid_mask + 1 - SCR_LINES*LINE_WIDTH * 2;
-		} else {
-			tp->tty_org = (tp->tty_org - 2 * LINE_WIDTH) & vid_mask;
-		}
-		offset = tp->tty_org;
-	}			
-	set_6845(VID_ORG, tp->tty_org >> 1);	/* 6845 thinks in words */
+	/* Scroll one line down in 3 ways: soft, avoid wrap, use origin. */
+	if (softscroll) {
+		vid_vid_copy(0, scr_width, chars);
+	} else
+	if (!wrap && cons->c_org < scr_width) {
+		vid_vid_copy(cons->c_org, vid_size - chars, chars);
+		cons->c_org = vid_size - scr_size;
+	} else {
+		cons->c_org = (cons->c_org - scr_width) & vid_mask;
+	}
+	new_line = cons->c_org;
   }
   /* Blank the new line at top or bottom. */
-  vid_copy(NIL_PTR, vid_base, offset, LINE_WIDTH);
+  mem_vid_copy(BLANK_MEM, new_line, scr_width);
+
+  /* Set the new video origin. */
+  set_6845(VID_ORG, cons->c_org);
+  flush(cons);
 }
+
 
 /*===========================================================================*
  *				flush					     *
  *===========================================================================*/
-PUBLIC void flush(tp)
-register struct tty_struct *tp;	/* pointer to tty struct */
+PRIVATE void flush(cons)
+register console_t *cons;	/* pointer to console struct */
 {
-/* Have the characters in 'ramqueue' transferred to the screen. */
+/* Send characters buffered in 'ramqueue' to screen memory, check the new
+ * cursor position, compute the new hardware cursor position and set it.
+ */
+  unsigned cur;
+  tty_t *tp = cons->c_tty;
 
-  if (tp->tty_rwords == 0) return;
-  vid_copy((char *)tp->tty_ramqueue, vid_base, tp->tty_vid, tp->tty_rwords);
+  /* Have the characters in 'ramqueue' transferred to the screen. */
+  if (cons->c_rwords > 0) {
+	mem_vid_copy(cons->c_ramqueue, cons->c_cur, cons->c_rwords);
+	cons->c_rwords = 0;
 
-  /* Update the video parameters and cursor. */
-  tp->tty_vid = (tp->tty_vid + 2 * tp->tty_rwords);
-  set_6845(CURSOR, tp->tty_vid >> 1);	/* cursor counts in words */
-  tp->tty_rwords = 0;
-}
+	/* TTY likes to know the current column and if echoing messed up. */
+	tp->tty_position = cons->c_column;
+	tp->tty_reprint = TRUE;
+  }
 
-
-/*===========================================================================*
- *				move_to					     *
- *===========================================================================*/
-PRIVATE void move_to(tp, x, y)
-struct tty_struct *tp;		/* pointer to tty struct */
-int x;				/* column (0 <= x <= 79) */
-int y;				/* row (0 <= y <= 24, 0 at top) */
-{
-/* Move the cursor to (x, y). */
-
-  flush(tp);			/* flush any pending characters */
-  if (x < 0 || x >= LINE_WIDTH || y < 0 || y >= SCR_LINES) return;
-  tp->tty_column = x;		/* set x co-ordinate */
-  tp->tty_row = y;		/* set y co-ordinate */
-  tp->tty_vid = (tp->tty_org + 2*y*LINE_WIDTH + 2*x);
-
-  set_6845(CURSOR, tp->tty_vid >> 1);	/* cursor counts in words */
+  /* Check and update the cursor position. */
+  if (cons->c_column < 0) cons->c_column = 0;
+  if (cons->c_column > scr_width) cons->c_column = scr_width;
+  if (cons->c_row < 0) cons->c_row = 0;
+  if (cons->c_row >= scr_lines) cons->c_row = scr_lines - 1;
+  cur = cons->c_org + cons->c_row * scr_width + cons->c_column;
+  if (cur != cons->c_cur) {
+	set_6845(CURSOR, cur);
+	cons->c_cur = cur;
+  }
 }
 
 
 /*===========================================================================*
  *				parse_escape				     *
  *===========================================================================*/
-PRIVATE void parse_escape(tp, c)
-register struct tty_struct *tp;	/* pointer to tty struct */
+PRIVATE void parse_escape(cons, c)
+register console_t *cons;	/* pointer to console struct */
 char c;				/* next character in escape sequence */
 {
 /* The following ANSI escape sequences are currently supported.
@@ -346,378 +382,285 @@ char c;				/* next character in escape sequence */
  *   ESC M scrolls the screen backwards if the cursor is on the top line
  */
 
-  switch (tp->tty_esc_state) {
-	case 1: 		/* ESC seen */
-		tp->tty_esc_intro = '\0';
-		tp->tty_esc_parmp = tp->tty_esc_parmv;
-		tp->tty_esc_parmv[0] = tp->tty_esc_parmv[1] = 0;
-		switch (c) {
-		  case '[': 	/* Control Sequence Introducer */
-			tp->tty_esc_intro = c;
-			tp->tty_esc_state = 2; 
-			break;
-		  case 'M': 	/* Reverse Index */
-			do_escape(tp, c);
-			break;
-		  default: 
-			tp->tty_esc_state = 0; 
-			break;
-		}
+  switch (cons->c_esc_state) {
+    case 1:			/* ESC seen */
+	cons->c_esc_intro = '\0';
+	cons->c_esc_parmp = cons->c_esc_parmv;
+	cons->c_esc_parmv[0] = cons->c_esc_parmv[1] = 0;
+	switch (c) {
+	    case '[':	/* Control Sequence Introducer */
+		cons->c_esc_intro = c;
+		cons->c_esc_state = 2;
 		break;
+	    case 'M':	/* Reverse Index */
+		do_escape(cons, c);
+		break;
+	    default:
+		cons->c_esc_state = 0;
+	}
+	break;
 
-	case 2: 		/* ESC [ seen */
-		if (c >= '0' && c <= '9') {
-			if (tp->tty_esc_parmp 
-					< tp->tty_esc_parmv + MAX_ESC_PARMS)
-				*tp->tty_esc_parmp =
-				  *tp->tty_esc_parmp * 10 + (c - '0');
-			break;
-		}
-		else if (c == ';') {
-			if (++tp->tty_esc_parmp 
-					< tp->tty_esc_parmv + MAX_ESC_PARMS)
-				*tp->tty_esc_parmp = 0;
-			break;
-		}
-		else {
-			do_escape(tp, c);
-		}
-		break;
-	default:		/* illegal state */
-		tp->tty_esc_state = 0;
-		break;
+    case 2:			/* ESC [ seen */
+	if (c >= '0' && c <= '9') {
+		if (cons->c_esc_parmp < bufend(cons->c_esc_parmv))
+			*cons->c_esc_parmp = *cons->c_esc_parmp * 10 + (c-'0');
+	} else
+	if (c == ';') {
+		if (++cons->c_esc_parmp < bufend(cons->c_esc_parmv))
+			*cons->c_esc_parmp = 0;
+	} else {
+		do_escape(cons, c);
+	}
+	break;
   }
 }
+
 
 /*===========================================================================*
  *				do_escape				     *
  *===========================================================================*/
-PRIVATE void do_escape(tp, c)
-register struct tty_struct *tp;	/* pointer to tty struct */
+PRIVATE void do_escape(cons, c)
+register console_t *cons;	/* pointer to console struct */
 char c;				/* next character in escape sequence */
 {
-  int n, vx, value, attr, src, dst, count;
+  int value, n;
+  unsigned src, dst, count;
 
   /* Some of these things hack on screen RAM, so it had better be up to date */
-  flush(tp);
+  flush(cons);
 
-  /* Handle a sequence beginning with just ESC */
-  if (tp->tty_esc_intro == '\0') {
+  if (cons->c_esc_intro == '\0') {
+	/* Handle a sequence beginning with just ESC */
 	switch (c) {
-		case 'M':		/* Reverse Index */
-			if (tp->tty_row == 0)
-				scroll_screen(tp, GO_BACKWARD);
-			else
-				tp->tty_row--;
-			move_to(tp, tp->tty_column, tp->tty_row);
-			break;
+	    case 'M':		/* Reverse Index */
+		if (cons->c_row == 0) {
+			scroll_screen(cons, SCROLL_DOWN);
+		} else {
+			cons->c_row--;
+		}
+		flush(cons);
+		break;
 
-		default: break;
+	    default: break;
 	}
-  } else {
+  } else
+  if (cons->c_esc_intro == '[') {
 	/* Handle a sequence beginning with ESC [ and parameters */
-	if (tp->tty_esc_intro == '[') {
-		value = tp->tty_esc_parmv[0];
-		attr = one_con_attribute;
-		switch (c) {
-		    case 'A': 		/* ESC [nA moves up n lines */
-			n = (value == 0 ? 1 : value);
-			move_to(tp, tp->tty_column, tp->tty_row - n);
+	value = cons->c_esc_parmv[0];
+	switch (c) {
+	    case 'A':		/* ESC [nA moves up n lines */
+		n = (value == 0 ? 1 : value);
+		cons->c_row -= n;
+		flush(cons);
+		break;
+
+	    case 'B':		/* ESC [nB moves down n lines */
+		n = (value == 0 ? 1 : value);
+		cons->c_row += n;
+		flush(cons);
+		break;
+
+	    case 'C':		/* ESC [nC moves right n spaces */
+		n = (value == 0 ? 1 : value);
+		cons->c_column += n;
+		flush(cons);
+		break;
+
+	    case 'D':		/* ESC [nD moves left n spaces */
+		n = (value == 0 ? 1 : value);
+		cons->c_column -= n;
+		flush(cons);
+		break;
+
+	    case 'H':		/* ESC [m;nH" moves cursor to (m,n) */
+		cons->c_row = cons->c_esc_parmv[0] - 1;
+		cons->c_column = cons->c_esc_parmv[1] - 1;
+		flush(cons);
+		break;
+
+	    case 'J':		/* ESC [sJ clears in display */
+		switch (value) {
+		    case 0:	/* Clear from cursor to end of screen */
+			count = scr_size - (cons->c_cur - cons->c_org);
+			dst = cons->c_cur;
+			break;
+		    case 1:	/* Clear from start of screen to cursor */
+			count = cons->c_cur - cons->c_org;
+			dst = cons->c_org;
+			break;
+		    case 2:	/* Clear entire screen */
+			count = scr_size;
+			dst = cons->c_org;
+			break;
+		    default:	/* Do nothing */
+			count = 0;
+			dst = cons->c_org;
+		}
+		mem_vid_copy(BLANK_MEM, dst, count);
+		break;
+
+	    case 'K':		/* ESC [sK clears line from cursor */
+		switch (value) {
+		    case 0:	/* Clear from cursor to end of line */
+			count = scr_width - cons->c_column;
+			dst = cons->c_cur;
+			break;
+		    case 1:	/* Clear from beginning of line to cursor */
+			count = cons->c_column;
+			dst = cons->c_cur - cons->c_column;
+			break;
+		    case 2:	/* Clear entire line */
+			count = scr_width;
+			dst = cons->c_cur - cons->c_column;
+			break;
+		    default:	/* Do nothing */
+			count = 0;
+			dst = cons->c_cur;
+		}
+		mem_vid_copy(BLANK_MEM, dst, count);
+		break;
+
+	    case 'L':		/* ESC [nL inserts n lines at cursor */
+		n = value;
+		if (n < 1) n = 1;
+		if (n > (scr_lines - cons->c_row))
+			n = scr_lines - cons->c_row;
+
+		src = cons->c_org + cons->c_row * scr_width;
+		dst = src + n * scr_width;
+		count = (scr_lines - cons->c_row - n) * scr_width;
+		vid_vid_copy(src, dst, count);
+		mem_vid_copy(BLANK_MEM, src, n * scr_width);
+		break;
+
+	    case 'M':		/* ESC [nM deletes n lines at cursor */
+		n = value;
+		if (n < 1) n = 1;
+		if (n > (scr_lines - cons->c_row))
+			n = scr_lines - cons->c_row;
+
+		dst = cons->c_org + cons->c_row * scr_width;
+		src = dst + n * scr_width;
+		count = (scr_lines - cons->c_row - n) * scr_width;
+		vid_vid_copy(src, dst, count);
+		mem_vid_copy(BLANK_MEM, dst + count, n * scr_width);
+		break;
+
+	    case '@':		/* ESC [n@ inserts n chars at cursor */
+		n = value;
+		if (n < 1) n = 1;
+		if (n > (scr_width - cons->c_column))
+			n = scr_width - cons->c_column;
+
+		src = cons->c_cur;
+		dst = src + n;
+		count = scr_width - cons->c_column - n;
+		vid_vid_copy(src, dst, count);
+		mem_vid_copy(BLANK_MEM, src, n);
+		break;
+
+	    case 'P':		/* ESC [nP deletes n chars at cursor */
+		n = value;
+		if (n < 1) n = 1;
+		if (n > (scr_width - cons->c_column))
+			n = scr_width - cons->c_column;
+
+		dst = cons->c_cur;
+		src = dst + n;
+		count = scr_width - cons->c_column - n;
+		vid_vid_copy(src, dst, count);
+		mem_vid_copy(BLANK_MEM, dst + count, n);
+		break;
+
+	    case 'm':		/* ESC [nm enables rendition n */
+		switch (value) {
+		    case 1:	/* BOLD  */
+			if (color) {
+				/* Can't do bold, so use yellow */
+				attribute = (attribute & 0xf0ff) | 0x0E00;
+			} else {
+				/* Set intensity bit */
+				attribute |= 0x0800;
+			}
 			break;
 
-	    	    case 'B':		/* ESC [nB moves down n lines */
-			n = (value == 0 ? 1 : value);
-			move_to(tp, tp->tty_column, tp->tty_row + n);
+		    case 4:	/* UNDERLINE */
+			if (color) {
+				/* Use light green */
+				attribute = (attribute & 0xf0ff) | 0x0A00;
+			} else {
+				attribute = (attribute & 0x8900);
+			}
 			break;
 
-		    case 'C':		/* ESC [nC moves right n spaces */
-			n = (value == 0 ? 1 : value);
-			move_to(tp, tp->tty_column + n, tp->tty_row);
+		    case 5:	/* BLINKING */
+			if (color) {
+				/* Use magenta */
+				attribute = (attribute & 0xf0ff) | 0x0500;
+			} else {
+				/* Set the blink bit */
+				attribute |= 0x8000;
+			}
 			break;
 
-		    case 'D':		/* ESC [nD moves left n spaces */
-			n = (value == 0 ? 1 : value);
-			move_to(tp, tp->tty_column - n, tp->tty_row);
+		    case 7:	/* REVERSE */
+			if (color) {
+				/* Swap fg and bg colors */
+				attribute =
+					((attribute & 0xf000) >> 4) |
+					((attribute & 0x0f00) << 4);
+			} else
+			if ((attribute & 0x7000) == 0) {
+				attribute = (attribute & 0x8800) | 0x7000;
+			} else {
+				attribute = (attribute & 0x8800) | 0x0700;
+			}
 			break;
 
-		    case 'H':		/* ESC [m;nH" moves cursor to (m,n) */
-			move_to(tp, MAX(1, MIN(LINE_WIDTH, 
-			    tp->tty_esc_parmv[1])) - 1,
-			    MAX(1, MIN(SCR_LINES, tp->tty_esc_parmv[0])) - 1 );
+		    default:	/* COLOR */
+		        if (30 <= value && value <= 37) {
+				attribute =
+					(attribute & 0xf0ff) |
+					(ansi_colors[(value - 30)] << 8);
+				blank_color =
+					(blank_color & 0xf0ff) |
+					(ansi_colors[(value - 30)] << 8);
+			} else
+			if (40 <= value && value <= 47) {
+				attribute =
+					(attribute & 0x0fff) |
+					(ansi_colors[(value - 40)] << 12);
+				blank_color =
+					(blank_color & 0x0fff) |
+					(ansi_colors[(value - 40)] << 12);
+			} else {
+				attribute = blank_color;
+			}
 			break;
-
-		    /* cursor mods from dweaver@clover.cleaf.com 
-		       (David Weaver) from comp.os.minix 12 Sep 1994
-		       This adds full support for the ED and EL sequences.
-		    */
-	            case 'J':		/* ESC [sJ clears in display */
-		      switch (value)
-		      {
-		        case 0: /* Clear from cursor to end of screen */
-		          n = 2 * ((SCR_LINES - (tp->tty_row + 1)) * LINE_WIDTH
-		     		       + LINE_WIDTH - (tp->tty_column));
-		          vx = tp->tty_vid;
-		          break;
-		        case 1:	/* Clear from start of screen to cursor */
-		          n = 2 * (tp->tty_row * LINE_WIDTH + tp->tty_column);
-	  	          vx = tp->tty_vid -
-		 	    (2 * (tp->tty_row * LINE_WIDTH + tp->tty_column));
-	 	          break;
-		        case 2:		/* Clear entire screen */
-		          n = 2 * SCR_LINES * LINE_WIDTH;
-		          vx = tp->tty_vid -
-			    (2 * (tp->tty_row * LINE_WIDTH + tp->tty_column));
-	  	          break;
-	  	        default:	/* Do nothing */
-		          n = 0;
-	  	          vx = tp->tty_vid;
-		      }
-	  	      vid_copy(NIL_PTR, vid_base, vx, n / 2);
-		      break;
-
-		    case 'K':		/* ESC [sK clears in line */
-		      switch (value)
-		      {
-	  	        case 0:		/* Clear from cursor to end of line */
-		          n = 2 * (LINE_WIDTH - (tp->tty_column));
-		          vx = tp->tty_vid;
-		          break;
-		        case 1:	/* Clear from beginning of line to cursor */
-		      	  n = 2 * (tp->tty_column);
-		          vx = tp->tty_vid - tp->tty_column;
-		          break;
-	 	        case 2:		/* Clear entire line */
-		          n = 2 * LINE_WIDTH;
-		          vx = tp->tty_vid;
-	 	          break;
-		        default:		/* Do nothing */
-		          n = 0;
-		          vx = tp->tty_vid;
-		      }
-		      vid_copy(NIL_PTR, vid_base, vx, n / 2);
-		      break;
-
-		    case 'L':		/* ESC [nL inserts n lines ar cursor */
-			n = value;
-			if (n < 1) n = 1;
-			if (n > (SCR_LINES - tp->tty_row)) 
-				n = SCR_LINES - tp->tty_row;
-
-			src = tp->tty_org+(SCR_LINES - n) * LINE_WIDTH * 2 - 2;
-			dst = tp->tty_org+SCR_LINES * LINE_WIDTH * 2 - 2;
-			count = (SCR_LINES - n - tp->tty_row) * LINE_WIDTH;
-			l_scr_down(vid_base, src, dst, count);
-			dst = tp->tty_org + tp->tty_row * LINE_WIDTH * 2;
-			long_vid_copy(NIL_PTR, vid_base, dst, n * LINE_WIDTH);
-			break;
-
-		    case 'M':		/* ESC [nM deletes n lines at cursor */
-			n = value;
-			if (n < 1) n = 1;
-			if (n > (SCR_LINES - tp->tty_row)) 
-				n = SCR_LINES - tp->tty_row;
-
-			src = tp->tty_org + (tp->tty_row + n) * LINE_WIDTH * 2;
-			dst = tp->tty_org + (tp->tty_row) * LINE_WIDTH * 2;
-			count = (SCR_LINES - n - tp->tty_row) * LINE_WIDTH;
-			l_scr_up(vid_base, src, dst, count);
-			dst = tp->tty_org + (SCR_LINES - n) * LINE_WIDTH * 2;
-			  long_vid_copy(NIL_PTR, vid_base, dst, n*LINE_WIDTH);
-			break;
-
-		    case 'P':		/* ESC [nP deletes n chars at cursor */
-			n = value;
-			if (n < 1) n = 1;
-			if (n > (LINE_WIDTH - tp->tty_column))
-				n = LINE_WIDTH - tp->tty_column;
-			src = (tp->tty_row * LINE_WIDTH + tp->tty_column+n) *2;
-			dst = (tp->tty_row * LINE_WIDTH + tp->tty_column) * 2;
-			count = LINE_WIDTH - tp->tty_column - n;
-			src += tp->tty_org;
-			dst += tp->tty_org;
-			scr_up(vid_base, src, dst, count);
-			vid_copy(NIL_PTR, vid_base, dst + count * 2, n);
-			break;
-
-		    case '@':  		/* ESC [n@ inserts n chars at cursor */
-			n = value;
-			if (n < 1) n = 1;
-			if (n > (LINE_WIDTH - tp->tty_column))
-				n = LINE_WIDTH - tp->tty_column;
-			src = (tp->tty_row * LINE_WIDTH + LINE_WIDTH- n-1) * 2;
-			dst = (tp->tty_row * LINE_WIDTH + LINE_WIDTH - 1) * 2;
-			count = LINE_WIDTH - tp->tty_column - n;
-			src += tp->tty_org;
-			dst += tp->tty_org;
-			scr_down(vid_base, src, dst, count);
-			dst = (tp->tty_row * LINE_WIDTH + tp->tty_column) * 2;
-			dst += tp->tty_org;
-			vid_copy(NIL_PTR, vid_base, dst, n);
-			break;
-
-	   	    case 'm':		/* ESC [nm enables rendition n */
-	 		switch (value) {
- 			    case 1: /*  BOLD  */
-				if (color)
-	 				one_con_attribute = /* yellow fg */
-					 	(attr & 0xf0ff) | 0x0E00;
-				else
-		 			one_con_attribute |= 0x0800; /* inten*/
- 				break;
- 
- 			    case 4: /*  UNDERLINE */
-				if (color)
-					one_con_attribute = /* lt green fg */
-					 (attr & 0xf0ff) | 0x0A00;
-				else
-					one_con_attribute = /* ul */
-					 (attr & 0x8900);
- 				break;
- 
- 			    case 5: /*  BLINKING */
-				if (color) /* can't blink color */
-					one_con_attribute = /* magenta fg */
-					 (attr & 0xf0ff) | 0x0500;
-				else
-		 			one_con_attribute |= /* blink */
-					 0x8000;
- 				break;
- 
- 			    case 7: /*  REVERSE  (black on light grey)  */
-				if (color)
-	 				one_con_attribute = 
-					 ((attr & 0xf000) >> 4) |
-					 ((attr & 0x0f00) << 4);
-				else if ((attr & 0x7000) == 0)
-					one_con_attribute =
-					 (attr & 0x8800) | 0x7000;
-				else
-					one_con_attribute =
-					 (attr & 0x8800) | 0x0700;
-  				break;
-
- 			    default: if (value >= 30 && value <= 37) {
-					one_con_attribute = 
-					 (attr & 0xf0ff) |
-					 (ansi_colors[(value - 30)] << 8);
-					blank_color = 
-					 (blank_color & 0xf0ff) |
-					 (ansi_colors[(value - 30)] << 8);
-				} else if (value >= 40 && value <= 47) {
-					one_con_attribute = 
-					 (attr & 0x0fff) |
-					 (ansi_colors[(value - 40)] << 12);
-					blank_color =
-					 (blank_color & 0x0fff) |
-					 (ansi_colors[(value - 40)] << 12);
-				} else
-	 				one_con_attribute = blank_color;
-  				break;
-	 		}
-			break;
-
-	   	    default:
-			break;
-		}	/* closes switch(c) */
-	}	/* closes if (tp->tty_esc_intro == '[') */
+		}
+		break;
+	}
   }
-  tp->tty_esc_state = 0;
+  cons->c_esc_state = 0;
 }
 
-/*===========================================================================*
- *				long_vid_copy				     *
- *===========================================================================*/
-PRIVATE void long_vid_copy(src, base, offset, count)
-char *src;
-unsigned int base, offset, count;
-{
-/* Break up a call to vid_copy for machines that can only write
- * during vertical retrace.  Vid_copy itself does the wait.
- */
-
-  int ct;	
-
-  while (count > 0) {
-	ct = MIN (count, vid_retrace >> 1);
-	vid_copy(src, base, offset, ct);
-	if (src != NIL_PTR) src += ct * 2;
-	offset += ct * 2;
-	count -= ct;
-  }
-}
-
-/*===========================================================================*
- *				long_src_up				     *
- *===========================================================================*/
-PRIVATE void l_scr_up(base, src, dst, count)
-unsigned int base;
-int src, dst, count;
-{
-/* Break up a call to scr_up for machines that can only write
- * during vertical retrace.  scr_up doesn't do the wait, so we do.
- * Note however that we keep interrupts on during the scr_up.  This
- * could lead to snow if an interrupt happens while we are doing
- * the display.  Sorry, but I don't see any good alternative.
- * Turning off interrupts makes us lose RS232 input chars.
- */
-
-  int ct, wait;
-
-  wait = color && ! ega;
-  while (count > 0) {
-	if (wait) wait_retrace();
-	ct = MIN (count, vid_retrace >> 1);
-	scr_up(base, src, dst, ct);
-	src += ct * 2;
-	dst += ct * 2;
-	count -= ct;
-  }
-}
-
-/*===========================================================================*
- *				long_scr_down				     *
- *===========================================================================*/
-PRIVATE void l_scr_down(base, src, dst, count)
-unsigned int base;
-int src, dst, count;
-{
-/* Break up a call to scr_down as for scr_up. */
-
-  int ct, wait;
-
-  wait = color && ! ega;
-  while (count > 0) {
-	if (wait) wait_retrace();
-	ct = MIN (count, vid_retrace >> 1);
-	scr_down(base, src, dst, ct);
-	src -= ct * 2;
-	dst -= ct * 2;
-	count -= ct;
-  }
-}
 
 /*===========================================================================*
  *				set_6845				     *
  *===========================================================================*/
 PRIVATE void set_6845(reg, val)
 int reg;			/* which register pair to set */
-int val;			/* 16-bit value to set it to */
+unsigned val;			/* 16-bit value to set it to */
 {
-/* Set a register pair inside the 6845.  
- * Registers 10-11 control the format of the cursor (how high it is, etc).
- * Registers 12-13 tell the 6845 where in video ram to start (in WORDS)
- * Registers 14-15 tell the 6845 where to put the cursor (in WORDS)
- *
- * Note that registers 12-15 work in words, i.e. 0x0000 is the top left
- * character, but 0x0001 (not 0x0002) is the next character.  This addressing
- * is different from the way the 8088 addresses the video ram, where 0x0002
- * is the address of the next character.
+/* Set a register pair inside the 6845.
+ * Registers 12-13 tell the 6845 where in video ram to start
+ * Registers 14-15 tell the 6845 where to put the cursor
  */
   lock();			/* try to stop h/w loading in-between value */
-  out_byte(vid_port + INDEX, reg);	/* set the index register */
+  out_byte(vid_port + INDEX, reg);		/* set the index register */
   out_byte(vid_port + DATA, (val>>8) & BYTE);	/* output high byte */
-  out_byte(vid_port + INDEX, reg + 1);	/* again */
-  out_byte(vid_port + DATA, val&BYTE);	/* output low byte */
+  out_byte(vid_port + INDEX, reg + 1);		/* again */
+  out_byte(vid_port + DATA, val&BYTE);		/* output low byte */
   unlock();
 }
 
@@ -725,8 +668,6 @@ int val;			/* 16-bit value to set it to */
 /*===========================================================================*
  *				beep					     *
  *===========================================================================*/
-PRIVATE int beeping = FALSE;
-
 PRIVATE void beep()
 {
 /* Making a beeping sound on the speaker (output for CRTL-G).
@@ -770,40 +711,48 @@ PRIVATE void stop_beep()
 /*===========================================================================*
  *				scr_init				     *
  *===========================================================================*/
-PUBLIC void scr_init(minor)
-int minor;
+PUBLIC void scr_init(tp)
+tty_t *tp;
 {
 /* Initialize the screen driver. */
+  console_t *cons;
+  phys_bytes vid_base;
+  u16_t bios_crtbase;
 
-  one_con_attribute = BLANK;
-  if (ps) softscroll = TRUE;
+  /* Associate console and TTY. */
+  cons = &cons_table[0];
+  cons->c_tty = tp;
+  tp->tty_priv = cons;
 
-  /* Tell the EGA card, if any, to simulate a 16K CGA card. */
-  out_byte(EGA + INDEX, 4);	/* register select */
-  out_byte(EGA + DATA, 1);	/* no extended memory to be used */
+  /* Initialize the keyboard driver. */
+  kb_init(tp);
+
+  /* Output functions. */
+  tp->tty_devwrite = cons_write;
+  tp->tty_echo = cons_echo;
+
+  /* Get the BIOS parameters that tells the VDU I/O base register. */
+  phys_copy(0x463L, vir2phys(&bios_crtbase), 2L);
+
+  vid_port = bios_crtbase;
 
   if (color) {
-	vid_base = protected_mode ? COLOR_SELECTOR:physb_to_hclick(COLOR_BASE);
-	vid_mask = C_VID_MASK;
-	vid_port = C_6845;
-	vid_retrace = C_RETRACE;
+	vid_base = COLOR_BASE;
+	vid_size = COLOR_SIZE >> 1;
   } else {
-	vid_base = protected_mode ? MONO_SELECTOR : physb_to_hclick(MONO_BASE);
-	vid_mask = M_VID_MASK;
-	vid_port = M_6845;
-	vid_retrace = M_RETRACE;
+	vid_base = MONO_BASE;
+	vid_size = MONO_SIZE >> 1;
   }
+  if (ega) vid_size = COLOR_SIZE >> 1;
 
-  if (ega) {
-	vid_mask = C_VID_MASK;
-	vid_retrace = C_VID_MASK + 1;
-  }
+  vid_seg = protected_mode ? VIDEO_SELECTOR : physb_to_hclick(vid_base);
+  init_dataseg(&gdt[VIDEO_INDEX], vid_base, (phys_bytes) (vid_size << 1),
+							TASK_PRIVILEGE);
+  vid_mask = vid_size - 1;
 
-  if (0)
-  set_6845(CUR_SIZE, CURSOR_SHAPE);	/* set cursor shape */
   set_6845(VID_ORG, 0);			/* use page 0 of video ram */
-  move_to(&tty_struct[0], 0, 0);	/* move cursor to upper left */
 }
+
 
 /*===========================================================================*
  *				putk					     *
@@ -817,7 +766,12 @@ int c;				/* character to print */
  * the character and starts the output.
  */
 
-  if (c != 0) out_char(&tty_struct[0], (int) c);
+  if (c != 0) {
+	if (c == '\n') putk('\r');
+	out_char(&cons_table[0], (int) c);
+  } else {
+	flush(&cons_table[0]);
+  }
 }
 
 
@@ -829,7 +783,7 @@ PUBLIC void toggle_scroll()
 /* Toggle between hardware and software scroll. */
 
   cons_org0();
-  softscroll = 1 - softscroll;
+  softscroll = !softscroll;
   printf("%sware scrolling enabled.\n", softscroll ? "Soft" : "Hard");
 }
 
@@ -842,6 +796,7 @@ PUBLIC void cons_stop()
 /* Prepare for halt or reboot. */
   cons_org0();
   softscroll = 1;
+  attribute = blank_color = BLANK_COLOR;
 }
 
 
@@ -850,14 +805,18 @@ PUBLIC void cons_stop()
  *===========================================================================*/
 PRIVATE void cons_org0()
 {
-/* Reset the video origin. */
-  struct tty_struct *cons;
+/* Scroll video memory back to put the origin at 0. */
+  console_t *cons= &cons_table[0];
+  unsigned n;
 
-  cons= &tty_struct[0];
-  scr_up(vid_base, cons->tty_org, 0, SCR_LINES * LINE_WIDTH);
-  cons->tty_vid -= cons->tty_org;
-  cons->tty_org = 0;
-  set_6845(VID_ORG, 0);
+  while (cons->c_org > 0) {
+	n = vid_size - scr_size;	/* amount of unused memory */
+	if (n > cons->c_org) n = cons->c_org;
+	vid_vid_copy(cons->c_org, cons->c_org - n, scr_size);
+	cons->c_org -= n;
+	set_6845(VID_ORG, cons->c_org);
+  }
+  flush(cons);
 }
 
 
@@ -891,12 +850,10 @@ struct sequence *seq;
   } while (--len > 0);
 }
 
-PUBLIC int con_loadfont(proc_nr, font_vir)
-int proc_nr;
-vir_bytes font_vir;
+PUBLIC int con_loadfont(user_phys)
+phys_bytes user_phys;
 {
 /* Load a font into the EGA or VGA adapter. */
-  phys_bytes user_phys;
   static struct sequence seq1[7] = {
 	{ GA_SEQUENCER_INDEX, 0x00, 0x01 },
 	{ GA_SEQUENCER_INDEX, 0x02, 0x04 },
@@ -918,8 +875,6 @@ vir_bytes font_vir;
 
   seq2[6].value= color ? 0x0E : 0x0A;
 
-  user_phys = numap(proc_nr, font_vir, GA_FONT_SIZE);
-  if (user_phys == 0) return(EFAULT);
   if (!ega) return(ENOTTY);
 
   lock();

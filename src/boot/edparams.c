@@ -1,4 +1,4 @@
-/*	edparams 1.15 - Modify boot parameters		Author: Kees J. Bot
+/*	edparams 1.16 - Modify boot parameters		Author: Kees J. Bot
  *								20 May 1992
  */
 
@@ -431,6 +431,7 @@ void get_parameters(void)
 	b_setvar(E_SPECIAL|E_VAR|E_DEV, "ramimagedev", "bootdev");
 	b_setvar(E_SPECIAL|E_VAR, "ramsize", "0");
 	b_setvar(E_SPECIAL|E_VAR, "processor", "?");
+	b_setvar(E_SPECIAL|E_VAR, "bus", "?");
 	b_setvar(E_SPECIAL|E_VAR, "memsize", "?");
 	b_setvar(E_SPECIAL|E_VAR, "emssize", "?");
 	b_setvar(E_SPECIAL|E_VAR, "video", "?");

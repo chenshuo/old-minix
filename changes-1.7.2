@@ -1,0 +1,698 @@
+Short list of differences between 1.7.1 and 1.7.2:
+
+  - Termios tty driver.
+
+  - Pseudo ttys allowing one to rlogin *into* Minix.
+
+  - Shared text.
+
+  - Several manual pages refering to "Chapter 9" replaced by those
+    entries from Chapter 9 in the reference manual.
+
+Contributions:
+
+  Richard Henderson <rth@tamu.edu>
+	- doscan() fix.
+	- How to do RS-232 break.
+
+  Paul Ashton <paul@vast.unsw.edu.au>
+	- test26 bug report.
+
+  Darren Mason <D.M.Mason@newcastle.ac.uk>
+	- UK keymap.
+
+  Victor A. Rodriguez <bit-man@TASA.com.ar>
+	- keymap(5), Latin American keymap.
+
+  Toshiya Ogawa <ogw@shizuokanet.or.jp>
+	- Japanese keymap.
+
+  Andy Tanenbaum <ast@cs.vu.nl>
+	- Updated spell, prep, dictionaries.
+
+  Al Woodhull <awoodhull@hamp.hampshire.edu>
+	- Reorganized several kernel files.
+	- Testing 1.7.2 before release.
+
+  Philip Homburg <philip@cs.vu.nl>
+	- Advise on termios, new stty.c, in.rld.
+
+  Michael Temari <temari@ix.netcom.com>
+	- TCP/IP programs: ftp, ftpd, telnetd.
+
+  (and others I forgot to name)
+
+Long list of differences between 1.7.1 and 1.7.2:
+
+  include/ar.h
+  include/blocksize.h
+  include/out.h
+  include/sys/fdio.h
+  include/sys/hdio.h
+	Obsolete, redundant, or system dependent include files removed.
+
+  include/ibm/
+	IBM dependent header files placed here.
+
+  include/ibm/diskparm.h
+	Floppy format data, formerly <minix/diskparm.h>.
+
+  include/ibm/partition.h
+	IBM style hard disk partition table, formerly <minix/partition.h>.
+	Note: There is a new <minix/partition.h>.
+
+  include/minix/boot.h
+	Cleaned up a bit.  If I had time I would get rid of it.
+
+  include/minix/callnr.h
+	New system calls added: SETSID, GETPGRP
+	Old system calls removed: AM_SYSCALL, BRK3
+
+  include/minix/com.h
+	NO_CTL_TTY no longer used (done differently).  Old things between
+	'#if XXX' removed.
+
+  include/minix/config.h
+	IBM_386_VM removed (must have sneaked in when Philip sent TCP/IP
+	patches to Andy an eon ago.)  NR_BUFS set to 100 for 386 to save
+	a bit of memory to give 2 Mb machines a chance.  C_RS232_INT_HANDLERS,
+	DEFAULT_CLASS, NO_HANDSHAKE removed (see rs232.c).  ENABLE_COMPAT
+	added as a new flag to enable backwards compatibility code.  For now
+	it *must* be set to 1.  NR_PTYS added to specify the number of
+	pseudo-ttys.  ENABLE_PS_WINI removed (ps_wini is gone).
+
+  include/minix/const.h
+	Definition of NR_TASKS changed to listen to ENABLE_WINI, so that all
+	*_wini drivers may be configured out as was intended for 1.7.1.
+
+  include/minix/diskparm.h
+	Moved to include/ibm/.
+
+  include/minix/keymap.h
+	NR_SCAN_CODES increased to 0x80 to make the Japanese happy.
+
+  include/minix/partition.h
+	New include file for use with the DIOCGETP and DIOCSETP ioctls to
+	download and upload partitioning info in a machine-independend way.
+
+  include/minix/type.h
+	New 'struct psinfo' invented for use by the ps(1) command to get
+	the locations of the process tables from the kernel.
+
+  include/sgtty.h
+	Changed a bit to match the compatibility code in the new termios
+	tty driver.  The nonstandard 28800 baud rate is gone.
+
+  include/sys/asynchio.h
+	Reference to "Minix-386vm" changed to "Minix-vmd".  This is done
+	in several other places.
+
+  include/sys/ioctl.h
+	In Dutch the plural of a foreign or weird word is formed by adding
+	"'s".  You do not really want to know this, so "ioctl's" changed to
+	"ioctls".  Lots of new terminal ioctls added.  DIOCSETP, and
+	DIOCGETP renumbered because they use a new struct.  New memory
+	ioctls added to set the RAM disk size or to up/download ps(1) info.
+
+  include/sys/ptrace.h
+	T_STOP added to please Al Woodhull.  It would be nice if someone
+	would put this tracing stuff to use.  Don't look at me, I hate
+	debugging programs.
+
+  include/termios.h
+	Formerly used by an emulation library, moved to Minix-vmd and changed
+	for use by a real termios implementation.  Now moved back to 1.7.2
+	for a standard Minix termios implementation.  (Instant compatibility
+	with Minix-vmd.)
+
+  include/ttyent.h
+	New include file used for reading the new /etc/ttytab, see ttytab(5),
+	getttyent(3).
+
+  include/unistd.h
+	_POSIX_VDISABLE removed, because it is in <termios.h>.  New functions
+	ttyslot() and fttyslot() added that return a slot number in /etc/utmp.
+
+  man/
+	New manual pages:
+		tget(1), setsid(2), crypt(3), curses(3), getgrent(3),
+		getpwent(3), getttyent(3), termios(3), ttyname(3),
+		ttyslot(3), tty(4), keymap(5), passwd(5), rhosts(5),
+		ttytab(5), getty(8), pwdauth(8).
+	Removed:
+		ttys(5), ttytype(5), and several flat text manual pages.
+	"Chapter 9":
+		bawk, de, dis88, elle, elvis, ic, indent, kermit, m4,
+		mined, patch, rz, sz.
+
+  man/man0/
+	Various references to /dev/tty[012] changed into /dev/console and the
+	new /dev/tty0[01] devices.
+
+  man/man0/adduser
+	Manual page for the adduser(8) command.
+
+  man/man0/ps
+	References to 'ps U' and the ADDR field removed, for they are gone.
+
+  man/man4/hd.4
+	New <minix/partition.h> explained.
+
+  man/man5/TZ.5
+	Examples for the new European timezone rules updated.
+
+  man/man8/boot.8
+	/etc/ttys is now /etc/ttytab, hd=ps is gone, bus=xxx moved to
+	monitor(8).
+
+  man/man8/init.8
+	Updated to describe the new /etc/ttytab file.
+
+  man/man8/installboot.8
+	Feeble attempt to make a few things more understandable.
+
+  man/man8/irdpd.8
+  man/man8/nonamed.8
+  man/man8/rarpd.8
+	SIGUSR1 raises the debugging level, SIGUSR2 turns debugging off.
+
+  man/man8/monitor.8
+	Introduce the 'bus' variable that is set by the monitor to 'xt',
+	'at', or 'mca'.  Note that 'ps' is no longer supported.
+
+  man/man8/partition.8
+	Added -f (force) flag to make a partition on a too small device.
+
+  man/man8/usage.8
+	Introduce the NR_PTYS config variable, the adduser(8) command,
+	and shadow passwords.
+
+  src/.ashrc
+	New startup file for ash that programs the 'cd' builtin to put
+	the current directory on the statusline of a terminal.  Real nice
+	if you rlogin into Minix from a remote xterm window.
+
+  src/.profile
+	Check if $TERM looks like something, run .ashrc if ash.
+
+  src/.rhosts
+	Removed.  (It allowed yours truly to access your Minix machine
+	remotely without a password.  Either nobody noticed this or I
+	am not considered to be a security threath.)
+
+  src/boot/boot.c
+  src/boot/boot.h
+	Introduced the new 'bus' variable.  The monitor can use BIOS calls
+	to reliably find out if the machine is an XT, AT, or MCA based
+	machine.  Minix has trouble doing this from protected mode.
+	New "exit" command that exits edparams, and reboots the monitor.
+	'shutdown -x exit' is a smart way to reboot your machine fast.
+
+  src/commands/
+	Stack size changes for several programs to give Minix-386 a
+	chance to run in 2 Mb.  <blocksize.h> removed from several
+	programs.
+
+  src/commands/cawf/mnx.mac
+	Macros added for the "chapter 9" manual pages.
+
+  src/commands/elle/eesite.c
+  src/commands/elle/eeterm.c
+	Added a TIOCGWINSZ call to get the window size.  Explained that a
+	terminal with just 'am' in the termcap is stupid, but 'am:xn' is
+	smart.  This gets us the 79th column.  Alas column 80 still unused.
+
+  src/commands/elvis/curses.c
+  src/commands/elvis/opts.c
+	Changed so that TIOCGWINSZ is actually used.  Two second timeout
+	after hitting ESC changed to one second.  Should use MIN&TIME in
+	1.7.3.
+
+  src/commands/ftpd
+	New ftp daemon.
+
+  src/commands/i386/asmconv/asmconv.c
+	Several things fixed, none that have to do with standard Minix.
+
+  src/commands/i86/cc.c
+	Added '-D__i86' to the predefined symbols.  The 386 driver already
+	has __i386 defined.
+
+  src/commands/ibm/ar.c
+	Removed: Old ar command for old ACK compiler.
+
+  src/commands/ibm/fdisk.c
+  src/commands/ibm/format.c
+  src/commands/ibm/part.c
+  src/commands/ibm/partition.c
+  src/commands/ibm/repartition.c
+	New DIOCGETP.
+
+  src/commands/ibm/loadkeys.c
+	Changed to accept a keymap with more keycodes.  (Still accepts the
+	old key tables.)
+
+  src/commands/kermit/
+	28800 baud removed.  Added call to tcsendbreak() to send breaks.
+
+  src/commands/make/make.c
+	Null pointer dereference fixed.
+
+  src/commands/mined/mined1.c
+	Added a TIOCGWINSZ call to get the window size.
+
+  src/commands/reboot/
+	Separate wall command removed.  Shutdown sends out \r\n sequences.
+
+  src/commands/scripts/DESCRIBE.sh
+  src/commands/scripts/MAKEDEV.sh
+	Removed /dev/tty[012]
+	Added /dev/log, /dev/tty0[01], /dev/ttyp??, /dev/ptyp??.
+	Use mode 600 for /dev/eth and /dev/ip to keep ordinary users from
+	accessing the raw ethernet.
+
+  src/commands/scripts/adduser.sh
+	New command to add new users to the system.
+
+  src/commands/scripts/checkhier.sh
+	Check new files /etc/ttytab and /usr/adm/lastlog, forget about
+	/etc/psdatabase, /etc/ttys, and /etc/ttytype.
+
+  src/commands/scripts/spell.sh
+	Accept alternate dictionaries with '-d' flag.
+
+  src/commands/simple/cat.c
+	Removed <blocksize.h>, better error reports, fixed exit code.
+
+  src/commands/simple/cp.c
+	Setuid bits were not always cleared when POSIX says so.  (I hate
+	it when a command assumes that the user is stupid.  Let the user
+	find that out by themselves.)
+
+  src/commands/simple/dhrystone.c
+	Now always runs 15 seconds instead of a fixed number of loops.
+	Computes result using time computing, not real time.  (Andy
+	complained that dhrystone dumped core on his new pentium.  Not
+	surprising if dhrystone finishes 50000 loops in 0 seconds.)
+
+  src/commands/simple/ftp.c
+	New ftp client program.
+
+  src/commands/simple/getty.c
+	Customizable login banner.
+
+  src/commands/simple/in.rld.c
+	Remote login service daemon (for rlogin).
+
+  src/commands/simple/irdpd.c
+  src/commands/simple/nonamed.c
+  src/commands/simple/rarpd.c
+	SIGUSR1 raises the debugging level, SIGUSR2 turns debugging off.
+
+  src/commands/simple/kill.c
+	Allow killing a negative pid (process group).  Return a meaningful
+	exit code.
+
+  src/commands/simple/login.c
+	Minix-vmd version ported back.  Can be called from in.rld to
+	start a login session.
+
+  src/commands/simple/mesg.c
+	New command to allow/disallow messages by write(1).
+
+  src/commands/simple/mkfs.c
+	New DIOCGETP.
+
+  src/commands/simple/passwd.c
+	If the encrypted password is "##name" then edit /etc/shadow.
+
+  src/commands/simple/prep.c
+	Changed to better remove troff goo.
+
+  src/commands/simple/ps.c
+	Moved to src/tools to be closer to the kernel.
+
+  src/commands/simple/pwdauth.c
+	New command that is called by crypt(3) to encrypt or check a
+	password.  It is setuid root to be able to read /etc/shadow.
+
+  src/commands/simple/rlogin.c
+	Some nonsense that has to do with speeds.  IEXTEN flag cleared to
+	stop capturing ^V, ^R.
+
+  src/commands/simple/stty.c
+	Minix-vmd stty.c adapted for termios ported back to standard Minix.
+
+  src/commands/simple/su.c
+	Keep the shell of the caller on a simple 'su' (i.e. not 'su -'.)
+	This means that if bin types 'su' than root uses the ash shell.
+
+  src/commands/simple/tar.c
+	Would go into a fit if input is not in 512 byte units.  All bets
+	are off when reading from a pipe, so this is fixed.
+
+  src/commands/simple/tget.c
+	New command to make the termcap usable from the shell.  Used in
+	.ashrc to get the codes to write the status line.
+
+  src/commands/simple/vol.c
+	Added the -1 flag to signal that only one volume is read/written.
+
+  src/commands/simple/who.c
+	Replaced with the Minix-vmd version that shows the host field of
+	an rlogin session.
+
+  src/commands/telnetd
+	New telnet daemon to offer telnet into Minix.  Does not work yet.
+
+  src/commands/yap/
+	Explained the virtues of TIOCGWINSZ.
+
+  src/etc/group
+	The 'sysadm' and 'mail' groups are deleted.
+	New 'ftp' group added for anonymous FTP.
+
+  src/etc/passwd
+	Likewise 'mail' out, 'ftp' in.
+	The root and bin users have "##root" in the password field to
+	refer to the "root" entry in the shadow password file.
+
+  src/etc/rc
+	Horrible "deamons" speling error corrected.  New 'login', 'telnet',
+	and 'ftp' services started if networking is enabled.
+
+  src/etc/services
+	Replaced by a Berkeley /etc/services file before anyone notices
+	that it is the output of 'ypcat services' of a Solaris machine.
+	(One must be careful not to grab something that is conveniently
+	lying around even though you have the intention to replace it
+	later.)
+
+  src/etc/shadow
+	New default shadow password file.  Contains only a passwordless
+	entry for root.
+
+  src/etc/ttys
+  src/etc/ttytype
+	Removed.
+
+  src/etc/ttytab
+	Added.
+
+  src/fs/device.c
+	New do_setsid() function to handle the FS side of setsid().  Code on
+	how to allocate a controlling tty is cleaned up and simplified.
+	Tty_close(), ctty_open() simplified.  Call_task() improved so it can
+	handle revives thrown at it at any moment.  (And TTY certainly
+	does.)  Net_rw() and net_close() removed because regular functions
+	can replace them.  Rw_dev2() renamed to call_ctty().
+
+  src/fs/file.h
+	New value 'FILP_CLOSED' added that marks a tty device as prematurely
+	closed.  (For when a session leader exits.)
+
+  src/fs/fproc.h
+	fs_tty renamed to fp_tty to match the rest of the fproc fields.
+	New fp_sesldr flag that is true for a session leader added,
+	fp_pgrp removed.
+
+  src/fs/main.c
+	MIOCSPSINFO call to tell the kernel where fproc is so that ps(1) may
+	know that later with MIOCGPSINFO.  Load_ram() rewritten to make
+	loading the RAM disk more understandable.  Askdev() and fastload()
+	removed.  Askdev() should not be done here, and fastload() isn't.
+	Boot parameters stuff simplyfied.
+
+  src/fs/misc.c
+	Don't make children of INIT process group leaders, that's why we
+	have the new setsid() call.  When a session leader exits then
+	forcefully revoke all access to the controlling tty using a nice
+	loop over all processes and all open files.
+
+  src/fs/mount.c
+	Fixed some O_RDONLY/O_RDWR vs R_BIT/W_BIT confusion.  User processes
+	use O_RDONLY/O_WRONLY/O_RDWR, everything below uses R_BIT/W_BIT.
+
+  src/fs/open.c
+	TTY_FLAGS and COUNT are synonyms, but we only use TTY_FLAGS for ttys.
+	Watch out for FILP_CLOSED signalling that a device is already closed.
+	COUNT no longer shows the number of references (dups) to an open
+	device.  Devices opens and closes are now matched one to one.
+
+  src/fs/pipe.c
+	A comment names rw_dev2, now it names call_ctty.
+
+  src/fs/proto.h
+	Removed: no_call(), rw_dev2(), tty_close(), net_rw(), net_close().
+	Added: call_ctty(), do_setsid().
+
+  src/fs/putk.c
+	Transform \n into \r\n.
+
+  src/fs/read.c
+	Return EIO if a file is marked as closed by FILP_CLOSED.
+
+  src/fs/table.c
+	Added do_setsid to system call jump table.  Device jump table
+	updated to reflect changes in device.c.
+
+  src/inet/nw_task.?
+  src/inet/inet.?
+	Renamed one into the other to make it easier to spot the main files.
+
+  src/kernel/aha_scsi.c
+	Retry on an "Aborted Command" error.  Do not return an error if
+	adding a filemark on close fails, just complain and return OK.
+	A device close may never fail, because UNIX doesn't allow close()
+	to fail on I/O errors.  Better Adaptec device probe.
+
+  src/kernel/at_wini.c
+	ATA removable device code that noone supports removed, some hooks
+	to later add ATAPI support added.  File reordered to please Al.
+
+  src/kernel/clock.c
+	File reordered by Al.  Call to tty_wakeup() revamped.
+
+  src/kernel/console.c
+	Major parts rewritten to support termios and to simplify the
+	handling of screen memory.  The old code was byte oriented, but
+	video boards are word oriented.  The new code is word oriented
+	and leaves byte/word trickery to the low level support code.
+	Several bugs fixed in the update.  Color/mono information now
+	obtained from the BIOS data area.
+
+  src/kernel/const.h
+	PS_KEYB_IRQ and console definitions removed.
+
+  src/kernel/dmp.c
+	Array of process names removed (now p_name in process table.)
+	Both text and data addresses shown, because they need not be
+	consecutive anymore.  Paging if lots of output.
+
+  src/kernel/dp8390.c
+	Skip the WD80x3 probe if the memory address is configured to zero,
+	i.e. DPETH0=280:5:0.  Keeps some NE2000's from being mistaken from
+	a WD8013 if they happen to have the proper I/O register checksum.
+
+  src/kernel/driver.c
+	System dependent functions partition(), extpartition(),
+	get_part_table() and sort() moved to drvlib.c.  File reordered
+	for Al.  DIOCGETP/DIOCSETP changed for new <minix/partition.h>
+
+  src/kernel/driver.h
+	Type dr_geometry changed for new <minix/partition.h>, all geometry()
+	functions in the drivers updated to match.  Several definitions
+	moved to drvlib.h.
+
+  src/kernel/drvlib.?
+	System dependent parts formerly in driver.?.
+
+  src/kernel/glo.h
+	Flag 'ps' removed, so no support for PS/2 Model 30s anymore.
+	Console flags 'color' and 'snow' removed.  TTY introduces
+	'tty_timeout' as the time to call tty_wakeup() for an event.
+
+  src/kernel/i8259.c
+	Function init_8259() renamed to the less conspicuous intr_init().
+
+  src/kernel/keyboard.c
+	PS/2 model 30 keyboard complexity removed.  Interface adapted to
+	the termios tty driver.  Don't bother TTY with make/break nonsense
+	anymore.
+
+  src/kernel/keymaps/
+	New Japanese, Latin-American, and UK keymaps.  Keymaps updated to
+	have 0x80 keycodes.
+
+  src/kernel/klib386.s
+  src/kernel/klib88.s
+	Reordered for Al.  Scr_up() and vid_copy() replaced by
+	vid_vid_copy() and mem_vid_copy().  Wait_retrace(), phys_zero()
+	and test_and_set() removed.
+
+  src/kernel/main.c
+	Main() cleaned up a bit to hide the gory details.
+
+  src/kernel/memory.c
+	Do_setup() replaced by m_ioctl() that handles MIOCRAMSIZE,
+	MIOCSPSINFO, MIOCGPSINFO, and also DIOCGETP by calling the
+	generic do_diocntl().
+
+  src/kernel/misc.c
+	Memory list setup simplyfied a bit.
+
+  src/kernel/printer.c
+	Handle DEV_OPEN and DEV_CLOSE calls so that FS needn't avoid them.
+	Remember the virtual address of the user buffer instead of the
+	physical address.  Prevents problems if a process is ever moved.
+	Use EFAULT instead of E_BAD_ADDR here and everywhere else.
+
+  src/kernel/proc.h
+	Introduce p_name in the process table for the name of the process.
+	The cproc_addr(n) is the same as proc_addr(n) but compiles to a
+	constant if 'n' is a constant.  With proc_vir2phys(p, vir) one can
+	efficiently translate a virtual address to a physical address if it
+	has been previously checked with umap().
+
+  src/kernel/protect.c
+	Ldt_init() folded into prot_init().
+
+  src/kernel/protect.h
+	Why have both COLOR_INDEX and MONO_INDEX if one VIDEO_INDEX will do?
+
+  src/kernel/proto.h
+	Removed: fork_name(), mem_dmp(), set_name(), most of the RS232,
+	tty, and console functions (modularisation).
+
+  src/kernel/ps_wini.c
+	Removed because I can't get it to work.
+
+  src/kernel/pty.c
+	Pseudo-ttys!
+
+  src/kernel/rs2.s
+	Removed.  Only the C code of the RS232 driver has been changed
+	for termios.  The assembly code is only useful if one wants very
+	high baud rates on an XT.
+
+  src/kernel/rs232.c
+	Updated for termios.  The PC now uses the C code instead of the
+	faster assembly code.  I managed to pull 115200 baud using a
+	386dx/40 through the updated driver, so I'm happy with the C code.
+
+  src/kernel/sconst.h
+	Cleaned up to get rid of the EXXX symbols.
+
+  src/kernel/start.c
+	Machine type check removed, the 'bus' variable will tell.
+
+  src/kernel/system.c
+	Reordered by Al.  Do_fork() and related functions fill in p_name.
+	Memcpy in do_fork() replaced by a normal struct copy.  Do_oldsig()
+	encased by ENABLE_COMPAT.
+
+  src/kernel/tty.c
+  src/kernel/tty.h
+	Updated for termios.  Too much has changed to summarize here, you
+	have to read the code and/or the manual page tty(4).
+
+  src/kernel/wini.c
+	Call to ps_wini removed.
+
+  src/lib/ansi/strtol.c
+	Signed overflow in what is to be a constant expression fixed.
+
+  src/lib/curses/curses.3
+	Moved to /usr/man/man3
+
+  src/lib/float/fptrp.s
+  src/lib/math/frexp.s
+  src/lib/math/modf.s
+	Prepared for 68k code to come soon.
+
+  src/lib/other/crypt.c
+	Replaced by a stub function that calls pwdauth to do the work.
+
+  src/lib/other/getgrent.c
+	Replaced by the Minix-vmd version that understands group members.
+
+  src/lib/other/getpw.c
+	Removed for being of no use.
+
+  src/lib/other/getpwent.c
+	Replaced by the Minix-vmd version that can read alternate (read
+	"shadow") password files.
+
+  src/lib/other/getttyent.c
+  src/lib/other/ttyslot.c
+  src/lib/posix/_cfgetispeed.c
+  src/lib/posix/_cfgetospeed.c
+  src/lib/posix/_cfsetispeed.c
+  src/lib/posix/_cfsetospeed.c
+  src/lib/posix/_setsid.c
+  src/lib/posix/_tcdrain.c
+  src/lib/posix/_tcflow.c
+  src/lib/posix/_tcflush.c
+  src/lib/posix/_tcgetattr.c
+  src/lib/posix/_tcsendbreak.c
+  src/lib/posix/_tcsetattr.c
+	New functions.
+
+  src/lib/posix/_ioctl.c
+	Should be simplyfied, but isn't.  Still using the old sgtty message
+	packing/unpacking to make the 1.7.1 - 1.7.2 upgrade easier.
+
+  src/lib/posix/_uname.c
+	Changed the system name to always be Minix for any Minix variant,
+	because 'uname -p' will tell the processor type.
+
+  src/lib/stdio/doscan.c
+	One extra ; can do lots of damage in C programs.
+
+  src/lib/stdio/setvbuf.c
+	Fixed by our ACK guru who shall remain nameless to shield him from
+	the Minix hordes.  (I will handle bug reports.)
+
+  src/lib/syscall/
+	Lots of new termios stubs.
+
+  src/mm/exec.c
+  src/mm/forkexit.c
+	Implement shared text.  When a session leader dies send a HANGUP
+	to its process group.
+
+  src/mm/getset.c
+	New SETSID and GETPGRP system calls.
+
+  src/mm/main.c
+	Tell MEM about the process table so ps(1) can find it.
+
+  src/mm/mproc.h
+	New fields mp_ino, mp_dev, and mp_ctime to identify a file so
+	it may later be shared if executed again.
+
+  src/mm/proto.h
+	Added: find_share().
+
+  src/mm/signal.c
+	ENABLE_COMPAT used to make old signal code optional.
+	Send SIGHUP to the session leader instead of the process group.
+
+  src/mm/table.c
+	Add setsid and getpgrp entries to the system call table.
+
+  src/mm/trace.c
+	Cleaned up by Al.
+
+  src/test/test26.c
+	You can't compare two struct's byte by byte and expect the holes
+	between struct members to be equal.
+
+  src/tools/init.c
+	Updated to use /etc/ttytab to start login processes.  Knows nothing
+	about terminal settings anymore, it leaves it to stty(1).
+	Run 'shutdown -h now' when CTRL-ALT-DEL is typed instead of stopping
+	cold.
+
+  src/tools/mkboot
+	'ps U' call removed.

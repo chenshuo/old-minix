@@ -30,12 +30,12 @@ extern u16_t sizes[8];		/* table filled in by build */
 extern struct tasktab tasktab[];/* initialized in table.c, so extern here */
 extern char *t_stack[];		/* initialized in table.c, so extern here */
 EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */
+EXTERN clock_t tty_timeout;	/* time to wake up the TTY task */
 
 #if (CHIP == INTEL)
 
 /* Machine type. */
 EXTERN int pc_at;		/* PC-AT compatible hardware interface */
-EXTERN int ps;			/* PS/2 */
 EXTERN int ps_mca;		/* PS/2 with Micro Channel */
 EXTERN unsigned int processor;	/* 86, 186, 286, 386, ... */
 #if _WORD_SIZE == 2
@@ -44,18 +44,15 @@ EXTERN int protected_mode;	/* nonzero if running in Intel protected mode*/
 #define protected_mode	1	/* 386 mode implies protected mode */
 #endif
 
-/* Video cards and keyboard types. */
-EXTERN int color;		/* nonzero if console is color, 0 if mono */
-EXTERN int ega;			/* nonzero if console is supports EGA */
-EXTERN int vga;			/* nonzero if console is supports VGA */
-EXTERN int snow;		/* nonzero if screen needs snow removal */
+/* Video card types. */
+EXTERN int ega;			/* nonzero if console is EGA */
+EXTERN int vga;			/* nonzero if console is VGA */
 
 /* Memory sizes. */
 EXTERN unsigned ext_memsize;	/* initialized by assembler startup code */
 EXTERN unsigned low_memsize;
 
 /* Miscellaneous. */
-EXTERN u16_t Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
 EXTERN irq_handler_t irq_table[NR_IRQ_VECTORS];
 EXTERN int irq_use;		/* bit map of all in-use irq's */
 EXTERN reg_t mon_ss, mon_sp;	/* monitor stack */
@@ -73,7 +70,7 @@ EXTERN _PROTOTYPE( void (*level0_func), (void) );
 extern int keypad;		/* Flag for keypad mode */
 extern int app_mode;		/* Flag for arrow key application mode */
 extern int STdebKey;		/* nonzero if ctl-alt-Fx detected */
-extern struct tty_struct *cur_cons; /* virtual cons currently displayed */
+extern struct tty *cur_cons;	/* virtual cons currently displayed */
 extern unsigned char font8[];	/* 8 pixel wide font table (initialized) */
 extern unsigned char font12[];	/* 12 pixel wide font table (initialized) */
 extern unsigned char font16[];	/* 16 pixel wide font table (initialized) */

@@ -18,11 +18,11 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <blocksize.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 #define CHUNK    25		/* max number of blocks read at once */
+#define BLOCK_SIZE	1024	/* size of a block */
 #define RESUME  200		/* # good reads before going back to CHUNK */
 #define DIVISOR	 50		/* how often to print statistics */
 #define STORE  4096		/* save this many bad blocks for summary */

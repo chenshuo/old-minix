@@ -10,7 +10,9 @@
  *    - tell kernel about EXEC
  *    - save offset to initial argc (for ps)
  *
- *   The only entry point is do_exec.
+ * The entry points into this file are:
+ *   do_exec:	 perform the EXEC system call
+ *   find_share: find a process whose text segment can be shared
  */
 
 #include "mm.h"
@@ -18,13 +20,14 @@
 #include <minix/callnr.h>
 #include <a.out.h>
 #include <signal.h>
+#include <string.h>
 #include "mproc.h"
 #include "param.h"
 
 FORWARD _PROTOTYPE( void load_seg, (int fd, int seg, vir_bytes seg_bytes) );
-FORWARD _PROTOTYPE( int new_mem, (vir_bytes text_bytes, vir_bytes data_bytes,
-		vir_bytes bss_bytes, vir_bytes stk_bytes,
-		phys_bytes tot_bytes)					);
+FORWARD _PROTOTYPE( int new_mem, (struct mproc *sh_mp, vir_bytes text_bytes,
+		vir_bytes data_bytes, vir_bytes bss_bytes,
+		vir_bytes stk_bytes, phys_bytes tot_bytes)		);
 FORWARD _PROTOTYPE( void patch_ptr, (char stack [ARG_MAX ], vir_bytes base) );
 FORWARD _PROTOTYPE( int read_header, (int fd, int *ft, vir_bytes *text_bytes,
 		vir_bytes *data_bytes, vir_bytes *bss_bytes,
@@ -46,10 +49,11 @@ PUBLIC int do_exec()
  */
 
   register struct mproc *rmp;
+  struct mproc *sh_mp;
   int m, r, fd, ft, sn;
   static char mbuf[ARG_MAX];	/* buffer for stack and zeroes */
   static char name_buf[PATH_MAX]; /* the name of the file to exec */
-  char *new_sp;
+  char *new_sp, *basename;
   vir_bytes src, dst, text_bytes, data_bytes, bss_bytes, stk_bytes, vsp;
   phys_bytes tot_bytes;		/* total space for program, including gap */
   long sym_bytes;
@@ -92,12 +96,20 @@ PUBLIC int do_exec()
 	return(EACCES);
   }
 
+  /* Can the process' text be shared with that of one already running? */
+  sh_mp = find_share(rmp, s_buf.st_ino, s_buf.st_dev, s_buf.st_ctime);
+
   /* Allocate new memory and release old memory.  Fix map and tell kernel. */
-  r = new_mem(text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes);
+  r = new_mem(sh_mp, text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes);
   if (r != OK) {
 	close(fd);		/* insufficient core or program too big */
 	return(r);
   }
+
+  /* Save file identification to allow it to be shared. */
+  rmp->mp_ino = s_buf.st_ino;
+  rmp->mp_dev = s_buf.st_dev;
+  rmp->mp_ctime = s_buf.st_ctime;
 
   /* Patch up stack and copy it from MM to new core image. */
   vsp = (vir_bytes) rmp->mp_seg[S].mem_vir << CLICK_SHIFT;
@@ -110,13 +122,17 @@ PUBLIC int do_exec()
   if (r != OK) panic("do_exec stack copy err", NO_NUM);
 
   /* Read in text and data segments. */
-  load_seg(fd, T, text_bytes);
+  if (sh_mp != NULL) {
+	lseek(fd, (off_t) text_bytes, SEEK_CUR);  /* shared: skip text */
+  } else {
+	load_seg(fd, T, text_bytes);
+  }
   load_seg(fd, D, data_bytes);
 
 #if (SHADOWING == 1)
   if (lseek(fd, (off_t)sym_bytes, SEEK_CUR) == (off_t) -1) ;	/* error */
   if (relocate(fd, (unsigned char *)mbuf) < 0) 	;		/* error */
-  pc += (vir_bytes) rp->p_map[T].mem_vir << CLICK_SHIFT;
+  pc += (vir_bytes) rp->mp_seg[T].mem_vir << CLICK_SHIFT;
 #endif
 
   close(fd);			/* don't need exec file any more */
@@ -151,7 +167,10 @@ PUBLIC int do_exec()
   new_sp = (char *) vsp;
 
   tell_fs(EXEC, who, 0, 0);	/* allow FS to handle FD_CLOEXEC files */
-  sys_exec(who, new_sp, rmp->mp_flags & TRACED, name_buf, pc);
+
+  basename = strrchr(name_buf, '/');
+  if (basename == NULL) basename = name_buf; else basename++;
+  sys_exec(who, new_sp, rmp->mp_flags & TRACED, basename, pc);
   return(OK);
 }
 
@@ -266,7 +285,8 @@ vir_bytes *pc;			/* program entry point (initial PC) */
 /*===========================================================================*
  *				new_mem					     *
  *===========================================================================*/
-PRIVATE int new_mem(text_bytes, data_bytes,bss_bytes,stk_bytes,tot_bytes)
+PRIVATE int new_mem(sh_mp, text_bytes, data_bytes,bss_bytes,stk_bytes,tot_bytes)
+struct mproc *sh_mp;		/* text can be shared with this process */
 vir_bytes text_bytes;		/* text segment size in bytes */
 vir_bytes data_bytes;		/* size of initialized data in bytes */
 vir_bytes bss_bytes;		/* size of bss in bytes */
@@ -285,9 +305,11 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   phys_clicks base, size;
 #else
   static char zero[1024];		/* used to zero bss */
-  phys_clicks old_clicks;
   phys_bytes bytes, base, count, bss_offset;
 #endif
+
+  /* No need to allocate text if it can be shared. */
+  if (sh_mp != NULL) text_bytes = 0;
 
   /* Acquire the new memory.  Each of the 4 parts: text, (data+bss), gap,
    * and stack occupies an integral number of clicks, starting at click
@@ -295,7 +317,6 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
    */
 
   text_clicks = ((unsigned long) text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
-				/* HACK */
   data_clicks = (data_bytes + bss_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   stack_clicks = (stk_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
   tot_clicks = (tot_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
@@ -312,10 +333,13 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   rmp = mp;
 
 #if (SHADOWING == 0)
-  old_clicks = (phys_clicks) rmp->mp_seg[S].mem_len;
-  old_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
-  if (rmp->mp_flags & SEPARATE) old_clicks += rmp->mp_seg[T].mem_len;
-  free_mem(rmp->mp_seg[T].mem_phys, old_clicks);	/* free the memory */
+  if (find_share(rmp, rmp->mp_ino, rmp->mp_dev, rmp->mp_ctime) == NULL) {
+	/* No other process shares the text segment, so free it. */
+	free_mem(rmp->mp_seg[T].mem_phys, rmp->mp_seg[T].mem_len);
+  }
+  /* Free the data and stack segments. */
+  free_mem(rmp->mp_seg[D].mem_phys,
+      rmp->mp_seg[S].mem_vir + rmp->mp_seg[S].mem_len - rmp->mp_seg[D].mem_vir);
 #endif
 
   /* We have now passed the point of no return.  The old core image has been
@@ -323,12 +347,21 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
    */
   new_base = alloc_mem(text_clicks + tot_clicks);	/* new core image */
   if (new_base == NO_MEM) panic("MM hole list is inconsistent", NO_NUM);
-  rmp->mp_seg[T].mem_len = text_clicks;
-  rmp->mp_seg[T].mem_phys = new_base;
-  rmp->mp_seg[D].mem_len = data_clicks;
+
+  if (sh_mp != NULL) {
+	/* Share the text segment. */
+	rmp->mp_seg[T] = sh_mp->mp_seg[T];
+  } else {
+	rmp->mp_seg[T].mem_phys = new_base;
+	rmp->mp_seg[T].mem_vir = 0;
+	rmp->mp_seg[T].mem_len = text_clicks;
+  }
   rmp->mp_seg[D].mem_phys = new_base + text_clicks;
-  rmp->mp_seg[S].mem_len = stack_clicks;
+  rmp->mp_seg[D].mem_vir = 0;
+  rmp->mp_seg[D].mem_len = data_clicks;
   rmp->mp_seg[S].mem_phys = rmp->mp_seg[D].mem_phys + data_clicks + gap_clicks;
+  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
+  rmp->mp_seg[S].mem_len = stack_clicks;
 
 #if (CHIP == M68000)
 #if (SHADOWING == 0)
@@ -340,23 +373,14 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
   rmp->mp_seg[D].mem_vir = rmp->mp_seg[D].mem_phys;
   rmp->mp_seg[S].mem_vir = rmp->mp_seg[S].mem_phys;
 #endif
-#else
-  rmp->mp_seg[T].mem_vir = 0;
-  rmp->mp_seg[D].mem_vir = 0;
-  rmp->mp_seg[S].mem_vir = rmp->mp_seg[D].mem_vir + data_clicks + gap_clicks;
 #endif
 
-#if (SHADOWING == 1)
-  sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
-			&base, &size);
-  free_mem(base, size);
-#else
+#if (SHADOWING == 0)
   sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel */
 
-  /* Zero the bss, gap, and stack segment. Start just above text.  */
+  /* Zero the bss, gap, and stack segment. */
   bytes = (phys_bytes)(data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
-  base = (long) rmp->mp_seg[T].mem_phys + rmp->mp_seg[T].mem_len;
-  base = base << CLICK_SHIFT;
+  base = (phys_bytes) rmp->mp_seg[D].mem_phys << CLICK_SHIFT;
   bss_offset = (data_bytes >> CLICK_SHIFT) << CLICK_SHIFT;
   base += bss_offset;
   bytes -= bss_offset;
@@ -370,6 +394,12 @@ phys_bytes tot_bytes;		/* total memory to allocate, including gap */
 	base += count;
 	bytes -= count;
   }
+#endif
+
+#if (SHADOWING == 1)
+  sys_fresh(who, rmp->mp_seg, (phys_clicks)(data_bytes >> CLICK_SHIFT),
+			&base, &size);
+  free_mem(base, size);
 #endif
 
   return(OK);
@@ -442,6 +472,35 @@ vir_bytes seg_bytes;		/* how big is the segment */
 	seg_bytes -= bytes;
   }
 }
+
+
+/*===========================================================================*
+ *				find_share				     *
+ *===========================================================================*/
+PUBLIC struct mproc *find_share(mp_ign, ino, dev, ctime)
+struct mproc *mp_ign;		/* process that should not be looked at */
+ino_t ino;			/* parameters that uniquely identify a file */
+dev_t dev;
+time_t ctime;
+{
+/* Look for a process that is the file <ino, dev, ctime> in execution.  Don't
+ * accidentally "find" mp_ign, because it is the process on whose behalf this
+ * call is made.
+ */
+  struct mproc *sh_mp;
+
+  for (sh_mp = &mproc[INIT_PROC_NR]; sh_mp < &mproc[NR_PROCS]; sh_mp++) {
+	if ((sh_mp->mp_flags & (IN_USE | HANGING | SEPARATE))
+					!= (IN_USE | SEPARATE)) continue;
+	if (sh_mp == mp_ign) continue;
+	if (sh_mp->mp_ino != ino) continue;
+	if (sh_mp->mp_dev != dev) continue;
+	if (sh_mp->mp_ctime != ctime) continue;
+	return sh_mp;
+  }
+  return(NULL);
+}
+
 
 #if (SHADOWING == 1)
 /*===========================================================================*

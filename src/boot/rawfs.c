@@ -27,7 +27,7 @@ void readblock(off_t blockno, char *buf);
  * inodes and 16-bit disk addresses and Version 2 with big inodes and 32-bit
  * disk addresses.
 #ifdef FLEX
- * To make matters worse, Minix-386vm knows about the normal Unix Version 7
+ * To make matters worse, Minix-vmd knows about the normal Unix Version 7
  * directories and directories with flexible entries.
 #endif
  */

@@ -2,7 +2,7 @@
 This file contains routines for buffer management.
 */
 
-#include "nw_task.h"
+#include "inet.h"
 
 #include <stdlib.h>
 #include <string.h>

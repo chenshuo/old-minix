@@ -5,7 +5,9 @@
  * can be signaled.  The actual signaling is done by sig_proc().
  *
  * The entry points into this file are:
+#if ENABLE_COMPAT
  *   do_signal:	perform the SIGNAL system call
+#endif
  *   do_kill:	perform the KILL system call
  *   do_sigaction:   perform the SIGACTION system call
  *   do_sigpending:  perform the SIGPENDING system call
@@ -13,6 +15,7 @@
  *   do_sigreturn:   perform the SIGRETURN system call
  *   do_sigsuspend:  perform the SIGSUSPEND system call
  *   do_ksig:	accept a signal originating in the kernel (e.g., SIGINT)
+ *   check_sig: check which processes to signal with sig_proc()
  *   sig_proc:	interrupt or terminate a signaled process
  *   do_alarm:	perform the ALARM system call by calling set_alarm()
  *   set_alarm:	tell the clock task to start or stop a timer
@@ -36,10 +39,10 @@
 				/* buffer size for core dumps */
 
 FORWARD _PROTOTYPE( void check_pending, (void)				);
-FORWARD _PROTOTYPE( int check_sig, (pid_t proc_id, int signo)		);
 FORWARD _PROTOTYPE( void dump_core, (struct mproc *rmp)			);
 FORWARD _PROTOTYPE( void unpause, (int pro)				);
 
+#if ENABLE_COMPAT
 /*===========================================================================*
  *				do_signal				     *
  *===========================================================================*/
@@ -86,6 +89,7 @@ PUBLIC int do_signal()
   if (sigismember(&old_ignore, sig)) return(1);
   return(OK);
 }
+#endif /* ENABLE_COMPAT */
 
 
 /*===========================================================================*
@@ -240,7 +244,7 @@ PUBLIC int do_sigsuspend()
 /*===========================================================================*
  *				check_sig				     *
  *===========================================================================*/
-PRIVATE int check_sig(proc_id, signo)
+PUBLIC int check_sig(proc_id, signo)
 pid_t proc_id;			/* pid of proc to sig, or 0 or -1, or -pgrp */
 int signo;			/* signal to send to process (0 to _NSIG) */
 {
@@ -347,7 +351,6 @@ PUBLIC int do_ksig()
 	    			 * is still necessary; however it would be
 	    			 * nice to eliminate the special test for
 	    			 * SIGSTKFLT above */
-	    case SIGHUP: 
 	    case SIGINT: 
 	    case SIGQUIT: 
 		id = 0; break;	/* broadcast to process group */
@@ -428,14 +431,15 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 	sm.sm_sigreturn = rmp->mp_sigreturn;
 	sys_getsp(slot, &new_sp);
 	sm.sm_stkptr = new_sp;
-	if (sigflags & SA_COMPAT) {
-		/* Make room for an old style stack frame. */
-		new_sp -= SIG_PUSH_BYTES;
-	} else {
-		/* Make room for the sigcontext and sigframe struct. */
-		new_sp = new_sp - sizeof(struct sigcontext) 
-			 - 3 * sizeof(char *) - 2 * sizeof(int);
-	}
+
+#if ENABLE_COMPAT
+	/* Make room for an old style stack frame? */
+	if (sigflags & SA_COMPAT) new_sp -= SIG_PUSH_BYTES;
+	else
+#endif
+	/* Make room for the sigcontext and sigframe struct. */
+	new_sp -= sizeof(struct sigcontext) 
+				 + 3 * sizeof(char *) + 2 * sizeof(int);
 
 	if (adjust(rmp, rmp->mp_seg[D].mem_len, new_sp) != OK)
 		goto dodefault;
@@ -451,10 +455,11 @@ int signo;			/* signal to send to process (1 to _NSIG) */
 		rmp->mp_sigact[signo].sa_handler = SIG_DFL;
 	}
 
-  	if (sigflags & SA_COMPAT)
-		sys_oldsig(slot, signo, rmp->mp_func);
+#if ENABLE_COMPAT
+  	if (sigflags & SA_COMPAT) sys_oldsig(slot, signo, rmp->mp_func);
 	else
-		sys_sendsig(slot, &sm);
+#endif
+	sys_sendsig(slot, &sm);
 	sigdelset(&rmp->mp_sigpending, signo);
 	/* If process is hanging on PAUSE, WAIT, SIGSUSPEND, tty, pipe, etc.,
 	 * release it.

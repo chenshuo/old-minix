@@ -91,11 +91,16 @@
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <signal.h>
+#include <unistd.h>
 
 /* Accuracy of timings and human fatigue controlled by next two lines */
-#define LOOPS	50000		/* Use this for slow or 16 bit machines */
+/*#define LOOPS	50000	*/	/* Use this for slow or 16 bit machines */
 /*#define LOOPS	500000 */	/* Use this for faster machines */
+/*#define LOOPS	(sizeof(int) == 2 ? 50000 : 1000000)*/
 
+/* Seconds to run */
+#define SECONDS	15
 
 /* Compiler dependent options */
 #define	NOENUM			/* Define if compiler has no enum's */
@@ -103,15 +108,21 @@
 
 
 /* Define only one of the next two defines */
-/*#define TIMES		*/	/* Use times(2) time function */
-#define TIME			/* Use time(2) time function */
+#define TIMES			/* Use times(2) time function */
+/*#define TIME	*/		/* Use time(2) time function */
 
 
-/* Define the granularity of your times(2) function (when used) */
+#ifdef TIME
+/* Ganularity of time(2) is of course 1 second */
+#define HZ	1
+#endif
+
+#ifdef TIMES
+/* Define the granularity of your times(2) function */
 /*#define HZ	50 */		/* times(2) returns 1/50 second (europe?) */
 #define HZ	60		/* times(2) returns 1/60 second (most) */
 /*#define HZ	100 	*/	/* times(2) returns 1/100 second (WECo) */
-
+#endif
 
 /* For compatibility with goofed up version */
 /*#undef GOOF		*/	/* Define if you want the goofed up version */
@@ -181,6 +192,8 @@ typedef int boolean;
 #endif
 
 _PROTOTYPE(int main, (void));
+_PROTOTYPE(void prep_timer, (void));
+_PROTOTYPE(void timeout, (int sig));
 _PROTOTYPE(void Proc0, (void));
 _PROTOTYPE(void Proc1, (RecordPtr PtrParIn));
 _PROTOTYPE(void Proc2, (OneToFifty *IntParIO));
@@ -206,6 +219,24 @@ int main()
 }
 
 
+#if __STDC__
+volatile int done;
+#else
+int done;
+#endif
+
+void prep_timer()
+{
+  signal(SIGALRM, timeout);
+  done = 0;
+}
+
+void timeout(sig)
+int sig;
+{
+  done = 1;
+}
+
 /* Package 1  */
 int IntGlob;
 boolean BoolGlob;
@@ -227,32 +258,40 @@ void Proc0()
   String30 String1Loc;
   String30 String2Loc;
   register unsigned long i;
+  unsigned long starttime;
+  unsigned long benchtime;
+  unsigned long nulltime;
+  unsigned long nullloops;
+  unsigned long benchloops;
+#ifdef TIMES
+  struct tms tms;
+#endif
 
+  i = 0;
+  prep_timer();
 
 #ifdef TIME
-  long starttime;
-  long benchtime;
-  long nulltime;
-
-
   starttime = time((long *) 0);
-  for (i = 0; i < LOOPS; ++i);
+#endif
+
+#ifdef TIMES
+  times(&tms);
+  starttime = tms.tms_utime;
+#endif
+
+  alarm(1);
+  while (!done) i++;
+
+#ifdef TIME
   nulltime = time((long *) 0) - starttime;	/* Computes o'head of loop */
 #endif
 
 #ifdef TIMES
-  time_t starttime;
-  time_t benchtime;
-  time_t nulltime;
-  struct tms tms;
-
-
-  times(&tms);
-  starttime = tms.tms_utime;
-  for (i = 0; i < LOOPS; ++i);
   times(&tms);
   nulltime = tms.tms_utime - starttime;	/* Computes overhead of looping */
 #endif
+
+  nullloops = i;
 
 
   PtrGlbNext = (RecordPtr) malloc(sizeof(RecordType));
@@ -272,6 +311,9 @@ void Proc0()
 /*****************
 -- Start Timer --
 *****************/
+  i = 0;
+  prep_timer();
+
 #ifdef TIME
   starttime = time((long *) 0);
 #endif
@@ -281,7 +323,9 @@ void Proc0()
   starttime = tms.tms_utime;
 #endif
 
-  for (i = 0; i < LOOPS; ++i) {
+  alarm(SECONDS);
+  while (!done) {
+	i++;
 	Proc5();
 	Proc4();
 	IntLoc1 = 2;
@@ -312,25 +356,23 @@ void Proc0()
 
 
 #ifdef TIME
-  benchtime = time((long *) 0) - starttime - nulltime;
-  printf("Dhrystone(%s) time for %ld passes = %ld\n",
-         Version,
-         (long) LOOPS, benchtime);
-  printf("This machine benchmarks at %ld dhrystones/second\n",
-         ((long) LOOPS) / benchtime);
+  benchtime = time((long *) 0) - starttime;
 #endif
 
 #ifdef TIMES
   times(&tms);
-  benchtime = tms.tms_utime - starttime - nulltime;
-  printf("Dhrystone(%s) time for %ld passes = %ld\n",
-         Version,
-         (long) LOOPS, benchtime / HZ);
-  printf("This machine benchmarks at %ld dhrystones/second\n",
-         ((long) LOOPS) * HZ / benchtime);
+  benchtime = tms.tms_utime - starttime;
 #endif
+  benchloops = i;
 
+  /* Approximately correct benchtime to the nulltime. */
+  benchtime -= nulltime / (nullloops / benchloops);
 
+  printf("Dhrystone(%s) time for %lu passes = %lu.%02lu\n",
+         Version,
+         benchloops, benchtime / HZ, benchtime % HZ * 100 / HZ);
+  printf("This machine benchmarks at %lu dhrystones/second\n",
+         benchloops * HZ / benchtime);
 }
 
 

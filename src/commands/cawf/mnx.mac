@@ -78,9 +78,11 @@
 .br
 ..
 .de Cx
+.in +8
 .ft B
-\&	\\$1 \\$2 \\$3 \\$4 \\$5 \\$6 \\$7 \\$8 \\$9
+\&\\$1 \\$2 \\$3 \\$4 \\$5 \\$6 \\$7 \\$8 \\$9
 .ft R
+.in -8
 ..
 .de DI
 .ft B
@@ -95,4 +97,41 @@
 ..
 .de SP
 .sp
+..
+.\"	Major section (normally numbered)
+.de SE
+.sp 1
+\fB\\$1\fP
+.sp 1
+..
+.\"	Subsection (normally numbered)
+.de SS
+.sp 1
+\fB\\$1\fP
+..
+.de UU
+.SH
+\\$1
+.sp 1
+..
+.\"	Start list
+.de LI
+.in +0.25i
+.ll -0.25i
+.HS
+..
+.\"	End list
+.de LX
+.sp 1
+.in -0.25i
+.ll +0.25i
+.LP
+..
+.\"	List item
+.de IT
+.HS
+..
+.\"Short unnumbered lines
+.de UN
+.HS
 ..

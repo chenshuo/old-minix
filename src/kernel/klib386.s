@@ -22,25 +22,21 @@
 .define	___main		! dummy for GCC
 .define	_in_byte	! read a byte from a port and return it
 .define	_in_word	! read a word from a port and return it
-.define	_lock		! disable interrupts
-.define	_unlock		! enable interrupts
-.define	_enable_irq	! enable an irq at the 8259 controller
-.define	_disable_irq	! disable an irq
-.define	_mem_rdw	! copy one word from [segment:offset]
 .define	_out_byte	! write a byte to a port
 .define	_out_word	! write a word to a port
-.define	_phys_copy	! copy data from anywhere to anywhere in memory
-.define	_phys_zero	! zero memory anywhere in memory
 .define	_port_read	! transfer data from (disk controller) port to memory
 .define	_port_read_byte	! likewise byte by byte
 .define	_port_write	! transfer data from memory to (disk controller) port
 .define	_port_write_byte ! likewise byte by byte
+.define	_lock		! disable interrupts
+.define	_unlock		! enable interrupts
+.define	_enable_irq	! enable an irq at the 8259 controller
+.define	_disable_irq	! disable an irq
+.define	_phys_copy	! copy data from anywhere to anywhere in memory
+.define	_mem_rdw	! copy one word from [segment:offset]
 .define	_reset		! reset the system
-.define	_scr_down	! scroll screen a line down (in software, by copying)
-.define	_scr_up		! scroll screen a line up (in software, by copying)
-.define	_test_and_set	! test and set locking primitive on a word in memory
-.define	_vid_copy	! copy data to video ram (perhaps during retrace only)
-.define	_wait_retrace	! wait for retrace interval
+.define	_mem_vid_copy	! copy data to video ram
+.define	_vid_vid_copy	! move data in video ram
 .define	_level0		! call a function at level 0
 
 ! The routines only guarantee to preserve the registers the `C` compiler
@@ -50,7 +46,6 @@
 ! imported variables
 
 .sect .bss
-.extern	_Ax, _Bx, _Cx, _Dx, _Es
 .extern	_mon_return, _mon_sp
 .extern _irq_use
 .extern	_blank_color
@@ -58,9 +53,9 @@
 .extern	_gdt
 .extern	_low_memsize
 .extern	_sizes
-.extern	_snow
+.extern	_vid_seg
+.extern	_vid_size
 .extern	_vid_mask
-.extern	_vid_port
 .extern	_level0_func
 
 .sect .text
@@ -90,7 +85,7 @@ _monitor:
 !*				bios13					     *
 !*===========================================================================*
 ! PUBLIC void bios13();
-.define	_bios13	
+.define	_bios13
 _bios13:
 	cmpb	(_mon_return), 0	! is the monitor there?
 	jnz	0f
@@ -165,6 +160,15 @@ csinit:	mov	eax, DS_SELECTOR
 	pop	esi
 	pop	ebp
 	ret
+
+.sect .bss
+.define	_Ax, _Bx, _Cx, _Dx, _Es		! 8086 register variables
+.comm	_Ax, 4
+.comm	_Bx, 4
+.comm	_Cx, 4
+.comm	_Dx, 4
+.comm	_Es, 4
+.sect .text
 #endif /* ENABLE_BIOS_WINI */
 
 
@@ -187,11 +191,11 @@ _build_sig:
 	mov	edx, 4+4(esp)		! rp
 	mov	eax, 4+4+4(esp)		! sig
 	mov	(ecx), eax		! put signal number in sig_stuff
-	mov	eax, EPCREG(edx)	! signalled process` PC
+	mov	eax, PCREG(edx)		! signalled process` PC
 	mov	4(ecx), eax		! put pc in sig_stuff
-	mov	eax, ECSREG(edx)	! signalled process` cs
+	mov	eax, CSREG(edx)		! signalled process` cs
 	mov	4+4(ecx), eax		! put cs in sig_stuff
-	mov	eax, EPSWREG(edx)	! signalled process` PSW
+	mov	eax, PSWREG(edx)	! signalled process` PSW
 	mov	4+4+4(ecx), eax		! put psw in sig_stuff
 	ret
 
@@ -207,6 +211,9 @@ _build_sig:
 
 CM_DENSITY	=	16
 CM_LOG_DENSITY	=	4
+TEST1PATTERN	=	0x55		! memory test pattern 1
+TEST2PATTERN	=	0xAA		! memory test pattern 2
+
 CHKM_ARGS	=	4 + 4 + 4	! 4 + 4
 !			ds ebx eip	base size
 
@@ -247,12 +254,12 @@ cm_exit:
 ! space to anywhere else.  It also copies the source address provided as a
 ! parameter to the call into the first word of the destination message.
 !
-! Note that the message size, `Msize` is in WORDS (not bytes) and must be set
+! Note that the message size, `Msize` is in DWORDS (not bytes) and must be set
 ! correctly.  Changing the definition of message in the type file and not
 ! changing it here will lead to total disaster.
 
 CM_ARGS	=	4 + 4 + 4 + 4 + 4	! 4 + 4 + 4 + 4 + 4
-!		es  ds edi esi eip 	proc scl sof dcl dof
+!		es  ds edi esi eip	proc scl sof dcl dof
 
 	.align	16
 _cp_mess:
@@ -276,7 +283,7 @@ _cp_mess:
 	mov	eax, CM_ARGS(esp)	! process number of sender
 	stos				! copy sender`s number to dest message
 	add	esi, 4			! don`t copy first word
-	mov	ecx, [Msize>>1] - 1	! Msize assumed even, dword count now
+	mov	ecx, Msize - 1		! remember, first word doesn't count
 	rep
 	movs				! copy the message
 
@@ -330,6 +337,140 @@ _in_word:
 	mov	edx, 4(esp)		! port
 	sub	eax, eax
     o16	in	dx			! read 1 word
+	ret
+
+
+!*===========================================================================*
+!*				out_byte				     *
+!*===========================================================================*
+! PUBLIC void out_byte(port_t port, u8_t value);
+! Write  value  (cast to a byte)  to the I/O port  port.
+
+	.align	16
+_out_byte:
+	mov	edx, 4(esp)		! port
+	movb	al, 4+4(esp)		! value
+	outb	dx			! output 1 byte
+	ret
+
+
+!*===========================================================================*
+!*				out_word				     *
+!*===========================================================================*
+! PUBLIC void out_word(Port_t port, U16_t value);
+! Write  value  (cast to a word)  to the I/O port  port.
+
+	.align	16
+_out_word:
+	mov	edx, 4(esp)		! port
+	mov	eax, 4+4(esp)		! value
+    o16	out	dx			! output 1 word
+	ret
+
+
+!*===========================================================================*
+!*				port_read				     *
+!*===========================================================================*
+! PUBLIC void port_read(port_t port, phys_bytes destination, unsigned bytcount);
+! Transfer data from (hard disk controller) port to memory.
+
+PR_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port dst len
+
+	.align	16
+_port_read:
+	cld
+	push	edi
+	push	es
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	es, cx
+	mov	edx, PR_ARGS(esp)	! port to read from
+	mov	edi, PR_ARGS+4(esp)	! destination addr
+	mov	ecx, PR_ARGS+4+4(esp)	! byte count
+	shr	ecx, 1			! word count
+	rep				! (hardware can`t handle dwords)
+    o16	ins				! read everything
+	pop	es
+	pop	edi
+	ret
+
+
+!*===========================================================================*
+!*				port_read_byte				     *
+!*===========================================================================*
+! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
+!						unsigned bytcount);
+! Transfer data from port to memory.
+
+PR_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port dst len
+
+_port_read_byte:
+	cld
+	push	edi
+	push	es
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	es, cx
+	mov	edx, PR_ARGS_B(esp)
+	mov	edi, PR_ARGS_B+4(esp)
+	mov	ecx, PR_ARGS_B+4+4(esp)
+	rep
+	insb
+	pop	es
+	pop	edi
+	ret
+
+
+!*===========================================================================*
+!*				port_write				     *
+!*===========================================================================*
+! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
+! Transfer data from memory to (hard disk controller) port.
+
+PW_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port src len
+
+	.align	16
+_port_write:
+	cld
+	push	esi
+	push	ds
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	ds, cx
+	mov	edx, PW_ARGS(esp)	! port to write to
+	mov	esi, PW_ARGS+4(esp)	! source addr
+	mov	ecx, PW_ARGS+4+4(esp)	! byte count
+	shr	ecx, 1			! word count
+	rep				! (hardware can`t handle dwords)
+    o16	outs				! write everything
+	pop	ds
+	pop	esi
+	ret
+
+
+!*===========================================================================*
+!*				port_write_byte				     *
+!*===========================================================================*
+! PUBLIC void port_write_byte(port_t port, phys_bytes source,
+!						unsigned bytcount);
+! Transfer data from memory to port.
+
+PW_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port src len
+
+_port_write_byte:
+	cld
+	push	esi
+	push	ds
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	ds, cx
+	mov	edx, PW_ARGS_B(esp)
+	mov	esi, PW_ARGS_B+4(esp)
+	mov	ecx, PW_ARGS_B+4+4(esp)
+	rep
+	outsb
+	pop	ds
+	pop	esi
 	ret
 
 
@@ -438,19 +579,17 @@ dis_already:
 !			phys_bytes bytecount);
 ! Copy a block of physical memory.
 
-PC_ARGS	=	4 + 4 + 4 + 4 + 4	! 4 + 4 + 4
-!		es  ds edi esi eip 	src dst len
+PC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
+!		es edi esi eip	 src dst len
 
 	.align	16
 _phys_copy:
 	cld
 	push	esi
 	push	edi
-	push	ds
 	push	es
 
 	mov	eax, FLAT_DS_SELECTOR
-	mov	ds, ax
 	mov	es, ax
 
 	mov	esi, PC_ARGS(esp)
@@ -464,70 +603,21 @@ _phys_copy:
 	and	ecx, 3			! count for alignment
 	sub	eax, ecx
 	rep
-	movsb
+   eseg	movsb
 	mov	ecx, eax
 	shr	ecx, 2			! count of dwords
 	rep
-	movs
+   eseg	movs
 	and	eax, 3
 pc_small:
 	xchg	ecx, eax		! remainder
 	rep
-	movsb
+   eseg	movsb
 
 	pop	es
-	pop	ds
 	pop	edi
 	pop	esi
 	ret
-
-
-
-!*===========================================================================*
-!*				phys_zero				     *
-!*===========================================================================*
-! PUBLIC void phys_zero(phys_bytes destination, phys_bytes bytecount);
-! Zero a block of physical memory.
-
-PZ_ARGS	=	4 + 4 + 4	! 4 + 4
-!		es  edi eip 	dst len
-
-	.align	16
-_phys_zero:
-	cld
-	push	edi
-	push	es
-
-	mov	eax, FLAT_DS_SELECTOR
-	mov	es, ax
-
-	xor	eax, eax		! a zero
-
-	mov	edi, PZ_ARGS(esp)
-	mov	edx, PZ_ARGS+4(esp)
-
-	cmp	edx, 10			! avoid align overhead for small counts
-	jb	pz_small
-	mov	ecx, edi		! align dest
-	neg	ecx
-	and	ecx, 3			! count for alignment
-	sub	edx, ecx
-	rep
-	stosb
-	mov	ecx, edx
-	shr	ecx, 2			! count of dwords
-	rep
-	stos
-	and	edx, 3
-pz_small:
-	xchg	ecx, edx		! remainder
-	rep
-	stosb
-
-	pop	es
-	pop	edi
-	ret
-
 
 
 !*===========================================================================*
@@ -543,137 +633,6 @@ _mem_rdw:
 	mov	eax, 4+4(esp)		! offset
 	movzx	eax, (eax)		! byte to return
 	mov	ds, cx
-	ret
-
-!*===========================================================================*
-!*				out_byte				     *
-!*===========================================================================*
-! PUBLIC void out_byte(port_t port, u8_t value);
-! Write  value  (cast to a byte)  to the I/O port  port.
-
-	.align	16
-_out_byte:
-	mov	edx, 4(esp)		! port
-	movzxb	eax, 4+4(esp)		! truncated value
-	outb	dx			! output 1 byte
-	ret
-
-!*===========================================================================*
-!*				out_word				     *
-!*===========================================================================*
-! PUBLIC void out_word(Port_t port, U16_t value);
-! Write  value  (cast to a word)  to the I/O port  port.
-
-	.align	16
-_out_word:
-	mov	edx, 4(esp)		! port
-	movzx	eax, 4+4(esp)		! truncated value
-    o16	out	dx			! output 1 word
-	ret
-
-!*===========================================================================*
-!*				port_read				     *
-!*===========================================================================*
-! PUBLIC void port_read(port_t port, phys_bytes destination, unsigned bytcount);
-! Transfer data from (hard disk controller) port to memory.
-
-PR_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port dst len
-
-	.align	16
-_port_read:
-	cld
-	push	edi
-	push	es
-	mov	ecx, FLAT_DS_SELECTOR
-	mov	es, cx
-	mov	edx, PR_ARGS(esp)	! port to read from
-	mov	edi, PR_ARGS+4(esp)	! destination addr
-	mov	ecx, PR_ARGS+4+4(esp)	! byte count
-	shr	ecx, 1			! word count
-	rep				! (hardware can`t handle dwords)
-    o16	ins				! read everything
-	pop	es
-	pop	edi
-	ret
-
-
-!*===========================================================================*
-!*				port_read_byte				     *
-!*===========================================================================*
-! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
-!						unsigned bytcount);
-! Transfer data from port to memory.
-
-PR_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port dst len
-
-_port_read_byte:
-	cld
-	push	edi
-	push	es
-	mov	ecx, FLAT_DS_SELECTOR
-	mov	es, cx
-	mov	edx, PR_ARGS_B(esp)
-	mov	edi, PR_ARGS_B+4(esp)
-	mov	ecx, PR_ARGS_B+4+4(esp)
-	rep	
-	insb
-	pop	es
-	pop	edi
-	ret
-
-
-!*===========================================================================*
-!*				port_write				     *
-!*===========================================================================*
-! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
-! Transfer data from memory to (hard disk controller) port.
-
-PW_ARGS	=	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port src len
-
-	.align	16
-_port_write:
-	cld
-	push	esi
-	push	ds
-	mov	ecx, FLAT_DS_SELECTOR
-	mov	ds, cx
-	mov	edx, PW_ARGS(esp)	! port to write to
-	mov	esi, PW_ARGS+4(esp)	! source addr
-	mov	ecx, PW_ARGS+4+4(esp)	! byte count
-	shr	ecx, 1			! word count
-	rep				! (hardware can`t handle dwords)
-    o16	outs				! write everything
-	pop	ds
-	pop	esi
-	ret
-
-
-!*===========================================================================*
-!*				port_write_byte				     *
-!*===========================================================================*
-! PUBLIC void port_write_byte(port_t port, phys_bytes source,
-!						unsigned bytcount);
-! Transfer data from memory to port.
-
-PW_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
-!		es edi eip		port src len
-
-_port_write_byte:
-	cld
-	push	esi
-	push	ds
-	mov	ecx, FLAT_DS_SELECTOR
-	mov	ds, cx
-	mov	edx, PW_ARGS_B(esp)
-	mov	esi, PW_ARGS_B+4(esp)
-	mov	ecx, PW_ARGS_B+4+4(esp)
-	rep
-	outsb
-	pop	ds
-	pop	esi
 	ret
 
 
@@ -692,160 +651,137 @@ idt_zero:	.data4	0, 0
 
 
 !*===========================================================================*
-!*				scr_down & scr_up			     *
+!*				mem_vid_copy				     *
 !*===========================================================================*
-! PUBLIC void scr_down(unsigned videoseg, int source, int dest, int count);
-! Scroll the screen down one line.
+! PUBLIC void mem_vid_copy(u16 *src, unsigned dst, unsigned count);
 !
-! PUBLIC void scr_up(unsigned videoseg, int source, int dest, int count);
-! Scroll the screen up one line.
-!
-! These are identical except scr_down() must reverse the direction flag
-! during the copy to avoid problems with overlap.
+! Copy count characters from kernel memory to video memory.  Src, dst and
+! count are character (word) based video offsets and counts.  If src is null
+! then screen memory is blanked by filling it with blank_color.
 
-SDU_ARGS	=	4 + 4 + 4 + 4 + 4	! 4 + 4 + 4 + 4
-!			es  ds edi esi eip 	 seg src dst ct
+MVC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
+!			es edi esi eip	 src dst ct
 
-_scr_down:
-	std
-_scr_up:
-	push	esi
-	push	edi
-	push	ds
-	push	es
-	mov	eax, SDU_ARGS(esp)	! videoseg (selector for video ram)
-	mov	esi, SDU_ARGS+4(esp)	! source (offset within video ram)
-	mov	edi, SDU_ARGS+4+4(esp)	! dest (offset within video ram)
-	mov	ecx, SDU_ARGS+4+4+4(esp) ! count (in words)
-	mov	ds, ax			! set source and dest segs to videoseg
-	mov	es, ax
-	rep				! do the copy
-    o16	movs
-	pop	es
-	pop	ds
-	pop	edi
-	pop	esi
-	cld				! restore (unnecessarily for scr_up)
-	ret
-
-
-!*===========================================================================*
-!*				test_and_set				     *
-!*===========================================================================*
-! PUBLIC int test_and_set(int *flag);
-! Set the flag to TRUE, indivisibly with getting its old value.
-! Return old flag.
-
-	.align	16
-_test_and_set:
-	mov	ecx, 4(esp)
-	mov	eax, 1
-	xchg	eax, (ecx)
-	ret
-
-
-!*===========================================================================*
-!*				vid_copy				     *
-!*===========================================================================*
-! PUBLIC void vid_copy(char *buffer, unsigned videobase, int offset,
-!		       int words);
-! where
-!     `buffer`    is a pointer to the (character, attribute) pairs
-!     `videobase` is 0xB800 for color and 0xB000 for monochrome displays
-!     `offset`    tells where within video ram to copy the data
-!     `words`     tells how many words to copy
-! if buffer is zero, the fill char (blank_color) is used
-!
-! This routine takes a string of (character, attribute) pairs and writes them
-! onto the screen.  For a snowy display, the writing only takes places during
-! the vertical retrace interval, to avoid displaying garbage on the screen.
-
-VC_ARGS	=	4 + 4 + 4 + 4 + 4	! 4 + 4 + 4 + 4
-!		es edi esi ebx eip 	 buf bas off words
-
-_vid_copy:
-	push	ebx
+_mem_vid_copy:
 	push	esi
 	push	edi
 	push	es
-vid0:
-	mov	esi, VC_ARGS(esp)	! buffer
-	mov	es, VC_ARGS+4(esp)	! video_base
-	mov	edi, VC_ARGS+4+4(esp)	! offset
-	and	edi, (_vid_mask)	! only 4K or 16K counts
-	mov	ecx, VC_ARGS+4+4+4(esp)	! word count for copy loop
-
-	lea	ebx, -1(edi)(ecx*2)	! point at last char in target
-	sub	ebx, (_vid_mask)	! # characters beyond end of video ram
-	jle	vid1			! copy does not run off end of vram
-	sar	ebx, 1			! # words that don`t fit
-	sub	ecx, ebx		! reduce count by overrun
-
-vid1:
-	push	ecx			! save actual count used for later
-
-! With a snowy (color, most CGA`s) display, you can avoid snow by only copying
-! to video ram during vertical retrace.
-
-	cmp	(_snow), 0
-	jz	over_wait_for_retrace
-	call	_wait_retrace
-
-over_wait_for_retrace:
-	test	esi, esi		! buffer == 0 means blank the screen
-	je	vid7			! jump for blanking
-	rep				! this is the copy loop
+	mov	esi, MVC_ARGS(esp)	! source
+	mov	edi, MVC_ARGS+4(esp)	! destination
+	mov	edx, MVC_ARGS+4+4(esp)	! count
+	mov	es, (_vid_seg)		! destination is video segment
+	cld				! make sure direction is up
+mvc_loop:
+	and	edi, (_vid_mask)	! wrap address
+	mov	ecx, edx		! one chunk to copy
+	mov	eax, (_vid_size)
+	sub	eax, edi
+	cmp	ecx, eax
+	jbe	0f
+	mov	ecx, eax		! ecx = min(ecx, vid_size - edi)
+0:	sub	edx, ecx		! count -= ecx
+	shl	edi, 1			! byte address
+	test	esi, esi		! source == 0 means blank the screen
+	jz	mvc_blank
+mvc_copy:
+	rep				! copy words to video memory
     o16	movs
-
-
-vid5:
-	pop	esi			! count of words copied
-	test	ebx, ebx		! if no overrun, we are done
-	jle	vc_exit			! everything fit
-
-	mov	VC_ARGS+4+4+4(esp), ebx	! set up residual count
-	mov	VC_ARGS+4+4(esp), 0	! start copying at base of video ram
-	cmp	VC_ARGS(esp), 0		! NIL_PTR means store blanks
-	je	vid0			! go do it
-	add	esi, esi		! count of bytes copied
-	add	VC_ARGS(esp), esi	! increment buffer pointer
-	jmp	vid0			! go copy some more
-
-vc_exit:
-	pop	es
-	pop	edi
-	pop	esi
-	pop	ebx
-	ret
-
-vid7:
+	jmp	mvc_test
+mvc_blank:
 	mov	eax, (_blank_color)	! ax = blanking character
-	rep				! copy loop
-    o16	stos				! blank screen
-	jmp	vid5			! done
+	rep
+    o16	stos				! copy blanks to video memory
+	!jmp	mvc_test
+mvc_test:
+	shr	edi, 1			! word addresses
+	test	edx, edx
+	jnz	mvc_loop
+mvc_done:
+	pop	es
+	pop	edi
+	pop	esi
+	ret
 
 
 !*===========================================================================*
-!*			      wait_retrace				     *
+!*				vid_vid_copy				     *
 !*===========================================================================*
-! PUBLIC void wait_retrace();
-! Wait for the *start* of retrace period.
-! The VERTICAL_RETRACE_MASK of the color vid_port is set during retrace.
-! First wait until it is off (no retrace).
-! Then wait until it comes on (start of retrace).
-! We can`t afford to worry about interrupts.
+! PUBLIC void vid_vid_copy(unsigned src, unsigned dst, unsigned count);
+!
+! Copy count characters from video memory to video memory.  Handle overlap.
+! Used for scrolling, line or character insertion and deletion.  Src, dst
+! and count are character (word) based video offsets and counts.
 
-_wait_retrace:
-	mov	edx, (_vid_port)
-	orb	dl, COLOR_STATUS_PORT & 0xFF
-wait_no_retrace:
-	inb	dx
-	testb	al, VERTICAL_RETRACE_MASK
-	jnz	wait_no_retrace
-wait_retrace:
-	inb	dx
-	testb	al, VERTICAL_RETRACE_MASK
-	jz	wait_retrace
+VVC_ARGS	=	4 + 4 + 4 + 4	! 4 + 4 + 4
+!			es edi esi eip	 src dst ct
+
+_vid_vid_copy:
+	push	esi
+	push	edi
+	push	es
+	mov	esi, VVC_ARGS(esp)	! source
+	mov	edi, VVC_ARGS+4(esp)	! destination
+	mov	edx, VVC_ARGS+4+4(esp)	! count
+	mov	es, (_vid_seg)		! use video segment
+	cmp	esi, edi		! copy up or down?
+	jb	vvc_down
+vvc_up:
+	cld				! direction is up
+vvc_uploop:
+	and	esi, (_vid_mask)	! wrap addresses
+	and	edi, (_vid_mask)
+	mov	ecx, edx		! one chunk to copy
+	mov	eax, (_vid_size)
+	sub	eax, esi
+	cmp	ecx, eax
+	jbe	0f
+	mov	ecx, eax		! ecx = min(ecx, vid_size - esi)
+0:	mov	eax, (_vid_size)
+	sub	eax, edi
+	cmp	ecx, eax
+	jbe	0f
+	mov	ecx, eax		! ecx = min(ecx, vid_size - edi)
+0:	sub	edx, ecx		! count -= ecx
+	shl	esi, 1
+	shl	edi, 1			! byte addresses
+	rep
+eseg o16 movs				! copy video words
+	shr	esi, 1
+	shr	edi, 1			! word addresses
+	test	edx, edx
+	jnz	vvc_uploop		! again?
+	jmp	vvc_done
+vvc_down:
+	std				! direction is down
+	lea	esi, -1(esi)(edx*1)	! start copying at the top
+	lea	edi, -1(edi)(edx*1)
+vvc_downloop:
+	and	esi, (_vid_mask)	! wrap addresses
+	and	edi, (_vid_mask)
+	mov	ecx, edx		! one chunk to copy
+	lea	eax, 1(esi)
+	cmp	ecx, eax
+	jbe	0f
+	mov	ecx, eax		! ecx = min(ecx, esi + 1)
+0:	lea	eax, 1(edi)
+	cmp	ecx, eax
+	jbe	0f
+	mov	ecx, eax		! ecx = min(ecx, edi + 1)
+0:	sub	edx, ecx		! count -= ecx
+	shl	esi, 1
+	shl	edi, 1			! byte addresses
+	rep
+eseg o16 movs				! copy video words
+	shr	esi, 1
+	shr	edi, 1			! word addresses
+	test	edx, edx
+	jnz	vvc_downloop		! again?
+	cld				! C compiler expect up
+	!jmp	vvc_done
+vvc_done:
+	pop	es
+	pop	edi
+	pop	esi
 	ret
 
 

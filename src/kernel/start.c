@@ -15,19 +15,10 @@
 #include <minix/boot.h>
 #include "protect.h"
 
-/* Magic BIOS addresses. */
-#define MACHINE_TYPE 0xFFFFEL	/* address of machine type word */
-#	define	PC_AT	0xFC	/* code in first byte for PC-AT */
-#	define	PS	0xFA	/* code in first byte for PS/2 Model 30 */
-#	define	PS_386	0xF8	/* code in first byte for PS/2 386 70 & 80 */
-#	define	PS_50	0x04	/* code in second byte for PS/2 Model 50 */
-#	define	PS_50A	0xBA	/* code in second byte on some Model 50s */
-#	define	PS_50Z	0xE9	/* code in second byte for Model 50Z */
-#	define	PS_60	0x05	/* code in second byte for PS/2 Model 60 */
-
 PRIVATE char k_environ[256];	/* environment strings passed by loader */
 
 FORWARD _PROTOTYPE( int k_atoi, (char *s) );
+
 
 /*==========================================================================*
  *				cstart					    *
@@ -40,7 +31,6 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
 /* Perform system initializations prior to calling main(). */
 
   register char *envp;
-  u8_t mach_magic[2];
   phys_bytes mcode_base, mdata_base;
   unsigned mon_start;
 
@@ -58,52 +48,30 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
   phys_copy(mdata_base + parmoff, vir2phys(k_environ), (phys_bytes) parmsize);
 
   /* Convert important boot environment variables. */
-  envp = k_getenv("rootdev");
-  if (envp != NIL_PTR) boot_parameters.bp_rootdev = k_atoi(envp);
-  envp = k_getenv("ramimagedev");
-  if (envp != NIL_PTR) boot_parameters.bp_ramimagedev = k_atoi(envp);
-  envp = k_getenv("ramsize");
-  if (envp != NIL_PTR) boot_parameters.bp_ramsize = k_atoi(envp);
-  envp = k_getenv("processor");
-  if (envp != NIL_PTR) boot_parameters.bp_processor = k_atoi(envp);
+  boot_parameters.bp_rootdev = k_atoi(k_getenv("rootdev"));
+  boot_parameters.bp_ramimagedev = k_atoi(k_getenv("ramimagedev"));
+  boot_parameters.bp_ramsize = k_atoi(k_getenv("ramsize"));
+  boot_parameters.bp_processor = k_atoi(k_getenv("processor"));
 
   /* Type of VDU: */
-  envp = k_getenv("chrome");
-  color = envp != NIL_PTR && strcmp(envp, "color") == 0;
   envp = k_getenv("video");
-  if (envp != NIL_PTR) {
-	if (strcmp(envp, "ega") == 0) ega = TRUE;
-	if (strcmp(envp, "vga") == 0) vga = ega = TRUE;
-  }
+  if (strcmp(envp, "ega") == 0) ega = TRUE;
+  if (strcmp(envp, "vga") == 0) vga = ega = TRUE;
 
   /* Memory sizes: */
-  envp = k_getenv("memsize");
-  low_memsize = envp != NIL_PTR ? k_atoi(envp) : 256;
-  envp = k_getenv("emssize");
-  ext_memsize = envp != NIL_PTR ? k_atoi(envp) : 0;
+  low_memsize = k_atoi(k_getenv("memsize"));
+  ext_memsize = k_atoi(k_getenv("emssize"));
 
-  /* Determine machine type. */
+  /* Processor? */
   processor = boot_parameters.bp_processor;	/* 86, 186, 286, 386, ... */
-  phys_copy(MACHINE_TYPE, vir2phys(mach_magic), 2L);
 
+  /* XT, AT or MCA bus? */
   envp = k_getenv("bus");
-  if (envp != NIL_PTR) {
-	/* Variable "bus" overrides the machine type. */
-	if (strcmp(envp, "at") == 0) pc_at = TRUE;
-	if (strcmp(envp, "ps") == 0) ps = TRUE;
-	if (strcmp(envp, "mca") == 0) pc_at = ps_mca = TRUE;
-  } else
-  if (mach_magic[0] == PC_AT) {
+  if (envp == NIL_PTR || strcmp(envp, "at") == 0) {
 	pc_at = TRUE;
-	/* could be a PS/2 Model 50 or 60 -- check submodel byte */
-	if (mach_magic[2] == PS_50 || mach_magic[2] == PS_60)   ps_mca = TRUE;
-	if (mach_magic[2] == PS_50A || mach_magic[2] == PS_50Z) ps_mca = TRUE;
   } else
-  if (mach_magic[0] == PS_386) {
+  if (strcmp(envp, "mca") == 0) {
 	pc_at = ps_mca = TRUE;
-  } else
-  if (mach_magic[0] == PS) {
-	ps = TRUE;
   }
 
   /* Decide if mode is protected. */

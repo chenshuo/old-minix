@@ -103,6 +103,13 @@ sepID:
 	mov	_rem_part+0, si	! Remote partition table offset
 	pop	_rem_part+2	! and segment (saved es)
 
+! Remember the current video mode for restoration on exit.
+	movb	ah, #0x0F	! Get current video mode
+	int	0x10
+	andb	al, #0x7F	! Mask off bit 7 (no blanking)
+	movb	old_vid_mode, al
+	movb	cur_vid_mode, al
+
 ! Give C code access to the code segment, data segment and the size of this
 ! process.
 	xor	ax, ax
@@ -143,7 +150,8 @@ quit:	mov	ax, #any_key
 	push	ax
 	call	_printk
 	call	_getchar
-reboot:	int	0x19			! Reboot the system
+reboot:	call	restore_video
+	int	0x19			! Reboot the system
 .data
 any_key:
 	.ascii	"\nHit any key to reboot\n\0"
@@ -499,13 +507,13 @@ finish:	movb	al, ah
 !	A carriage return is changed into a linefeed for UNIX compatibility.
 .define _getchar, _peekchar
 _peekchar:
-	movb	ah, #1		! Keyboard status
+	movb	ah, #0x01	! Keyboard status
 	int	0x16
 	jnz	getc		! Keypress?
 	xor	ax, ax		! No key
 	ret
 _getchar:
-	movb	ah, #0		! Read character from keyboard
+	xorb	ah, ah		! Read character from keyboard
 	int	0x16
 getc:	cmpb	al, #0x0D	! Carriage return?
 	jnz	nocr
@@ -526,11 +534,11 @@ _putk:	mov	bx, sp
 	testb	al, al		! 1.6.* printk adds a trailing null
 	jz	nulch
 	cmpb	al, #0x0A	! al = newline?
-	jnz	putc		! No
-	movb	al, #0x0D	! putc('\r')
-	call	putc
+	jnz	putc
+	movb	al, #0x0D
+	call	putc		! putc('\r')
 	movb	al, #0x0A	! Restore the '\n' and print it
-putc:	movb	ah, #14		! 14 = print character in teletype mode
+putc:	movb	ah, #0x0E	! Print character in teletype mode
 	mov	bx, #0x0001	! Page 0, foreground color
 	int	0x10		! Call BIOS VIDEO_IO
 nulch:	ret
@@ -541,6 +549,7 @@ nulch:	ret
 _reset_video:
 	mov	bx, sp
 	mov	ax, 2(bx)	! Video mode
+	mov	cur_vid_mode, ax
 	testb	ah, ah
 	jnz	xvesa		! VESA extended mode?
 	int	0x10		! Reset video (ah = 0)
@@ -553,6 +562,15 @@ setcur:	xor	dx, dx		! dl = column = 0, dh = row = 0
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
 	ret
+
+restore_video:			! To restore the video mode on exit
+	mov	ax, old_vid_mode
+	cmp	ax, cur_vid_mode
+	je	vidok
+	push	ax
+	call	_reset_video
+	pop	ax
+vidok:	ret
 
 ! u32_t get_tick(void);
 !	Return the current value of the clock tick counter.  This counter
@@ -574,9 +592,34 @@ _get_tick:
 ! too by looking at the hardware, but there is a small chance on errors that
 ! the monitor allows you to correct by setting variables.
 
+.define		_get_bus	! returns type of system bus
 .define		_get_video	! returns type of display
 .define		_get_memsize	! returns amount of low memory in K
 .define		_get_ext_memsize  ! returns amount of extended memory in K
+
+! u16_t get_bus(void)
+!	Return type of system bus, in order: XT, AT, MCA.
+_get_bus:
+	xor	dx, dx		! Assume XT
+	movb	ah, #0xC0	! Code for get configuration
+	int	0x15
+	jc	got_bus		! Carry clear and ah = 00 if supported
+	testb	ah, ah
+	jne	got_bus
+	eseg
+	movb	al, 5(bx)	! Load feature byte #1
+	movb	dl, #2		! Assume MCA
+	testb	al, #0x02	! Test bit 1 - "bus is Micro Channel"
+	jnz	got_bus
+	dec	dx		! Assume AT
+	testb	al, #0x40	! Test bit 6 - "2nd 8259 installed"
+	jnz	got_bus
+	dec	dx		! It is an XT
+got_bus:
+	push	ds
+	pop	es		! Restore es
+	mov	ax, dx		! Return bus code
+	ret
 
 ! u16_t get_video(void)
 !	Return type of display, in order: MDA, CGA, mono EGA, color EGA,
@@ -653,6 +696,7 @@ got_ext_memsize:
 !	need for that anymore, now that you can format floppies under Minix).
 !	The bootstrap must have been loaded at BOOTSEG from "device".
 _bootstrap:
+	call	restore_video
 	mov	bx, sp
 	movb	dl, 2(bx)	! Device to boot from
 	mov	si, 4(bx)	! ds:si = partition table entry
@@ -949,5 +993,6 @@ p_mcs_desc:
 	.data1	UNSET, 0x9A, 0x00, 0x00
 
 .bss
-! Saved machine status word (cr0)
-	.comm	msw, 4
+	.comm	old_vid_mode, 2		! Video mode at startup
+	.comm	cur_vid_mode, 2		! Current video mode
+	.comm	msw, 4			! Saved machine status word (cr0)

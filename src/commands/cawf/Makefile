@@ -54,7 +54,7 @@ bsfilt: bsfilt.c
 
 cawf:	${OBJ}
 	${CC} ${CFLAGS} ${OBJ} -o $@
-	install -S 32kw $@
+	install -S 56k $@
 
 clean:
 	rm -f *.o a.out core *errs bsfilt cawf

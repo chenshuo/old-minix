@@ -695,7 +695,7 @@ char        **pinputname;
   else
      llp = np->n_line;
 
-  do {
+  while (llp) {
      for (dp = llp->l_dep; dp; dp = dp->d_next) {
         if( strncmp(*pbasename,dp->d_name->n_name,baselen) == 0) {
            *pinputname = dp->d_name->n_name;
@@ -706,10 +706,14 @@ char        **pinputname;
            dpflag = TRUE;
         }
      }
-  } while( !lp && (llp = llp->l_next));
+     if (lp) break;
+     llp = llp->l_next;
+  }
 
+#if NO_WE_DO_WANT_THIS_BASENAME
   free(*pbasename);  /* basename ambiguous or no dependency file */
   *pbasename = (char *)0;
+#endif
   return;
 }
 

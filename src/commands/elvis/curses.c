@@ -32,6 +32,9 @@
 #  endif
 # else
 #  include	<sgtty.h>
+#  if MINIX
+#   include	<sys/ioctl.h>
+#  endif
 # endif
 #endif
 
@@ -789,9 +792,13 @@ int getsize(signo)
 		cols = v_cols();
 	}
 #endif
-	if (lines >= 2 && cols >= 30)
+	if (lines >= 2)
 	{
 		LINES = lines;
+	}
+
+	if (cols >= 30)
+	{
 		COLS = cols;
 	}
 

@@ -1,4 +1,4 @@
-/*	irdpd 1.6 - Internet router discovery protocol daemon.
+/*	irdpd 1.8 - Internet router discovery protocol daemon.
  *							Author: Kees J. Bot
  *								28 May 1994
  * Activily solicitate or passively look for routers.
@@ -16,6 +16,7 @@
 #include <time.h>
 #include <limits.h>
 #include <unistd.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/asynchio.h>
 #include <net/hton.h>
@@ -204,7 +205,9 @@ void advertize(ipaddr_t host)
 			print_table();
 		}
 
-		if (write(irdp_fd, buf, data - buf) < 0) fatal(ip_device);
+		if (write(irdp_fd, buf, data - buf) < 0) {
+			(errno == EIO ? fatal : report)(ip_device);
+		}
 	}
 	free(buf);
 }
@@ -454,6 +457,15 @@ void irdp_incoming(ssize_t n)
 	}
 }
 
+void sig_handler(int sig)
+/* A signal changes the debug level. */
+{
+	switch (sig) {
+	case SIGUSR1:	debug++;		break;
+	case SIGUSR2:	debug= 0;		break;
+	}
+}
+
 void usage(void)
 {
 	fprintf(stderr,
@@ -472,6 +484,7 @@ int main(int argc, char **argv)
 	asynchio_t asyn;
 	time_t timeout;
 	struct timeval tv;
+	struct sigaction sa;
 	char *offset_arg, *offset_end;
 	long arg;
 
@@ -526,6 +539,13 @@ int main(int argc, char **argv)
 		}
 	}
 	if (i != argc) usage();
+
+	/* Debug level signals. */
+	sa.sa_handler= sig_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags= 0;
+	sigaction(SIGUSR1, &sa, nil);
+	sigaction(SIGUSR2, &sa, nil);
 
 	if (udp_device == nil && (udp_device= getenv("UDP_DEVICE")) == nil)
 		udp_device= UDP_DEVICE;
@@ -588,6 +608,7 @@ int main(int argc, char **argv)
 			r= asyn_read(&asyn, rip_fd, rip_buf, sizeof(rip_buf));
 			if (r < 0) {
 				if (errno == EIO) fatal(udp_device);
+				if (errno != EINPROGRESS) report(udp_device);
 			} else {
 				now= time(nil);
 				rip_incoming(r);
@@ -600,6 +621,7 @@ int main(int argc, char **argv)
 							sizeof(irdp_buf));
 			if (r < 0) {
 				if (errno == EIO) fatal(ip_device);
+				if (errno != EINPROGRESS) report(ip_device);
 			} else {
 				now= time(nil);
 				irdp_incoming(r);

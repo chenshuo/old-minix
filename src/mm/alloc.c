@@ -90,6 +90,7 @@ phys_clicks clicks;		/* number of clicks to free */
 
   register struct hole *hp, *new_ptr, *prev_ptr;
 
+  if (clicks == 0) return;
   if ( (new_ptr = free_slots) == NIL_HOLE) panic("Hole table full", NO_NUM);
   new_ptr->h_base = base;
   new_ptr->h_len = clicks;

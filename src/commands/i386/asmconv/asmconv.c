@@ -1,7 +1,7 @@
-/*	asmconv 1.8 - convert 80X86 assembly		Author: Kees J. Bot
+/*	asmconv 1.10 - convert 80X86 assembly		Author: Kees J. Bot
  *								24 Dec 1993
  */
-static char version[] = "1.8";
+static char version[] = "1.10";
 
 #define nil 0
 #include <stdio.h>

@@ -1,6 +1,6 @@
 /* clock.c */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "proto.h"
 #include "generic/assert.h"
 #include "generic/buf.h"

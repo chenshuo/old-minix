@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 2.14 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 2.15 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -11,7 +11,7 @@ case $#:$1 in
 1:std)		# Standard devices.
 	set -$- mem fd0 fd1 fd0a fd1a \
 		hd0 hd1a hd5 hd6a cd0 cd1a sd0 sd1a sd5 sd6a \
-		st4 tty eth
+		st4 tty tty00 tty01 eth
 	;;
 0:|1:-\?)
 	cat >&2 <<EOF
@@ -25,8 +25,10 @@ Where key is one of the following:
 	sd0 sd5 sd1a ...	# Make SCSI disks
 	st0 st1 ...		# Make SCSI tapes rst0, nrst0, rst1 ...
 	cd0 cd1a		# Make CD-ROM devices (non SCSI)
-	console lp tty tty[0-2]	# One of these makes all six
-	eth psip ip tcp udp	# One of these makes TCP/IP devices
+	console lp tty log	# One of these makes all four
+	tty00 ... tty03		# Make serial lines
+	ttyp ttyq ...		# Make tty, pty pairs
+	eth ip tcp udp		# One of these makes TCP/IP devices
 	audio mixer		# Make audio devices
 	std			# All standard devices
 EOF
@@ -141,23 +143,44 @@ do
 		$e mknod rst$n c 10 `expr $m + 1`
 		$e chmod 660 rst$n nrst$n
 		;;
-	console|lp|tty|tty[0-2])
-		# Console, line printer, anonymous tty, standard ttys.
+	console|lp|tty|log)
+		# Console, line printer, anonymous tty, diagnostics device.
 		#
 		$e mknod console c 4 0
 		$e chmod 600 console
 		$e chgrp tty console
+		$e mknod tty c 5 0
+		$e chmod 666 tty
 		$e mknod lp c 6 0
 		$e chown daemon lp
 		$e chgrp daemon lp
 		$e chmod 200 lp
-		$e mknod tty c 5 0
-		$e chmod 666 tty
-		$e ln console tty0
-		$e mknod tty1 c 4 1
-		$e mknod tty2 c 4 2
-		$e chmod 666 tty[12]
-		$e chgrp tty tty[12]
+		$e mknod log c 4 15
+		$e chmod 222 log
+		;;
+	tty0[0-3])
+		# Serial lines.
+		#
+		n=`expr $dev : '.*\\(.\\)'`
+		$e mknod $dev c 4 `expr $n + 16`
+		$e chmod 666 $dev
+		$e chgrp tty $dev
+		;;
+	tty[p-s][0-9a-f]|pty[p-s][0-9a-f])
+		# Pseudo ttys.
+		#
+		dev=`expr $dev : '...\\(..\\)'`
+		g=`expr $dev : '\\(.\\)'`	# Which group.
+		g=`echo $g | tr 'pqrs' '0123'`
+		n=`expr $dev : '.\\(.\\)'`	# Which pty in the group.
+		case $n in
+		[a-f])	n=1`echo $n | tr 'abcdef' '012345'`
+		esac
+
+		$e mknod tty$dev c 4 `expr $g '*' 16 + $n + 128`
+		$e mknod pty$dev c 4 `expr $g '*' 16 + $n + 192`
+		$e chgrp tty tty$dev pty$dev
+		$e chmod 666 tty$dev pty$dev
 		;;
 	eth|ip|tcp|udp)
 		# TCP/IP devices.
@@ -166,7 +189,7 @@ do
 		$e mknod ip c 7 2
 		$e mknod tcp c 7 3
 		$e mknod udp c 7 4
-		$e chmod 666 eth ip	# These two should be mode 600!
+		$e chmod 600 eth ip
 		$e chmod 666 tcp udp
 		;;
 	audio|mixer)

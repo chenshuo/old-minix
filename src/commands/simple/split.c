@@ -3,10 +3,11 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <stdlib.h>
-#include <blocksize.h>
 #include <string.h>
 #include <unistd.h>
 #include <minix/minlib.h>
+
+#define CHUNK_SIZE	1024
 
 int cut_line = 1000;
 int infile;
@@ -59,14 +60,14 @@ char **argv;
 
 void split()
 {
-  char buf[BLOCK_SIZE];
+  char buf[CHUNK_SIZE];
   register char *index, *base;
   register int n;
   int fd;
   long lines = 0L;
 
   fd = -1;
-  while ((n = read(infile, buf, BLOCK_SIZE)) > 0) {
+  while ((n = read(infile, buf, CHUNK_SIZE)) > 0) {
 	base = index = buf;
 	while (--n >= 0) {
 		if (*index++ == '\n')

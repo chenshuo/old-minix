@@ -21,6 +21,9 @@
  *		only 10% of the original functionality, but a 10x chance of
  *		working.)
  *		12/12/92	Kees J. Bot
+ *
+ *		Customizable login banner.
+ *		11/13/95	Kees J. Bot
  */
 
 #include <sys/types.h>
@@ -50,16 +53,11 @@ void sigcatch(int sig)
 /* Catch the signals that want to catch. */
 
   switch(sig) {
-  case SIGEMT:	/* SIGEMT means SUSPEND */
+  case SIGUSR1:	/* SIGUSR1 means SUSPEND */
 	if (state == ST_IDLE) state = ST_SUSPEND;
 	break;
-  case SIGIOT:	/* SIGIOT means RESTART */
+  case SIGUSR2:	/* SIGUSR2 means RESTART */
 	if (state == ST_SUSPEND) state = ST_RUNNING;
-	break;
-  case SIGBUS:	/* SIGBUS means IGNORE ALL */
-	signal(SIGEMT, SIG_IGN);
-	signal(SIGIOT, SIG_IGN);
-	state = ST_RUNNING;
 	break;
   }
   signal(sig, sigcatch);
@@ -102,11 +100,16 @@ int areadch(void)
 
 /* Handle the process of a GETTY.
  */
-void do_getty(char *name, size_t len)
+void do_getty(char *name, size_t len, char **args)
 {
-  register char *np, *s;
+  register char *np, *s, *s0;
   int ch;
   struct utsname utsname;
+  char **banner;
+  static char *def_banner[] = { "%s  Release %r Version %v\n\n%n login: ", 0 };
+
+  /* Default banner? */
+  if (args[0] == NULL) args = def_banner;
 
   /* Display prompt. */
   ch = ' ';
@@ -115,16 +118,45 @@ void do_getty(char *name, size_t len)
 	/* Get data about this machine. */
 	uname(&utsname);
 
-	/* Give us a new line */
-	std_out("\n");
-	std_out(utsname.sysname);
-	std_out("  Release ");
-	std_out(utsname.release);
-	std_out(" Version ");
-	std_out(utsname.version);
-	std_out("\n\n");
-	std_out(utsname.nodename);
-	std_out(" login: ");
+	/* Print the banner. */
+	for (banner = args; *banner != NULL; banner++) {
+		std_out(banner == args ? "\n" : " ");
+		s0 = *banner;
+		for (s = *banner; *s != 0; s++) {
+			if (*s == '\\') {
+				write(1, s0, s-s0);
+				s0 = s+2;
+				switch (*++s) {
+				case 'n':  std_out("\n"); break;
+				case 's':  std_out(" "); break;
+				case 't':  std_out("\t"); break;
+				case 0:	   goto leave;
+				default:   s0 = s;
+				}
+			} else
+			if (*s == '%') {
+				write(1, s0, s-s0);
+				s0 = s+2;
+				switch (*++s) {
+				case 's':  std_out(utsname.sysname); break;
+				case 'n':  std_out(utsname.nodename); break;
+				case 'r':  std_out(utsname.release); break;
+				case 'v':  std_out(utsname.version); break;
+				case 'm':  std_out(utsname.machine); break;
+				case 'p':  std_out(utsname.arch); break;
+#if __minix_vmd
+				case 'k':  std_out(utsname.kernel); break;
+				case 'h':  std_out(utsname.hostname); break;
+				case 'b':  std_out(utsname.bus); break;
+#endif
+				case 0:	   goto leave;
+				default:   s0 = s-1;
+				}
+			}
+		}
+	    leave:
+		write(1, s0, s-s0);
+	}
 
 	np = name;
 	while (ch != '\n') {
@@ -171,6 +203,10 @@ int main(int argc, char **argv)
   register char *s;
   char name[30];
 
+  /* Ignore keyboard signals. */
+  signal(SIGINT, SIG_IGN);
+  signal(SIGQUIT, SIG_IGN);
+
   tty_name = ttyname(0);
   if (tty_name == NULL) {
 	std_out("getty: tty name unknown\n");
@@ -182,11 +218,10 @@ int main(int argc, char **argv)
   chmod(tty_name, 0600);	/* mode to max secure */
 
   /* Catch some of the available signals. */
-  signal(SIGEMT, sigcatch);
-  signal(SIGIOT, sigcatch);
-  signal(SIGBUS, sigcatch);
+  signal(SIGUSR1, sigcatch);
+  signal(SIGUSR2, sigcatch);
 
-  do_getty(name, sizeof(name));	/* handle getty() */
+  do_getty(name, sizeof(name), argv+1);	/* handle getty() */
   name[29] = '\0';		/* make sure the name fits! */
 
   do_login(name);		/* and call login(1) if OK */

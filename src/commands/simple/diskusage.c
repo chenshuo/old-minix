@@ -54,7 +54,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
-#include <blocksize.h>
 #include <stdlib.h>
 #include <ctype.h>
 #include <unistd.h>
@@ -190,7 +189,7 @@ off_t bytes;			/* will be charged to first. */
   for (curs = list_head; curs != NULL; curs = curs->next) {
 	if (curs->uid == uid) {
 		found++;
-		curs->blocks += (bytes + BLOCK_SIZE - 1) / BLOCK_SIZE;	/* ceiling */
+		curs->blocks += (bytes + 1024 - 1) / 1024;	/* ceiling */
 		break;
 	}
   }
@@ -397,7 +396,7 @@ char *argv[];
 				insert(&list_head, m_rec);
 			}	/* if !exist */
 			update_list((Uid_t) m_uid,
-				    (off_t) BLOCK_SIZE * m_blocks);
+				    (off_t) 1024 * m_blocks);
 		}		/* while fgets */
 		fclose(dskusg);
 		continue;	/* go on to next "while" file */

@@ -80,7 +80,6 @@ typedef int ssize_t;
  */
 #define _POSIX_NO_TRUNC       (-1)
 #define _POSIX_CHOWN_RESTRICTED  1
-#define _POSIX_VDISABLE       0xDF
 
 /* Function Prototypes. */
 #ifndef _ANSI_H
@@ -151,6 +150,9 @@ _PROTOTYPE( int umount, (const char *_name)				);
 _PROTOTYPE( int reboot, (int _how, ...)					);
 _PROTOTYPE( int gethostname, (char *_hostname, size_t _len)		);
 _PROTOTYPE( int getdomainname, (char *_domain, size_t _len)		);
+_PROTOTYPE( int ttyslot, (void)						);
+_PROTOTYPE( int fttyslot, (int _fd)					);
+_PROTOTYPE( char *crypt, (const char *_key, const char *_salt)		);
 #endif
 
 #endif /* _UNISTD_H */

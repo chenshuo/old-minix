@@ -10,6 +10,7 @@
 
 #include "kernel.h"
 #include "driver.h"
+#include "drvlib.h"
 #include <minix/cdrom.h>
 #include <sys/ioctl.h>
 
@@ -115,7 +116,7 @@ FORWARD _PROTOTYPE ( char *mcd_name, (void));
 FORWARD _PROTOTYPE ( struct device *mcd_prepare, (int dev));
 FORWARD _PROTOTYPE ( int mcd_schedule, (int proc_nr, struct iorequest_s *iop));
 FORWARD _PROTOTYPE ( int mcd_finish, (void));
-FORWARD _PROTOTYPE ( void mcd_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE ( void mcd_geometry, (struct partition *entry));
 
 
 /* Flags displaying current status of cdrom, used with the McdStatus variable */
@@ -1221,18 +1222,16 @@ count, n, 0, 0, 0, mcd_count);
 /*============================================================================*
  *				mcd_geometry				      *
  *============================================================================*/
-PRIVATE void mcd_geometry(chs)
-unsigned *chs;		
-
+PRIVATE void mcd_geometry(entry)
+struct partition *entry;		
 {
 /* The geometry of a cdrom doesn't look like the geometry of a regular disk,
  * so we invent a geometry to keep external programs happy.
  */ 
-  chs[0] = mcd_part[0].dv_size / (64 * 32);
-  chs[1] = 64;
-  chs[2] = 32;
+  entry->cylinders = (mcd_part[0].dv_size >> SECTOR_SHIFT) / (64 * 32);
+  entry->heads = 64;
+  entry->sectors = 32;
 }
-
 
 
 /*============================================================================*

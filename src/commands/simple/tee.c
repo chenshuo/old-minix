@@ -2,13 +2,13 @@
 
 #include <sys/types.h>
 #include <fcntl.h>
-#include <blocksize.h>
 #include <signal.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <minix/minlib.h>
 
 #define	MAXFD	18
+#define CHUNK_SIZE	4096
 
 int fd[MAXFD];
 
@@ -19,7 +19,7 @@ int argc;
 char **argv;
 {
   char iflag = 0, aflag = 0;
-  char buf[BLOCK_SIZE];
+  char buf[CHUNK_SIZE];
   int i, s, n;
 
   argv++;
@@ -56,7 +56,7 @@ char **argv;
 
   if (iflag) signal(SIGINT, SIG_IGN);
 
-  while ((n = read(0, buf, BLOCK_SIZE)) > 0) {
+  while ((n = read(0, buf, CHUNK_SIZE)) > 0) {
 	for (i = 0; i < s; i++) write(fd[i], buf, n);
   }
 

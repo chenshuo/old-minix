@@ -28,7 +28,7 @@ The valid messages and their parameters are:
 
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include <minix/callnr.h>
 #include "mq.h"
 #include "proto.h"

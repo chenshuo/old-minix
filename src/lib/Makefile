@@ -26,7 +26,6 @@ all:
 	cd stdio && $(MAKE)
 	cd syscall && $(MAKE)
 	cd syslib && $(MAKE)
-	cd termios && $(MAKE)
 	cd `arch` && $(MAKE)
 
 install:	all

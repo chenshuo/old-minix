@@ -2,12 +2,12 @@
  * accepts six message types:
  *
  *   HARD_INT:    a clock interrupt has occurred
+ *   GET_UPTIME:  get the time since boot in ticks
  *   GET_TIME:    a process wants the real time in seconds
  *   SET_TIME:    a process wants to set the real time in seconds
  *   SET_ALARM:   a process wants to be alerted after a specified interval
- *   GET_UPTIME:  get the time since boot in ticks
  *   SET_SYN_AL:  set the sync alarm
- *   
+ *
  *
  * The input message is format m6.  The parameters are as follows:
  *
@@ -15,21 +15,33 @@
  * ---------------------------------------------
  * | HARD_INT   |          |         |         |
  * |------------+----------+---------+---------|
+ * | GET_UPTIME |          |         |         |
+ * |------------+----------+---------+---------|
  * | GET_TIME   |          |         |         |
  * |------------+----------+---------+---------|
  * | SET_TIME   |          |         | newtime |
  * |------------+----------+---------+---------|
  * | SET_ALARM  | proc_nr  |f to call|  delta  |
  * |------------+----------+---------+---------|
- * | GET_UPTIME |          |         |         |
- * |------------+----------+---------+---------|
- * | SET_SYN_AL |          |         |  delta  |
+ * | SET_SYN_AL | proc_nr  |         |  delta  |
  * ---------------------------------------------
+ * NEW_TIME, DELTA_CLICKS, and SECONDS_LEFT all refer to the same field in
+ * the message, depending upon the message type.
+ *
+ * Reply messages are of type OK, except in the case of a HARD_INT, to
+ * which no reply is generated. For the GET_* messages the time is returned
+ * in the NEW_TIME field, and for the SET_ALARM and SET_SYN_AL the time
+ * in seconds remaining until the alarm is returned is returned in the same
+ * field.
  *
  * When an alarm goes off, if the caller is a user process, a SIGALRM signal
  * is sent to it.  If it is a task, a function specified by the caller will
  * be invoked.  This function may, for example, send a message, but only if
- * it is certain that the task will be blocked when the timer goes off.
+ * it is certain that the task will be blocked when the timer goes off. A
+ * synchronous alarm sends a message to the synchronous alarm task, which
+ * in turn can dispatch a message to another server. This is the only way
+ * to send an alarm to a server, since servers cannot use the function-call
+ * mechanism available to tasks and servers cannot receive signals.
  */
 
 #include "kernel.h"
@@ -59,19 +71,21 @@
 #endif
 
 /* Clock task variables. */
+PRIVATE clock_t realtime;	/* real time clock */
 PRIVATE time_t boot_time;	/* time in seconds of system boot */
 PRIVATE clock_t next_alarm;	/* probable time of next alarm */
-PRIVATE clock_t pending_ticks;	/* ticks seen by low level only */
-PRIVATE clock_t realtime;	/* real time clock */
-PRIVATE struct proc *prev_ptr;	/* last user process run by clock task */
 PRIVATE message mc;		/* message buffer for both input and output */
-PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
-
-PRIVATE int syn_al_alive= TRUE; /* don't wake syn_alrm_task before inited*/
 PRIVATE int watchdog_proc;	/* contains proc_nr at call of *watch_dog[]*/
+PRIVATE watchdog_t watch_dog[NR_TASKS+NR_PROCS];
+
+/* Variables used by both clock task and synchronous alarm task */
+PRIVATE int syn_al_alive= TRUE; /* don't wake syn_alrm_task before inited*/
 PRIVATE int syn_table[NR_TASKS+NR_PROCS]; /* which tasks get CLOCK_INT*/
 
-PRIVATE watchdog_t watch_dog[NR_TASKS+NR_PROCS];
+/* Variables changed by interrupt handler */
+PRIVATE clock_t pending_ticks;	/* ticks seen by low level only */
+PRIVATE int sched_ticks = SCHED_RATE;	/* counter: when 0, call scheduler */
+PRIVATE struct proc *prev_ptr;	/* last user process run by clock task */
 
 FORWARD _PROTOTYPE( void common_setalarm, (int proc_nr,
 		long delta_ticks, watchdog_t fuction) );
@@ -90,10 +104,12 @@ FORWARD _PROTOTYPE( int clock_handler, (int irq) );
  *===========================================================================*/
 PUBLIC void clock_task()
 {
-/* Main program of clock task.  It determines which of the 4 possible
- * calls this is by looking at 'mc.m_type'.   Then it dispatches.
+/* Main program of clock task.  It corrects realtime by adding pending
+ * ticks seen only by the interrupt service, then it determines which
+ * of the 6 possible calls this is by looking at 'mc.m_type'.  Then
+ * it dispatches.
  */
- 
+
   int opcode;
 
   init_clock();			/* initialize clock task */
@@ -110,10 +126,10 @@ PUBLIC void clock_task()
 
      switch (opcode) {
 	case HARD_INT:   do_clocktick();	break;
+	case GET_UPTIME: do_getuptime();	break;
 	case GET_TIME:	 do_get_time();		break;
 	case SET_TIME:	 do_set_time(&mc);	break;
 	case SET_ALARM:	 do_setalarm(&mc);	break;
-	case GET_UPTIME: do_getuptime();	break;
 	case SET_SYNC_AL:do_setsyn_alrm(&mc);	break;
 	default: panic("clock task got bad message", mc.m_type);
      }
@@ -130,7 +146,9 @@ PUBLIC void clock_task()
  *===========================================================================*/
 PRIVATE void do_clocktick()
 {
-/* This routine called on clock ticks when a lot of work needs to be done. */
+/* Despite its name, this routine is not called on every clock tick. It
+ * is called on those clock ticks when a lot of work needs to be done.
+ */
 
   register struct proc *rp;
   register int proc_nr;
@@ -176,6 +194,36 @@ PRIVATE void do_clocktick()
 
 
 /*===========================================================================*
+ *				do_getuptime				     *
+ *===========================================================================*/
+PRIVATE void do_getuptime()
+{
+/* Get and return the current clock uptime in ticks. */
+
+  mc.NEW_TIME = realtime;	/* current uptime */
+}
+
+
+/*===========================================================================*
+ *				get_uptime				     *
+ *===========================================================================*/
+PUBLIC clock_t get_uptime()
+{
+/* Get and return the current clock uptime in ticks.  This function is
+ * designed to be called from other tasks, so they can get uptime without
+ * the overhead of messages. It has to be careful about pending_ticks.
+ */
+
+  clock_t uptime;
+
+  lock();
+  uptime = realtime + pending_ticks;
+  unlock();
+  return(uptime);
+}
+
+
+/*===========================================================================*
  *				do_get_time				     *
  *===========================================================================*/
 PRIVATE void do_get_time()
@@ -217,7 +265,7 @@ message *m_ptr;			/* pointer to request message */
   proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
   delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
   function = (watchdog_t) m_ptr->FUNC_TO_CALL;
-  					/* function to call (tasks only) */
+					/* function to call (tasks only) */
   rp = proc_addr(proc_nr);
   mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm - realtime)/HZ );
   if (!istaskp(rp)) function= 0;	/* user processes get signaled */
@@ -231,7 +279,7 @@ message *m_ptr;			/* pointer to request message */
 PRIVATE void do_setsyn_alrm(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
-/* A process wants an synchronous alarm. 
+/* A process wants a synchronous alarm.
  */
 
   register struct proc *rp;
@@ -248,17 +296,6 @@ message *m_ptr;			/* pointer to request message */
 
 
 /*===========================================================================*
- *				do_getuptime				     *
- *===========================================================================*/
-PRIVATE void do_getuptime()
-{
-/* Get and return the current clock uptime in ticks. */
-
-  mc.NEW_TIME = realtime;	/* current uptime */
-}
-
-
-/*===========================================================================*
  *				common_setalarm				     *
  *===========================================================================*/
 PRIVATE void common_setalarm(proc_nr, delta_ticks, function)
@@ -267,7 +304,9 @@ long delta_ticks;		/* in how many clock ticks does he want it? */
 watchdog_t function;		/* function to call (0 if cause_sig is
 				 * to be called */
 {
-/* Record an alarm request and check to see it is the next alarm needed.  */
+/* Finish up work of do_set_alarm and do_setsyn_alrm.  Record an alarm
+ * request and check to see if it is the next alarm needed.
+ */
 
   register struct proc *rp;
 
@@ -284,21 +323,17 @@ watchdog_t function;		/* function to call (0 if cause_sig is
 
 
 /*===========================================================================*
- *				get_uptime				     *
+ *				cause_alarm				     *
  *===========================================================================*/
-PUBLIC clock_t get_uptime()
+PRIVATE void cause_alarm()
 {
-/* Get and return the current clock uptime in ticks.  This function is
- * designed to be called from other tasks, so it has to be careful about
- * pending_ticks.
+/* Routine called if a timer goes off and the process requested a synchronous
+ * alarm. The process number is in the global variable watchdog_proc (HACK).
  */
+  message mess;
 
-  clock_t uptime;
-
-  lock();
-  uptime = realtime + pending_ticks;
-  unlock();
-  return(uptime);
+  syn_table[watchdog_proc + NR_TASKS]= TRUE;
+  if (!syn_al_alive) send (SYN_ALRM_TASK, &mess);
 }
 
 
@@ -307,10 +342,15 @@ PUBLIC clock_t get_uptime()
  *===========================================================================*/
 PUBLIC void syn_alrm_task()
 {
-/* Main program of syn_alrm task.  It sends CLOCK_INT messages to process that
- * requested a syn_alrm.
+/* Main program of the synchronous alarm task.
+ * This task receives messages only from cause_alarm in the clock task.
+ * It sends a CLOCK_INT message to a process that requested a syn_alrm.
+ * Synchronous alarms are so called because, unlike a signals or the
+ * activation of a watchdog, a synchronous alarm is received by a process
+ * when it is in a known part of its code, that is, when it has issued
+ * a call to receive a message.
  */
- 
+
   message mess;
   int work_done;	/* ready to sleep ? */
   int *al_ptr;		/* pointer in syn_table */
@@ -326,7 +366,7 @@ PUBLIC void syn_alrm_task()
 		if (*al_ptr) {
 			*al_ptr= FALSE;
 			mess.m_type= CLOCK_INT;
-			send (i-NR_TASKS, &mess); 
+			send (i-NR_TASKS, &mess);
 			work_done= FALSE;
 		}
 	if (work_done) {
@@ -339,137 +379,16 @@ PUBLIC void syn_alrm_task()
 
 
 /*===========================================================================*
- *				cause_alarm				     *
- *===========================================================================*/
-PRIVATE void cause_alarm()
-{
-/* Routine called if a timer goes off and the process requested a synchronous
- * alarm. The process number is in the global variable watchdog_proc (HACK).
- */
-  message mess;
-
-  syn_table[watchdog_proc + NR_TASKS]= TRUE;
-  if (!syn_al_alive) send (SYN_ALRM_TASK, &mess);
-}
-#if (CHIP == INTEL)
-
-
-/*===========================================================================*
- *				init_clock				     *
- *===========================================================================*/
-PRIVATE void init_clock()
-{
-/* Initialize channel 0 of the 8253A timer to e.g. 60 Hz. */
-
-  out_byte(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
-  out_byte(TIMER0, TIMER_COUNT);	/* load timer low byte */
-  out_byte(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
-  put_irq_handler(CLOCK_IRQ, clock_handler);	/* set the interrupt handler */
-  enable_irq(CLOCK_IRQ);		/* ready for clock interrupts */
-}
-
-
-/*===========================================================================*
- *				clock_stop				     *
- *===========================================================================*/
-PUBLIC void clock_stop()
-{
-/* Reset the clock to the BIOS rate. */
-
-  out_byte(TIMER_MODE, 0x36);
-  out_byte(TIMER0, 0);
-  out_byte(TIMER0, 0);
-}
-
-
-/*==========================================================================*
- *				milli_start				    *
- *==========================================================================*/
-PUBLIC void milli_start(msp)
-struct milli_state *msp;
-{
-/* Prepare for calls to milli_elapsed(). */
-
-  msp->prev_count = 0;
-  msp->accum_count = 0;
-}
-
-
-/*==========================================================================*
- *				milli_elapsed				    *
- *==========================================================================*/
-PUBLIC unsigned milli_elapsed(msp)
-struct milli_state *msp;
-{
-/* Return the number of milliseconds since the call to milli_start().  Must be
- * polled rapidly.
- */
-  unsigned count;
-
-  /* Read the counter for channel 0 of the 8253A timer.  The counter
-   * decrements at twice the timer frequency (one full cycle for each
-   * half of square wave).  The counter normally has a value between 0
-   * and TIMER_COUNT, but before the clock task has been initialized,
-   * its maximum value is 65535, as set by the BIOS.
-   */
-  out_byte(TIMER_MODE, LATCH_COUNT);	/* make chip copy count to latch */
-  count = in_byte(TIMER0);	/* countdown continues during 2-step read */
-  count |= in_byte(TIMER0) << 8;
-
-  /* Add difference between previous and new count unless the counter has
-   * increased (restarted its cycle).  We may lose a tick now and then, but
-   * microsecond precision is not needed.
-   */
-  msp->accum_count += count <= msp->prev_count ? (msp->prev_count - count) : 1;
-  msp->prev_count = count;
-
-  return msp->accum_count / (TIMER_FREQ / 1000);
-}
-
-
-/*==========================================================================*
- *				milli_delay				    *
- *==========================================================================*/
-PUBLIC void milli_delay(millisec)
-unsigned millisec;
-{
-/* Delay some milliseconds. */
-
-  struct milli_state ms;
-
-  milli_start(&ms);
-  while (milli_elapsed(&ms) < millisec) {}
-}
-#endif
-
-#if (CHIP == M68000)
-#include "staddr.h"
-#include "stmfp.h"
-
-/*===========================================================================*
- *				init_clock				     *
- *===========================================================================*/
-PRIVATE void init_clock()
-{
-/* Initialize the timer C in the MFP 68901.
- * Reducing to HZ is not possible by hardware.  The resulting interrupt
- * rate is further reduced by software with a factor of 4.
- * Note that the expression below works for both HZ=50 and HZ=60.
- */
-  do {
-	MFP->mf_tcdr = TIMER_FREQ/(64*4*HZ);
-  } while ((MFP->mf_tcdr & 0xFF) != TIMER_FREQ/(64*4*HZ));
-  MFP->mf_tcdcr |= (T_Q064<<4);
-}
-#endif
-
-/*===========================================================================*
  *				clock_handler				     *
  *===========================================================================*/
 PRIVATE int clock_handler(irq)
 int irq;
 {
-/* Switch context to do_clocktick if an alarm has gone off.
+/* This executes on every clock tick (i.e., every time the timer chip
+ * generates an interrupt). It does a little bit of work so the clock
+ * task does not have to be called on every tick.
+ *
+ * Switch context to do_clocktick if an alarm has gone off.
  * Also switch there to reschedule if the reschedule will do something.
  * This happens when
  *	(1) quantum has expired
@@ -516,6 +435,7 @@ int irq;
 
   register struct proc *rp;
   register unsigned ticks;
+  clock_t now;
 
   if (ps_mca) {
 	/* Acknowledge the PS/2 clock interrupt. */
@@ -538,16 +458,17 @@ int irq;
   if (rp != bill_ptr && rp != proc_addr(IDLE)) bill_ptr->sys_time += ticks;
 
   pending_ticks += ticks;
-  tty_wakeup();			/* possibly wake up TTY */
+  now = realtime + pending_ticks;
+  if (tty_timeout <= now) tty_wakeup(now);	/* possibly wake up TTY */
 #if (CHIP != M68000)
-  pr_restart();			/* possibly restart printer */
+  pr_restart();					/* possibly restart printer */
 #endif
 #if (CHIP == M68000)
-  kb_timer();			/* keyboard repeat */
-  if (sched_ticks == 1) fd_timer();	/* floppy deselect */
+  kb_timer();					/* keyboard repeat */
+  if (sched_ticks == 1) fd_timer();		/* floppy deselect */
 #endif
 
-  if (next_alarm <= realtime + pending_ticks ||
+  if (next_alarm <= now ||
       sched_ticks == 1 &&
       bill_ptr == prev_ptr &&
 #if (SHADOWING == 0)
@@ -566,3 +487,114 @@ int irq;
   }
   return 1;	/* Reenable clock interrupt */
 }
+
+#if (CHIP == INTEL)
+
+/*===========================================================================*
+ *				init_clock				     *
+ *===========================================================================*/
+PRIVATE void init_clock()
+{
+/* Initialize channel 0 of the 8253A timer to e.g. 60 Hz. */
+
+  out_byte(TIMER_MODE, SQUARE_WAVE);	/* set timer to run continuously */
+  out_byte(TIMER0, TIMER_COUNT);	/* load timer low byte */
+  out_byte(TIMER0, TIMER_COUNT >> 8);	/* load timer high byte */
+  put_irq_handler(CLOCK_IRQ, clock_handler);	/* set the interrupt handler */
+  enable_irq(CLOCK_IRQ);		/* ready for clock interrupts */
+}
+
+
+/*===========================================================================*
+ *				clock_stop				     *
+ *===========================================================================*/
+PUBLIC void clock_stop()
+{
+/* Reset the clock to the BIOS rate. (For rebooting) */
+
+  out_byte(TIMER_MODE, 0x36);
+  out_byte(TIMER0, 0);
+  out_byte(TIMER0, 0);
+}
+
+
+/*==========================================================================*
+ *				milli_delay				    *
+ *==========================================================================*/
+PUBLIC void milli_delay(millisec)
+unsigned millisec;
+{
+/* Delay some milliseconds. */
+
+  struct milli_state ms;
+
+  milli_start(&ms);
+  while (milli_elapsed(&ms) < millisec) {}
+}
+
+/*==========================================================================*
+ *				milli_start				    *
+ *==========================================================================*/
+PUBLIC void milli_start(msp)
+struct milli_state *msp;
+{
+/* Prepare for calls to milli_elapsed(). */
+
+  msp->prev_count = 0;
+  msp->accum_count = 0;
+}
+
+
+/*==========================================================================*
+ *				milli_elapsed				    *
+ *==========================================================================*/
+PUBLIC unsigned milli_elapsed(msp)
+struct milli_state *msp;
+{
+/* Return the number of milliseconds since the call to milli_start().  Must be
+ * polled rapidly.
+ */
+  unsigned count;
+
+  /* Read the counter for channel 0 of the 8253A timer.  The counter
+   * decrements at twice the timer frequency (one full cycle for each
+   * half of square wave).  The counter normally has a value between 0
+   * and TIMER_COUNT, but before the clock task has been initialized,
+   * its maximum value is 65535, as set by the BIOS.
+   */
+  out_byte(TIMER_MODE, LATCH_COUNT);	/* make chip copy count to latch */
+  count = in_byte(TIMER0);	/* countdown continues during 2-step read */
+  count |= in_byte(TIMER0) << 8;
+
+  /* Add difference between previous and new count unless the counter has
+   * increased (restarted its cycle).  We may lose a tick now and then, but
+   * microsecond precision is not needed.
+   */
+  msp->accum_count += count <= msp->prev_count ? (msp->prev_count - count) : 1;
+  msp->prev_count = count;
+
+  return msp->accum_count / (TIMER_FREQ / 1000);
+}
+#endif /* (CHIP == INTEL) */
+
+
+#if (CHIP == M68000)
+#include "staddr.h"
+#include "stmfp.h"
+
+/*===========================================================================*
+ *				init_clock				     *
+ *===========================================================================*/
+PRIVATE void init_clock()
+{
+/* Initialize the timer C in the MFP 68901.
+ * Reducing to HZ is not possible by hardware.  The resulting interrupt
+ * rate is further reduced by software with a factor of 4.
+ * Note that the expression below works for both HZ=50 and HZ=60.
+ */
+  do {
+	MFP->mf_tcdr = TIMER_FREQ/(64*4*HZ);
+  } while ((MFP->mf_tcdr & 0xFF) != TIMER_FREQ/(64*4*HZ));
+  MFP->mf_tcdcr |= (T_Q064<<4);
+}
+#endif /* (CHIP == M68000) */

@@ -21,6 +21,8 @@ _PROTOTYPE( void stack_fault, (int proc_nr)				);
 
 /* exec.c */
 _PROTOTYPE( int do_exec, (void)						);
+_PROTOTYPE( struct mproc *find_share, (struct mproc *mp_ign, Ino_t ino,
+			Dev_t dev, time_t ctime)			);
 
 /* forkexit.c */
 _PROTOTYPE( int do_fork, (void)						);
@@ -48,8 +50,11 @@ _PROTOTYPE( int do_alarm, (void)					);
 _PROTOTYPE( int do_kill, (void)						);
 _PROTOTYPE( int do_ksig, (void)						);
 _PROTOTYPE( int do_pause, (void)					);
+#if ENABLE_COMPAT
 _PROTOTYPE( int do_signal, (void)					);
+#endif
 _PROTOTYPE( int set_alarm, (int proc_nr, int sec)			);
+_PROTOTYPE( int check_sig, (pid_t proc_id, int signo)			);
 _PROTOTYPE( void sig_proc, (struct mproc *rmp, int sig_nr)		);
 _PROTOTYPE( int do_sigaction, (void)					);
 _PROTOTYPE( int do_sigpending, (void)					);

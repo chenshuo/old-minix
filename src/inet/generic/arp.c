@@ -2,7 +2,7 @@
 arp.c
 */
 
-#include "nw_task.h"
+#include "inet.h"
 
 #include "arp.h"
 #include "assert.h"

@@ -22,7 +22,6 @@
 
 #include <minix/const.h>
 #include <minix/type.h>
-#include <blocksize.h>
 #include "../../fs/const.h"
 #include "../../fs/type.h"
 #include "../../fs/inode.h"

@@ -29,8 +29,8 @@ OBJECTS	= \
 	$(LIBRARY)(getlogin.o) \
 	$(LIBRARY)(getopt.o) \
 	$(LIBRARY)(getpass.o) \
-	$(LIBRARY)(getpw.o) \
 	$(LIBRARY)(getpwent.o) \
+	$(LIBRARY)(getttyent.o) \
 	$(LIBRARY)(getw.o) \
 	$(LIBRARY)(hypot.o) \
 	$(LIBRARY)(itoa.o) \
@@ -55,6 +55,7 @@ OBJECTS	= \
 	$(LIBRARY)(telldir.o) \
 	$(LIBRARY)(termcap.o) \
 	$(LIBRARY)(ttyname.o) \
+	$(LIBRARY)(ttyslot.o) \
 
 $(LIBRARY):	$(OBJECTS)
 	aal cr $@ *.o
@@ -126,11 +127,11 @@ $(LIBRARY)(getopt.o):	getopt.c
 $(LIBRARY)(getpass.o):	getpass.c
 	$(CC1) getpass.c
 
-$(LIBRARY)(getpw.o):	getpw.c
-	$(CC1) getpw.c
-
 $(LIBRARY)(getpwent.o):	getpwent.c
 	$(CC1) getpwent.c
+
+$(LIBRARY)(getttyent.o):	getttyent.c
+	$(CC1) getttyent.c
 
 $(LIBRARY)(getw.o):	getw.c
 	$(CC1) getw.c
@@ -212,3 +213,6 @@ $(LIBRARY)(termcap.o):	termcap.c
 
 $(LIBRARY)(ttyname.o):	ttyname.c
 	$(CC1) ttyname.c
+
+$(LIBRARY)(ttyslot.o):	ttyslot.c
+	$(CC1) ttyslot.c

@@ -26,6 +26,7 @@
  */
 #include "kernel.h"
 #include "driver.h"
+#include "drvlib.h"
 
 #if ENABLE_ESDI_WINI
 
@@ -128,7 +129,7 @@ FORWARD _PROTOTYPE( int w_att_write, (int value) );
 FORWARD _PROTOTYPE( void w_interrupt, (int dma) );
 FORWARD _PROTOTYPE( int w_handler, (int irq) );
 FORWARD _PROTOTYPE( void w_dma_setup, (struct trans *tp, unsigned count) );
-FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
+FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
 
 
 /* Entry points to this driver. */
@@ -700,11 +701,11 @@ unsigned int count;
 /*============================================================================*
  *				w_geometry				      *
  *============================================================================*/
-PRIVATE void w_geometry(chs)
-unsigned *chs;			/* {cylinder, head, sector} */
+PRIVATE void w_geometry(entry)
+struct partition *entry;
 {
-  chs[0] = (w_wn->part[0].dv_size >> SECTOR_SHIFT) / (64 * 32);
-  chs[1] = 64;
-  chs[2] = 32;
+  entry->cylinders = (w_wn->part[0].dv_size >> SECTOR_SHIFT) / (64 * 32);
+  entry->heads = 64;
+  entry->sectors = 32;
 }
 #endif /* ENABLE_ESDI_WINI */

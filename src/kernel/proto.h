@@ -6,7 +6,7 @@
 /* Struct declarations. */
 struct dpeth;
 struct proc;
-struct tty_struct;
+struct tty;
 
 /* at_wini.c, bios_wini.c, esdi_wini.c, ps_wini.c, xt_wini.c, wini.c */
 _PROTOTYPE( void winchester_task, (void)				);
@@ -26,12 +26,9 @@ _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
 /* dmp.c */
-_PROTOTYPE( void fork_name, (int p1, int p2)				);
 _PROTOTYPE( void map_dmp, (void)					);
-_PROTOTYPE( void mem_dmp, (char *adr, int len)				);
 _PROTOTYPE( void p_dmp, (void)						);
 _PROTOTYPE( void reg_dmp, (struct proc *rp)				);
-_PROTOTYPE( void set_name, (int source_nr, int proc_nr, char *ptr)	);
 
 /* dp8390.c */
 _PROTOTYPE( void dp8390_task, (void)					);
@@ -71,18 +68,7 @@ _PROTOTYPE( int sys_call, (int function, int src_dest, message *m_ptr)	);
 _PROTOTYPE( void unhold, (void)						);
 
 /* rs232.c */
-_PROTOTYPE( void rs_inhibit, (int minor, int inhibit)			);
-_PROTOTYPE( int rs_init, (int minor)					);
-_PROTOTYPE( int rs_ioctl, (int minor, int mode, int speeds)		);
-_PROTOTYPE( int rs_read, (int minor, char **bufindirect,
-		unsigned char *odoneindirect)				);
-_PROTOTYPE( int rs_hangup, (int minor)					);
-_PROTOTYPE( int rs_dcd, (int minor)					);
-_PROTOTYPE( void rs_istart, (int minor)					);
-_PROTOTYPE( void rs_istop, (int minor)					);
-_PROTOTYPE( void rs_ocancel, (int minor)				);
-_PROTOTYPE( void rs_setc, (int minor, int xoff)				);
-_PROTOTYPE( void rs_write, (int minor, char *buf, int nbytes)		);
+_PROTOTYPE( void rs_init, (struct tty *tp)				);
 
 /* sb16_dsp.c */
 _PROTOTYPE( void dsp_task, (void)					);
@@ -100,10 +86,16 @@ _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
 
 /* tty.c */
-_PROTOTYPE( void finish, (struct tty_struct *tp, int code)		);
-_PROTOTYPE( void sigchar, (struct tty_struct *tp, int sig)		);
+_PROTOTYPE( void handle_events, (struct tty *tp)			);
+_PROTOTYPE( void sigchar, (struct tty *tp, int sig)			);
 _PROTOTYPE( void tty_task, (void)					);
-_PROTOTYPE( void tty_wakeup, (void)					);
+_PROTOTYPE( int in_process, (struct tty *tp, char *buf, int count)	);
+_PROTOTYPE( void out_process, (struct tty *tp, char *bstart, char *bpos,
+				char *bend, int *icount, int *ocount)	);
+_PROTOTYPE( void tty_wakeup, (clock_t now)				);
+_PROTOTYPE( void tty_reply, (int code, int replyee, int proc_nr,
+							int status)	);
+_PROTOTYPE( void tty_devnop, (struct tty *tp)				);
 
 /* library */
 _PROTOTYPE( void *memcpy, (void *_s1, const void *_s2, size_t _n)	);
@@ -117,13 +109,10 @@ _PROTOTYPE( void milli_delay, (unsigned millisec)			);
 
 /* console.c */
 _PROTOTYPE( void cons_stop, (void)					);
-_PROTOTYPE( void console, (struct tty_struct *tp)			);
-_PROTOTYPE( void flush, (struct tty_struct *tp)				);
-_PROTOTYPE( void out_char, (struct tty_struct *tp, int c)		);
 _PROTOTYPE( void putk, (int c)						);
-_PROTOTYPE( void scr_init, (int minor)					);
+_PROTOTYPE( void scr_init, (struct tty *tp)				);
 _PROTOTYPE( void toggle_scroll, (void)					);
-_PROTOTYPE( int con_loadfont, (int proc_nr, vir_bytes font_vir)		);
+_PROTOTYPE( int con_loadfont, (phys_bytes user_phys)			);
 
 /* cstart.c */
 _PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mcs, U16_t mds,
@@ -136,17 +125,12 @@ _PROTOTYPE( void exception, (unsigned vec_nr)				);
 /* i8259.c */
 _PROTOTYPE( irq_handler_t get_irq_handler, (int irq)			);
 _PROTOTYPE( void put_irq_handler, (int irq, irq_handler_t handler)	);
-_PROTOTYPE( void init_8259, (unsigned master_base, unsigned slave_base)	);
+_PROTOTYPE( void intr_init, (int mine)					);
 
 /* keyboard.c */
-_PROTOTYPE( int func_key, (int ch)					);
-_PROTOTYPE( void kb_init, (int minor)					);
-_PROTOTYPE( int kbd_loadmap, (int proc_nr, vir_bytes map_vir)		);
-_PROTOTYPE( int kb_read, (int minor, char **bufindirect,
-		unsigned char *odoneindirect)				);
-_PROTOTYPE( int letter_code, (int scode)				);
-_PROTOTYPE( int make_break, (int ch)					);
-_PROTOTYPE( void wreboot, (int how)						);
+_PROTOTYPE( void kb_init, (struct tty *tp)				);
+_PROTOTYPE( int kbd_loadmap, (phys_bytes user_phys)			);
+_PROTOTYPE( void wreboot, (int how)					);
 
 /* klib*.s */
 _PROTOTYPE( void bios13, (void)						);
@@ -174,12 +158,8 @@ _PROTOTYPE( void port_write, (unsigned port, phys_bytes source,
 _PROTOTYPE( void port_write_byte, (unsigned port, phys_bytes source,
 		unsigned bytcount)					);
 _PROTOTYPE( void reset, (void)						);
-_PROTOTYPE( void scr_down, (unsigned videoseg, int source,int dest,int count));
-_PROTOTYPE( void scr_up, (unsigned videoseg, int source, int dest, int count));
-_PROTOTYPE( int test_and_set, (int *flag)				);
-_PROTOTYPE( void vid_copy, (char *buffer, unsigned videobase,
-		int offset, int words)					);
-_PROTOTYPE( void wait_retrace, (void)					);
+_PROTOTYPE( void vid_vid_copy, (unsigned src, unsigned dst, unsigned count));
+_PROTOTYPE( void mem_vid_copy, (u16_t *src, unsigned dst, unsigned count));
 _PROTOTYPE( void level0, (void (*func)(void))				);
 _PROTOTYPE( void monitor, (void)					);
 
@@ -245,9 +225,12 @@ _PROTOTYPE( void init_codeseg, (struct segdesc_s *segdp, phys_bytes base,
 		phys_bytes size, int privilege)				);
 _PROTOTYPE( void init_dataseg, (struct segdesc_s *segdp, phys_bytes base,
 		phys_bytes size, int privilege)				);
-_PROTOTYPE( void ldt_init, (void)					);
-_PROTOTYPE( phys_bytes seg2phys, (U16_t seg)					);
+_PROTOTYPE( phys_bytes seg2phys, (U16_t seg)				);
 _PROTOTYPE( void enable_iop, (struct proc *pp)				);
+
+/* pty.c */
+_PROTOTYPE( void do_pty, (struct tty *tp, message *m_ptr)		);
+_PROTOTYPE( void pty_init, (struct tty *tp)				);
 
 /* system.c */
 _PROTOTYPE( void alloc_segments, (struct proc *rp)			);
@@ -271,7 +254,7 @@ _PROTOTYPE( void rupt, (void)						);
 _PROTOTYPE( void trap, (void)						);
 _PROTOTYPE( void checksp, (void)					);
 _PROTOTYPE( void aciaint, (void)					);
-_PROTOTYPE( void fake_int, (const char *s, int t)				);
+_PROTOTYPE( void fake_int, (const char *s, int t)			);
 _PROTOTYPE( void timint, (int t)					);
 _PROTOTYPE( void mdiint, (void)						);
 _PROTOTYPE( void iob, (int t)						);
@@ -302,9 +285,8 @@ _PROTOTYPE( int do_xbms, (phys_bytes address, int count, int rw, int minor) );
 /* stkbd.c */
 _PROTOTYPE( void kbdint, (void)						);
 _PROTOTYPE( void kb_timer, (void)					);
-_PROTOTYPE( int kb_read, (int minor, char **bufindirect,
-		unsigned char *odoneindirect)				);
-_PROTOTYPE( void kbdinit, (int minor)					);
+_PROTOTYPE( int kb_read, (int minor, char **bufindirect)		);
+_PROTOTYPE( void kb_init, (int minor)					);
 
 /* stshadow.c */
 _PROTOTYPE( void mkshadow, (struct proc *p, phys_clicks c2)		);
@@ -313,11 +295,11 @@ _PROTOTYPE( void rmshadow, (struct proc *p, phys_clicks *basep,
 _PROTOTYPE( void unshadow, (struct proc *p)				);
  
 /* stvdu.c */
-_PROTOTYPE( void flush, (struct tty_struct *tp)				);
-_PROTOTYPE( void console, (struct tty_struct *tp)			);
-_PROTOTYPE( void out_char, (struct tty_struct *tp, int c)		);
-_PROTOTYPE( void vduinit, (struct tty_struct *tp)			);
-_PROTOTYPE( void vduswitch, (struct tty_struct *tp)			);
+_PROTOTYPE( void flush, (struct tty *tp)				);
+_PROTOTYPE( void console, (struct tty *tp)				);
+_PROTOTYPE( void out_char, (struct tty *tp, int c)			);
+_PROTOTYPE( void scr_init, (int minor)					);
+_PROTOTYPE( void vduswitch, (struct tty *tp)				);
 _PROTOTYPE( void vdusetup, (unsigned int vres, char *vram,
 			    unsigned short *vrgb)			);
 _PROTOTYPE( void vbl, (void)						);
@@ -362,7 +344,7 @@ _PROTOTYPE( void unlock, (void)						);
 _PROTOTYPE( void restore, (int oldsr)					);
 _PROTOTYPE( void reboot, (void)						);
 _PROTOTYPE( int test_and_set, (char *flag)				);
-_PROTOTYPE( unsigned long get_mem_size, (char *start_addr)			);
+_PROTOTYPE( unsigned long get_mem_size, (char *start_addr)		);
 
 /* stprint.c */
 #ifdef DEBOUT

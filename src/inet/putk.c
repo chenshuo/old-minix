@@ -3,7 +3,7 @@
  * Printing is done by calling the TTY task directly, not going through FS.
  */
 
-#include "nw_task.h"
+#include "inet.h"
 
 #define BUF_SIZE          100	/* print buffer size */
 
@@ -11,7 +11,7 @@ PRIVATE int buf_count;		/* # characters in the buffer */
 PRIVATE char print_buf[BUF_SIZE];	/* output is buffered here */
 PRIVATE message putch_msg;	/* used for message to TTY task */
 
-FORWARD _PROTOTYPE (void F_l_u_s_h, (void) );
+FORWARD _PROTOTYPE (void flush, (void) );
 _PROTOTYPE (void putk, (int c) );
 
 
@@ -21,19 +21,18 @@ _PROTOTYPE (void putk, (int c) );
 PUBLIC void putk(c)
 int c;
 {
+/* Accumulate another character.  If 0 or buffer full, print it. */
 
-  /* Accumulate another character.  If '\n' or buffer full, print it. */
-  if (c == '\n')
-	  print_buf[buf_count++] = '\r';
-  print_buf[buf_count++] = c;
-  if (c == '\n' || buf_count >= BUF_SIZE-1) F_l_u_s_h();
+  if (c == 0 || buf_count == BUF_SIZE) flush();
+  if (c == '\n') putk('\r');
+  if (c != 0) print_buf[buf_count++] = c;
 }
 
 
 /*===========================================================================*
- *				F_l_u_s_h				     *
+ *				flush					     *
  *===========================================================================*/
-PRIVATE void F_l_u_s_h()
+PRIVATE void flush()
 {
 /* Flush the print buffer by calling TTY task. */
 

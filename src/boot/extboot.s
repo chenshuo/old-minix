@@ -1,4 +1,4 @@
-!	extboot 1.0 - Extended partition boot code	Author: Kees J. Bot
+!	extboot 1.1 - Extended partition boot code	Author: Kees J. Bot
 !								13 May 1995
 !
 ! This code may be placed into any free boot sector, like the first sector
@@ -14,7 +14,7 @@
 	PENTRYSIZE =	    16	! Size of one partition table entry
 	MAGIC	   =	   510	! Location of the AA55 magic number
 
-	! minix/partition.h:
+	! <ibm/partition.h>:
 	EXT_PART   =	     5
 	bootind	   =	     0
 	sysind	   =	     4

@@ -1,128 +1,143 @@
-/* get entry from password file
+/*	getpwent(), getpwuid(), getpwnam() - password file routines
  *
- * By Patrick van Kleef
- *
- * James R. Stuhlmacher  Nov. 1989
- *  - Modified for POSIX conformance.
+ *							Author: Kees J. Bot
+ *								31 Jan 1994
  */
-
-#include <lib.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
+#define nil 0
+#define open _open
+#define fcntl _fcntl
+#define read _read
+#define close _close
+#include <sys/types.h>
 #include <pwd.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-#define BUFFERSIZE 1024
-#define PWBUFSIZE 256
+#define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
+#define arraylimit(a)	((a) + arraysize(a))
 
-PRIVATE char _pw_file[] = "/etc/passwd";
-PRIVATE char _pwbuf[PWBUFSIZE];
-PRIVATE char _buffer[BUFFERSIZE];
-PRIVATE char *_pnt;
-PRIVATE char *_buf;
-PRIVATE int _pw = -1;
-PRIVATE int _bufcnt;
-PRIVATE struct passwd _pwd;
+static char PASSWD[]= "/etc/passwd";	/* The password file. */
+static const char *pwfile;		/* Current password file. */
 
-PRIVATE _PROTOTYPE( int getline, (void)		);
-PRIVATE _PROTOTYPE( void skip_period, (void)	);
+static char buf[1024];			/* Read buffer. */
+static char pwline[256];		/* One line from the password file. */
+static struct passwd entry;		/* Entry to fill and return. */
+static int pwfd= -1;			/* Filedescriptor to the file. */
+static char *bufptr;			/* Place in buf. */
+static ssize_t buflen= 0;		/* Remaining characters in buf. */
+static char *lineptr;			/* Place in the line. */
 
-PUBLIC int setpwent()
+void endpwent(void)
+/* Close the password file. */
 {
-  if (_pw >= 0)
-	lseek(_pw, (off_t) 0, SEEK_SET);
-  else
-	_pw = open(_pw_file, O_RDONLY);
-
-  _bufcnt = 0;
-  return(_pw);
-}
-
-
-PUBLIC void endpwent()
-{
-  if (_pw >= 0) close(_pw);
-
-  _pw = -1;
-  _bufcnt = 0;
-}
-
-PRIVATE int getline()
-{
-  if (_pw < 0 && setpwent() < 0) return(0);
-  _buf = _pwbuf;
-  do {
-	if (--_bufcnt <= 0) {
-		if ((_bufcnt = read(_pw, _buffer, BUFFERSIZE)) <= 0)
-			return(0);
-		else
-			_pnt = _buffer;
+	if (pwfd >= 0) {
+		(void) close(pwfd);
+		pwfd= -1;
+		buflen= 0;
 	}
-	*_buf++ = *_pnt++;
-  } while (*_pnt != '\n' && _buf < _pwbuf + PWBUFSIZE - 1);
-  _pnt++;
-  _bufcnt--;
-  *_buf = '\0';
-  _buf = _pwbuf;
-  return(1);
 }
 
-PRIVATE void skip_period()
+int setpwent(void)
+/* Open the password file. */
 {
-  while (*_buf != ':') _buf++;
+	if (pwfd >= 0) endpwent();
 
-  *_buf++ = '\0';
+	if (pwfile == nil) pwfile= PASSWD;
+
+	if ((pwfd= open(pwfile, O_RDONLY)) < 0) return -1;
+	(void) fcntl(pwfd, F_SETFD, fcntl(pwfd, F_GETFD) | FD_CLOEXEC);
+	return 0;
 }
 
-PUBLIC struct passwd *getpwent()
+void setpwfile(const char *file)
+/* Prepare for reading an alternate password file. */
 {
-  if (getline() == 0) return((struct passwd *)NULL);
-
-  _pwd.pw_name = _buf;
-  skip_period();
-  _pwd.pw_passwd = _buf;
-  skip_period();
-  _pwd.pw_uid = (uid_t) atoi(_buf);
-  skip_period();
-  _pwd.pw_gid = (gid_t) atoi(_buf);
-  skip_period();
-  _pwd.pw_gecos = _buf;
-  skip_period();
-  _pwd.pw_dir = _buf;
-  skip_period();
-  _pwd.pw_shell = _buf;
-
-  return(&_pwd);
+	endpwent();
+	pwfile= file;
 }
 
-PUBLIC struct passwd *getpwnam(__name)
-_CONST char *__name;
+static int getline(void)
+/* Get one line from the password file, return 0 if bad or EOF. */
 {
-  struct passwd *pwd;
+	lineptr= pwline;
 
-  setpwent();
-  while ((pwd = getpwent()) != 0)
-	if (!strcmp(pwd->pw_name, __name)) break;
-  endpwent();
-  if (pwd != 0)
-	return(pwd);
-  else
-	return((struct passwd *)NULL);
+	do {
+		if (buflen == 0) {
+			if ((buflen= read(pwfd, buf, sizeof(buf))) <= 0)
+				return 0;
+			bufptr= buf;
+		}
+
+		if (lineptr == arraylimit(pwline)) return 0;
+		buflen--;
+	} while ((*lineptr++ = *bufptr++) != '\n');
+
+	lineptr= pwline;
+	return 1;
 }
 
-PUBLIC struct passwd *getpwuid(__uid)
-int __uid;
+static char *scan_colon(void)
+/* Scan for a field separator in a line, return the start of the field. */
 {
-  struct passwd *pwd;
+	char *field= lineptr;
+	char *last;
 
-  setpwent();
-  while ((pwd = getpwent()) != 0)
-	if (pwd->pw_uid == __uid) break;
-  endpwent();
-  if (pwd != 0)
-	return(pwd);
-  else
-	return((struct passwd *)NULL);
+	for (;;) {
+		last= lineptr;
+		if (*lineptr == 0) return nil;
+		if (*lineptr == '\n') break;
+		if (*lineptr++ == ':') break;
+	}
+	*last= 0;
+	return field;
+}
+
+struct passwd *getpwent(void)
+/* Read one entry from the password file. */
+{
+	char *p;
+
+	/* Open the file if not yet open. */
+	if (pwfd < 0 && setpwent() < 0) return nil;
+
+	/* Until a good line is read. */
+	for (;;) {
+		if (!getline()) return nil;	/* EOF or corrupt. */
+
+		if ((entry.pw_name= scan_colon()) == nil) continue;
+		if ((entry.pw_passwd= scan_colon()) == nil) continue;
+		if ((p= scan_colon()) == nil) continue;
+		entry.pw_uid= strtol(p, nil, 0);
+		if ((p= scan_colon()) == nil) continue;
+		entry.pw_gid= strtol(p, nil, 0);
+		if ((entry.pw_gecos= scan_colon()) == nil) continue;
+		if ((entry.pw_dir= scan_colon()) == nil) continue;
+		if ((entry.pw_shell= scan_colon()) == nil) continue;
+
+		if (*lineptr == 0) return &entry;
+	}
+}
+
+struct passwd *getpwuid(Uid_t uid)
+/* Return the password file entry belonging to the user-id. */
+{
+	struct passwd *pw;
+
+	endpwent();
+	while ((pw= getpwent()) != nil && pw->pw_uid != uid) {}
+	endpwent();
+	return pw;
+}
+
+struct passwd *getpwnam(const char *name)
+/* Return the password file entry belonging to the user name. */
+{
+	struct passwd *pw;
+
+	endpwent();
+	while ((pw= getpwent()) != nil && strcmp(pw->pw_name, name) != 0) {}
+	endpwent();
+	return pw;
 }

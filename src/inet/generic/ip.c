@@ -2,7 +2,7 @@
 ip.c
 */
 
-#include "nw_task.h"
+#include "inet.h"
 #include "buf.h"
 #include "type.h"
 

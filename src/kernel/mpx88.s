@@ -104,7 +104,6 @@
 .extern	_pc_at
 .extern	_proc_ptr
 .extern	_protected_mode
-.extern	_ps
 .extern	_ps_mca
 .extern	_irq_table
 
@@ -479,8 +478,7 @@ over_call_unhold:
 	push	DSREG(si)
 	mov	si,SIREG(si)
 	pop	ds
-	nop			! helps debugger emulate iret - else pop skips
-	iret			! return to user or task
+	iret
 
 restart1:
 	decb	_k_reenter
@@ -498,9 +496,9 @@ restart1:
 
 
 !*===========================================================================*
-!*				idle					     *
+!*				idle_task				     *
 !*===========================================================================*
-_idle_task:			! executed when there is no work 
+_idle_task:			! executed when there is no work
 	jmp	_idle_task	! a "hlt" before this fails in protected mode
 
 
@@ -623,10 +621,6 @@ _general_protection:
 	push	#PROTECTION_VECTOR
 	jmp	errexception
 
-_level0_call:
-	call	save
-	jmp	@_level0_func
-
 
 !*===========================================================================*
 !*				p_exception				     *
@@ -736,6 +730,14 @@ p1_restart:
 	popa
 	add	sp,#2		! skip return adr
 	iret			! continue process
+
+
+!*===========================================================================*
+!*				level0_call				     *
+!*===========================================================================*
+_level0_call:
+	call	save
+	jmp	@_level0_func
 
 
 !*===========================================================================*

@@ -22,6 +22,7 @@ _PROTOTYPE( struct group *getgrnam, (const char *_name)			);
 _PROTOTYPE( void endgrent, (void)					);
 _PROTOTYPE( struct group *getgrent, (void)				);
 _PROTOTYPE( int setgrent, (void)					);
+_PROTOTYPE( void setgrfile, (const char *_file)				);
 #endif
 
 #endif /* _GRP_H */

@@ -34,12 +34,9 @@
 */
 
 #include <sys/types.h>
+#include <ibm/partition.h>
 #include <minix/partition.h>
-#if __minix_vmd
 #include <sys/ioctl.h>
-#else
-#include <sgtty.h>
-#endif
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
@@ -86,7 +83,6 @@ int readonly;
 int override= 0;
 
 _PROTOTYPE(int main, (int argc, char *argv []));
-_PROTOTYPE(int diocntl, (char *device, int request, struct part_entry *entry));
 _PROTOTYPE(void getgeom, (void));
 _PROTOTYPE(int getboot, (char *buffer));
 _PROTOTYPE(int putboot, (char *buffer));
@@ -231,49 +227,22 @@ char *argv[];
 
 #ifdef UNIX
 
-#define DSETP	0
-#define DGETP	1
-
-#ifdef DIOCGETP
-/* The hard disk driver supports an ioctl to report the base and size of a
- * device as a partition table entry.
- */
-
-int diocntl(device, request, entry)
-	char *device;
-	int request;
-	struct part_entry *entry;
-{
-	int r, f, err;
-
-	if ((f= open(device, O_RDONLY)) < 0) return -1;
-	r= ioctl(f, request == DSETP ? DIOCSETP : DIOCGETP, (void *) entry);
-	err= errno;
-	(void) close(f);
-	errno= err;
-	return r;
-}
-#else
-#define diocntl(d, r, e)		(errno= ENOTTY, -1)
-#endif
-
 void getgeom()
 {
-			/* pc  at  qd  ps pat  qh  PS */
-  static char fl_cyls[]= { 40, 80, 40, 80, 40, 80, 80 };
-  static char fl_secs[]= {  9, 15,  9,  9,  9,  9, 18 };
-  struct stat st;
-  struct part_entry geom;
+  struct partition geom;
+  int fd, r;
 
   if (override) return;
 
-  if (stat(devname, &st) < 0 || !S_ISBLK(st.st_mode)) return;
+  if ((fd= open(devname, O_RDONLY)) < 0) return;
 
-  if (diocntl(devname, DGETP, &geom) < 0) return;
+  r = ioctl(fd, DIOCGETP, &geom);
+  close(fd);
+  if (r < 0) return;
 
-  nhead = geom.last_head + 1;
-  nsec = geom.last_sec & 0x3F;
-  ncyl = ((geom.last_sec & 0xC0) << 2 | geom.last_cyl) + 1;
+  nhead = geom.heads;
+  nsec = geom.sectors;
+  ncyl = geom.cylinders;
 
   printf("Geometry of %s: %dx%dx%d\n", devname, ncyl, nhead, nsec);
 }

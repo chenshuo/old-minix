@@ -82,7 +82,7 @@ fi
 
 if [ "$net" ]
 then
-	echo -n "Starting network deamons: "
+	echo -n "Starting network daemons: "
 	for daemon in rarpd nonamed irdpd
 	do
 		if [ -f /usr/bin/$daemon ]
@@ -97,7 +97,8 @@ then
 	hostaddr -a >/etc/hostname.file || echo noname >/etc/hostname.file
 
 	echo -n "Starting network services:"
-	for pair in 'shell in.rshd'
+	for pair in 'shell in.rshd' 'login in.rld' \
+			'telnet in.telnetd' 'ftp in.ftpd'
 	do
 		set $pair
 		if [ -f /usr/bin/$2 ]

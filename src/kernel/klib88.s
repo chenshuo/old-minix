@@ -17,28 +17,24 @@
 .define	_exit		! dummy for library routines
 .define	__exit		! dummy for library routines
 .define	___exit		! dummy for library routines
-.define	.fat		! dummy for library routines
+.define	.fat, .trp	! dummies for library routines
 .define	_in_byte	! read a byte from a port and return it
 .define	_in_word	! read a word from a port and return it
-.define	_lock		! disable interrupts
-.define	_unlock		! enable interrupts
-.define	_enable_irq	! enable an irq at the 8259 controller
-.define	_disable_irq	! disable an irq
-.define	_mem_rdw	! copy one word from [segment:offset]
 .define	_out_byte	! write a byte to a port
 .define	_out_word	! write a word to a port
-.define	_phys_copy	! copy data from anywhere to anywhere in memory
 .define	_port_read	! transfer data from (disk controller) port to memory
 .define	_port_read_byte	! likewise byte by byte
 .define	_port_write	! transfer data from memory to (disk controller) port
 .define	_port_write_byte ! likewise byte by byte
+.define	_lock		! disable interrupts
+.define	_unlock		! enable interrupts
+.define	_enable_irq	! enable an irq at the 8259 controller
+.define	_disable_irq	! disable an irq
+.define	_phys_copy	! copy data from anywhere to anywhere in memory
+.define	_mem_rdw	! copy one word from [segment:offset]
 .define	_reset		! reset the system
-.define	_scr_down	! scroll screen a line down (in software, by copying)
-.define	_scr_up		! scroll screen a line up (in software, by copying)
-.define	_test_and_set	! test and set locking primitive on a word in memory
-.define	.trp		! dummy for library routines
-.define	_vid_copy	! copy data to video ram (perhaps during retrace only)
-.define	_wait_retrace	! wait for retrace interval
+.define	_mem_vid_copy	! copy data to video ram
+.define	_vid_vid_copy	! move data in video ram
 .define	_level0		! call a function at level 0
 .define	klib_init_prot	! initialize klib functions for protected mode
 
@@ -51,6 +47,8 @@
 #	define EM_XFER_FUNC	0x87
 #define JMP_OPCODE	0xE9	/* opcode used for patching */
 #define OFF_MASK	0x000F	/* offset mask for phys_b -> hclick:offset */
+#define HCHIGH_MASK	0x0F	/* h/w click mask for low byte of hi word */
+#define HCLOW_MASK	0xF0	/* h/w click mask for low byte of low word */
 
 ! Imported functions
 
@@ -66,14 +64,13 @@
 ! Imported variables
 
 .extern kernel_ds
-.extern	_Ax, _Bx, _Cx, _Dx, _Es
 .extern _irq_use
 .extern	_blank_color
 .extern	_gdt
 .extern	_protected_mode
-.extern	_snow
+.extern	_vid_seg
+.extern	_vid_size
 .extern	_vid_mask
-.extern	_vid_port
 .extern	_level0_func
 
 	.text
@@ -170,6 +167,15 @@ int13:
 	mov	ax, ds
 	mov	es, ax		! restore es
 	ret
+
+.bss
+.define	_Ax, _Bx, _Cx, _Dx, _Es		! 8086 register variables
+.comm	_Ax, 2
+.comm	_Bx, 2
+.comm	_Cx, 2
+.comm	_Dx, 2
+.comm	_Es, 2
+.text
 #endif /* ENABLE_BIOS_WINI */
 
 
@@ -315,6 +321,9 @@ _build_sig:
 
 PCM_DENSITY	=	256	! resolution of check
 				! the shift logic depends on this being 256
+TEST1PATTERN	=	0x55	! memory test pattern 1
+TEST2PATTERN	=	0xAA	! memory test pattern 2
+
 _check_mem:
 	pop	bx
 	pop	_gdt+DS_286_OFFSET+DESC_BASE
@@ -415,7 +424,7 @@ _cp_mess:
 	pop di			! restore di
 	pop si			! restore si
 	pop ds			! restore ds
-	pop es			! restore es	
+	pop es			! restore es
 	ret			! that's all folks!
 
 
@@ -425,8 +434,7 @@ _cp_mess:
 ! PUBLIC void exit();
 ! Some library routines use exit, so provide a dummy version.
 ! Actual calls to exit cannot occur in the kernel.
-! Same for .fat
-! Same for .trp.
+! Same for .fat & .trp.
 
 _exit:
 __exit:
@@ -469,28 +477,147 @@ _in_word:
 
 
 !*===========================================================================*
-!*				klib_init_prot				     *
+!*				out_byte				     *
 !*===========================================================================*
-! PUBLIC void klib_init_prot();
-! Initialize klib for protected mode by patching some real mode functions
-! at their starts to jump to their protected mode equivalents, according to
-! the patch table.  Saves a lot of tests on the 'protected_mode' variable.
-! Note that this function must be run in real mode, for it writes the code
-! segment.  (One otherwise has to set up a descriptor, etc, etc.)
+! PUBLIC void out_byte(port_t port, int value);
+! Write  value  (cast to a byte)  to the I/O port  port.
 
-klib_init_prot:
-	mov	si,#patch_table
-kip_next:
-	lods			! original function
+_out_byte:
+	pop	bx
+	pop	dx		! port
+	pop	ax		! value
+	sub	sp,#2+2
+	outb			! output 1 byte
+	jmp	(bx)
+
+
+!*===========================================================================*
+!*				out_word				     *
+!*===========================================================================*
+! PUBLIC void out_word(port_t port, int value);
+! Write  value  (cast to a word)  to the I/O port  port.
+
+_out_word:
+	pop	bx
+	pop	dx		! port
+	pop	ax		! value
+	sub	sp,#2+2
+	outw			! output 1 word
+	jmp	(bx)
+
+
+!*===========================================================================*
+!*				port_read				     *
+!*===========================================================================*
+! PUBLIC void port_read(port_t port, phys_bytes destination,unsigned bytcount);
+! Transfer data from (hard disk controller) port to memory.
+
+_port_read:
+	push	bp
+	mov	bp,sp
+	push	di
+	push	es
+
+	call	portio_setup
+	shr	cx,#1		! count in words
+	mov	di,bx		! di = destination offset
+	mov	es,ax		! es = destination segment
+	rep
+	ins
+
+	pop	es
+	pop	di
+	pop	bp
+	ret
+
+portio_setup:
+	mov	ax,4+2(bp)	! source/destination address in dx:ax
+	mov	dx,4+2+2(bp)
 	mov	bx,ax
-  cseg	movb	(bx),#JMP_OPCODE ! overwrite start of function by a long jump
-	lods			! new function - target of jump
-	sub	ax,bx		! relative jump
-	sub	ax,#3		! adjust by length of jump instruction
-  cseg	mov	1(bx),ax	! set address
-	cmp	si,#end_patch_table ! end of table?
-	jb	kip_next
-kip_done:
+	and	bx,#OFF_MASK	! bx = offset = address % 16
+	andb	dl,#HCHIGH_MASK	! ax = segment = address / 16 % 0x10000
+	andb	al,#HCLOW_MASK
+	orb	al,dl
+	movb	cl,#HCLICK_SHIFT
+	ror	ax,cl
+	mov	cx,4+2+4(bp)	! count in bytes
+	mov	dx,4(bp)	! port to read from
+	cld			! direction is UP
+	ret
+
+
+!*===========================================================================*
+!*				port_read_byte				     *
+!*===========================================================================*
+! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
+!							unsigned bytcount);
+! Transfer data port to memory.
+
+_port_read_byte:
+	push	bp
+	mov	bp,sp
+	push	di
+	push	es
+
+	call	portio_setup
+	mov	di,bx		! di = destination offset
+	mov	es,ax		! es = destination segment
+	rep
+	insb
+
+	pop	es
+	pop	di
+	pop	bp
+	ret
+
+
+!*===========================================================================*
+!*				port_write				     *
+!*===========================================================================*
+! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
+! Transfer data from memory to (hard disk controller) port.
+
+_port_write:
+	push	bp
+	mov	bp,sp
+	push	si
+	push	ds
+
+	call	portio_setup
+	shr	cx,#1		! count in words
+	mov	si,bx		! si = source offset
+	mov	ds,ax		! ds = source segment
+	rep
+	outs
+
+	pop	ds
+	pop	si
+	pop	bp
+	ret
+
+
+!*===========================================================================*
+!*				port_write_byte				     *
+!*===========================================================================*
+! PUBLIC void port_write_byte(port_t port, phys_bytes source,
+!							unsigned bytcount);
+! Transfer data from memory to port.
+
+_port_write_byte:
+	push	bp
+	mov	bp,sp
+	push	si
+	push	ds
+
+	call	portio_setup
+	mov	si,bx		! si = source offset
+	mov	ds,ax		! ds = source segment
+	rep
+	outsb
+
+	pop	ds
+	pop	si
+	pop	bp
 	ret
 
 
@@ -697,151 +824,6 @@ _mem_rdw:
 
 
 !*===========================================================================*
-!*				out_byte				     *
-!*===========================================================================*
-! PUBLIC void out_byte(port_t port, int value);
-! Write  value  (cast to a byte)  to the I/O port  port.
-
-_out_byte:
-	pop	bx
-	pop	dx		! port
-	pop	ax		! value
-	sub	sp,#2+2
-	outb			! output 1 byte
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				out_word				     *
-!*===========================================================================*
-! PUBLIC void out_word(port_t port, int value);
-! Write  value  (cast to a word)  to the I/O port  port.
-
-_out_word:
-	pop	bx
-	pop	dx		! port
-	pop	ax		! value
-	sub	sp,#2+2
-	outw			! output 1 word
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				port_read				     *
-!*===========================================================================*
-! PUBLIC void port_read(port_t port, phys_bytes destination,unsigned bytcount);
-! Transfer data from (hard disk controller) port to memory.
-
-_port_read:
-	push	bp
-	mov	bp,sp
-	push	di
-	push	es
-
-	call	portio_setup
-	shr	cx,#1		! count in words
-	mov	di,bx		! di = destination offset
-	mov	es,ax		! es = destination segment
-	rep
-	ins
-
-	pop	es
-	pop	di
-	pop	bp
-	ret
-
-portio_setup:
-	mov	ax,4+2(bp)	! source/destination address in dx:ax
-	mov	dx,4+2+2(bp)
-	mov	bx,ax
-	and	bx,#OFF_MASK	! bx = offset = address % 16
-	andb	dl,#HCHIGH_MASK	! ax = segment = address / 16 % 0x10000
-	andb	al,#HCLOW_MASK
-	orb	al,dl
-	movb	cl,#HCLICK_SHIFT
-	ror	ax,cl
-	mov	cx,4+2+4(bp)	! count in bytes
-	mov	dx,4(bp)	! port to read from
-	cld			! direction is UP
-	ret
-
-
-!*===========================================================================*
-!*				port_read_byte				     *
-!*===========================================================================*
-! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
-!							unsigned bytcount);
-! Transfer data port to memory.
-
-_port_read_byte:
-	push	bp
-	mov	bp,sp
-	push	di
-	push	es
-
-	call	portio_setup
-	mov	di,bx		! di = destination offset
-	mov	es,ax		! es = destination segment
-	rep
-	insb
-
-	pop	es
-	pop	di
-	pop	bp
-	ret
-
-
-!*===========================================================================*
-!*				port_write				     *
-!*===========================================================================*
-! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
-! Transfer data from memory to (hard disk controller) port.
-
-_port_write:
-	push	bp
-	mov	bp,sp
-	push	si
-	push	ds
-
-	call	portio_setup
-	shr	cx,#1		! count in words
-	mov	si,bx		! si = source offset
-	mov	ds,ax		! ds = source segment
-	rep
-	outs
-
-	pop	ds
-	pop	si
-	pop	bp
-	ret
-
-
-!*===========================================================================*
-!*				port_write_byte				     *
-!*===========================================================================*
-! PUBLIC void port_write_byte(port_t port, phys_bytes source,
-!							unsigned bytcount);
-! Transfer data from memory to port.
-
-_port_write_byte:
-	push	bp
-	mov	bp,sp
-	push	si
-	push	ds
-
-	call	portio_setup
-	mov	si,bx		! si = source offset
-	mov	ds,ax		! ds = source segment
-	rep
-	outsb
-
-	pop	ds
-	pop	si
-	pop	bp
-	ret
-
-
-!*===========================================================================*
 !*				reset					     *
 !*===========================================================================*
 ! PUBLIC void reset();
@@ -853,164 +835,141 @@ _reset:
 
 
 !*===========================================================================*
-!*				scr_down & scr_up			     *
+!*				mem_vid_copy				     *
 !*===========================================================================*
-! PUBLIC void scr_down(unsigned videoseg, int source, int dest, int count);
-! Scroll the screen down one line.
+! PUBLIC void mem_vid_copy(u16 *src, unsigned dst, unsigned count);
 !
-! PUBLIC void scr_up(unsigned videoseg, int source, int dest, int count);
-! Scroll the screen up one line.
-!
-! These are identical except scr_down() must reverse the direction flag
-! during the copy to avoid problems with overlap.
+! Copy count characters from kernel memory to video memory.  Src, dst and
+! count are character (word) based video offsets and counts.  If src is null
+! then screen memory is blanked by filling it with blank_color.
 
-_scr_down:
-	std
-_scr_up:
-	push	bp
-	mov	bp,sp
+MVC_ARGS	=	2 + 2 + 2 + 2	! 2 + 2 + 2
+!			es  di  si  ip	 src dst ct
+
+_mem_vid_copy:
 	push	si
 	push	di
-	push	ds
 	push	es
-	mov	ax,4(bp)	! videoseg (selector for video ram)
-	mov	si,6(bp)	! source (offset within video ram)
-	mov	di,8(bp)	! dest (offset within video ram)
-	mov	cx,10(bp)	! count (in words)
-	mov	ds,ax		! set source and dest segs to videoseg
-	mov	es,ax
-	rep			! do the copy
+	mov	bx, sp
+	mov	si, MVC_ARGS(bx)	! source
+	mov	di, MVC_ARGS+2(bx)	! destination
+	mov	dx, MVC_ARGS+2+2(bx)	! count
+	mov	es, _vid_seg		! destination is video segment
+	cld				! make sure direction is up
+mvc_loop:
+	and	di, _vid_mask		! wrap address
+	mov	cx, dx			! one chunk to copy
+	mov	ax, _vid_size
+	sub	ax, di
+	cmp	cx, ax
+	jbe	0f
+	mov	cx, ax			! cx = min(cx, vid_size - di)
+0:	sub	dx, cx			! count -= cx
+	shl	di, #1			! byte address
+	test	si, si			! source == 0 means blank the screen
+	jz	mvc_blank
+mvc_copy:
+	rep				! copy words to video memory
 	movs
+	jmp	mvc_test
+mvc_blank:
+	mov	ax, _blank_color	! ax = blanking character
+	rep
+	stos				! copy blanks to video memory
+	!jmp	mvc_test
+mvc_test:
+	shr	di, #1			! word addresses
+	test	dx, dx
+	jnz	mvc_loop
+mvc_done:
 	pop	es
-	pop	ds
 	pop	di
 	pop	si
-	pop	bp
-	cld			! restore (unnecessarily for scr_up)
 	ret
 
 
 !*===========================================================================*
-!*				test_and_set				     *
+!*				vid_vid_copy				     *
 !*===========================================================================*
-! PUBLIC int test_and_set(int *flag);
-! Set the flag to TRUE, indivisibly with getting its old value.
-! Return old flag.
-
-_test_and_set:
-	pop	dx
-	pop	bx
-	sub	sp,#2
-	mov	ax,#1
-	xchg	ax,(bx)
-	jmp	(dx)
-
-
-!*===========================================================================*
-!*				vid_copy				     *
-!*===========================================================================*
-! PUBLIC void vid_copy(char *buffer, unsigned videobase, int offset,
-!		       int words);
-! where
-!     'buffer'    is a pointer to the (character, attribute) pairs
-!     'videobase' is 0xB800 for color and 0xB000 for monochrome displays
-!     'offset'    tells where within video ram to copy the data
-!     'words'     tells how many words to copy
-! if buffer is zero, the fill char (blank_color) is used
+! PUBLIC void vid_vid_copy(unsigned src, unsigned dst, unsigned count);
 !
-! This routine takes a string of (character, attribute) pairs and writes them
-! onto the screen.  For a snowy display, the writing only takes places during
-! the vertical retrace interval, to avoid displaying garbage on the screen.
+! Copy count characters from video memory to video memory.  Handle overlap.
+! Used for scrolling, line or character insertion and deletion.  Src, dst
+! and count are character (word) based video offsets and counts.
 
-_vid_copy:
-	push bp			! we need bp to access the parameters
-	mov bp,sp		! set bp to sp for indexing
-	push si			! save the registers
-	push di			! save di
-	push bx			! save bx
-	push cx			! save cx
-	push dx			! save dx
-	push es			! save es
-vid.0:	mov si,4(bp)		! si = pointer to data to be copied
-	mov es,6(bp)		! load es NOW: int routines may NOT ruin it
-	mov di,8(bp)		! di = offset within video ram
-	and di,_vid_mask	! only 4K or 16K counts
-	mov cx,10(bp)		! cx = word count for copy loop
-	mov dx,#0x3DA		! prepare to see if color display is retracing
+VVC_ARGS	=	2 + 2 + 2 + 2	! 2 + 2 + 2
+!			es  di  si  ip 	 src dst ct
 
-	mov bx,di		! see if copy will run off end of video ram
-	add bx,cx		! compute where copy ends
-	add bx,cx		! bx = last character copied + 1
-	sub bx,_vid_mask	! bx = # characters beyond end of video ram
-	sub bx,#1		! note: dec bx doesn't set flags properly
-				! it DOES for jle!!
-	jle vid.1		! jump if no overrun
-	sar bx,#1		! bx = # words that don't fit in video ram
-	sub cx,bx		! reduce count by overrun
-
-vid.1:	push cx			! save actual count used for later
-	cmpb _snow,#0		! skip vertical retrace test if no snow
-	jz vid.4
-
-!vid.2:	in			| with a color display, you can only copy to
-!	test al,*010		| the video ram during vertical retrace, so
-!	jnz vid.2		| wait for start of retrace period.  Bit 3 of
-vid.3:	in			! 0x3DA is set during retrace.  First wait
-	testb al,*010		! until it is off (no retrace), then wait
-	jz vid.3		! until it comes on (start of retrace)
-
-vid.4:	cmp si,#0		! si = 0 means blank the screen
-	je vid.7		! jump for blanking
-	rep			! this is the copy loop
-	movs			! ditto
-
-vid.5:	pop si			! si = count of words copied
-	cmp bx,#0		! if bx < 0, then no overrun and we are done
-	jle vid.6		! jump if everything fit
-	mov 10(bp),bx		! set up residual count
-	mov 8(bp),#0		! start copying at base of video ram
-	cmp 4(bp),#0		! NIL_PTR means store blanks
-	je vid.0		! go do it
-	add si,si		! si = count of bytes copied
-	add 4(bp),si		! increment buffer pointer
-	jmp vid.0		! go copy some more
-
-vid.6:	pop es			! restore registers
-	pop dx			! restore dx
-	pop cx			! restore cx
-	pop bx			! restore bx
-	pop di			! restore di
-	pop si			! restore si
-	pop bp			! restore bp
-	ret			! return to caller
-
-vid.7:	mov ax,_blank_color	! ax = blanking character
-	rep			! copy loop
-	stos			! blank screen
-	jmp vid.5		! done
-
-
-!*===========================================================================*
-!*			      wait_retrace				     *
-!*===========================================================================*
-! PUBLIC void wait_retrace();
-! Wait for the *start* of retrace period.
-! The VERTICAL_RETRACE_MASK of the color vid_port is set during retrace.
-! First wait until it is off (no retrace).
-! Then wait until it comes on (start of retrace).
-! We can't afford to worry about interrupts.
-
-_wait_retrace:
-	mov	dx,_vid_port
-	orb	dl,#COLOR_STATUS_PORT & 0xFF
-wait_no_retrace:
-	inb
-	testb	al,#VERTICAL_RETRACE_MASK
-	jnz	wait_no_retrace
-wait_retrace:
-	inb
-	testb	al,#VERTICAL_RETRACE_MASK
-	jz	wait_retrace
+_vid_vid_copy:
+	push	si
+	push	di
+	push	es
+	mov	bx, sp
+	mov	si, VVC_ARGS(bx)	! source
+	mov	di, VVC_ARGS+2(bx)	! destination
+	mov	dx, VVC_ARGS+2+2(bx)	! count
+	mov	es, _vid_seg		! use video segment
+	cmp	si, di			! copy up or down?
+	jb	vvc_down
+vvc_up:
+	cld				! direction is up
+vvc_uploop:
+	and	si, _vid_mask		! wrap addresses
+	and	di, _vid_mask
+	mov	cx, dx			! one chunk to copy
+	mov	ax, _vid_size
+	sub	ax, si
+	cmp	cx, ax
+	jbe	0f
+	mov	cx, ax			! cx = min(cx, vid_size - si)
+0:	mov	ax, _vid_size
+	sub	ax, di
+	cmp	cx, ax
+	jbe	0f
+	mov	cx, ax			! cx = min(cx, vid_size - di)
+0:	sub	dx, cx			! count -= cx
+	shl	si, #1
+	shl	di, #1			! byte addresses
+	rep
+   eseg movs				! copy video words
+	shr	si, #1
+	shr	di, #1			! word addresses
+	test	dx, dx
+	jnz	vvc_uploop		! again?
+	jmp	vvc_done
+vvc_down:
+	std				! direction is down
+	add	si, dx			! start copying at the top
+	dec	si
+	add	di, dx
+	dec	di
+vvc_downloop:
+	and	si, _vid_mask		! wrap addresses
+	and	di, _vid_mask
+	mov	cx, dx			! one chunk to copy
+	lea	ax, 1(si)
+	cmp	cx, ax
+	jbe	0f
+	mov	cx, ax			! cx = min(cx, si + 1)
+0:	lea	ax, 1(di)
+	cmp	cx, ax
+	jbe	0f
+	mov	cx, ax			! cx = min(cx, di + 1)
+0:	sub	dx, cx			! count -= cx
+	shl	si, #1
+	shl	di, #1			! byte addresses
+	rep
+   eseg	movs				! copy video words
+	shr	si, #1
+	shr	di, #1			! word addresses
+	test	dx, dx
+	jnz	vvc_downloop		! again?
+	cld				! C compiler expect up
+	!jmp	vvc_done
+vvc_done:
+	pop	es
+	pop	di
+	pop	si
 	ret
 
 
@@ -1026,6 +985,32 @@ _level0:
 
 
 !*===========================================================================*
+!*				klib_init_prot				     *
+!*===========================================================================*
+! PUBLIC void klib_init_prot();
+! Initialize klib for protected mode by patching some real mode functions
+! at their starts to jump to their protected mode equivalents, according to
+! the patch table.  Saves a lot of tests on the 'protected_mode' variable.
+! Note that this function must be run in real mode, for it writes the code
+! segment.  (One otherwise has to set up a descriptor, etc, etc.)
+
+klib_init_prot:
+	mov	si,#patch_table
+kip_next:
+	lods			! original function
+	mov	bx,ax
+  cseg	movb	(bx),#JMP_OPCODE ! overwrite start of function by a long jump
+	lods			! new function - target of jump
+	sub	ax,bx		! relative jump
+	sub	ax,#3		! adjust by length of jump instruction
+  cseg	mov	1(bx),ax	! set address
+	cmp	si,#end_patch_table ! end of table?
+	jb	kip_next
+kip_done:
+	ret
+
+
+!*===========================================================================*
 !*			variants for protected mode			     *
 !*===========================================================================*
 ! Some routines are different in protected mode.
@@ -1033,6 +1018,7 @@ _level0:
 ! One complication is that the method of building segment descriptors is not
 ! reentrant, so the protected mode versions must not be called by interrupt
 ! handlers.
+
 
 !*===========================================================================*
 !*				p_cp_mess				     *
@@ -1050,13 +1036,13 @@ p_cp_mess:
 #error /* the only click size supported is 256, to avoid slow shifts here */
 #endif
 	addb	ah,cl		! calculate source offset
-	adcb	ch,#0 		! and put in base of source descriptor
+	adcb	ch,#0		! and put in base of source descriptor
 	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
 	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,ch
 	pop	cx		! destination clicks
 	pop	ax		! destination offset
 	addb	ah,cl		! calculate destination offset
-	adcb	ch,#0 		! and put in base of destination descriptor
+	adcb	ch,#0		! and put in base of destination descriptor
 	mov	_gdt+ES_286_OFFSET+DESC_BASE,ax
 	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE,ch
 	sub	sp,#2+2+2+2+2
@@ -1081,6 +1067,24 @@ p_cp_mess:
 	pop	es
 	pop	ds
 	jmp	(dx)
+
+
+!*===========================================================================*
+!*				p_portio_setup				     *
+!*===========================================================================*
+! The port_read, port_write, etc. functions need a setup routine that uses
+! a segment descriptor.
+p_portio_setup:
+	mov	ax,4+2(bp)	! source/destination address in dx:ax
+	mov	dx,4+2+2(bp)
+	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,dl
+	xor	bx,bx		! bx = 0 = start of segment
+	mov	ax,#DS_286_SELECTOR ! ax = segment selector
+	mov	cx,4+2+4(bp)	! count in bytes
+	mov	dx,4(bp)	! port to read from
+	cld			! direction is UP
+	ret
 
 
 !*===========================================================================*
@@ -1140,24 +1144,6 @@ ppc_next:
 	pop	si
 	pop	di
 	jmp	(dx)
-
-
-!*===========================================================================*
-!*				p_portio_setup				     *
-!*===========================================================================*
-! The port_read, port_write, etc. functions need a setup routine that uses
-! a segment descriptor.
-p_portio_setup:
-	mov	ax,4+2(bp)	! source/destination address in dx:ax
-	mov	dx,4+2+2(bp)
-	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,dl
-	xor	bx,bx		! bx = 0 = start of segment
-	mov	ax,#DS_286_SELECTOR ! ax = segment selector
-	mov	cx,4+2+4(bp)	! count in bytes
-	mov	dx,4(bp)	! port to read from
-	cld			! direction is UP
-	ret
 
 
 !*===========================================================================*

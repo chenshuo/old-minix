@@ -62,7 +62,11 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	no_sys,		/* 45 = unused	*/
 	do_getset,	/* 46 = setgid	*/
 	do_getset,	/* 47 = getgid	*/
-	do_signal,	/* 48 = sig	*/
+#if ENABLE_COMPAT
+	do_signal,	/* 48 = signal	*/
+#else
+	no_sys,		/* 48 = (signal)*/
+#endif
 	no_sys,		/* 49 = unused	*/
 	no_sys,		/* 50 = unused	*/
 	no_sys,		/* 51 = (acct)	*/
@@ -76,20 +80,20 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	do_exec,	/* 59 = exece	*/
 	no_sys,		/* 60 = umask	*/
 	no_sys,		/* 61 = chroot	*/
-	no_sys,		/* 62 = unused	*/
-	no_sys,		/* 63 = unused	*/
+	do_getset,	/* 62 = setsid	*/
+	do_getset,	/* 63 = getpgrp	*/
 
 	do_ksig,	/* 64 = KSIG: signals originating in the kernel	*/
 	no_sys,		/* 65 = UNPAUSE	*/
 	no_sys, 	/* 66 = unused  */
 	no_sys,		/* 67 = REVIVE	*/
-	no_sys,		/* 68 = TASK_REPLY	*/
-	no_sys,		/* 69 = AMOEBA SYSTEM CALL */
-	no_sys,		/* 70 = unused */
-	do_sigaction,	/* 71 = SIGACTION */
-	do_sigsuspend,	/* 72 = SIGSUSPEND */
-	do_sigpending,	/* 73 = SIGPENDING */
-	do_sigprocmask,	/* 74 = SIGPROCMASK */
-	do_sigreturn,	/* 75 = SIGRETURN */
-	do_reboot,	/* 76 = REBOOT */
+	no_sys,		/* 68 = TASK_REPLY  */
+	no_sys,		/* 69 = unused	*/
+	no_sys,		/* 70 = unused	*/
+	do_sigaction,	/* 71 = sigaction   */
+	do_sigsuspend,	/* 72 = sigsuspend  */
+	do_sigpending,	/* 73 = sigpending  */
+	do_sigprocmask,	/* 74 = sigprocmask */
+	do_sigreturn,	/* 75 = sigreturn   */
+	do_reboot,	/* 76 = reboot	*/
 };

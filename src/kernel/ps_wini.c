@@ -1,4 +1,8 @@
-#define WRITE_DISABLE	1
+/* NOTE: This driver doesn't work!  The original Minix 1.5 driver was only
+ * used to transfer 1 kb blocks, but it should now be able to transfer any
+ * number of sectors.  Alas I have no idea yet how to make it do that. (kjb)
+ */
+
 /* This file contains the device dependent part of a driver for the IBM PS/2
  * ST506 types 1 and 2 adapters.  The original version was written by Wim
  * van Leersum.  It has been modified extensively to make it run on PS/2s
@@ -92,7 +96,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned wn_precomp;		/* write precompensation cylinder */
   unsigned wn_open_ct;		/* in-use count */
   struct device wn_part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device wn_subpart[SUB_PER_DRIVE]; /* subpartititions: hd[1-4][a-d] */
+  struct device wn_subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
 } wini[MAX_DRIVES], *w_wn;
 
 PRIVATE struct trans {
@@ -185,9 +189,9 @@ int device;
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->wn_subpart[device % SUB_PER_DRIVE];
-  } else
+  } else {
 	return(NIL_DEV);
-
+  }
   return(w_drive < nr_drives ? w_dv : NIL_DEV);
 }
 
@@ -413,14 +417,6 @@ unsigned count;			/* bytes to transfer */
   sector = (tp->tr_block % w_wn->wn_sectors) + 1;
   head = (tp->tr_block % secspcyl) / w_wn->wn_sectors;
 
-#if WRITE_DISABLE
-  /* Can't let untested code write on the poor guinea pigs disk. */
-  if (w_opcode != DEV_READ) {
-	printf("%s: write at %u/%u/%u:%u not done\n",
-		w_name(), cylinder, head, sector, count);
-	return(OK);
-  }
-#endif
   /* Compute command to transfer count bytes.  (I am using the top four bits
    * of the cylinder number using a 0x0F mask instead of 0x03 (KJB)).
    */
@@ -677,9 +673,10 @@ PRIVATE void init_params()
 {
 /* This routine is called at startup to initialize the drive parameters. */
 
-  unsigned int segment, offset, vector;
+  u16_t parv[2];
+  unsigned int vector;
   int drive;
-  phys_bytes address, param_phys;
+  phys_bytes param_phys;
   unsigned char params[16];
   struct wini *wn;
 
@@ -691,13 +688,12 @@ PRIVATE void init_params()
   if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 
   for (drive = 0, wn = wini; drive < nr_drives; drive++, wn++) {
-	/* Copy the parameter vector from the saved vector table */
+	/* Copy the BIOS parameter vector */
 	vector = drive == 0 ? WINI_0_PARM_VEC : WINI_1_PARM_VEC;
-	offset = vec_table[2 * vector];
-	segment = vec_table[2 * vector + 1];
+	phys_copy(vector * 4L, vir2phys(parv), 4L);
 
 	/* Calculate the address of the parameters and copy them */
-	address = hclick_to_physb(segment) + offset;
+	address = hclick_to_physb(parv[1]) + parv[0];
 	phys_copy(address, param_phys, 16L);
 
 	/* Copy the parameters to the structures of the drive */

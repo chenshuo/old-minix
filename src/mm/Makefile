@@ -5,20 +5,18 @@ u = /usr
 i = $u/include
 s = $i/sys
 h = $i/minix
-l = $u/lib
 
 # Programs, flags, etc.
 CC =	exec cc
-LD =	$(CC) -.o
 CFLAGS = -I$i
 LDFLAGS = -i
-HEAD =	$l/head.o
 
 OBJ = 	main.o forkexit.o break.o exec.o \
 	signal.o alloc.o utility.o table.o putk.o trace.o getset.o
 
-mm:	$(HEAD) $(OBJ)
-	$(LD) -o $@ $(LDFLAGS) $(HEAD) $(OBJ)
+mm:	$(OBJ)
+	$(CC) -o $@ $(LDFLAGS) $(OBJ)
+	install -S 256w $@
 
 all install:	# Nothing.
 
@@ -31,6 +29,7 @@ a =	mm.h $h/config.h $s/types.h $h/const.h $h/type.h \
 	$i/limits.h $i/errno.h const.h type.h proto.h glo.h
 
 alloc.o:	$a
+alloc.o:	$h/com.h
 
 break.o:	$a
 break.o:	$i/signal.h
@@ -75,6 +74,7 @@ signal.o:	$h/com.h
 signal.o:	$i/signal.h
 signal.o:	$s/sigcontext.h
 signal.o:	$i/unistd.h
+signal.o:	$i/string.h
 signal.o:	mproc.h
 signal.o:	param.h
 

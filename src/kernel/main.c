@@ -10,32 +10,13 @@
 
 #include "kernel.h"
 #include <signal.h>
+#include <unistd.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
 
 #define CMASK4          0x9E	/* mask for Planar Control Register */
-#define HIGH_INT          17	/* limit of the interrupt vectors */
 
-#if _WORD_SIZE == 2
-typedef _PROTOTYPE( void (*vecaddr_t), (void) );
-
-FORWARD _PROTOTYPE( void set_vec, (int vec_nr, vecaddr_t addr) );
-
-PRIVATE vecaddr_t int_vec[HIGH_INT] = {
-  int00, int01, int02, int03, int04, int05, int06, int07,
-  int08, int09, int10, int11, int12, int13, int14, int15,
-  int16,
-};
-
-PRIVATE vecaddr_t irq0_vec[HIGH_INT] = {
-  hwint00, hwint01, hwint02, hwint03, hwint04, hwint05, hwint06, hwint07,
-};
-
-PRIVATE vecaddr_t irq8_vec[HIGH_INT] = {
-  hwint08, hwint09, hwint10, hwint11, hwint12, hwint13, hwint14, hwint15,
-};
-#endif
 
 /*===========================================================================*
  *                                   main                                    *
@@ -62,12 +43,6 @@ PUBLIC void main()
    * They are reenabled when INIT_PSW is loaded by the first restart().
    */
 
-  /* Call the stage 2 assembler hooks to finish machine/mode-specific inits.
-   * The 2 stages are needed to handle modes switches, especially 16->32 bits.
-   */
-  mpx_2hook();
-  klib_2hook();
-
   /* Clear the process table.
    * Set up mappings for proc_addr() and proc_number() macros.
    */
@@ -83,24 +58,24 @@ PUBLIC void main()
   /* Interpret memory sizes. */
   mem_init();
 
-  /* Set up proc table entries for tasks and servers.  Be very careful about
-   * sp, since in real mode the 3 words prior to it will be clobbered when
-   * the kernel pushes pc, cs, and psw onto the USER's stack when starting
-   * the user the first time.  If an interrupt happens before the user loads
-   * a better stack pointer, these 3 words will be used to save the state,
-   * and the interrupt handler will use another 3, and a debugger trap will
-   * use another 3 or 4, and an "impossible" non-maskable interrupt may use
-   * more!  This means that with INIT_SP == 0x1C, user programs must leave
-   * the memory between 0x0008 and 0x001B free.  FS currently violates this
-   * by using the word at 0x0008.
+  /* Set up proc table entries for tasks and servers.  The stacks of the
+   * kernel tasks are initialized to an array in data space.  The stacks
+   * of the servers have been added to the data segment by the monitor, so
+   * the stack pointer is set to the end of the data segment.  All the
+   * processes are in low memory on the 8086.  On the 386 only the kernel
+   * is in low memory, the rest if loaded in extended memory.
    */
 
-  /* Align stack base suitably. */
-  ktsb = ((reg_t) t_stack + (ALIGNMENT - 1)) & ~((reg_t) ALIGNMENT - 1);
+  /* Task stacks. */
+  ktsb = (reg_t) t_stack;
 
   for (rp = BEG_PROC_ADDR, t = -NR_TASKS; rp <= BEG_USER_ADDR; ++rp, ++t) {
 	if (t < 0) {
 		stack_size = tasktab[t + NR_TASKS].stksize;
+		if (stack_size > 0) {
+			rp->p_stguard = (reg_t *) ktsb;
+			*rp->p_stguard = STACK_GUARD;
+		}
 		ktsb += stack_size;
 		rp->p_reg.sp = ktsb;
 		text_base = code_base >> CLICK_SHIFT;
@@ -108,7 +83,6 @@ PUBLIC void main()
 		sizeindex = 0;		/* and use the full kernel sizes */
 		memp = &mem[0];		/* remove from this memory chunk */
 	} else {
-		rp->p_reg.sp = INIT_SP;
 		sizeindex = 2 * t + 2;	/* MM, FS, INIT have their own sizes */
 	}
 	rp->p_reg.pc = (reg_t) tasktab[t + NR_TASKS].initial_pc;
@@ -126,6 +100,15 @@ PUBLIC void main()
 	memp->size -= (text_base - memp->base);
 	memp->base = text_base;			/* memory no longer free */
 
+	if (t >= 0) {
+		/* Initialize the server stack pointer.  Take it down one word
+		 * to give crtso.s something to use as "argc".
+		 */
+		rp->p_reg.sp = (rp->p_map[S].mem_vir +
+				rp->p_map[S].mem_len) << CLICK_SHIFT;
+		rp->p_reg.sp -= sizeof(reg_t);
+	}
+
 #if _WORD_SIZE == 4
 	/* Servers are loaded in extended memory if in 386 mode. */
 	if (t < 0) {
@@ -138,20 +121,6 @@ PUBLIC void main()
 
 	alloc_segments(rp);
   }
-
-  /* Save the old interrupt vectors for *wini.c to peek at. */
-  phys_copy(0L, vir2phys(vec_table), (long) VECTOR_BYTES);
-
-#if _WORD_SIZE == 2
-  if (!protected_mode) {
-	/* Set up the new real mode interrupt vectors. */
-	for (t = 0; t < HIGH_INT; t++) set_vec(t, int_vec[t]);
-	for (t = HIGH_INT; t < 256; t++) set_vec(t, trp);
-	set_vec(SYS_VECTOR, s_call);
-	for (t = 0; t < 8; t++) set_vec(IRQ0_VECTOR + t, irq0_vec[t]);
-	for (t = 0; t < 8; t++) set_vec(IRQ8_VECTOR + t, irq8_vec[t]);
-  }
-#endif /* _WORD_SIZE == 2 */
 
   bill_ptr = proc_addr(IDLE);  /* it has to point somewhere */
   lock_pick_proc();
@@ -179,36 +148,10 @@ int n;
  * kind of stuck.
  */
 
-  soon_reboot();		/* so printf doesn't try to use sys services */
   if (*s != 0) {
-	printf("\r\nKernel panic: %s",s);
+	printf("\nKernel panic: %s",s);
 	if (n != NO_NUM) printf(" %d", n);
-	printf("\r\n");
+	printf("\n");
   }
-  if (db_exists) {
-	db_enabled = TRUE;
-	db();
-  }
-  wreboot();
+  wreboot(RBT_PANIC);
 }
-
-#if _WORD_SIZE == 2
-/*===========================================================================*
- *                                   set_vec                                 *
- *===========================================================================*/
-PRIVATE void set_vec(vec_nr, addr)
-int vec_nr;			/* which vector */
-vecaddr_t addr;			/* where to start */
-{
-/* Set up an interrupt vector. */
-
-  u16_t vec[2];
-
-  /* Build the vector in the array 'vec'. */
-  vec[0] = (u16_t) addr;
-  vec[1] = (u16_t) physb_to_hclick(code_base);
-
-  /* Copy the vector into place. */
-  phys_copy(vir2phys(vec), (phys_bytes) (vec_nr * 4), (phys_bytes) 4);
-}
-#endif /* _WORD_SIZE == 2 */

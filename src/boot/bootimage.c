@@ -33,6 +33,7 @@ void printk(char *fmt, ...);
 #define K_CHMEM  0x0004	/* This kernel listens to chmem for its stack size. */
 #define K_HIGH   0x0008	/* Load mm, fs, etc. in extended memory. */
 #define K_HDR	 0x0010	/* No need to patch sizes, kernel uses the headers. */
+#define K_RET	 0x0020	/* Returns to the monitor on reboot. */
 
 
 /* Data about the different processes. */
@@ -214,8 +215,10 @@ char *get_sector(u32_t vsec)
 	u32_t sec;
 	int r;
 	static char buf[32 * SECTOR_SIZE];
-	static size_t count= 0;		/* Number of sectors in the buffer. */
+	static size_t count;		/* Number of sectors in the buffer. */
 	static u32_t bufsec;		/* First Sector now in the buffer. */
+
+	if (vsec == 0) count= 0;	/* First sector; initialize. */
 
 	if ((sec= (*vir2sec)(vsec)) == -1) return nil;
 
@@ -471,6 +474,7 @@ void exec_image(char *image, char *params, size_t paramsize)
 	if (get_word(process[KERNEL].data + MAGIC_OFF) != KERNEL_D_MAGIC) {
 		printf("%s magic number is incorrect\n", process[KERNEL].name);
 		errno= 0;
+		return;
 	}
 
 	/* Patch sizes, etc. into kernel data. */
@@ -489,10 +493,12 @@ void exec_image(char *image, char *params, size_t paramsize)
 	reset_video(mode);
 
 	/* Minix. */
-	(k_flags & K_I386 ? minix386 : minix86)(
-		process[KERNEL].entry, process[KERNEL].cs, process[KERNEL].ds,
-		params, paramsize
-	);
+	reboot_code= minix(process[KERNEL].entry, process[KERNEL].cs,
+				process[KERNEL].ds, params, paramsize);
+
+	/* Boot file system still around? */
+	fsok= r_super() != 0;
+	errno= 0;
 }
 
 char *params2params(size_t *size)
@@ -619,7 +625,7 @@ bail_out:
 	return nil;
 }
 
-void minix(void)
+void bootminix(void)
 /* Load Minix and run it.  (Given the size of this program it is surprising
  * that it ever gets to that.)
  */
@@ -641,7 +647,6 @@ void minix(void)
 	printf(".\n\n");
 
 	exec_image(image, minixparams, paramsize);
-	/* Not supposed to return, if it does however, errno tells why. */
 
 	switch (errno) {
 	case ENOEXEC:
@@ -653,7 +658,7 @@ void minix(void)
 	case EIO:
 		printf("Unsuspected EOF on %s\n", image);
 	case 0:
-		/* Error already reported. */;
+		/* No error or error already reported. */;
 	}
 	/* Put all that free memory to use again. */
 	init_cache();

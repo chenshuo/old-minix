@@ -27,6 +27,8 @@
 #define sig_msg		mm_in.m1_i1
 #endif
 #define reboot_flag	mm_in.m1_i1
+#define reboot_code	mm_in.m1_p1
+#define reboot_size	mm_in.m1_i2
 
 /* The following names are synonyms for the variables in the output message. */
 #define reply_type      mm_out.m_type

@@ -22,9 +22,9 @@ unsigned vec_nr;
   };
   static struct ex_s ex_data[] = {
 	"Divide error", SIGFPE, 86,
-	"Debug exception", SIGTRAP, 86,		/* overidden by debugger */
-	"Nonmaskable interrupt", SIGBUS, 86,	/* needs separate handler */
-	"Breakpoint", SIGEMT, 86,		/* overidden by debugger */
+	"Debug exception", SIGTRAP, 86,
+	"Nonmaskable interrupt", SIGBUS, 86,
+	"Breakpoint", SIGEMT, 86,
 	"Overflow", SIGFPE, 86,
 	"Bounds check", SIGFPE, 186,
 	"Invalid opcode", SIGILL, 186,
@@ -38,7 +38,6 @@ unsigned vec_nr;
 	"Page fault", SIGSEGV, 386,		/* not close */
 	NIL_PTR, SIGILL, 0,			/* probably software trap */
 	"Coprocessor error", SIGFPE, 386,
-	"Unexpected interrupt along vector >= 17", SIGILL, 0,
   };
   register struct ex_s *ep;
   struct proc *saved_proc;
@@ -61,14 +60,13 @@ unsigned vec_nr;
   }
 
   /* This is not supposed to happen. */
-  soon_reboot();		/* so printf doesn't try to use sys services */
   if (ep->msg == NIL_PTR || processor < ep->minprocessor)
-	printf("\r\nIntel-reserved exception %d\r\n", vec_nr);
+	printf("\nIntel-reserved exception %d\n", vec_nr);
   else
-	printf("\r\n%s\r\n", ep->msg);
-  printf("process number %d, pc = 0x%04x:0x%08x\r\n",
+	printf("\n%s\n", ep->msg);
+  printf("process number %d, pc = 0x%04x:0x%08x\n",
 	proc_number(saved_proc),
 	(unsigned) saved_proc->p_reg.cs,
 	(unsigned) saved_proc->p_reg.pc);
-  panic("exception in kernel, mm or fs", NO_NUM);
+  panic("exception in system code", NO_NUM);
 }

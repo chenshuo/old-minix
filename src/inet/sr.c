@@ -197,7 +197,7 @@ sr_cancel_t cancelf;
 	sr_fd= &sr_fd_table[minor];
 
 	if (sr_fd->srf_flags & SFF_INUSE)
-		return ERROR;
+		return EGENERIC;
 
 	sr_fd->srf_flags= SFF_INUSE | SFF_MINOR;
 	sr_fd->srf_port= port;

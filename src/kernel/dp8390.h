@@ -1,63 +1,64 @@
+/*
+dp8390.h
+
+Created:	before Dec 28, 1992 by Philip Homburg
+*/
+
 /* National Semiconductor DP8390 Network Interface Controller. */
 
-typedef union dp8390reg {
-  struct pg0rd {		/* Page 0, for reading ------------- */
-	u8_t	dp_cr;		/* Read side of Command Register     */
-	u8_t	dp_clda0;	/* Current Local Dma Address 0       */
-	u8_t	dp_clda1;	/* Current Local Dma Address 1       */
-	u8_t	dp_bnry;	/* Boundary Pointer                  */
-	u8_t	dp_tsr;		/* Transmit Status Register          */
-	u8_t	dp_ncr;		/* Number of Collisions Register     */
-	u8_t	dp_fifo;	/* Fifo ??                           */
-	u8_t	dp_isr;		/* Interrupt Status Register         */
-	u8_t	dp_crda0;	/* Current Remote Dma Address 0      */
-	u8_t	dp_crda1;	/* Current Remote Dma Address 1      */
-	u8_t	dp_dum1;	/* unused                            */
-	u8_t	dp_dum2;	/* unused                            */
-	u8_t	dp_rsr;		/* Receive Status Register           */
-	u8_t	dp_cntr0;	/* Tally Counter 0                   */
-	u8_t	dp_cntr1;	/* Tally Counter 1                   */
-	u8_t	dp_cntr2;	/* Tally Counter 2                   */
-  } dp_pg0rd;
+				/* Page 0, for reading ------------- */
+#define	DP_CR		0x0	/* Read side of Command Register     */
+#define	DP_CLDA0	0x1	/* Current Local Dma Address 0       */
+#define	DP_CLDA1	0x2	/* Current Local Dma Address 1       */
+#define	DP_BNRY		0x3	/* Boundary Pointer                  */
+#define	DP_TSR		0x4	/* Transmit Status Register          */
+#define	DP_NCR		0x5	/* Number of Collisions Register     */
+#define	DP_FIFO		0x6	/* Fifo ??                           */
+#define	DP_ISR		0x7	/* Interrupt Status Register         */
+#define	DP_CRDA0	0x8	/* Current Remote Dma Address 0      */
+#define	DP_CRDA1	0x9	/* Current Remote Dma Address 1      */
+#define	DP_DUM1		0xA	/* unused                            */
+#define	DP_DUM2		0xB	/* unused                            */
+#define	DP_RSR		0xC	/* Receive Status Register           */
+#define	DP_CNTR0	0xD	/* Tally Counter 0                   */
+#define	DP_CNTR1	0xE	/* Tally Counter 1                   */
+#define	DP_CNTR2	0xF	/* Tally Counter 2                   */
 
-  struct pg0wr {		/* Page 0, for writing ------------- */
-	u8_t	dp_cr;		/* Write side of Command Register    */
-	u8_t	dp_pstart;	/* Page Start Register               */
-	u8_t	dp_pstop;	/* Page Stop Register                */
-	u8_t	dp_bnry;	/* Boundary Pointer                  */
-	u8_t	dp_tpsr;	/* Transmit Page Start Register      */
-	u8_t	dp_tbcr0;	/* Transmit Byte Count Register 0    */
-	u8_t	dp_tbcr1;	/* Transmit Byte Count Register 1    */
-	u8_t	dp_isr;		/* Interrupt Status Register         */
-	u8_t	dp_rsar0;	/* Remote Start Address Register 0   */
-	u8_t	dp_rsar1;	/* Remote Start Address Register 1   */
-	u8_t	dp_rbcr0;	/* Remote Byte Count Register 0      */
-	u8_t	dp_rbcr1;	/* Remote Byte Count Register 1      */
-	u8_t	dp_rcr;		/* Receive Configuration Register    */
-	u8_t	dp_tcr;		/* Transmit Configuration Register   */
-	u8_t	dp_dcr;		/* Data Configuration Register       */
-	u8_t	dp_imr;		/* Interrupt Mask Register           */
-  } dp_pg0wr;
- 
-  struct pg1rdwr {		/* Page 1, read/write -------------- */
-	u8_t	dp_cr;		/* Command Register                  */
-	u8_t	dp_par0;	/* Physical Address Register 0       */
-	u8_t	dp_par1;	/* Physical Address Register 1       */
-	u8_t	dp_par2;	/* Physical Address Register 2       */
-	u8_t	dp_par3;	/* Physical Address Register 3       */
-	u8_t	dp_par4;	/* Physical Address Register 4       */
-	u8_t	dp_par5;	/* Physical Address Register 5       */
-	u8_t	dp_curr;	/* Current Page Register             */
-	u8_t	dp_mar0;	/* Multicast Address Register 0      */
-	u8_t	dp_mar1;	/* Multicast Address Register 1      */
-	u8_t	dp_mar2;	/* Multicast Address Register 2      */
-	u8_t	dp_mar3;	/* Multicast Address Register 3      */
-	u8_t	dp_mar4;	/* Multicast Address Register 4      */
-	u8_t	dp_mar5;	/* Multicast Address Register 5      */
-	u8_t	dp_mar6;	/* Multicast Address Register 6      */
-	u8_t	dp_mar7;	/* Multicast Address Register 7      */
-  } dp_pg1rdwr;
-} dp8390;
+				/* Page 0, for writing ------------- */
+#define	DP_CR		0x0	/* Write side of Command Register    */
+#define	DP_PSTART	0x1	/* Page Start Register               */
+#define	DP_PSTOP	0x2	/* Page Stop Register                */
+#define	DP_BNRY		0x3	/* Boundary Pointer                  */
+#define	DP_TPSR		0x4	/* Transmit Page Start Register      */
+#define	DP_TBCR0	0x5	/* Transmit Byte Count Register 0    */
+#define	DP_TBCR1	0x6	/* Transmit Byte Count Register 1    */
+#define	DP_ISR		0x7	/* Interrupt Status Register         */
+#define	DP_RSAR0	0x8	/* Remote Start Address Register 0   */
+#define	DP_RSAR1	0x9	/* Remote Start Address Register 1   */
+#define	DP_RBCR0	0xA	/* Remote Byte Count Register 0      */
+#define	DP_RBCR1	0xB	/* Remote Byte Count Register 1      */
+#define	DP_RCR		0xC	/* Receive Configuration Register    */
+#define	DP_TCR		0xD	/* Transmit Configuration Register   */
+#define	DP_DCR		0xE	/* Data Configuration Register       */
+#define	DP_IMR		0xF	/* Interrupt Mask Register           */
+
+				/* Page 1, read/write -------------- */
+#define	DP_CR		0x0	/* Command Register                  */
+#define	DP_PAR0		0x1	/* Physical Address Register 0       */
+#define	DP_PAR1		0x2	/* Physical Address Register 1       */
+#define	DP_PAR2		0x3	/* Physical Address Register 2       */
+#define	DP_PAR3		0x4	/* Physical Address Register 3       */
+#define	DP_PAR4		0x5	/* Physical Address Register 4       */
+#define	DP_PAR5		0x6	/* Physical Address Register 5       */
+#define	DP_CURR		0x7	/* Current Page Register             */
+#define	DP_MAR0		0x8	/* Multicast Address Register 0      */
+#define	DP_MAR1		0x9	/* Multicast Address Register 1      */
+#define	DP_MAR2		0xA	/* Multicast Address Register 2      */
+#define	DP_MAR3		0xB	/* Multicast Address Register 3      */
+#define	DP_MAR4		0xC	/* Multicast Address Register 4      */
+#define	DP_MAR5		0xD	/* Multicast Address Register 5      */
+#define	DP_MAR6		0xE	/* Multicast Address Register 6      */
+#define	DP_MAR7		0xF	/* Multicast Address Register 7      */
 
 /* Bits in dp_cr */
 #define CR_STP		0x01	/* Stop: software reset              */
@@ -149,9 +150,133 @@ typedef union dp8390reg {
 #define RSR_DIS		0x40	/* Receiver Disabled                 */
 
 
-typedef struct rcvdheader {
-  u8_t rp_status;		/* Copy of rsr                       */
-  u8_t rp_next;			/* Pointer to next packet            */
-  u8_t rp_rbcl;			/* Receive Byte Count Low            */
-  u8_t rp_rbch;			/* Receive Byte Count High           */
-} rcvdheader_t;
+typedef struct dp_rcvhdr
+{
+	u8_t dr_status;			/* Copy of rsr                       */
+	u8_t dr_next;			/* Pointer to next packet            */
+	u8_t dr_rbcl;			/* Receive Byte Count Low            */
+	u8_t dr_rbch;			/* Receive Byte Count High           */
+} dp_rcvhdr_t;
+
+#define DP_PAGESIZE	256
+
+/* Some macros to simplify accessing the dp8390 */
+#define inb_reg0(dep, reg)	(in_byte(dep->de_dp8390_port+reg))
+#define outb_reg0(dep, reg, data) (out_byte(dep->de_dp8390_port+reg, data))
+#define inb_reg1(dep, reg)	(in_byte (dep->de_dp8390_port+reg))
+#define outb_reg1(dep, reg, data) (out_byte(dep->de_dp8390_port+reg, data))
+
+/* Software interface to the dp8390 driver */
+
+struct dpeth;
+struct iovec_dat;
+_PROTOTYPE( typedef void (*dp_initf_t), (struct dpeth *dep)		);
+_PROTOTYPE( typedef void (*dp_stopf_t), (struct dpeth *dep)		);
+_PROTOTYPE( typedef void (*dp_user2nicf_t), (struct dpeth *dep,
+			struct iovec_dat *iovp, vir_bytes offset,
+			int nic_addr, vir_bytes count)			);
+_PROTOTYPE( typedef void (*dp_nic2userf_t), (struct dpeth *dep,
+			int nic_addr, struct iovec_dat *iovp,
+			vir_bytes offset, vir_bytes count)		);
+#if 0
+_PROTOTYPE( typedef void (*dp_getheaderf_t), (struct dpeth *dep,
+			int page, struct dp_rcvhdr *h, u16_t *eth_type)	);
+#endif
+_PROTOTYPE( typedef void (*dp_getblock_t), (struct dpeth *dep,
+		int page, size_t offset, size_t size, void *dst)	);
+
+/* iovectors are handled IOVEC_NR entries at a time. */
+#define IOVEC_NR	16
+
+typedef struct iovec_dat
+{
+  iovec_t iod_iovec[IOVEC_NR];
+  int iod_iovec_s;
+  int iod_proc_nr;
+  vir_bytes iod_iovec_addr;
+} iovec_dat_t;
+
+#define SENDQ_NR	2	/* Maximum size of the send queue */
+#define SENDQ_PAGES	6	/* 6 * DP_PAGESIZE >= 1514 bytes */
+
+typedef struct dpeth
+{
+	/* The de_base_port field is the starting point of the probe.
+	 * The conf routine also fills de_linmem and de_irq. If the probe
+	 * routine knows the irq and/or memory address because they are
+	 * hardwired in the board, the probe should modify these fields.
+	 * Futhermore, the probe routine should also fill in de_initf and
+	 * de_stopf fields with the appropriate function pointers and set
+	 * de_prog_IO iff programmed I/O is to be used.
+	 */
+	port_t de_base_port;
+	phys_bytes de_linmem;
+	int de_irq;
+	dp_initf_t de_initf; 
+	dp_stopf_t de_stopf; 
+	int de_prog_IO;
+
+	/* The initf function fills the following fields. Only cards that do
+	 * programmed I/O fill in the de_pata_port field.
+	 * In addition, the init routine has to fill in the sendq data
+	 * structures.
+	 */
+	ether_addr_t de_address;
+	port_t de_dp8390_port;
+	port_t de_data_port;
+	int de_16bit;
+	int de_ramsize;
+	int de_offset_page;
+	int de_startpage;
+	int de_stoppage;
+
+	/* Do it yourself send queue */
+	struct sendq
+	{
+		int sq_filled;		/* this buffer contains a packet */
+		int sq_size;		/* with this size */
+		int sq_sendpage;	/* starting page of the buffer */
+	} de_sendq[SENDQ_NR];
+	int de_sendq_nr;
+	int de_sendq_head;		/* Enqueue at the head */
+	int de_sendq_tail;		/* Dequeue at the tail */
+
+	/* The de_memsegm field is calculated based on the de_linmem field */
+	segm_t de_memsegm;
+
+	/* Fields for internal use by the dp8390 driver. */
+	int de_flags;
+	int de_mode;
+	eth_stat_t de_stat;
+	iovec_dat_t de_read_iovec;
+	iovec_dat_t de_write_iovec;
+	iovec_dat_t de_tmp_iovec;
+	vir_bytes de_read_s;
+	int de_client;
+	message de_sendmsg;
+	dp_user2nicf_t de_user2nicf; 
+	dp_nic2userf_t de_nic2userf; 
+	dp_getblock_t de_getblockf; 
+} dpeth_t;
+
+#define DEI_DEFAULT	0x8000
+
+#define DEF_EMPTY	0x000
+#define DEF_PACK_SEND	0x001
+#define DEF_PACK_RECV	0x002
+#define DEF_SEND_AVAIL	0x004
+#define DEF_READING	0x010
+#define DEF_PROMISC	0x040
+#define DEF_MULTI	0x080
+#define DEF_BROAD	0x100
+#define DEF_ENABLED	0x200
+#define DEF_STOPPED	0x400
+
+#define DEM_DISABLED	0x0
+#define DEM_SINK	0x1
+#define DEM_ENABLED	0x2
+
+
+/*
+ * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/dp8390.h,v 1.4 1995/06/12 18:21:01 philip Exp $
+ */

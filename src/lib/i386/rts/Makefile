@@ -7,16 +7,11 @@ LIBRARY	= ../../libc.a
 
 all:	\
 	../../crtso.o \
-	../../head.o \
 	$(LIBRARY)
 
 ../../crtso.o:	crtso.s
 	$(CC1) -c crtso.s
 	mv crtso.o $@
-
-../../head.o:	head.s
-	$(CC1) -c head.s
-	mv head.o $@
 
 OBJECTS	= \
 	$(LIBRARY)(__sigreturn.o) \

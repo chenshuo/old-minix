@@ -13,6 +13,7 @@
 #include "fs.h"
 #include <minix/com.h>
 #include <minix/boot.h>
+#include <unistd.h>
 #include "buf.h"
 #include "file.h"
 #include "fproc.h"
@@ -56,17 +57,16 @@ int flag;			/* M3 means path may be in message */
 
   register char *rpu, *rpm;
   int r;
-  vir_bytes vpath;
 
   /* Check name length for validity. */
   if (len <= 0) {
 	err_code = EINVAL;
-	return(ERROR);
+	return(EGENERIC);
   }
 
   if (len > PATH_MAX) {
 	err_code = ENAMETOOLONG;
-	return(ERROR);
+	return(EGENERIC);
   }
 
   if (flag == M3 && len <= M3_STRING) {
@@ -77,8 +77,8 @@ int flag;			/* M3 means path may be in message */
 	r = OK;
   } else {
 	/* String is not contained in the message.  Get it from user space. */
-	vpath = (vir_bytes) path;
-	r = rw_user(D, who, vpath, (vir_bytes) len, user_path, FROM_USER);
+	r = sys_copy(who, D, (phys_bytes) path,
+		FS_PROC_NR, D, (phys_bytes) user_path, (phys_bytes) len);
   }
   return(r);
 }
@@ -113,9 +113,8 @@ int num;			/* number to go with format string */
   if (num != NO_NUM) printf("%d",num); 
   printf("\n");
   (void) do_sync();		/* flush everything to the disk */
-  sys_abort(2);
+  sys_abort(RBT_PANIC);
 }
-
 
 
 /*===========================================================================*
@@ -130,6 +129,7 @@ int w;				/* promotion of 16-bit word to be swapped */
   if (norm) return( (unsigned) w & 0xFFFF);
   return( ((w&BYTE) << 8) | ( (w>>8) & BYTE));
 }
+
 
 /*===========================================================================*
  *				conv4					     *
@@ -149,39 +149,3 @@ long x;				/* 32-bit long to be byte swapped */
   l = ( (long) lo <<16) | hi;
   return(l);
 }
-
-/*===========================================================================*
- *				sys_times				     *
- *===========================================================================*/
-PUBLIC void sys_times(proc, ptr)
-int proc;			/* proc whose times are needed */
-clock_t ptr[5];			/* pointer to time buffer */
-{
-/* Fetch the accounting info for a proc. */
-  message m;
-
-  m.m1_i1 = proc;
-  m.m1_p1 = (char *)ptr;
-  (void) _taskcall(SYSTASK, SYS_TIMES, &m);
-  ptr[0] = m.USER_TIME;
-  ptr[1] = m.SYSTEM_TIME;
-  ptr[2] = m.CHILD_UTIME;
-  ptr[3] = m.CHILD_STIME;
-  ptr[4] = m.BOOT_TICKS;
-}
-
-/*===========================================================================*
- *				sys_kill				     *
- *===========================================================================*/
-PUBLIC void sys_kill(proc, signr)
-int proc;			/* which proc has exited */
-int signr;			/* signal number: 1 - 16 */
-{
-/* A proc has to be signaled via MM.  Tell the kernel. */
-  message m;
-
-  m.m6_i1 = proc;
-  m.m6_i2 = signr;
-  (void) _taskcall(SYSTASK, SYS_KILL, &m);
-}
-

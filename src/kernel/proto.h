@@ -4,11 +4,11 @@
 #define PROTO_H
 
 /* Struct declarations. */
+struct dpeth;
 struct proc;
 struct tty_struct;
 
-/* at_wini.c, bios_wini.c, esdi_wini.c, ps_wini.c, xt_wini.c, stacsi.c */
-_PROTOTYPE( task_t *sel_wini_task, (void)				);
+/* at_wini.c, bios_wini.c, esdi_wini.c, ps_wini.c, xt_wini.c, wini.c */
 _PROTOTYPE( void winchester_task, (void)				);
 _PROTOTYPE( void at_winchester_task, (void)				);
 _PROTOTYPE( void bios_winchester_task, (void)				);
@@ -17,10 +17,11 @@ _PROTOTYPE( void ps_winchester_task, (void)				);
 _PROTOTYPE( void xt_winchester_task, (void)				);
 
 /* aha_scsi.c */
-_PROTOTYPE( void scsi_task, (void)					);
+_PROTOTYPE( void aha_scsi_task, (void)					);
 
 /* clock.c */
 _PROTOTYPE( void clock_task, (void)					);
+_PROTOTYPE( void clock_stop, (void)					);
 _PROTOTYPE( clock_t get_uptime, (void)					);
 _PROTOTYPE( void syn_alrm_task, (void)					);
 
@@ -32,15 +33,21 @@ _PROTOTYPE( void p_dmp, (void)						);
 _PROTOTYPE( void reg_dmp, (struct proc *rp)				);
 _PROTOTYPE( void set_name, (int source_nr, int proc_nr, char *ptr)	);
 
-/* driver.c */
-_PROTOTYPE( void nop_task, (void)					);
+/* dp8390.c */
+_PROTOTYPE( void dp8390_task, (void)					);
+_PROTOTYPE( void dp_dump, (void)					);
+_PROTOTYPE( void dp8390_stop, (void)					);
 
 /* floppy.c, stfloppy.c */
 _PROTOTYPE( void floppy_task, (void)					);
+_PROTOTYPE( void floppy_stop, (void)					);
 
 /* main.c, stmain.c */
 _PROTOTYPE( void main, (void)						);
 _PROTOTYPE( void panic, (const char *s, int n)				);
+
+/* mcd.c */
+_PROTOTYPE( void mcd_task, (void)					);
 
 /* memory.c */
 _PROTOTYPE( void mem_task, (void)					);
@@ -69,11 +76,19 @@ _PROTOTYPE( int rs_init, (int minor)					);
 _PROTOTYPE( int rs_ioctl, (int minor, int mode, int speeds)		);
 _PROTOTYPE( int rs_read, (int minor, char **bufindirect,
 		unsigned char *odoneindirect)				);
+_PROTOTYPE( int rs_hangup, (int minor)					);
+_PROTOTYPE( int rs_dcd, (int minor)					);
 _PROTOTYPE( void rs_istart, (int minor)					);
 _PROTOTYPE( void rs_istop, (int minor)					);
 _PROTOTYPE( void rs_ocancel, (int minor)				);
 _PROTOTYPE( void rs_setc, (int minor, int xoff)				);
 _PROTOTYPE( void rs_write, (int minor, char *buf, int nbytes)		);
+
+/* sb16_dsp.c */
+_PROTOTYPE( void dsp_task, (void)					);
+
+/* sb16_mixer.c */
+_PROTOTYPE( void mixer_task, (void)					);
 
 /* system.c */
 _PROTOTYPE( void cause_sig, (int proc_nr, int sig_nr)			);
@@ -92,34 +107,28 @@ _PROTOTYPE( void tty_wakeup, (void)					);
 
 /* library */
 _PROTOTYPE( void *memcpy, (void *_s1, const void *_s2, size_t _n)	);
-_PROTOTYPE( void printk, (const char *mess,...)				);
-_PROTOTYPE( int receive, (int source, message *mess)			);
-_PROTOTYPE( int send, (int to, message *mess)				);
-_PROTOTYPE( int sendrec, (int _src_dest, message *_m_ptr)		);
 
 #if (CHIP == INTEL)
 
 /* clock.c */
+_PROTOTYPE( void milli_start, (struct milli_state *msp)			);
+_PROTOTYPE( unsigned milli_elapsed, (struct milli_state *msp)		);
 _PROTOTYPE( void milli_delay, (unsigned millisec)			);
-_PROTOTYPE( unsigned read_counter, (void)				);
 
 /* console.c */
+_PROTOTYPE( void cons_stop, (void)					);
 _PROTOTYPE( void console, (struct tty_struct *tp)			);
 _PROTOTYPE( void flush, (struct tty_struct *tp)				);
 _PROTOTYPE( void out_char, (struct tty_struct *tp, int c)		);
 _PROTOTYPE( void putk, (int c)						);
 _PROTOTYPE( void scr_init, (int minor)					);
 _PROTOTYPE( void toggle_scroll, (void)					);
+_PROTOTYPE( int con_loadfont, (int proc_nr, vir_bytes font_vir)		);
 
 /* cstart.c */
-_PROTOTYPE( void cstart, (U16_t cs, U16_t ds,
-		char *parmoff, U16_t parmseg, size_t parmsize)		);
+_PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mcs, U16_t mds,
+				U16_t parmoff, U16_t parmsize)		);
 _PROTOTYPE( char *k_getenv, (char *name)				);
-
-/* ether.c */
-_PROTOTYPE( void ehw_task, (void)					);
-_PROTOTYPE( void ehw_dump, (void)					);
-_PROTOTYPE( void ehw_stop, (void)					);
 
 /* exception.c */
 _PROTOTYPE( void exception, (unsigned vec_nr)				);
@@ -128,7 +137,6 @@ _PROTOTYPE( void exception, (unsigned vec_nr)				);
 _PROTOTYPE( irq_handler_t get_irq_handler, (int irq)			);
 _PROTOTYPE( void put_irq_handler, (int irq, irq_handler_t handler)	);
 _PROTOTYPE( void init_8259, (unsigned master_base, unsigned slave_base)	);
-_PROTOTYPE( void soon_reboot, (void)					);
 
 /* keyboard.c */
 _PROTOTYPE( int func_key, (int ch)					);
@@ -138,10 +146,9 @@ _PROTOTYPE( int kb_read, (int minor, char **bufindirect,
 		unsigned char *odoneindirect)				);
 _PROTOTYPE( int letter_code, (int scode)				);
 _PROTOTYPE( int make_break, (int ch)					);
-_PROTOTYPE( void reboot, (void)						);
-_PROTOTYPE( void wreboot, (void)					);
+_PROTOTYPE( void wreboot, (int how)						);
 
-/* klib*.x */
+/* klib*.s */
 _PROTOTYPE( void bios13, (void)						);
 _PROTOTYPE( void build_sig, (char *sig_stuff, struct proc *rp, int sig)	);
 _PROTOTYPE( phys_bytes check_mem, (phys_bytes base, phys_bytes size)	);
@@ -149,22 +156,22 @@ _PROTOTYPE( void cp_mess, (int src,phys_clicks src_clicks,vir_bytes src_offset,
 		phys_clicks dst_clicks, vir_bytes dst_offset)		);
 _PROTOTYPE( int in_byte, (port_t port)					);
 _PROTOTYPE( int in_word, (port_t port)					);
-_PROTOTYPE( void klib_1hook, (void)					);
-_PROTOTYPE( void klib_2hook, (void)					);
 _PROTOTYPE( void lock, (void)						);
 _PROTOTYPE( void unlock, (void)						);
 _PROTOTYPE( void enable_irq, (unsigned irq)				);
 _PROTOTYPE( int disable_irq, (unsigned irq)				);
 _PROTOTYPE( u16_t mem_rdw, (segm_t segm, vir_bytes offset)		);
-_PROTOTYPE( void mpx_1hook, (void)					);
-_PROTOTYPE( void mpx_2hook, (void)					);
 _PROTOTYPE( void out_byte, (port_t port, int value)			);
 _PROTOTYPE( void out_word, (port_t port, int value)			);
 _PROTOTYPE( void phys_copy, (phys_bytes source, phys_bytes dest,
 		phys_bytes count)					);
 _PROTOTYPE( void port_read, (unsigned port, phys_bytes destination,
 		unsigned bytcount)					);
+_PROTOTYPE( void port_read_byte, (unsigned port, phys_bytes destination,
+		unsigned bytcount)					);
 _PROTOTYPE( void port_write, (unsigned port, phys_bytes source,
+		unsigned bytcount)					);
+_PROTOTYPE( void port_write_byte, (unsigned port, phys_bytes source,
 		unsigned bytcount)					);
 _PROTOTYPE( void reset, (void)						);
 _PROTOTYPE( void scr_down, (unsigned videoseg, int source,int dest,int count));
@@ -174,37 +181,34 @@ _PROTOTYPE( void vid_copy, (char *buffer, unsigned videobase,
 		int offset, int words)					);
 _PROTOTYPE( void wait_retrace, (void)					);
 _PROTOTYPE( void level0, (void (*func)(void))				);
+_PROTOTYPE( void monitor, (void)					);
 
 /* misc.c */
 _PROTOTYPE( void mem_init, (void)					);
 
-/* mpx*.x */
+/* mpx*.s */
 _PROTOTYPE( void idle_task, (void)					);
 _PROTOTYPE( void restart, (void)					);
-_PROTOTYPE( void db, (void)                                             );
-_PROTOTYPE( u16_t get_word, (U16_t segment, u16_t *offset)		);
-_PROTOTYPE( void put_word, (U16_t segment, u16_t *offset, U16_t value)	);
 
 /* The following are never called from C (pure asm procs). */
 
-/* Exception handlers, in numerical order. */
-_PROTOTYPE( void int00, (void) ), _PROTOTYPE( divide_error, (void) );
-_PROTOTYPE( void int01, (void) ), _PROTOTYPE( single_step_exception, (void) );
-_PROTOTYPE( void int02, (void) ), _PROTOTYPE( nmi, (void) );
-_PROTOTYPE( void int03, (void) ), _PROTOTYPE( breakpoint_exception, (void) );
-_PROTOTYPE( void int04, (void) ), _PROTOTYPE( overflow, (void) );
-_PROTOTYPE( void int05, (void) ), _PROTOTYPE( bounds_check, (void) );
-_PROTOTYPE( void int06, (void) ), _PROTOTYPE( inval_opcode, (void) );
-_PROTOTYPE( void int07, (void) ), _PROTOTYPE( copr_not_available, (void) );
-_PROTOTYPE( void int08, (void) ), _PROTOTYPE( double_fault, (void) );
-_PROTOTYPE( void int09, (void) ), _PROTOTYPE( copr_seg_overrun, (void) );
-_PROTOTYPE( void int10, (void) ), _PROTOTYPE( inval_tss, (void) );
-_PROTOTYPE( void int11, (void) ), _PROTOTYPE( segment_not_present, (void) );
-_PROTOTYPE( void int12, (void) ), _PROTOTYPE( stack_exception, (void) );
-_PROTOTYPE( void int13, (void) ), _PROTOTYPE( general_protection, (void) );
-_PROTOTYPE( void int14, (void) ), _PROTOTYPE( page_fault, (void) );
-_PROTOTYPE( void int15, (void) );
-_PROTOTYPE( void int16, (void) ), _PROTOTYPE( copr_error, (void) );
+/* Exception handlers (real or protected mode), in numerical order. */
+void _PROTOTYPE( int00, (void) ), _PROTOTYPE( divide_error, (void) );
+void _PROTOTYPE( int01, (void) ), _PROTOTYPE( single_step_exception, (void) );
+void _PROTOTYPE( int02, (void) ), _PROTOTYPE( nmi, (void) );
+void _PROTOTYPE( int03, (void) ), _PROTOTYPE( breakpoint_exception, (void) );
+void _PROTOTYPE( int04, (void) ), _PROTOTYPE( overflow, (void) );
+void _PROTOTYPE( int05, (void) ), _PROTOTYPE( bounds_check, (void) );
+void _PROTOTYPE( int06, (void) ), _PROTOTYPE( inval_opcode, (void) );
+void _PROTOTYPE( int07, (void) ), _PROTOTYPE( copr_not_available, (void) );
+void				  _PROTOTYPE( double_fault, (void) );
+void				  _PROTOTYPE( copr_seg_overrun, (void) );
+void				  _PROTOTYPE( inval_tss, (void) );
+void				  _PROTOTYPE( segment_not_present, (void) );
+void				  _PROTOTYPE( stack_exception, (void) );
+void				  _PROTOTYPE( general_protection, (void) );
+void				  _PROTOTYPE( page_fault, (void) );
+void				  _PROTOTYPE( copr_error, (void) );
 
 /* Hardware interrupt handlers. */
 _PROTOTYPE( void hwint00, (void) );
@@ -229,6 +233,9 @@ _PROTOTYPE( void trp, (void) );
 _PROTOTYPE( void s_call, (void) ), _PROTOTYPE( p_s_call, (void) );
 _PROTOTYPE( void level0_call, (void) );
 
+/* ne2000.c */
+_PROTOTYPE( int ne_probe, (struct dpeth *dep)				);
+
 /* printer.c */
 _PROTOTYPE( void pr_restart, (void)					);
 
@@ -239,10 +246,14 @@ _PROTOTYPE( void init_codeseg, (struct segdesc_s *segdp, phys_bytes base,
 _PROTOTYPE( void init_dataseg, (struct segdesc_s *segdp, phys_bytes base,
 		phys_bytes size, int privilege)				);
 _PROTOTYPE( void ldt_init, (void)					);
+_PROTOTYPE( phys_bytes seg2phys, (U16_t seg)					);
 _PROTOTYPE( void enable_iop, (struct proc *pp)				);
 
 /* system.c */
 _PROTOTYPE( void alloc_segments, (struct proc *rp)			);
+
+/* wdeth.c */
+_PROTOTYPE( int wdeth_probe, (struct dpeth *dep)			);
 
 #endif /* (CHIP == INTEL) */
 

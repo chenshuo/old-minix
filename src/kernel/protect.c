@@ -8,11 +8,11 @@
 #include "protect.h"
 
 #if _WORD_SIZE == 4
-#define INT_GATE_TYPE (INT_286_GATE | DESC_386_BIT)
-#define TSS_TYPE      (AVL_286_TSS  | DESC_386_BIT)
+#define INT_GATE_TYPE	(INT_286_GATE | DESC_386_BIT)
+#define TSS_TYPE	(AVL_286_TSS  | DESC_386_BIT)
 #else
-#define INT_GATE_TYPE INT_286_GATE
-#define TSS_TYPE      AVL_286_TSS
+#define INT_GATE_TYPE	INT_286_GATE
+#define TSS_TYPE	AVL_286_TSS
 #endif
 
 struct desctableptr_s {
@@ -162,30 +162,21 @@ PUBLIC void prot_init()
   else
 	code_bytes = (phys_bytes) sizes[0] << CLICK_SHIFT;
 
-  /* Build temporary gdt and idt pointers in GDT where BIOS needs them. */
-  dtp= (struct desctableptr_s *) &gdt[BIOS_GDT_INDEX];
-  * (u16_t *) dtp->limit = sizeof gdt - 1;
+  /* Build gdt and idt pointers in GDT where the BIOS expects them. */
+  dtp= (struct desctableptr_s *) &gdt[GDT_INDEX];
+  * (u16_t *) dtp->limit = (sizeof gdt) - 1;
   * (u32_t *) dtp->base = vir2phys(gdt);
 
-  dtp= (struct desctableptr_s *) &gdt[BIOS_IDT_INDEX];
-  * (u16_t *) dtp->limit = sizeof idt - 1;
+  dtp= (struct desctableptr_s *) &gdt[IDT_INDEX];
+  * (u16_t *) dtp->limit = (sizeof idt) - 1;
   * (u32_t *) dtp->base = vir2phys(idt);
 
   /* Build segment descriptors for tasks and interrupt handlers. */
-  init_dataseg(&gdt[DS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
-  init_dataseg(&gdt[ES_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
-  init_dataseg(&gdt[SS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
   init_codeseg(&gdt[CS_INDEX], code_base, code_bytes, INTR_PRIVILEGE);
+  init_dataseg(&gdt[DS_INDEX], data_base, data_bytes, INTR_PRIVILEGE);
+  init_dataseg(&gdt[ES_INDEX], 0L, 0L, TASK_PRIVILEGE);
 
-  /* Build segments for debugger. */
-  init_codeseg(&gdt[DB_CS_INDEX], hclick_to_physb(break_vector.selector),
-	       (phys_bytes) MAX_286_SEG_SIZE, INTR_PRIVILEGE);
-  init_dataseg(&gdt[DB_DS_INDEX], hclick_to_physb(break_vector.selector),
-	       (phys_bytes) MAX_286_SEG_SIZE, INTR_PRIVILEGE);
-  init_dataseg(&gdt[GDT_INDEX], vir2phys(gdt),
-	       (phys_bytes) sizeof gdt, INTR_PRIVILEGE);
-
-  /* Build scratch descriptors for functions in klib286. */
+  /* Build scratch descriptors for functions in klib88. */
   init_dataseg(&gdt[DS_286_INDEX], (phys_bytes) 0,
 	       (phys_bytes) MAX_286_SEG_SIZE, TASK_PRIVILEGE);
   init_dataseg(&gdt[ES_286_INDEX], (phys_bytes) 0,
@@ -221,28 +212,13 @@ PUBLIC void prot_init()
   	   PRESENT | (TASK_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
 
 #if _WORD_SIZE == 4
-  /* Build 16-bit code segment for debugger.  Debugger runs mainly in 16-bit
-   * mode but it is inconvenient to switch directly.
-   */
-  init_codeseg(&gdt[DB_CS16_INDEX], hclick_to_physb(break_vector.selector),
-	       (phys_bytes) MAX_286_SEG_SIZE, INTR_PRIVILEGE);
-  gdt[DB_CS16_INDEX].granularity &= ~DEFAULT;
-
   /* Complete building of main TSS. */
   tss.iobase = sizeof tss;	/* empty i/o permissions map */
-
-  /* Build flat data segment for functions in klib386. */
-  init_dataseg(&gdt[FLAT_DS_INDEX], (phys_bytes) 0, (phys_bytes) 0,
-	       TASK_PRIVILEGE);
 
   /* Complete building of interrupt gates. */
   int_gate(SYS386_VECTOR, (phys_bytes) (vir_bytes) s_call,
 	   PRESENT | (USER_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
 #endif
-
-  /* Fix up debugger selectors, now the real-mode values are finished with. */
-  break_vector.selector = DB_CS_SELECTOR;
-  sstep_vector.selector = DB_CS_SELECTOR;
 }
 
 /*=========================================================================*
@@ -328,6 +304,31 @@ phys_bytes size;
 #else
   segdp->limit_low = size - 1;
 #endif
+}
+
+
+/*=========================================================================*
+ *				seg2phys					   *
+ *=========================================================================*/
+PUBLIC phys_bytes seg2phys(seg)
+U16_t seg;
+{
+/* Return the base address of a segment, with seg being either a 8086 segment
+ * register, or a 286/386 segment selector.
+ */
+  phys_bytes base;
+  struct segdesc_s *segdp;
+
+  if (!protected_mode) {
+	base = hclick_to_physb(seg);
+  } else {
+	segdp = &gdt[seg >> 3];
+	base = segdp->base_low | ((u32_t) segdp->base_middle << 16);
+#if _WORD_SIZE == 4
+	base |= ((u32_t) segdp->base_high << 24);
+#endif
+  }
+  return base;
 }
 
 

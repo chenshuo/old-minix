@@ -157,11 +157,9 @@ char *user_addr;		/* user space address where stat buf goes */
 {
 /* Common code for stat and fstat system calls. */
 
-  register struct stat *stp;
   struct stat statbuf;
   mode_t mo;
   int r, s;
-  vir_bytes v;
 
   /* Update the atime, ctime, and mtime fields in the inode, if need be. */
   if (rip->i_update) update_times(rip);
@@ -169,28 +167,27 @@ char *user_addr;		/* user space address where stat buf goes */
   /* Fill in the statbuf struct. */
   mo = rip->i_mode & I_TYPE;
   s = (mo == I_CHAR_SPECIAL || mo == I_BLOCK_SPECIAL);	/* true iff special */
-  stp = &statbuf;		/* set up pointer to the buffer */
-  stp->st_dev = rip->i_dev;
-  stp->st_ino = rip->i_num;
-  stp->st_mode = rip->i_mode;
-  stp->st_nlink = rip->i_nlinks & BYTE;
-  stp->st_uid = rip->i_uid;
-  stp->st_gid = rip->i_gid & BYTE;
-  stp->st_rdev = (dev_t) (s ? rip->i_zone[0] : NO_DEV);
-  stp->st_size = rip->i_size;
+  statbuf.st_dev = rip->i_dev;
+  statbuf.st_ino = rip->i_num;
+  statbuf.st_mode = rip->i_mode;
+  statbuf.st_nlink = rip->i_nlinks & BYTE;
+  statbuf.st_uid = rip->i_uid;
+  statbuf.st_gid = rip->i_gid & BYTE;
+  statbuf.st_rdev = (dev_t) (s ? rip->i_zone[0] : NO_DEV);
+  statbuf.st_size = rip->i_size;
 
   if (rip->i_pipe == I_PIPE) {
-	stp->st_mode &= ~I_REGULAR;	/* wipe out I_REGULAR bit for pipes */
+	statbuf.st_mode &= ~I_REGULAR;	/* wipe out I_REGULAR bit for pipes */
 	if (fil_ptr != NIL_FILP && fil_ptr->filp_mode & R_BIT) 
-		stp->st_size -= fil_ptr->filp_pos;
+		statbuf.st_size -= fil_ptr->filp_pos;
   }
 
-  stp->st_atime = rip->i_atime;
-  stp->st_mtime = rip->i_mtime;
-  stp->st_ctime = rip->i_ctime;
+  statbuf.st_atime = rip->i_atime;
+  statbuf.st_mtime = rip->i_mtime;
+  statbuf.st_ctime = rip->i_ctime;
 
   /* Copy the struct to user space. */
-  v = (vir_bytes) user_addr;
-  r = rw_user(D, who, v, (vir_bytes) sizeof statbuf, (char *) stp, TO_USER);
+  r = sys_copy(FS_PROC_NR, D, (phys_bytes) &statbuf,
+  		who, D, (phys_bytes) user_addr, (phys_bytes) sizeof(statbuf));
   return(r);
 }

@@ -1,4 +1,4 @@
-/*	installboot 1.18 - Make a device bootable	Author: Kees J. Bot
+/*	installboot 1.20 - Make a device bootable	Author: Kees J. Bot
  *								21 Dec 1991
  *
  * Either make a device bootable or make an image from kernel, mm, fs, etc.
@@ -28,9 +28,10 @@
 #define RATIO		(BLOCK_SIZE/SECTOR_SIZE)
 #define SIGNATURE	0xAA55	/* Boot block signature. */
 #define BOOT_MAX	64	/* Absolute maximum size of secondary boot */
-#define JMPSHORT	0xEB	/* Fix flag after a short jmp? */
-#define JMPLONG		0xE9	/* Fix flag after a long jmp? */
-#define XOR		0x31	/* Followed by an XOR instruction? */
+#define JMP		0xEB	/* Opcode of a short jump */
+#define JMPOFFM		0x01	/* Jump offset in normal master bootstrap */
+#define JMPOFFE		0x02	/* Jump offset in extended bootstrap */
+#define XOR		0x31	/* Jumping to an XOR instruction? */
 #define SIGPOS		510	/* Where to put signature word. */
 #define PARTPOS		446	/* Offset to the partition table in a master
 				 * boot block.
@@ -92,8 +93,6 @@ void bwrite(FILE *f, char *name, void *buf, size_t len)
 long total_text= 0, total_data= 0, total_bss= 0;
 int making_image= 0;
 
-#define align(n)	(((n) + ((SECTOR_SIZE) - 1)) & ~((SECTOR_SIZE) - 1))
-
 void read_header(int talk, char *proc, FILE *procf, struct image_header *ihdr)
 /* Read the a.out header of a program and check it.  If procf happens to be
  * nil then the header is already in *image_hdr and need only be checked.
@@ -101,7 +100,6 @@ void read_header(int talk, char *proc, FILE *procf, struct image_header *ihdr)
 {
 	int n, big= 0;
 	static int banner= 0;
-	long a_text, a_bss;
 	struct exec *phdr= &ihdr->process;
 
 	if (procf == nil) {
@@ -133,17 +131,15 @@ void read_header(int talk, char *proc, FILE *procf, struct image_header *ihdr)
 		printf("    text    data     bss     size\n");
 		banner= 1;
 	}
-	a_text= (making_image && phdr->a_flags & A_SEP) ? align(phdr->a_text)
-							: phdr->a_text;
-	a_bss= making_image ? align(phdr->a_bss) : phdr->a_bss;
 
 	if (talk) {
-		printf("%8ld%8ld%8ld%9ld  %s\n", a_text, phdr->a_data, a_bss,
-			a_text + phdr->a_data + a_bss, proc);
+		printf("%8ld%8ld%8ld%9ld  %s\n",
+			phdr->a_text, phdr->a_data, phdr->a_bss,
+			phdr->a_text + phdr->a_data + phdr->a_bss, proc);
 	}
-	total_text+= a_text;
+	total_text+= phdr->a_text;
 	total_data+= phdr->a_data;
-	total_bss+= a_bss;
+	total_bss+= phdr->a_bss;
 
 	if (phdr->a_cpu == A_I8086) {
 		long data= phdr->a_data + phdr->a_bss;
@@ -158,9 +154,9 @@ void read_header(int talk, char *proc, FILE *procf, struct image_header *ihdr)
 			"%s will crash, %s%s%s segment%s larger then 64K\n",
 			proc,
 			big & 1 ? "text" : "",
-			big == 2 ? " and " : "",
+			big == 3 ? " and " : "",
 			big & 2 ? "data" : "",
-			big == 2 ? "s are" : " is");
+			big == 3 ? "s are" : " is");
 	}
 }
 
@@ -172,6 +168,8 @@ void padimage(char *image, FILE *imagef, int n)
 		n--;
 	}
 }
+
+#define align(n)	(((n) + ((SECTOR_SIZE) - 1)) & ~((SECTOR_SIZE) - 1))
 
 void copyexec(char *proc, FILE *procf, char *image, FILE *imagef, long n)
 /* Copy n bytes from proc to image padded to fill a sector. */
@@ -674,12 +672,12 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 	}
 }
 
-void install_master(char *device, char *masterboot, int fix)
+void install_master(char *device, char *masterboot, char *fix)
 /* Booting a hard disk is a two stage process:  The master bootstrap in sector
  * 0 loads the bootstrap from sector 0 of the active partition which in turn
  * starts the operating system.  This code installs such a master bootstrap
- * on a hard disk.  If fix >= 0, then the master bootstrap is locked into
- * booting device /dev/hd'fix'.
+ * on a hard disk.  If fix is non-null then the master bootstrap is locked
+ * into booting device /dev/hd'fix'.
  */
 {
 	FILE *masf;
@@ -712,21 +710,39 @@ void install_master(char *device, char *masterboot, int fix)
 
 	(void) bread(masf, masterboot, buf, size);
 
-	if (fix >= 0) {
+	if (fix != nil) {
 		/* Fixate partition to boot. */
-		int fixpos= 0;
+		int device= 0, logical= 0;
+		char *pf= fix;
 
-		/* The first instruction is a jmp over the fix flag. */
-		if (buf[0] == (char) JMPSHORT) fixpos= 2;
-		if (buf[0] == (char) JMPLONG) fixpos= 3;
+		while (between('0', *pf, '9')) {
+			device= 10 * device + (*pf - '0');
+			if (device >= 40) break;
+			pf++;
+		}
+		if (between('a', *pf, 'd')) {
+			logical= 1 + (*pf - 'a');
+			pf++;
+		}
+		if (*pf != 0) {
+			fprintf(stderr, "installboot: bad fix key '%s'\n", fix);
+			exit(1);
+		}
 
-		/* Patch it in if the code looks like the proper masterboot. */
-		if (fixpos != 0 && buf[fixpos + 1] == (char) XOR) {
-			buf[fixpos]= fix;
+		if (buf[0] == (char) JMP && buf[1] == (char) JMPOFFM
+				&& buf[3] == (char) XOR && logical == 0) {
+			/* Minix masterboot; patch device number. */
+			buf[2]= device;
+		} else
+		if (buf[0] == (char) JMP && buf[1] == (char) JMPOFFE
+				&& buf[4] == (char) XOR && logical != 0) {
+			/* Minix extboot; patch device and logical number. */
+			buf[2]= device;
+			buf[3]= logical;
 		} else {
 			fprintf(stderr,
-				"installboot: can't put a fix flag on %s\n",
-				masterboot);
+				"installboot: can't put fix flag '%s' on %s\n",
+				fix, masterboot);
 			exit(1);
 		}
 	}
@@ -782,13 +798,11 @@ int main(int argc, char **argv)
 		make_bootable(BOOT, argv[2], argv[3], argv[4], argv + 5);
 	} else
 	if (argc == 4 && isoption(argv[1], "-master")) {
-		install_master(argv[2], argv[3], -1);
+		install_master(argv[2], argv[3], nil);
 	} else
 	if (argc == 5 && isoption(argv[1], "-master")
-		    && between('0', argv[2][0], '9')
-		    && (argv[2][1] == 0 || between('0', argv[2][1], '9')
-						&& argv[2][2] == 0)) {
-		install_master(argv[3], argv[4], atoi(argv[2]));
+				    && between('0', argv[2][0], '9')) {
+		install_master(argv[3], argv[4], argv[2]);
 	} else {
 		usage();
 	}

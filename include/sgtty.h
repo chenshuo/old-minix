@@ -45,6 +45,10 @@ struct tchars {
 #define B4800		  48
 #define B9600 		  96
 #define B19200		 192
+#define B28800		 196
+#define B38400		 195
+#define B57600		 194
+#define B115200		 193
 
 #define TIOCGETP (('t'<<8) | 8)
 #define TIOCSETP (('t'<<8) | 9)

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# whatis/apropos 1.2 - search whatis(5) database for commands
+# whatis/apropos 1.3 - search whatis(5) database for commands
 #							Author: Kees J. Bot
 # BUGS
 #	whatis file must be as if created by makewhatis(8).
@@ -36,7 +36,7 @@ do
 
 		case $0 in
 		*whatis)
-			grep "(^$1| $1)[ ,][^(]*\(" $w && eval $all
+			grep "^($1|[^(]* $1)[ ,][^(]*\\(" $w && eval $all
 			;;
 		*apropos)
 			grep -i "$1" $w && eval $all

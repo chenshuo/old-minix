@@ -1116,6 +1116,10 @@ ttsspd(speed) {
 	    case 9600: s = B9600; break;
 #ifdef MINIX
 	    case 19200: s = B19200; break;
+	    case 28800: s = B28800; break;
+	    case 38400: s = B38400; break;
+	    case 57600: s = B57600; break;
+	    case 115200: s = B115200; break;
 #endif
 #ifdef PLEXUS
 	    case 19200: s = EXTA; break;

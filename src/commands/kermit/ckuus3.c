@@ -447,6 +447,10 @@ chkspd(x) int x; {
 	case 9600:
 #ifdef MINIX
         case 19200:
+	case 28800:
+	case 38400:
+	case 57600:
+	case 115200:
 #else
 #ifdef apollo
         case 19200:

@@ -149,8 +149,10 @@ message *m_ptr;
 PRIVATE void m_init()
 {
   /* Initialize this task. */
+  extern int _end;
+
   m_geom[KMEM_DEV].dv_base = vir2phys(0);
-  m_geom[KMEM_DEV].dv_size = (phys_bytes) sizes[1] << CLICK_SHIFT;
+  m_geom[KMEM_DEV].dv_size = vir2phys(&_end);
 
 #if (CHIP == INTEL)
   if (!protected_mode) {
@@ -193,21 +195,15 @@ message *m_ptr;			/* pointer to read or write message */
   bytesize = (unsigned long) m_ptr->COUNT * BLOCK_SIZE;
   size = (bytesize + CLICK_SHIFT-1) >> CLICK_SHIFT;
 
-#if (CHIP == INTEL)
-  if (pc_at && !protected_mode && ext_memsize * 1024L >= bytesize) {
-	/* The RAM disk can be placed in extended memory. */
-	base = 0x100000L >> CLICK_SHIFT;
-  } else
-#endif
-  {
-	/* Find a memory chunk big enough for the RAM disk. */
-	memp= &mem[NR_MEMS];
-	while ((--memp)->size < size) {
-		if (memp == mem) panic("RAM disk is too big.", NO_NUM);
-	}
-	base = memp->base + memp->size - size;
-	memp->size -= size;
+  /* Find a memory chunk big enough for the RAM disk. */
+  memp= &mem[NR_MEMS];
+  while ((--memp)->size < size) {
+	if (memp == mem) panic("RAM disk is too big", NO_NUM);
   }
+  base = memp->base;
+  memp->base += size;
+  memp->size -= size;
+
   m_geom[RAM_DEV].dv_base = (unsigned long) base << CLICK_SHIFT;
   m_geom[RAM_DEV].dv_size = bytesize;
   return(OK);

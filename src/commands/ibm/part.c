@@ -1,4 +1,4 @@
-/*	part 1.34 - Partition table editor		Author: Kees J. Bot
+/*	part 1.37 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 20k heap+stack.
  */
@@ -152,13 +152,9 @@ void set_cursor(int row, int col)
 	tputs(tgoto(t_cm, col, row), 1, putchr);
 }
 
-void clear_screen(void)
-{
-	set_cursor(0, 0);
-	tputs(t_cd, 1, putchr);
-}
-
 int statusrow= STATUSROW;
+int stat_ktl= 1;
+int need_help= 1;
 
 void stat_start(int serious)
 /* Prepare for printing on a fresh status line, possibly highlighted. */
@@ -168,14 +164,37 @@ void stat_start(int serious)
 	if (serious) tputs(t_so, 1, putchr);
 }
 
-void stat_end(void)
-/* Closing bracket for stat_start. */
+void stat_end(int ktl)
+/* Closing bracket for stat_start.  Sets "keystrokes to live" of message. */
 {
 	tputs(t_se, 1, putchr);
+	stat_ktl= ktl;
+	need_help= 1;
 }
 
-/* Reset the statusline pointer. */
-#define stat_reset()	((void) (statusrow= STATUSROW))
+void stat_reset(void)
+/* Reset the statusline pointer and clear old messages if expired. */
+{
+	if (stat_ktl > 0 && --stat_ktl == 0) {
+		statusrow= STATUSROW;
+		need_help= 1;
+	}
+	if (need_help && statusrow < (24-2)) {
+		if (statusrow > STATUSROW) stat_start(0);
+		stat_start(0);
+		putstr("Type '?' for help, '!' for advise");
+	}
+	statusrow= STATUSROW;
+	need_help= 0;
+}
+
+void clear_screen(void)
+{
+	set_cursor(0, 0);
+	tputs(t_cd, 1, putchr);
+	stat_ktl= 1;
+	stat_reset();
+}
 
 void reset_tty(void)
 /* Reset the tty to cooked mode. */
@@ -207,7 +226,7 @@ typedef struct device {
 	struct device *next, *prev;	/* Circular dequeue. */
 	dev_t	rdev;			/* Device number (sorting only). */
 	char	*name;			/* E.g. /dev/hd0 */
-	char	*subname;			/* E.g. /dev/hd0:2 */
+	char	*subname;		/* E.g. /dev/hd0:2 */
 	char	part[6];		/* E.g. hd2a */
 	parttype_t parttype;
 } device_t;
@@ -299,36 +318,36 @@ void getdevices(void)
 	(void) closedir(d);
 }
 
-/* One nice hand made featureful master bootstrap. */
+/* One featureful master bootstrap. */
 char bootstrap[] = {
 0353,0001,0000,0061,0300,0216,0330,0216,0300,0372,0216,0320,0274,0000,0174,0373,
-0275,0276,0007,0211,0346,0126,0277,0000,0006,0271,0000,0001,0374,0362,0245,0352,
-0044,0006,0000,0000,0264,0002,0315,0026,0250,0010,0164,0033,0350,0062,0001,0166,
-0007,0060,0344,0315,0026,0242,0177,0007,0054,0060,0074,0012,0163,0363,0120,0350,
-0037,0001,0177,0007,0130,0353,0007,0240,0002,0006,0204,0300,0164,0144,0230,0262,
-0005,0366,0362,0262,0200,0000,0302,0210,0340,0120,0350,0240,0000,0163,0003,0351,
-0144,0000,0130,0054,0001,0174,0141,0276,0276,0175,0211,0357,0271,0040,0000,0362,
-0245,0200,0301,0004,0211,0356,0215,0174,0020,0070,0154,0004,0164,0016,0213,0135,
-0010,0053,0134,0010,0213,0135,0012,0033,0134,0012,0163,0014,0212,0044,0206,0144,
-0020,0210,0044,0106,0071,0376,0162,0364,0211,0376,0201,0376,0356,0007,0162,0326,
-0342,0322,0211,0356,0264,0020,0366,0344,0001,0306,0200,0174,0004,0001,0162,0026,
-0353,0021,0204,0322,0175,0041,0211,0356,0200,0174,0004,0000,0164,0013,0366,0004,
-0200,0164,0006,0350,0077,0000,0162,0055,0303,0203,0306,0020,0201,0376,0376,0007,
-0162,0346,0350,0214,0000,0203,0007,0350,0207,0000,0221,0007,0376,0302,0174,0017,
-0315,0021,0321,0340,0321,0340,0200,0344,0003,0070,0342,0166,0012,0262,0200,0264,
-0010,0122,0315,0023,0132,0162,0143,0350,0003,0000,0162,0333,0303,0211,0356,0214,
-0134,0010,0214,0134,0012,0277,0003,0000,0122,0264,0010,0315,0023,0200,0341,0077,
-0376,0306,0210,0310,0366,0346,0211,0303,0213,0104,0010,0213,0124,0012,0367,0363,
-0222,0210,0325,0366,0361,0060,0322,0321,0352,0321,0352,0010,0342,0210,0321,0376,
-0301,0132,0210,0306,0273,0000,0174,0270,0001,0002,0315,0023,0163,0014,0117,0164,
-0006,0060,0344,0315,0023,0163,0301,0071,0347,0303,0201,0076,0376,0175,0125,0252,
-0165,0001,0303,0350,0013,0000,0251,0007,0353,0005,0350,0004,0000,0235,0007,0353,
-0376,0136,0255,0126,0211,0306,0254,0204,0300,0164,0011,0264,0016,0273,0001,0000,
-0315,0020,0353,0362,0303,0000,0057,0144,0145,0166,0057,0150,0144,0077,0010,0000,
-0015,0012,0000,0116,0157,0156,0145,0040,0141,0143,0164,0151,0166,0145,0015,0012,
-0000,0116,0145,0170,0164,0040,0144,0151,0163,0153,0015,0012,0000,0122,0145,0141,
-0144,0040,0145,0162,0162,0157,0162,0040,0000,0116,0157,0164,0040,0142,0157,0157,
-0164,0141,0142,0154,0145,0040,0000,0000,
+0275,0276,0007,0211,0346,0126,0277,0000,0006,0271,0000,0001,0374,0363,0245,0352,
+0044,0006,0000,0000,0264,0002,0315,0026,0250,0010,0164,0033,0350,0071,0001,0174,
+0007,0060,0344,0315,0026,0242,0205,0007,0054,0060,0074,0012,0163,0363,0120,0350,
+0046,0001,0205,0007,0130,0353,0012,0240,0002,0006,0204,0300,0165,0003,0351,0147,
+0000,0230,0262,0005,0366,0362,0262,0200,0000,0302,0210,0340,0120,0350,0234,0000,
+0163,0003,0351,0147,0000,0130,0054,0001,0175,0003,0351,0141,0000,0276,0276,0175,
+0211,0357,0271,0040,0000,0363,0245,0200,0301,0004,0211,0356,0215,0174,0020,0070,
+0154,0004,0164,0016,0213,0135,0010,0053,0134,0010,0213,0135,0012,0033,0134,0012,
+0163,0014,0212,0044,0206,0144,0020,0210,0044,0106,0071,0376,0162,0364,0211,0376,
+0201,0376,0356,0007,0162,0326,0342,0322,0211,0356,0264,0020,0366,0344,0001,0306,
+0200,0174,0004,0001,0162,0026,0353,0021,0204,0322,0175,0041,0211,0356,0200,0174,
+0004,0000,0164,0013,0366,0004,0200,0164,0006,0350,0070,0000,0162,0053,0303,0203,
+0306,0020,0201,0376,0376,0007,0162,0346,0350,0215,0000,0211,0007,0376,0302,0204,
+0322,0174,0023,0315,0021,0321,0340,0321,0340,0200,0344,0003,0070,0342,0167,0355,
+0350,0011,0000,0162,0350,0303,0350,0003,0000,0162,0146,0303,0211,0356,0214,0134,
+0010,0214,0134,0012,0277,0003,0000,0122,0006,0127,0264,0010,0315,0023,0137,0007,
+0200,0341,0077,0376,0306,0210,0310,0366,0346,0211,0303,0213,0104,0010,0213,0124,
+0012,0367,0363,0222,0210,0325,0366,0361,0060,0322,0321,0352,0321,0352,0010,0342,
+0210,0321,0376,0301,0132,0210,0306,0273,0000,0174,0270,0001,0002,0315,0023,0163,
+0020,0200,0374,0200,0164,0011,0117,0174,0006,0060,0344,0315,0023,0163,0270,0371,
+0303,0201,0076,0376,0175,0125,0252,0165,0001,0303,0350,0013,0000,0243,0007,0353,
+0005,0350,0004,0000,0227,0007,0353,0376,0136,0255,0126,0211,0306,0254,0204,0300,
+0164,0011,0264,0016,0273,0001,0000,0315,0020,0353,0362,0303,0057,0144,0145,0166,
+0057,0150,0144,0077,0010,0000,0015,0012,0000,0116,0157,0156,0145,0040,0141,0143,
+0164,0151,0166,0145,0015,0012,0000,0122,0145,0141,0144,0040,0145,0162,0162,0157,
+0162,0040,0000,0116,0157,0164,0040,0142,0157,0157,0164,0141,0142,0154,0145,0040,
+0000,0000,
 };
 
 int dirty= 0;
@@ -414,7 +433,7 @@ void recompute0(void)
 		table[0].lowsec= 0;
 		table[0].size= cylinders * heads * sectors;
 	}
-	table[0].sysind= MINIX_PART;
+	table[0].sysind= device < 0 ? NO_PART : MINIX_PART;
 	secpcyl= heads * sectors;
 }
 
@@ -492,11 +511,11 @@ void geometry(void)
 		stat_start(1);
 		printf("Failure to get the geometry of %s: %s", curdev->name,
 			errno == ENOTTY ? "No driver support" : strerror(err));
-		stat_end();
+		stat_end(5);
 		stat_start(0);
 		printf("The geometry has been guessed as %ux%ux%u",
 						cylinders, heads, sectors);
-		stat_end();
+		stat_end(5);
 	}
 
 	/* Show the base and size of the device instead of the whole drive.
@@ -576,10 +595,16 @@ int round_sysind(int ind, int delta)
  * number of the start of partition three.
  */
 typedef enum objtype {
-	O_TEXT, O_DEV, O_SUB, O_CYL, O_HEAD, O_SEC,
-	O_NUM, O_SORT, O_TYPHEX, O_TYPTXT,
+	O_INFO, O_TEXT, O_DEV, O_SUB,
+	O_TYPTXT, O_SORT, O_NUM, O_TYPHEX,
+	O_CYL, O_HEAD, O_SEC,
 	O_SCYL, O_SHEAD, O_SSEC, O_LCYL, O_LHEAD, O_LSEC, O_BASE, O_SIZE, O_KB
 } objtype_t;
+
+#define ljust(type)	((type) <= O_TYPTXT)
+#define center(type)	((type) == O_SORT)
+#define rjust(type)	((type) >= O_NUM)
+#define computed(type)	((type) >= O_TYPTXT)
 
 typedef struct object {
 	struct object	*next;
@@ -684,6 +709,33 @@ void print(object_t *op)
 	op->flags&= ~(OF_ODD | OF_BAD);
 
 	switch (op->type) {
+	case O_INFO:		{
+				/* Current field. */
+		static struct field { int type; char *name; } fields[]= {
+			{ O_DEV,	"Select device"		},
+			{ O_NUM,	"Active flag"		},
+			{ O_TYPHEX,	"Hex partition type"	},
+			{ O_TYPTXT,	"Partition type"	},
+			{ O_SCYL,	"Start cylinder"	},
+			{ O_SHEAD,	"Start head"		},
+			{ O_SSEC,	"Start sector"		},
+			{ O_CYL,	"Number of cylinders"	},
+			{ O_HEAD,	"Number of heads"	},
+			{ O_SEC,	"Sectors per track"	},
+			{ O_LCYL,	"Last cylinder"		},
+			{ O_LHEAD,	"Last head"		},
+			{ O_LSEC,	"Last sector"		},
+			{ O_BASE,	"Base sector"		},
+			{ O_SIZE,	"Size in sectors"	},
+			{ O_KB,		"Size in kilobytes"	},
+			{ -1,		"?"			},
+		};
+		struct field *fp= fields;
+
+		while (fp->type >= 0 && fp->type != curobj->type) fp++;
+		strcpy(op->value, fp->name);
+		op->flags|= OF_ODD;
+		break;		}
 	case O_TEXT:
 				/* Simple text field. */
 		strcpy(op->value, op->text);
@@ -691,12 +743,10 @@ void print(object_t *op)
 	case O_DEV:
 	case O_SUB:
 				/* Name of currently edited device. */
-		name= op->type == O_DEV ? curdev->name
-				: offset == 0 ? "" : curdev->subname;
-		if ((n= strlen(name)) > 10)
-			strcpy(op->value, name + n - 10);
-		else
-			sprintf(op->value, "%-10s", name);
+		name= op->type == O_DEV ? curdev->name :
+					offset == 0 ? "" : curdev->subname;
+		if ((n= strlen(name)) < 10) n= 10;
+		strcpy(op->value, name + (n - 10));
 		if (device < 0 && op->type == O_DEV) op->flags|= OF_BAD;
 		break;
 	case O_NUM:
@@ -706,25 +756,33 @@ void print(object_t *op)
 		break;
 	case O_SORT:
 				/* Position if the driver sorts the table. */
-		strcpy(op->value, "     ");
-		n= strlen(curdev->part);
+		name= curdev->part;
+		n= strlen(name);
 		switch (device < 0 ? DUNNO : curdev->parttype) {
 		case DUNNO:
-			sprintf(op->value + 2, "%d", sort_index[pe - table]);
-			n= 3;
+			sprintf(op->value, "%d", sort_index[pe - table]);
+			n= 1;
 			break;
 		case PRIMARY:
-			strcpy(op->value + 3 - (n+1)/2, curdev->part);
-			n= strlen(op->value);
+			if (n > op->len) {
+				name+= (n - op->len); n= op->len;
+			}
+			strcpy(op->value, name);
 			op->value[n-1] += sort_index[pe - table];
 			break;
 		case SUBPART:
-			strcpy(op->value + 2 - n/2, curdev->part);
-			n= strlen(op->value);
+			if (n > op->len-1) {
+				name+= (n - (op->len-1)); n= op->len-1;
+			}
+			strcpy(op->value, name);
 			op->value[n++] = 'a' + pe - table - 1;
 			break;
 		}
-		while (n < 5) op->value[n++]= ' ';
+		if (n < op->len) {
+			memmove(op->value+1, op->value, n);
+			op->value[0]= ' ';
+			n++;
+		}
 		op->value[n]= 0;
 		break;
 	case O_TYPHEX:
@@ -733,59 +791,59 @@ void print(object_t *op)
 		break;
 	case O_TYPTXT:
 				/* Ascii partition type indicator. */
-		sprintf(op->value, "%-9s", typ2txt(pe->sysind));
+		strcpy(op->value, typ2txt(pe->sysind));
 		if (pe->sysind == OLD_MINIX_PART && pe->lowsec & 1)
 			op->flags|= OF_BAD;
 		break;
 	case O_SCYL:
 				/* Partition's start cylinder. */
-		sprintf(op->value, "%4lu", entry2base(pe) / secpcyl);
+		sprintf(op->value, "%lu", entry2base(pe) / secpcyl);
 		break;
 	case O_SHEAD:
 				/* Start head. */
 		t= entry2base(pe);
-		sprintf(op->value, "%3lu", t % secpcyl / sectors);
+		sprintf(op->value, "%lu", t % secpcyl / sectors);
 		if (!aligned(t, secpcyl) && t != table[0].lowsec + sectors)
 			op->flags|= OF_ODD;
 		break;
 	case O_SSEC:
 				/* Start sector. */
 		t= entry2base(pe);
-		sprintf(op->value, "%2lu", t % sectors);
+		sprintf(op->value, "%lu", t % sectors);
 		if (!aligned(t, sectors)) op->flags|= OF_ODD;
 		break;
 	case O_CYL:
 				/* Number of cylinders. */
-		sprintf(op->value, "%4u", cylinders);
+		sprintf(op->value, "%u", cylinders);
 		break;
 	case O_HEAD:
 				/* Number of heads. */
-		sprintf(op->value, "%3u", heads);
+		sprintf(op->value, "%u", heads);
 		break;
 	case O_SEC:
 				/* Number of sectors per track. */
-		sprintf(op->value, "%2u", sectors);
+		sprintf(op->value, "%u", sectors);
 		break;
 	case O_LCYL:
 				/* Partition's last cylinder. */
 		t= entry2last(pe);
-		sprintf(op->value, "%4lu", t == -1 ? 0 : t / secpcyl);
+		sprintf(op->value, "%lu", t == -1 ? 0 : t / secpcyl);
 		break;
 	case O_LHEAD:
 				/* Partition's last head. */
 		t= entry2last(pe);
-		sprintf(op->value, "%3lu", t == -1 ? 0 : t % secpcyl / sectors);
+		sprintf(op->value, "%lu", t == -1 ? 0 : t % secpcyl / sectors);
 		if (!aligned(t + 1, secpcyl)) op->flags|= OF_ODD;
 		break;
 	case O_LSEC:
 				/* Partition's last sector. */
 		t= entry2last(pe);
-		sprintf(op->value, t == -1 ? "-1" : "%2lu", t % sectors);
+		sprintf(op->value, t == -1 ? "-1" : "%lu", t % sectors);
 		if (!aligned(t + 1, sectors)) op->flags|= OF_ODD;
 		break;
 	case O_BASE:
 				/* Partition's base sector. */
-		sprintf(op->value, "%8lu", entry2base(pe));
+		sprintf(op->value, "%lu", entry2base(pe));
 		if (pe->sysind != NO_PART && pe != &table[0]
 		   && (pe->lowsec <= table[0].lowsec || overlap(pe->lowsec)))
 			op->flags|= OF_BAD;
@@ -793,7 +851,7 @@ void print(object_t *op)
 	case O_SIZE:
 				/* Size of partitition in sectors. */
 		t= howend == SIZE ? entry2size(pe) : entry2last(pe);
-		sprintf(op->value, "%8lu", pe->sysind == NO_PART ? 0 : t);
+		sprintf(op->value, "%lu", pe->sysind == NO_PART ? 0 : t);
 		if (pe->sysind != NO_PART && (pe->size == 0
 		    || pe->lowsec + pe->size > table[0].lowsec + table[0].size
 		    || overlap(pe->lowsec + pe->size)))
@@ -801,20 +859,35 @@ void print(object_t *op)
 		break;
 	case O_KB:
 				/* Size of partitition in kilobytes. */
-		sprintf(op->value, "%7lu", entry2size(pe) / 2);
+		sprintf(op->value, "%lu", entry2size(pe) / 2);
 		break;
 	default:
 		sprintf(op->value, "?? %d ??", op->type);
 	}
 
+	if (device < 0 && computed(op->type)) strcpy(op->value, "?");
+
 	/* If a value overflows the print field then show a blank
 	 * reverse video field.
 	 */
-	if (strlen(op->value) > op->len) {
-		memset(op->value, ' ', op->len);
-		op->value[op->len]= 0;
+	if ((n= strlen(op->value)) > op->len) {
+		n= 0;
 		op->flags|= OF_BAD;
 	}
+
+	/* Left, center or right justified? */
+	if (ljust(op->type)) {
+		memset(op->value + n, ' ', op->len - n);
+	} else
+	if (center(op->type)) {
+		memset(op->value + n, ' ', op->len - n);
+		memmove(op->value + (op->len - n) / 2, op->value, n);
+		memset(op->value, ' ', (op->len - n) / 2);
+	} else {
+		memmove(op->value + (op->len - n), op->value, n);
+		memset(op->value, ' ', op->len - n);
+	}
+	op->value[op->len]= 0;
 
 	if ((op->flags & (OF_ODD | OF_BAD)) == (oldflags & (OF_ODD | OF_BAD))
 				&& strcmp(op->value, oldvalue) == 0) {
@@ -822,16 +895,8 @@ void print(object_t *op)
 		return;
 	}
 
-	switch (op->type) {
-	case O_TEXT:
-	case O_DEV:
-	case O_SUB:
-	case O_TYPTXT:		/* Cursor at the left. */
-		set_cursor(op->row, op->col);
-		break;
-	default:		/* Others have cursor at the right. */
-		set_cursor(op->row, op->col - strlen(op->value) + 1);
-	}
+	set_cursor(op->row, rjust(op->type) ? op->col - (op->len-1) : op->col);
+
 	if (op->flags & OF_BAD) tputs(t_so, 1, putchr);
 	else
 	if (op->flags & OF_ODD) tputs(t_md, 1, putchr);
@@ -854,8 +919,8 @@ int magic;	/* Changes when using the magic key. */
 
 void event(int ev, object_t *op);
 
-void m_refresh(int ev, object_t *op)
-/* Repaint the screen. */
+void m_redraw(int ev, object_t *op)
+/* Redraw the screen. */
 {
 	object_t *op2;
 
@@ -882,25 +947,6 @@ void m_orientation(int ev, object_t *op)
 	}
 }
 
-void m_activate(int ev, object_t *op)
-/* Toggle the active bit on a partition, only one partition is left active. */
-{
-	object_t *oldop;
-
-	if ((ev != '-' && ev != '+') || device < 0 || op->type != O_NUM) return;
-
-	for (oldop= world; oldop != nil; oldop= oldop->next) {
-		if (oldop != op
-			&& oldop->type == O_NUM
-			&& oldop->entry->bootind != 0
-		) {
-			oldop->entry->bootind= 0;
-		}
-	}
-	op->entry->bootind^= ACTIVE_FLAG;
-	dirty= 1;
-}
-
 void m_move(int ev, object_t *op)
 /* Move to the nearest modifiably object in the intended direction.  Objects
  * on the same row or column are really near.
@@ -911,6 +957,12 @@ void m_move(int ev, object_t *op)
 
 	if (ev != 'h' && ev != 'j' && ev != 'k' && ev != 'l' && ev != 'H')
 		return;
+
+	if (device < 0) {
+		/* No device open?  Then try to read first. */
+		event('r', op);
+		if (device < 0) return;
+	}
 
 	near= op;
 	dist= -1;
@@ -986,7 +1038,6 @@ void m_leave(int ev, object_t *op)
 /* About to leave this object. */
 {
 	if (ev != E_LEAVE) return;
-	event('r', op);
 }
 
 int within(unsigned *var, unsigned low, unsigned value, unsigned high)
@@ -1065,7 +1116,7 @@ int check_existing(struct part_entry *pe)
 	fflush(stdout);
 	while ((c= getchar()) != 'y' && c != 'n') {}
 	putchr(c);
-	stat_end();
+	stat_end(3);
 	return (expert= (c == 'y'));
 }
 
@@ -1074,6 +1125,7 @@ void m_modify(int ev, object_t *op)
  * arithmetic tricks the author doesn't understand either.
  */
 {
+	object_t *op2;
 	struct part_entry *pe= op->entry;
 	int mul, delta;
 	unsigned level= 1;
@@ -1136,6 +1188,14 @@ void m_modify(int ev, object_t *op)
 			return;
 		recompute0();
 		break;
+	case O_NUM:
+		if (ev != '-' && ev != '+') return;
+		for (op2= world; op2 != nil; op2= op2->next) {
+			if (op2->type == O_NUM && ev == '+')
+				op2->entry->bootind= 0;
+		}
+		op->entry->bootind= ev == '+' ? ACTIVE_FLAG : 0;
+		break;
 	case O_TYPHEX:
 		check_ind(pe);
 		pe->sysind= pe->sysind * mul / radix + delta;
@@ -1158,7 +1218,8 @@ void m_modify(int ev, object_t *op)
 		if (!lwithin(&t, 0L,
 			(t / level * mul / radix + delta) * level + surplus,
 			MAXSIZE)) return;
-		if (howend == LAST) pe->size-= t - pe->lowsec;
+		if (howend == LAST || op->type != O_BASE)
+			pe->size-= t - pe->lowsec;
 		pe->lowsec= t;
 		check_ind(pe);
 		if (pe->sysind == NO_PART) pe->sysind= MINIX_PART;
@@ -1176,11 +1237,7 @@ void m_modify(int ev, object_t *op)
 		if (!lwithin(&t, 0L,
 			(t / level * mul / radix + delta) * level + surplus,
 			MAXSIZE)) return;
-		if (howend == SIZE) {
-			pe->lowsec= t - pe->size + 1;
-		} else {
-			pe->size= t - pe->lowsec + 1;
-		}
+		pe->size= t - pe->lowsec + 1;
 		check_ind(pe);
 		if (pe->sysind == NO_PART) pe->sysind= MINIX_PART;
 		break;
@@ -1370,7 +1427,8 @@ void m_in(int ev, object_t *op)
 	int n;
 
 	if (ev != '>' || device < 0 || pe == nil || pe == &table[0]
-		|| (pe->sysind != MINIX_PART && pe->sysind != EXT_PART)
+		|| (!(pe->sysind == MINIX_PART && offset == 0)
+					&& pe->sysind != EXT_PART)
 		|| pe->size == 0) return;
 
 	ext= *pe;
@@ -1465,18 +1523,18 @@ void m_read(int ev, object_t *op)
 	) {
 		stat_start(1);
 		printf("%s: %s", curdev->name, strerror(errno));
-		stat_end();
+		stat_end(5);
 		return;
 	}
 
 	/* Assume up to five lines of kernel messages. */
 	statusrow+= 5-1;
-	stat_end();
+	stat_end(5);
 
 	if (mode == O_RDONLY) {
 		stat_start(1);
 		printf("%s: Readonly", curdev->name);
-		stat_end();
+		stat_end(5);
 	}
 	memset(bootblock, 0, sizeof(bootblock));
 
@@ -1489,7 +1547,7 @@ void m_read(int ev, object_t *op)
 		device= -1;
 	} else
 	if (n < SECTOR_SIZE) printf("%s: Unexpected EOF", curdev->subname);
-	if (n <= 0) stat_end();
+	if (n <= 0) stat_end(5);
 
 	if (n < SECTOR_SIZE) n= SECTOR_SIZE;
 
@@ -1507,7 +1565,7 @@ void m_read(int ev, object_t *op)
 		memset(table+1, 0, NR_PARTITIONS * sizeof(table[1]));
 		stat_start(1);
 		printf("%s: Invalid partition table (reset)", curdev->subname);
-		stat_end();
+		stat_end(5);
 	}
 
 	/* Fix an extended partition table up to something mere mortals can
@@ -1527,7 +1585,7 @@ void m_read(int ev, object_t *op)
 	if (extbase != 0) {
 		stat_start(1);
 		printf("Warning: You are in a DOS extended partition.");
-		stat_end();
+		stat_end(5);
 	}
 }
 
@@ -1545,13 +1603,13 @@ void m_write(int ev, object_t *op)
 		stat_start(1);
 		printf("Warning: About to write a new table on %s",
 							curdev->subname);
-		stat_end();
+		stat_end(5);
 	}
 	if (extbase != 0) {
 		/* Will this stop the luser?  Probably not... */
 		stat_start(1);
 		printf("You have changed a DOS extended partition.  Bad Idea.");
-		stat_end();
+		stat_end(5);
 	}
 	stat_start(1);
 	putstr("Save partition table? (y/n) ");
@@ -1560,7 +1618,7 @@ void m_write(int ev, object_t *op)
 	while ((c= getchar()) != 'y' && c != 'n' && c != ctrl('?')) {}
 
 	if (c == ctrl('?')) putstr("DEL"); else putchr(c);
-	stat_end();
+	stat_end(5);
 	if (c == 'n' && ev == E_WRITE) dirty= 0;
 	if (c != 'y') return;
 
@@ -1587,7 +1645,7 @@ void m_write(int ev, object_t *op)
 	) {
 		stat_start(1);
 		printf("%s: %s", curdev->name, strerror(errno));
-		stat_end();
+		stat_end(5);
 		return;
 	}
 	dirty= 0;
@@ -1608,7 +1666,7 @@ void m_shell(int ev, object_t *op)
 	case -1:
 		stat_start(1);
 		printf("can't fork: %s\n", strerror(errno));
-		stat_end();
+		stat_end(3);
 		break;
 	case 0:
 		if (device >= 0) (void) close(device);
@@ -1616,7 +1674,7 @@ void m_shell(int ev, object_t *op)
 		r= errno;
 		stat_start(1);
 		printf("/bin/sh: %s\n", strerror(errno));
-		stat_end();
+		stat_end(3);
 		exit(127);
 	}
 	sigint= signal(SIGINT, SIG_IGN);
@@ -1662,8 +1720,12 @@ void m_dump(int ev, object_t *op)
 			pe->lowsec,
 			howend == SIZE ? pe->size : pe->size + pe->lowsec - 1,
 			pe->size / 2);
-		stat_end();
+		stat_end(10);
 	}
+	stat_start(0);
+	printf("(Raw dump of the original %.40s table)",
+		curdev->subname);
+	stat_end(10);
 }
 
 int quitting= 0;
@@ -1686,23 +1748,24 @@ void m_help(int ev, object_t *op)
 		char	*keys;
 		char	*what;
 	} help[]= {
-	  { "? !",			"This help / more advice!" },
-	  { "CTRL-L",			"Refresh screen" },
-	  { "hjkl (arrow keys)",	"Move around" },
-	  { "+ - (= _ PgUp PgDn)",	"Increment/decrement/make active" },
-	  { "0-9 (a-f)",		"Enter value" },
-	  { "CTRL-K CTRL-J",		"Move entry up/down" },
-	  { ">",			"Start a subpartition table" },
-	  { "<",			"Back to the primary partition table" },
-	  { "m",			"Cycle through magic values" },
-	  { "spacebar",			"Keep \"Size\" or \"Last\" constant" },
-	  { "r w",			"Read/write partition table" },
-	  { "p s q",			"Raw dump / Shell escape / Quit" },
+	  { "? !",		  "This help / more advice!" },
+	  { "+ - (= _ PgUp PgDn)","Select/increment/decrement/make active" },
+	  { "0-9 (a-f)",	  "Enter value" },
+	  { "hjkl (arrow keys)",  "Move around" },
+	  { "CTRL-K CTRL-J",	  "Move entry up/down" },
+	  { "CTRL-L",		  "Redraw screen" },
+	  { ">",		  "Start a subpartition table" },
+	  { "<",		  "Back to the primary partition table" },
+	  { "m",		  "Cycle through magic values" },
+	  { "spacebar",		  "Show \"Size\" or \"Last\"" },
+	  { "r w",		  "Read/write partition table" },
+	  { "p s q",		  "Raw dump / Shell escape / Quit (bail out)" },
+	  { "y n DEL",		  "Answer \"yes\", \"no\", \"cancel\"" },
 	};
 	static char *advice[] = {
-	  "Walk through a device list with - and +, then hit 'r'.",
+	  "Choose a disk with '+' and '-', then hit 'r'.",
 	  "",
-	  "To make a new partition:  Go over to the Size or Kb field of an",
+	  "To make a new partition:  Move over to the Size or Kb field of an",
 	  "unused partition and type the size.  Hit the 'm' key to pad the",
 	  "partition out to a cylinder boundary.  Hit 'm' again to pad it out",
 	  "to the end of the disk.  You can hit 'm' more than once on a base",
@@ -1712,8 +1775,8 @@ void m_help(int ev, object_t *op)
 	  "or sector numbers.",
 	  "",
 	  "To delete a partition:  Type a zero in the hex Type field.",
-	  "",
-	  "To make a partition active: Type - or + in the Num field.",
+	  "To make a partition active:  Type '+' in the Num field.",
+	  "To study the list of keys:  Type '?'.",
 	};
 
 	if (ev == '?') {
@@ -1722,7 +1785,7 @@ void m_help(int ev, object_t *op)
 		for (hp= help; hp < arraylimit(help); hp++) {
 			stat_start(0);
 			printf("%-25s - %s", hp->keys, hp->what);
-			stat_end();
+			stat_end(0);
 		}
 		stat_start(0);
 		putstr("Things like ");
@@ -1730,7 +1793,7 @@ void m_help(int ev, object_t *op)
 		putstr(" must be checked, but ");
 		putstr(t_md); putstr("this"); putstr(t_me);
 		putstr(" is not really a problem");
-		stat_end();
+		stat_end(0);
 	} else
 	if (ev == '!') {
 		char **ap;
@@ -1738,7 +1801,7 @@ void m_help(int ev, object_t *op)
 		for (ap= advice; ap < arraylimit(advice); ap++) {
 			stat_start(0);
 			putstr(*ap);
-			stat_end();
+			stat_end(0);
 		}
 	}
 }
@@ -1747,9 +1810,8 @@ void event(int ev, object_t *op)
 /* Simply call all modifiers for an event, each one knows when to act. */
 {
 	m_help(ev, op);
-	m_refresh(ev, op);
+	m_redraw(ev, op);
 	m_orientation(ev, op);
-	m_activate(ev, op);
 	m_move(ev, op);
 	m_updown(ev, op);
 	m_enter(ev, op);
@@ -1825,9 +1887,9 @@ void mainloop(void)
 	int key;
 
 	while (!quitting) {
-		key= keypress();
-
 		stat_reset();
+
+		key= keypress();
 
 		event(key, curobj);
 
@@ -1842,6 +1904,7 @@ int main(int argc, char **argv)
 	struct part_entry *pe;
 
 	/* Define a few objects to show on the screen.  First text: */
+	op= newobject(O_INFO, 0, 0,  2, 19);
 	op= newobject(O_TEXT, 0, 0, 22, 13); op->text= "----first----";
 	op= newobject(O_TEXT, 0, 0, 37, 13); op->text= "--geom/last--";
 	op= newobject(O_TEXT, 0, 0, 52, 18); op->text= "------sectors-----";
@@ -1875,7 +1938,7 @@ int main(int argc, char **argv)
 	/* Objects for each partition: */
 	for (r= 4, pe= table+1; r <= 7; r++, pe++) {
 		op= newobject(O_NUM,    OF_MOD, r,  2,  2); op->entry= pe;
-		op= newobject(O_SORT,        0, r,  7,  5); op->entry= pe;
+		op= newobject(O_SORT,        0, r,  3,  5); op->entry= pe;
 		op= newobject(O_TYPHEX, OF_MOD, r, 10,  2); op->entry= pe;
 		op= newobject(O_TYPTXT, OF_MOD, r, 12,  9); op->entry= pe;
 		op= newobject(O_SCYL,   OF_MOD, r, 25,  4); op->entry= pe;
@@ -1903,9 +1966,6 @@ int main(int argc, char **argv)
 		clear_screen();
 		event(key, curobj);
 		display();
-		stat_start(0);
-		putstr("Type '?' for help");
-		stat_end();
 		mainloop();
 		reset_tty();
 	}

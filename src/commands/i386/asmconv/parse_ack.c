@@ -64,6 +64,7 @@ static mnemonic_t mnemtab[] = {			/* This array is sorted. */
 	{ "call",	CALL,		JUMP },
 	{ "callf",	CALLF,		JUMP },
 	{ "cbw",	CBW,		WORD },
+	{ "cdq",	CWD,		WORD },
 	{ "clc",	CLC,		WORD },
 	{ "cld",	CLD,		WORD },
 	{ "cli",	CLI,		WORD },
@@ -75,6 +76,7 @@ static mnemonic_t mnemtab[] = {			/* This array is sorted. */
 	{ "cmpsb",	CMPS,		BYTE },
 	{ "cmpxchg",	CMPXCHG,	WORD },
 	{ "cwd",	CWD,		WORD },
+	{ "cwde",	CBW,		WORD },
 	{ "daa",	DAA,		WORD },
 	{ "das",	DAS,		WORD },
 	{ "dec",	DEC,		WORD },
@@ -510,7 +512,7 @@ static expression_t *ack_get_operand(int *pn, int deref)
 	if (dialect == NCC && get_token(*pn)->symbol == '@') {
 		/* NCC: jmp @address  ->  ACK: jmp (address) */
 		(*pn)++;
-		if ((offset= ack_get_C_expression(pn)) == nil) return nil;
+		if ((offset= ack_get_operand(pn, deref)) == nil) return nil;
 		e= new_expr();
 		e->operator= '(';
 		e->middle= offset;
@@ -631,7 +633,7 @@ static asm86_t *ack_get_statement(void)
 	mnemonic_t *m;
 	int n;
 	int prefix_seen;
-	int opsize_prefix;
+	int oaz_prefix;
 	int deref;
 
 	assert(t->type == T_WORD);
@@ -654,23 +656,31 @@ static asm86_t *ack_get_statement(void)
 	a= new_asm86();
 
 	/* Process instruction prefixes. */
-	opsize_prefix= 0;
+	oaz_prefix= 0;
 	for (prefix_seen= 0;; prefix_seen= 1) {
 		if (strcmp(t->name, "o16") == 0) {
 			if (use16()) {
 				parse_err(1, t, "o16 in an 8086 section\n");
 			}
-			opsize_prefix= 1;
+			oaz_prefix|= OPZ;
 		} else
 		if (strcmp(t->name, "o32") == 0) {
 			if (use32()) {
 				parse_err(1, t, "o32 in an 80386 section\n");
 			}
-			opsize_prefix= 1;
+			oaz_prefix|= OPZ;
 		} else
-		if (strcmp(t->name, "a16") == 0 || strcmp(t->name, "a32") == 0)
-		{
-			parse_err(1, t, "can't deal with address prefixes\n");
+		if (strcmp(t->name, "a16") == 0) {
+			if (use16()) {
+				parse_err(1, t, "a16 in an 8086 section\n");
+			}
+			oaz_prefix|= ADZ;
+		} else
+		if (strcmp(t->name, "a32") == 0) {
+			if (use32()) {
+				parse_err(1, t, "a32 in an 80386 section\n");
+			}
+			oaz_prefix|= ADZ;
 		} else
 		if (strcmp(t->name, "rep") == 0
 			|| strcmp(t->name, "repe") == 0
@@ -718,9 +728,10 @@ static asm86_t *ack_get_statement(void)
 				del_asm86(a);
 				return nil;
 			}
-			if (m->optype != WORD && opsize_prefix) {
+			if (oaz_prefix != 0 && m->optype != JUMP
+						&& m->optype != WORD) {
 				parse_err(1, t,
-		"%s instruction can't have an operand size prefix\n", m->name);
+			"'%s' can't have an operand size prefix\n", m->name);
 			}
 			break;
 		}
@@ -741,7 +752,8 @@ static asm86_t *ack_get_statement(void)
 		return nil;
 	}
 	a->opcode= m->opcode;
-	a->optype= opsize_prefix ? OWORD : m->optype;
+	a->optype= m->optype;
+	a->oaz= oaz_prefix;
 
 	switch (a->opcode) {
 	case IN:
@@ -787,6 +799,28 @@ static asm86_t *ack_get_statement(void)
 			t= a->args->left;
 			a->args->left= a->args->right;
 			a->args->right= t;
+			break;
+		}
+		/*FALL THROUGH*/
+	case JMP:
+	case CALL:
+		/* NCC jmp @(reg)  ->  ACK jmp (reg) */
+		if (dialect == NCC && a->args != nil && (
+			(a->args->operator == '('
+				&& a->args->middle != nil
+				&& a->args->middle->operator == 'O')
+			|| (a->args->operator == 'O'
+				&& a->args->left == nil
+				&& a->args->middle != nil
+				&& a->args->right == nil)
+		)) {
+			expression_t *t;
+
+			t= a->args;
+			a->args= a->args->middle;
+			t->middle= nil;
+			del_expr(t);
+			if (a->args->operator == 'B') a->args->operator= 'W';
 		}
 		break;
 	default:;

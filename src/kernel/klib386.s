@@ -12,6 +12,7 @@
 ! This file contains a number of assembly code utility routines needed by the
 ! kernel.  They are:
 
+.define	_monitor	! exit Minix and return to the monitor
 .define	_build_sig	! build 4 word structure pushed onto stack for signals
 .define	_check_mem	! check a block of memory, return the valid size
 .define	_cp_mess	! copies messages from source to destination
@@ -19,11 +20,8 @@
 .define	__exit		! dummy for library routines
 .define	___exit		! dummy for library routines
 .define	___main		! dummy for GCC
-.define	_get_byte	! read a byte from anywhere and return it
 .define	_in_byte	! read a byte from a port and return it
 .define	_in_word	! read a word from a port and return it
-.define	_klib_1hook	! init from real mode for real or protected mode
-.define	_klib_2hook	! init from protected mode for real or protected mode
 .define	_lock		! disable interrupts
 .define	_unlock		! enable interrupts
 .define	_enable_irq	! enable an irq at the 8259 controller
@@ -34,8 +32,9 @@
 .define	_phys_copy	! copy data from anywhere to anywhere in memory
 .define	_phys_zero	! zero memory anywhere in memory
 .define	_port_read	! transfer data from (disk controller) port to memory
+.define	_port_read_byte	! likewise byte by byte
 .define	_port_write	! transfer data from memory to (disk controller) port
-.define	_put_byte	! write a byte to anywhere
+.define	_port_write_byte ! likewise byte by byte
 .define	_reset		! reset the system
 .define	_scr_down	! scroll screen a line down (in software, by copying)
 .define	_scr_up		! scroll screen a line up (in software, by copying)
@@ -51,6 +50,9 @@
 ! imported variables
 
 .sect .bss
+.extern	_Ax, _Bx, _Cx, _Dx, _Es
+.extern	_mon_return, _mon_sp
+.extern _irq_use
 .extern	_blank_color
 .extern	_ext_memsize
 .extern	_gdt
@@ -62,15 +64,107 @@
 .extern	_level0_func
 
 .sect .text
+!*===========================================================================*
+!*				monitor					     *
+!*===========================================================================*
+! PUBLIC void monitor();
+! Return to the monitor.
+
+_monitor:
+	mov	eax, (_reboot_code)	! address of new parameters
+	mov	esp, (_mon_sp)		! restore monitor stack pointer
+    o16 mov	dx, SS_SELECTOR		! monitor data segment
+	mov	ds, dx
+	mov	es, dx
+	mov	fs, dx
+	mov	gs, dx
+	mov	ss, dx
+	pop	edi
+	pop	esi
+	pop	ebp
+    o16 retf				! return to the monitor
+
+
 #if ENABLE_BIOS_WINI
 !*===========================================================================*
 !*				bios13					     *
 !*===========================================================================*
 ! PUBLIC void bios13();
 .define	_bios13	
-_bios13:			! It would be nice if this routine would
-	movb	(_Ax+1), 0x01	! switch back to real mode for a BIOS call...
-	ret			! (Shouldn`t be too difficult)
+_bios13:
+	cmpb	(_mon_return), 0	! is the monitor there?
+	jnz	0f
+	movb	(_Ax+1), 0x01		! "invalid command"
+	ret
+0:	push	ebp			! save C registers
+	push	esi
+	push	edi
+	push	ebx
+	pushf				! save flags
+	cli				! no interruptions
+
+	inb	INT2_CTLMASK
+	movb	ah, al
+	inb	INT_CTLMASK
+	push	eax			! save interrupt masks
+	mov	eax, (_irq_use)		! map of in-use IRQ`s
+	and	eax, ~[1<<CLOCK_IRQ]	! there is a special clock handler
+	outb	INT_CTLMASK		! enable all unused IRQ`s and vv.
+	movb	al, ah
+	outb	INT2_CTLMASK
+
+	mov	eax, cr0
+	push	eax			! save machine status word
+
+	mov	eax, SS_SELECTOR	! monitor data segment
+	mov	ss, ax
+	xchg	esp, (_mon_sp)		! switch stacks
+    o16	push	(_Es)			! parameters used in bios 13 call
+    o16	push	(_Dx)
+    o16	push	(_Cx)
+    o16	push	(_Bx)
+    o16	push	(_Ax)
+	mov	ds, ax			! remaining data selectors
+	mov	es, ax
+	mov	fs, ax
+	mov	gs, ax
+	push	cs
+	push	return			! kernel return address and selector
+    o16	jmpf	16+2*4+5*2+2*4(esp)	! make the call
+return:
+    o16	pop	(_Ax)
+    o16	pop	(_Bx)
+    o16	pop	(_Cx)
+    o16	pop	(_Dx)
+    o16	pop	(_Es)
+	lgdt	(_gdt+GDT_SELECTOR)	! reload global descriptor table
+	jmpf	CS_SELECTOR:csinit	! restore everything
+csinit:	mov	eax, DS_SELECTOR
+	mov	ds, ax
+	mov	es, ax
+	mov	fs, ax
+	mov	gs, ax
+	mov	ss, ax
+	xchg	esp, (_mon_sp)		! unswitch stacks
+	lidt	(_gdt+IDT_SELECTOR)	! reload interrupt descriptor table
+	andb	(_gdt+TSS_SELECTOR+DESC_ACCESS), ~0x02  ! clear TSS busy bit
+	mov	ax, TSS_SELECTOR
+	ltr	ax			! set TSS register
+
+	pop	eax
+	mov	cr0, eax		! restore machine status word
+
+	pop	eax
+	outb	INT_CTLMASK		! restore interrupt masks
+	movb	al, ah
+	outb	INT2_CTLMASK
+
+	popf				! restore flags
+	pop	ebx			! restore C registers
+	pop	edi
+	pop	esi
+	pop	ebp
+	ret
 #endif /* ENABLE_BIOS_WINI */
 
 
@@ -210,34 +304,6 @@ ___exit:
 ___main:
 	ret
 
-!*===========================================================================*
-!*				get_byte				     *
-!*===========================================================================*
-! PUBLIC u32_t get_byte(U16_t segment, u8_t *offset);
-! Load and return the byte at the far pointer  segment:offset.
-
-_get_byte:
-	mov	cx, ds
-	mov	ds, 4(esp)		! segment
-	mov	eax, 4+4(esp)		! offset
-	movzxb	eax, (eax)		! byte to return
-	mov	ds, cx
-	ret
-
-!*===========================================================================*
-!*				put_byte				     *
-!*===========================================================================*
-! PUBLIC void put_byte(U16_t segment, u8_t *offset, U8_t byte);
-! Store the byte at the far pointer segment:offset.
-
-_put_byte:
-	mov	cx, ds
-	mov	ds, 4(esp)		! segment
-	mov	eax, 4+4(esp)		! offset
-	mov	edx, 8+4(esp)		! byte
-	movb	(eax), dl		! store byte
-	mov	ds, cx
-	ret
 
 !*===========================================================================*
 !*				in_byte					     *
@@ -264,39 +330,6 @@ _in_word:
 	mov	edx, 4(esp)		! port
 	sub	eax, eax
     o16	in	dx			! read 1 word
-	ret
-
-
-!*===========================================================================*
-!*				klib_1hook				     *
-!*===========================================================================*
-! PUBLIC void klib_1hook();
-! Initialize klib from real mode for protected mode (no real mode).
-! Nothing to do.
-
-_klib_1hook:
-	ret
-
-
-!*===========================================================================*
-!*				klib_2hook				     *
-!*===========================================================================*
-! PUBLIC void klib_2hook();
-! Initialize klib from protected mode for protected mode (no real mode).
-! Load idt, task reg, and flags.
-
-_klib_2hook:
-	push	esi
-	push	edi
-	lidt	(_gdt+BIOS_IDT_SELECTOR)! loaded by BIOS, but in wrong mode!
-    o16	mov	ax, TSS_SELECTOR	! no other TSS is used
-	ltr	ax
-	sub	eax, eax		! zero
-	push	eax			! set flags to known good state
-	popf				! esp, clear nested task and int enable
-
-	pop	edi
-	pop	esi
 	ret
 
 
@@ -566,6 +599,32 @@ _port_read:
 
 
 !*===========================================================================*
+!*				port_read_byte				     *
+!*===========================================================================*
+! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
+!						unsigned bytcount);
+! Transfer data from port to memory.
+
+PR_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port dst len
+
+_port_read_byte:
+	cld
+	push	edi
+	push	es
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	es, cx
+	mov	edx, PR_ARGS_B(esp)
+	mov	edi, PR_ARGS_B+4(esp)
+	mov	ecx, PR_ARGS_B+4+4(esp)
+	rep	
+	insb
+	pop	es
+	pop	edi
+	ret
+
+
+!*===========================================================================*
 !*				port_write				     *
 !*===========================================================================*
 ! PUBLIC void port_write(port_t port, phys_bytes source, unsigned bytcount);
@@ -587,6 +646,32 @@ _port_write:
 	shr	ecx, 1			! word count
 	rep				! (hardware can`t handle dwords)
     o16	outs				! write everything
+	pop	ds
+	pop	esi
+	ret
+
+
+!*===========================================================================*
+!*				port_write_byte				     *
+!*===========================================================================*
+! PUBLIC void port_write_byte(port_t port, phys_bytes source,
+!						unsigned bytcount);
+! Transfer data from memory to port.
+
+PW_ARGS_B =	4 + 4 + 4		! 4 + 4 + 4
+!		es edi eip		port src len
+
+_port_write_byte:
+	cld
+	push	esi
+	push	ds
+	mov	ecx, FLAT_DS_SELECTOR
+	mov	ds, cx
+	mov	edx, PW_ARGS_B(esp)
+	mov	esi, PW_ARGS_B+4(esp)
+	mov	ecx, PW_ARGS_B+4+4(esp)
+	rep
+	outsb
 	pop	ds
 	pop	esi
 	ret

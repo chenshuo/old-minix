@@ -23,8 +23,6 @@ OBJECTS	= \
 	$(LIBRARY)(execlp.o) \
 	$(LIBRARY)(fdopen.o) \
 	$(LIBRARY)(ffs.o) \
-	$(LIBRARY)(fprintk.o) \
-	$(LIBRARY)(fputk.o) \
 	$(LIBRARY)(fslib.o) \
 	$(LIBRARY)(fsversion.o) \
 	$(LIBRARY)(getgrent.o) \
@@ -47,7 +45,6 @@ OBJECTS	= \
 	$(LIBRARY)(popen.o) \
 	$(LIBRARY)(printk.o) \
 	$(LIBRARY)(putenv.o) \
-	$(LIBRARY)(putk.o) \
 	$(LIBRARY)(putw.o) \
 	$(LIBRARY)(regexp.o) \
 	$(LIBRARY)(regsub.o) \
@@ -55,8 +52,6 @@ OBJECTS	= \
 	$(LIBRARY)(swab.o) \
 	$(LIBRARY)(syscall.o) \
 	$(LIBRARY)(sysconf.o) \
-	$(LIBRARY)(syslib.o) \
-	$(LIBRARY)(taskcall.o) \
 	$(LIBRARY)(telldir.o) \
 	$(LIBRARY)(termcap.o) \
 	$(LIBRARY)(ttyname.o) \
@@ -112,12 +107,6 @@ $(LIBRARY)(fdopen.o):	fdopen.c
 
 $(LIBRARY)(ffs.o):	ffs.c
 	$(CC1) ffs.c
-
-$(LIBRARY)(fprintk.o):	fprintk.c
-	$(CC1) fprintk.c
-
-$(LIBRARY)(fputk.o):	fputk.c
-	$(CC1) fputk.c
 
 $(LIBRARY)(fslib.o):	fslib.c
 	$(CC1) fslib.c
@@ -188,9 +177,6 @@ $(LIBRARY)(printk.o):	printk.c
 $(LIBRARY)(putenv.o):	putenv.c
 	$(CC1) putenv.c
 
-$(LIBRARY)(putk.o):	putk.c
-	$(CC1) putk.c
-
 $(LIBRARY)(putw.o):	putw.c
 	$(CC1) putw.c
 
@@ -217,9 +203,6 @@ $(LIBRARY)(sysconf.o):	sysconf.c
 
 $(LIBRARY)(syslib.o):	syslib.c
 	$(CC1) syslib.c
-
-$(LIBRARY)(taskcall.o):	taskcall.c
-	$(CC1) taskcall.c
 
 $(LIBRARY)(telldir.o):	telldir.c
 	$(CC1) telldir.c

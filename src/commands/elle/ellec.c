@@ -587,6 +587,10 @@ do_obprof()
 
 	rp = sizeof(st_prof);		/* Initialize */
 
+	/* Fixed by Kochin Chang, July 1995 */
+	/* format version should be the first field in compiled profile */
+	prof_pack(st_prof.version, format_ver);
+
 	prof_pack(st_prof.chrvec, rp);
 	prof_pack(st_prof.chrvcnt, chrcnt);
 	rp += chrcnt;

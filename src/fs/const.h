@@ -15,8 +15,6 @@
  */
 #define usizeof(t) ((unsigned) sizeof(t))
 
-#define FS_STACK_BYTES (512 * usizeof (char *)) /* size of file system stack */
-
 /* File system types. */
 #define SUPER_MAGIC   0x137F	/* magic number contained in super-block */
 #define SUPER_REV     0x7F13	/* magic # when 68000 disk read on PC or vv */

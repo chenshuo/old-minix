@@ -9,10 +9,10 @@ mdec=/usr/mdec	# bootstraps
 
 # Check arguments.
 case "$#:$1" in
-1:bootable | 1:hdinstall | 1:hdtest | 1:fdboot)
-	action=$1
+1:bootable | 1:hdinstall | 1:hdtest | [12]:fdboot)
+	action=$1 dev=$2
 	;;
-*)	echo "Usage: $0 [bootable | hdinstall | hdtest | fdboot]" >&2
+*)	echo "Usage: $0 [bootable | hdinstall | hdtest | fdboot [device]]" >&2
 	exit 1
 esac
 
@@ -40,8 +40,7 @@ bootable)
 	# Install the boot monitor on the root device and make it bootable.
 	install -cs -m 644 $mdec/boot $rootdir/boot || exit
 	sync
-	su root -c "exec installboot -device $root $mdec/bootblock /boot" \
-		|| exit
+	installboot -device $root $mdec/bootblock /boot || exit
 	;;
 hdinstall)
 	# Install a new image on the root device.
@@ -66,32 +65,44 @@ hdinstall)
 		echo "New $root:/$target installed."
 	fi
 	;;
-hdtest)
-	# Turn the hard disk scratch device into a boot disk for testing.
-	su root -c \
-	  "exec installboot -boot $tmp $mdec/bootblock $mdec/boot image" || exit
+hdtest | fdboot)
+	# hdtest: Turn the hard disk scratch device into a boot disk for
+	#	  testing.
+	# fdboot: Make a boot floppy.
 
-	# Copy the boot parameters.
-	su root -c "exec edparams $root set" >/tmp/mkb.$$ || exit
-	echo "unset delay; main(){boot}; save" >>/tmp/mkb.$$
-	su root -c "exec edparams $tmp" </tmp/mkb.$$ || exit
-	;;
-fdboot)
-	# Make a boot floppy.
-	echo -n \
+	if [ $action = hdtest ]
+	then
+		dev=$tmp
+	elif [ -z "$dev" ]
+	then
+		echo -n \
 "Finish the name of the floppy device to write (by default 'fd0'): /dev/";
-	read dev
-	case "$dev" in
-	'')	dev=/dev/fd0
-		;;
-	*)	dev=/dev/$dev
-	esac
-	installboot -boot $dev $mdec/bootblock $mdec/boot image || exit
+		read dev
+		case "$dev" in
+		'')	dev=/dev/fd0
+			;;
+		/dev/*)
+			;;
+		*)	dev=/dev/$dev
+		esac
+	fi
 
-	# Copy the boot parameters.
-	su root -c "exec edparams $root set" >/tmp/mkb.$$ || exit
-	echo "unset delay; save" >>/tmp/mkb.$$
-	su root -c "exec edparams $dev" </tmp/mkb.$$ || exit
+	# Make a file system.
+	umount $dev 2>/dev/null
+	mkfs -i 512 $dev || exit
+
+	# Install /dev, /boot and /minix.
+	mount $dev /mnt || exit
+	cpdir /dev /mnt/dev || exit
+	cp -p $mdec/boot /mnt/boot || exit
+	cp -p image /mnt/minix || exit
+	umount $dev || exit
+
+	# Make bootable and copy the boot parameters.
+	installboot -d $dev $mdec/bootblock boot || exit
+	dd if=$root of=$dev skip=1 seek=1 count=1 conv=silent || exit
+	edparams $dev 'main(){delay 2000;boot}; save' || exit
+	echo "Test kernel installed on $dev with boot parameters from $root"
 esac
 
 case $action in

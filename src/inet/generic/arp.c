@@ -657,7 +657,7 @@ int for_ioctl;
 			fd, offset, (unsigned long)data, port->ap_state);
 		break;
 	}
-	return ERROR;
+	return EGENERIC;
 }
 
 PRIVATE void rarp_timeout (fd, timer)
@@ -933,7 +933,7 @@ rarp_func_t func;
 		if (port->ap_eth_port == eth_port)
 			break;
 	if (i>=ARP_PORT_NR)
-		return ERROR;
+		return EGENERIC;
 	if (port->ap_flags & APF_INADDR_SET)
 	{
 		(*func)(ref, port->ap_ipaddr);
@@ -981,7 +981,7 @@ arp_req_func_t func;
 		if (port->ap_eth_port == eth_port)
 			break;
 	if (i>=ARP_PORT_NR)
-		return ERROR;
+		return EGENERIC;
 	if ((port->ap_state & APS_STATMASK) != APS_ARPMAIN)
 	{
 		port->ap_flags |= APF_CLIENTREQ|APF_MORE2WRITE |
@@ -1043,7 +1043,7 @@ ether_addr_t *ethaddr;
 		if (port->ap_eth_port == eth_port)
 			break;
 	if (i>=ARP_PORT_NR)
-		return ERROR;
+		return EGENERIC;
 	if ((port->ap_state & APS_STATMASK) != APS_ARPMAIN)
 	{
 #if DEBUG

@@ -1,217 +1,189 @@
-#include <lib.h>
+/*	printk() - kernel printf()			Author: Kees J. Bot
+ *								15 Jan 1994
+ */
+#define nil 0
 #include <stdarg.h>
+#include <limits.h>
 
-#define MAXDIG		11	/* 32 bits in radix 8 */
+#define isdigit(c)	((unsigned) ((c) - '0') <  (unsigned) 10)
 
-#define GETARG(typ)	va_arg(args, typ)
+#if !__STDC__
+/* Classic C stuff, ignore. */
+void putk();
+void printk(fmt) char *fmt;
+#else
 
-PRIVATE int Xflag;
+/* Printk() uses putk() to print characters. */
+void putk(int c);
 
-PRIVATE _PROTOTYPE(char *_itoa, (char *p, unsigned num, int radix));
-PRIVATE _PROTOTYPE(char *_ltoa, (char *p, unsigned long num, int radix));
-_PROTOTYPE(void putk, (int c));
-_PROTOTYPE( void printk, (char *fmt, int arg1));
-
-PRIVATE char *_itoa(p, num, radix)
-register char *p;
-register unsigned num;
-register radix;
+void printk(const char *fmt, ...)
+#endif
 {
-  register i;
-  register char *q;
+	int c;
+	enum { LEFT, RIGHT } adjust;
+	enum { LONG, INT } intsize;
+	int fill;
+	int width, max, len, base;
+	static char X2C_tab[]= "0123456789ABCDEF";
+	static char x2c_tab[]= "0123456789abcdef";
+	char *x2c;
+	char *p;
+	long i;
+	unsigned long u;
+	char temp[8 * sizeof(long) / 3 + 2];
 
-  q = p + MAXDIG;
-  do {
-	i = (int) (num % radix);
-	i += '0';
-	if (i > '9') i += (Xflag ? 'A' : 'a') - '0' - 10;
-	*--q = i;
-  } while (num = num / radix);
-  i = p + MAXDIG - q;
-  do
-	*p++ = *q++;
-  while (--i);
-  return(p);
-}
+	va_list argp;
 
-PRIVATE char *_ltoa(p, num, radix)
-register char *p;
-register unsigned long num;
-register radix;
-{
-  register i;
-  register char *q;
+	va_start(argp, fmt);
 
-  q = p + MAXDIG;
-  do {
-	i = (int) (num % radix);
-	i += '0';
-	if (i > '9') i += 'A' - '0' - 10;
-	*--q = i;
-  } while (num = num / radix);
-  i = p + MAXDIG - q;
-  do
-	*p++ = *q++;
-  while (--i);
-  return(p);
-}
-
-void printk(fmt, arg1)
-register char *fmt;
-int arg1;
-{
-  char buf[MAXDIG + 1];		/* +1 for sign */
-  register int *args = &arg1;
-  register char *p, *s;
-  int c, i, ndfnd, ljust, lflag, zfill;
-  short width, ndigit;
-  long l;
-
-  for (;;) {
-	c = *fmt++;
-	if (c == 0) {
-		/* We are done.  Flush the buffer. */
-		putk(0);
-		return;
-	}
-	if (c != '%') {
-		putk(c);
-		continue;
-	}
-	p = buf;
-	s = buf;
-	ljust = 0;
-	if (*fmt == '-') {
-		fmt++;
-		ljust++;
-	}
-	zfill = ' ';
-	if (*fmt == '0') {
-		fmt++;
-		zfill = '0';
-	}
-	for (width = 0;;) {
-		c = *fmt++;
-		if (c >= '0' && c <= '9')
-			c -= '0';
-		else if (c == '*')
-			c = GETARG(int);
-		else
-			break;
-		width *= 10;
-		width += c;
-	}
-	ndfnd = 0;
-	ndigit = 0;
-	if (c == '.') {
-		for (;;) {
-			c = *fmt++;
-			if (c >= '0' && c <= '9')
-				c -= '0';
-			else if (c == '*')
-				c = GETARG(int);
-			else
-				break;
-			ndigit *= 10;
-			ndigit += c;
-			ndfnd++;
+	while ((c= *fmt++) != 0) {
+		if (c != '%') {
+			/* Ordinary character. */
+			putk(c);
+			continue;
 		}
-	}
-	lflag = 0;
-	Xflag = 0;
-	if (c == 'l' || c == 'L') {
-		lflag++;
-		if (*fmt) c = *fmt++;
-	}
-	switch (c) {
-	    case 'X':
-		Xflag++;
 
-	    case 'x':
-		c = 16;
-		goto oxu;
+		/* Format specifier of the form:
+		 *	%[adjust][fill][width][.max]keys
+		 */
+		c= *fmt++;
 
-	    case 'U':
-		lflag++;
-
-	    case 'u':
-		c = 10;
-		goto oxu;
-
-	    case 'O':
-		lflag++;
-
-	    case 'o':
-		c = 8;
-  oxu:
-		if (lflag) {
-			p = _ltoa(p, (unsigned long) GETARG(long), c);
-			break;
+		adjust= RIGHT;
+		if (c == '-') {
+			adjust= LEFT;
+			c= *fmt++;
 		}
-		p = _itoa(p, (unsigned int) GETARG(int), c);
-		break;
 
-	    case 'D':
-		lflag++;
+		fill= ' ';
+		if (c == '0') {
+			fill= '0';
+			c= *fmt++;
+		}
 
-	    case 'd':
-		if (lflag) {
-			if ((l = GETARG(long)) < 0) {
-				*p++ = '-';
-				l = -l;
+		width= 0;
+		if (c == '*') {
+			/* Width is specified as an argument, e.g. %*d. */
+			width= va_arg(argp, int);
+			c= *fmt++;
+		} else
+		if (isdigit(c)) {
+			/* A number tells the width, e.g. %10d. */
+			do {
+				width= width * 10 + (c - '0');
+			} while (isdigit(c= *fmt++));
+		}
+
+		max= INT_MAX;
+		if (c == '.') {
+			/* Max field length coming up. */
+			if ((c= *fmt++) == '*') {
+				max= va_arg(argp, int);
+				c= *fmt++;
+			} else
+			if (isdigit(c)) {
+				max= 0;
+				do {
+					max= max * 10 + (c - '0');
+				} while (isdigit(c= *fmt++));
 			}
-			p = _ltoa(p, (unsigned long) l, 10);
+		}
+
+		/* Set a few flags to the default. */
+		x2c= x2c_tab;
+		i= 0;
+		base= 10;
+		intsize= INT;
+		if (c == 'l' || c == 'L') {
+			/* "Long" key, e.g. %ld. */
+			intsize= LONG;
+			c= *fmt++;
+		}
+		if (c == 0) break;
+
+		switch (c) {
+			/* Decimal.  Note that %D is treated as %ld. */
+		case 'D':
+			intsize= LONG;
+		case 'd':
+			i= intsize == LONG ? va_arg(argp, long)
+						: va_arg(argp, int);
+			u= i < 0 ? -i : i;
+			goto int2ascii;
+
+			/* Octal. */
+		case 'O':
+			intsize= LONG;
+		case 'o':
+			base= 010;
+			goto getint;
+
+			/* Hexadecimal.  %X prints upper case A-F, not %lx. */
+		case 'X':
+			x2c= X2C_tab;
+		case 'x':
+			base= 0x10;
+			goto getint;
+
+			/* Unsigned decimal. */
+		case 'U':
+			intsize= LONG;
+		case 'u':
+		getint:
+			u= intsize == LONG ? va_arg(argp, unsigned long)
+						: va_arg(argp, unsigned int);
+		int2ascii:
+			p= temp + sizeof(temp)-1;
+			*p= 0;
+			do {
+				*--p= x2c[u % base];
+			} while ((u /= base) > 0);
+			goto string_length;
+
+			/* A character. */
+		case 'c':
+			p= temp;
+			*p= va_arg(argp, int);
+			len= 1;
+			goto string_print;
+
+			/* Simply a percent. */
+		case '%':
+			p= temp;
+			*p= '%';
+			len= 1;
+			goto string_print;
+
+			/* A string.  The other cases will join in here. */
+		case 's':
+			p= va_arg(argp, char *);
+
+		string_length:
+			for (len= 0; p[len] != 0 && len < max; len++) {}
+
+		string_print:
+			width -= len;
+			if (i < 0) width--;
+			if (fill == '0' && i < 0) putk('-');
+			if (adjust == RIGHT) {
+				while (width > 0) { putk(fill); width--; }
+			}
+			if (fill == ' ' && i < 0) putk('-');
+			while (len > 0) { putk((unsigned char) *p++); len--; }
+			while (width > 0) { putk(fill); width--; }
 			break;
+
+			/* Unrecognized format key, echo it back. */
+		default:
+			putk('%');
+			putk(c);
 		}
-		if ((i = GETARG(int)) < 0) {
-			*p++ = '-';
-			i = -i;
-		}
-		p = _itoa(p, (unsigned int) i, 10);
-		break;
-
-	    case 'e':
-	    case 'f':
-	    case 'g':
-		zfill = ' ';
-		*p++ = '?';
-		break;
-
-	    case 'c':
-		zfill = ' ';
-		*p++ = GETARG(int);
-		break;
-
-	    case 's':
-		zfill = ' ';
-		if ((s = GETARG(char *)) == 0) s = "(null)";
-		if (ndigit == 0) ndigit = 32767;
-		for (p = s; *p && --ndigit >= 0; p++);
-		break;
-
-	    default:	*p++ = c;	break;
 	}
-	i = p - s;
-	if ((width -= i) < 0) width = 0;
-	if (ljust == 0) width = -width;
-	if (width < 0) {
-		if (*s == '-' && zfill == '0') {
-			putk( (int) *s);
-			s++;
-			i--;
-		}
-		do
-			putk(zfill);
-		while (++width != 0);
-	}
-	while (--i >= 0) {
-		putk( (int ) *s);
-		s++;
-	}
-	while (width) {
-		putk(zfill);
-		width--;
-	}
-  }
+
+	/* Mark the end with a null (should be something else, like -1). */
+	putk(0);
+	va_end(argp);
 }
 
+/*
+ * $PchHeader: /mount/hd2/minix/lib/minix/other/RCS/printk.c,v 1.2 1994/09/07 18:45:05 philip Exp $
+ */

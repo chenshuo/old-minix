@@ -1,4 +1,4 @@
-!	masterboot 1.7 - Master boot block code		Author: Kees J. Bot
+!	masterboot 1.8 - Master boot block code		Author: Kees J. Bot
 !
 ! This code may be placed in the first sector (the boot sector) of a floppy,
 ! hard disk or hard disk primary partition.  There it will perform the
@@ -163,33 +163,28 @@ nextpart:
 
 ! There are no active partitions on this drive, try the next drive.
 nextdisk:
-	call	print			! Tell about next disk
-	.data2	BUFFER+gonext
 	incb	dl			! Increment dl for the next drive
+	testb	dl, dl
 	jl	nexthd			! Hard disk if negative
 	int	0x11			! Get equipment configuration
 	shl	ax, #1			! Highest floppy drive # in bits 6-7
 	shl	ax, #1			! Now in bits 0-1 of ah
 	andb	ah, #0x03		! Extract bits
 	cmpb	dl, ah			! Must be dl <= ah for drive to exist
-	jbe	next			! Go read floppy
-sethd:	movb	dl, #0x80		! Try a hard disk next
-nexthd:	movb	ah, #0x08		! Code for drive parameters
-	push	dx			! Save dl
-	int	0x13
-	pop	dx			! Restore dl
-error1:	jb	error			! No such drive?
-next:
-	call	load0			! Read the next bootstrap
+	ja	nextdisk		! Otherwise try hd0 eventually
+	call	load0			! Read the next floppy bootstrap
 	jb	nextdisk		! It failed, next disk please
 	ret				! Jump to the next master bootstrap
+nexthd:	call	load0			! Read the hard disk bootstrap
+error1:	jb	error			! No disk?
+	ret
 
 
 ! Load sector 0 from the current device.  It's either a floppy bootstrap or
 ! a hard disk master bootstrap.
 load0:
 	mov	si, bp
-	mov	lowsec+0(si), ds	! Create a table with a zero lowsec
+	mov	lowsec+0(si), ds	! Create an entry with a zero lowsec
 	mov	lowsec+2(si), ds
 	!jmp	load
 
@@ -199,8 +194,12 @@ load0:
 load:
 	mov	di, #3		! Three retries for floppy spinup
 retry:	push	dx		! Save drive code
+	push	es
+	push	di		! Next call destroys es and di
 	movb	ah, #0x08	! Code for drive parameters
 	int	0x13
+	pop	di
+	pop	es
 	andb	cl, #0x3F	! cl = max sector number (1-origin)
 	incb	dh		! dh = 1 + max head number (0-origin)
 	movb	al, cl		! al = cl = sectors per track
@@ -224,12 +223,14 @@ retry:	push	dx		! Save drive code
 	mov	ax, #0x0201	! Code for read, just one sector
 	int	0x13		! Call the BIOS for a read
 	jnb	ok		! Read succeeded
+	cmpb	ah, #0x80	! Disk timed out?  (Floppy drive empty)
+	je	bad
 	dec	di
-	jz	bad		! Retry count expired
+	jl	bad		! Retry count expired
 	xorb	ah, ah
 	int	0x13		! Reset
 	jnb	retry		! Try again
-bad:	cmp	di, sp		! Set carry flag
+bad:	stc			! Set carry flag
 	ret
 ok:	cmp	LOADOFF+MAGIC, #0xAA55
 	jne	nosig		! Error if signature wrong
@@ -264,7 +265,6 @@ prdone:	ret
 devhd:		.ascii	"/dev/hd?\b"
 choice:		.ascii	"\0\r\n\0"
 noactive:	.ascii	"None active\r\n\0"
-gonext:		.ascii	"Next disk\r\n\0"
 readerr:	.ascii	"Read error \0"
 noboot:		.ascii	"Not bootable \0"
 .text

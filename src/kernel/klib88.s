@@ -8,6 +8,9 @@
 ! This file contains a number of assembly code utility routines needed by the
 ! kernel.  They are:
 
+.define	_monitor	! exit Minix and return to the monitor
+.define real2prot	! switch from real to protected mode
+.define prot2real	! switch from protected to real mode
 .define	_build_sig	! build 4 word structure pushed onto stack for signals
 .define	_check_mem	! check a block of memory, return the valid size
 .define	_cp_mess	! copies messages from source to destination
@@ -15,11 +18,8 @@
 .define	__exit		! dummy for library routines
 .define	___exit		! dummy for library routines
 .define	.fat		! dummy for library routines
-.define	_get_byte	! read a byte from anywhere and return it
 .define	_in_byte	! read a byte from a port and return it
 .define	_in_word	! read a word from a port and return it
-.define	_klib_1hook	! init from real mode for real or protected mode
-.define	_klib_2hook	! init from protected mode for real or protected mode
 .define	_lock		! disable interrupts
 .define	_unlock		! enable interrupts
 .define	_enable_irq	! enable an irq at the 8259 controller
@@ -29,7 +29,9 @@
 .define	_out_word	! write a word to a port
 .define	_phys_copy	! copy data from anywhere to anywhere in memory
 .define	_port_read	! transfer data from (disk controller) port to memory
+.define	_port_read_byte	! likewise byte by byte
 .define	_port_write	! transfer data from memory to (disk controller) port
+.define	_port_write_byte ! likewise byte by byte
 .define	_reset		! reset the system
 .define	_scr_down	! scroll screen a line down (in software, by copying)
 .define	_scr_up		! scroll screen a line up (in software, by copying)
@@ -38,6 +40,7 @@
 .define	_vid_copy	! copy data to video ram (perhaps during retrace only)
 .define	_wait_retrace	! wait for retrace interval
 .define	_level0		! call a function at level 0
+.define	klib_init_prot	! initialize klib functions for protected mode
 
 ! The routines only guarantee to preserve the registers the 'C' compiler
 ! expects to be preserved (si, di, bp, sp, segment registers, and direction
@@ -45,32 +48,56 @@
 
 #define DS_286_OFFSET	DS_286_INDEX*DESC_SIZE
 #define ES_286_OFFSET	ES_286_INDEX*DESC_SIZE
-#define EM_MASK		0xFFF0	/* extended memory mask for hi word */
-#define EM_XFER_VEC	0x15	/* copy (normal or extended) memory */
 #	define EM_XFER_FUNC	0x87
 #define JMP_OPCODE	0xE9	/* opcode used for patching */
 #define OFF_MASK	0x000F	/* offset mask for phys_b -> hclick:offset */
 
-! imported functions
+! Imported functions
 
 .extern	p_restart
 .extern	p_save
 .extern	_restart
 .extern	save
 
-! imported variables
+! Exported variables
 
+.extern kernel_cs
+
+! Imported variables
+
+.extern kernel_ds
 .extern	_Ax, _Bx, _Cx, _Dx, _Es
+.extern _irq_use
 .extern	_blank_color
 .extern	_gdt
 .extern	_protected_mode
 .extern	_snow
-.extern	_vec_table
 .extern	_vid_mask
 .extern	_vid_port
 .extern	_level0_func
 
 	.text
+!*===========================================================================*
+!*				monitor					     *
+!*===========================================================================*
+! PUBLIC void monitor();
+! Return to the monitor.
+
+_monitor:
+	call	prot2real		! switch to real mode
+	mov	ax, _reboot_code+0	! address of new parameters
+	mov	dx, _reboot_code+2
+	mov	sp, _mon_sp		! restore monitor stack pointer
+	mov	bx, _mon_ss		! monitor data segment
+	mov	ds, bx
+	mov	es, bx
+	mov	ss, bx
+	pop	di
+	pop	si
+	pop	bp
+	retf				! return to the monitor
+
+
 #if ENABLE_BIOS_WINI
 !*===========================================================================*
 !*				bios13					     *
@@ -78,112 +105,167 @@
 ! PUBLIC void bios13();
 .define _bios13
 _bios13:			! make a BIOS 0x13 call for disk I/O
-	push ax			! save the registers
-	push bx
-	push cx
-	push dx
-	push es
-	mov ax,_Ax		! load parameters
-	mov bx,_Bx
-	mov cx,_Cx
-	mov dx,_Dx
-	mov es,_Es
-	int 0x13		! make the BIOS call
-	mov _Ax,ax		! save results
-	mov _Bx,bx
-	mov _Cx,cx
-	mov _Dx,dx
-	pop es
-	pop dx
-	pop cx
-	pop bx
-	pop ax
+	push	si
+	push	di		! save C variable registers
+	pushf			! save flags
+
+	call	int13		! make the actual call
+
+	popf			! restore flags
+	pop	di		! restore C registers
+	pop	si
 	ret
 
-#if NO_GOOD_YET
-! BIOS call with real mode switch, crashes your system reliably!
+! Make a BIOS 0x13 call from protected mode
 p_bios13:
-	pusha				! save the world
-	pushf
-	cli				! no time for interrupts
+	push	bp
+	push	si
+	push	di			! save C variable registers
+	pushf				! save flags
+	cli				! no interruptions
+	inb	INT2_CTLMASK
+	movb	ah, al
 	inb	INT_CTLMASK
-	push	ax			! save interrupt mask
-	notb	al			! enable all disabled IRQ`s and vv.
-	outb	INT_CTLMASK
-	inb	INT2_CTLMASK		! same for slave controller
-	push	ax
-	notb	al
+	push	ax			! save interrupt masks
+	mov	ax, _irq_use		! map of in-use IRQ`s
+	and	ax, #~[1<<CLOCK_IRQ]	! there is a special clock handler
+	outb	INT_CTLMASK		! enable all unused IRQ`s and vv.
+	movb	al, ah
 	outb	INT2_CTLMASK
 
-! Shouldn`t one load 64 kb segment descriptors?  Where is the 386 book
-! when you need it.
-	mov	ax, _code_base+0
-	mov	dx, _code_base+2	! phys address of kernel text
-	mov	cx, #16
-	div	cx
-	push	ax			! code segment
-	push	#csinit1		! code offset
+	smsw	ax
+	push	ax			! save machine status word
+	call	prot2real		! switch to real mode
 
-	.data1	0x0F, 0x20, 0xC0   ! mov eax, cr0
-	andb	al, #0xFE		! Clear the P(rotect)E(nable) bit
-	.data1	0x0F, 0x22, 0xC0   ! mov cr0, eax
+	call	int13			! make the actual call
 
-	retf				! set cs
-csinit1:
-  cseg	mov	ax, kernel_ds		! Reload all segment registers
-	mov	ds, ax
-	mov	es, ax
-	.data1	0x8E, 0xE0	   ! mov fs, ax
-	.data1	0x8E, 0xE8	   ! mov gs, ax
-	mov	ss, ax
+	call	real2prot		! back to protected mode
+	pop	ax
+	lmsw	ax			! restore msw
 
-	lidt	idt_vectors		! Real mode interrupt vectors
+	pop	ax			! restore interrupt masks
+	outb	INT_CTLMASK
+	movb	al, ah
+	outb	INT2_CTLMASK
+	popf				! restore flags
+	pop	di
+	pop	si
+	pop	bp			! restore C variable registers
+	ret
 
-	! Everything back to "normal".  We can now make BIOS calls, unless
-	! the BIOS can`t live with the A20 line enabled.  In that case one
-	! has to run Minix in real mode.
-
-	mov	ax, _Ax			! load parameters
+int13:
+	mov	ax, _Ax		! load parameters
 	mov	bx, _Bx
 	mov	cx, _Cx
 	mov	dx, _Dx
 	mov	es, _Es
-!	sti
-!	int	0x13			! make the BIOS call
-!	cli
-movb	ah, #1
-	mov	_Ax, ax			! save results
+	sti			! enable interrupts
+	int	0x13		! make the BIOS call
+	cli			! disable interrupts
+	mov	_Ax, ax		! save results
 	mov	_Bx, bx
 	mov	_Cx, cx
 	mov	_Dx, dx
+	mov	_Es, es
+	mov	ax, ds
+	mov	es, ax		! restore es
+	ret
+#endif /* ENABLE_BIOS_WINI */
 
-	! The BIOS call has been made, step back up to protected mode.
 
-	.data1	0x0F, 0x20, 0xC0   ! mov eax, cr0
-	or	ax, #0x0001		! Set the PE bit
-	.data1	0x0F, 0x22, 0xC0   ! mov cr0, eax
+!*===========================================================================*
+!*				real2prot				     *
+!*===========================================================================*
+! Switch from real to protected mode.
+real2prot:
+	lgdt	_gdt+GDT_SELECTOR	! set global descriptor table
+	smsw	ax
+	mov	msw, ax			! save real mode msw
+	orb	al, #0x01		! set PE (protection enable) bit
+	lmsw	ax			! set msw, enabling protected mode
 
-	lgdt	_gdt+BIOS_GDT_SELECTOR
-	lidt    _gdt+BIOS_IDT_SELECTOR
-
-	jmpf	csinit2, CS_SELECTOR
-csinit2:
-	mov	ax, #DS_SELECTOR
+	jmpf	csinit, CS_SELECTOR	! set code segment selector
+csinit:
+	mov	ax, #DS_SELECTOR	! set data selectors
 	mov	ds, ax
 	mov	es, ax
-	.data1	0x8E, 0xE0	   ! mov fs, ax
-	.data1	0x8E, 0xE8	   ! mov gs, ax
 	mov	ss, ax
+	lidt    _gdt+IDT_SELECTOR	! set interrupt vectors
+	andb	_gdt+TSS_SELECTOR+DESC_ACCESS, #~0x02  ! clear TSS busy bit
+	mov	ax, #TSS_SELECTOR
+	ltr	ax			! set TSS register
 
-	pop	ax			! restore the world
-	outb	INT2_CTLMASK
-	pop	ax
-	outb	INT_CTLMASK
-	popf
-	popa
+	movb	ah, #0xDF
+	jmp	gate_A20		! enable the A20 address line
+
+
+!*===========================================================================*
+!*				prot2real				     *
+!*===========================================================================*
+! Switch from protected to real mode.
+prot2real:
+	mov	save_sp, sp		! save stack pointer
+	cmp	_processor, #386	! is this a 386?
+	jae	p2r386
+p2r286:
+	mov	_gdt+ES_286_OFFSET+DESC_BASE, #0x0400
+	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE, #0x00
+	mov	ax, #ES_286_SELECTOR
+	mov	es, ax			! BIOS data segment
+  eseg	mov	0x0067, #real		! set return from shutdown address
+  cseg	mov	ax, kernel_cs
+  eseg	mov	0x0069, ax
+	movb	al, #0x8F
+	outb	0x70			! select CMOS byte 0x0F (disable NMI)
+	jmp	.+2
+	movb	al, #0x0A
+	outb	0x71			! set shutdown code to 0x0A "jump far"
+	jmp	p_reset			! cause a processor shutdown
+p2r386:
+	lidt	idt_vectors		! real mode interrupt vectors
+	push	_gdt+CS_SELECTOR+0
+	push	_gdt+DS_SELECTOR+0	! save CS and DS limits
+	mov	_gdt+CS_SELECTOR+0, #0xFFFF
+	mov	_gdt+DS_SELECTOR+0, #0xFFFF ! set 64k limits
+	jmpf	cs64k, CS_SELECTOR	! reload selectors
+cs64k:	mov	ax, #DS_SELECTOR
+	mov	ds, ax
+	mov	es, ax
+	mov	ss, ax
+	pop	_gdt+DS_SELECTOR+0
+	pop	_gdt+CS_SELECTOR+0	! restore CS and DS limits
+	.data1	0x0F,0x20,0xC0		! mov	eax, cr0
+	mov	ax, msw			! restore real mode (16 bits) msw
+	.data1	0x0F,0x22,0xC0		! mov	cr0, eax
+	.data1	0xEA			! jmpf real, "kernel_cs"
+	.data2	real
+kernel_cs:
+	.data2	0
+real:
+  cseg	mov	ax, kernel_ds		! reload data segment registers
+	mov	ds, ax
+	mov	es, ax
+	mov	ss, ax
+	mov	sp, save_sp		! restore stack
+
+	movb	ah, #0xDD
+	!jmp	gate_A20		! disable the A20 address line
+
+! Enable (ah = 0xDF) or disable (ah = 0xDD) the A20 address line.
+gate_A20:
+	call	kb_wait
+	movb	al, #0xD1	! Tell keyboard that a command is coming
+	outb	0x64
+	call	kb_wait
+	movb	al, ah		! Enable or disable code
+	outb	0x60
+	!call	kb_wait
+	!ret
+kb_wait:
+	inb	0x64
+	testb	al, #0x02	! Keyboard input buffer full?
+	jnz	kb_wait		! If so, wait
 	ret
-#endif
-#endif /* ENABLE_BIOS_WINI */
 
 
 !*===========================================================================*
@@ -264,10 +346,10 @@ cm_loop:
 	xchgb	dl,(bx)
 	cmpb	dl,#TEST2PATTERN
 	jnz	cm_exit
-	eseg			! next segement, test for wraparound at 16M
-	add	_gdt+DS_286_OFFSET+DESC_BASE,#PCM_DENSITY
-	eseg			! assuming es == old ds
-	adcb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,#0
+				! next segment, test for wraparound at 16M
+				! assuming es == old ds
+  eseg	add	_gdt+DS_286_OFFSET+DESC_BASE,#PCM_DENSITY
+  eseg	adcb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,#0
 	loopnz	cm_loop
 
 cm_exit:
@@ -354,23 +436,6 @@ ___exit:
 	sti
 	jmp __exit
 
-!*===========================================================================*
-!*				get_byte				     *
-!*===========================================================================*
-! PUBLIC u16_t get_byte(u16_t segment, u8_t *offset);
-! Load and return the byte at the far pointer  segment:offset.
-
-_get_byte:
-	mov	cx,ds		! save ds
-	pop	dx		! return adr
-	pop	ds		! segment
-	pop	bx		! offset
-	sub	sp,#2+2		! adjust for parameters popped
-	movb	al,(bx)		! load the byte to return
-	xorb	ah,ah		! extend the u8_t to a u16_t
-	mov	ds,cx		! restore ds
-	jmp	(dx)		! return
-
 
 !*===========================================================================*
 !*				in_byte					     *
@@ -386,6 +451,8 @@ _in_byte:
 	inb			! input 1 byte
 	subb	ah,ah		! unsign extend
 	jmp	(bx)
+
+
 !*===========================================================================*
 !*				in_word					     *
 !*===========================================================================*
@@ -396,59 +463,34 @@ _in_word:
 	pop	bx
 	pop	dx		! port
 	dec	sp
-	dec	sp		! added to new klib.x 3/21/91 d.e.c.
+	dec	sp		! added to new klib.s 3/21/91 d.e.c.
 	inw			! input 1 word no sign extend needed
 	jmp	(bx)
 
 
 !*===========================================================================*
-!*				klib_1hook				     *
+!*				klib_init_prot				     *
 !*===========================================================================*
-! PUBLIC void klib_1hook();
-! Initialize klib from real mode for real or protected mode,
-! Do nothing for real mode.
-! For protected mode, patch some real mode functions at their starts to jump
-! to their protected mode equivalents, according to the patch table.
+! PUBLIC void klib_init_prot();
+! Initialize klib for protected mode by patching some real mode functions
+! at their starts to jump to their protected mode equivalents, according to
+! the patch table.  Saves a lot of tests on the 'protected_mode' variable.
+! Note that this function must be run in real mode, for it writes the code
+! segment.  (One otherwise has to set up a descriptor, etc, etc.)
 
-_klib_1hook:
-	cmpb	_protected_mode,#0
-	jz	hook1_done
+klib_init_prot:
 	mov	si,#patch_table
+kip_next:
 	lods			! original function
-patch1:
 	mov	bx,ax
-	cseg
-	movb	(bx),#JMP_OPCODE
+  cseg	movb	(bx),#JMP_OPCODE ! overwrite start of function by a long jump
 	lods			! new function - target of jump
 	sub	ax,bx		! relative jump
 	sub	ax,#3		! adjust by length of jump instruction
-	cseg
-	mov	1(bx),ax
-	lods			! next original function
-	test	ax,ax
-	jnz	patch1
-hook1_done:
-	ret
-
-
-!*===========================================================================*
-!*				klib_2hook				     *
-!*===========================================================================*
-! PUBLIC void klib_prot_mode_init();
-! Initialize klib protected real mode for real or protected mode,
-! Do nothing for real mode.
-! For protected mode, load idt, task reg and flags.
-
-_klib_2hook:
-	cmpb	_protected_mode,#0
-	jz	hook2_done
-	lidt	_gdt+BIOS_IDT_SELECTOR	! loaded by BIOS, but in wrong mode!
-	mov	ax,#TSS_SELECTOR	! no other TSS is used
-	ltr	ax
-	sub	ax,ax		! zero
-	push	ax		! set flags to known good state
-	popf			! especially, clear nested task and int enable
-hook2_done:
+  cseg	mov	1(bx),ax	! set address
+	cmp	si,#end_patch_table ! end of table?
+	jb	kip_next
+kip_done:
 	ret
 
 
@@ -565,13 +607,6 @@ _phys_copy:
 	push	bp		! save only registers required by C
 	mov	bp,sp		! set bp to point to source arg less 4
 
-! check for extended memory
-
-	mov	ax,SRCHI(bp)
-	or	ax,DESTHI(bp)
-	test	ax,#EM_MASK
-	jnz	to_em_xfer
-
 	push	si		! save si
 	push	di		! save di
 	push	ds		! save ds
@@ -581,8 +616,7 @@ _phys_copy:
 	mov	dx,SRCHI(bp)
 	mov	si,ax		! si = source offset = address % 16
 	and	si,#OFF_MASK
-!	andb	dl,#HCHIGH_MASK	| ds = source segment = address / 16 % 0x10000
-				! mask is unnecessary because of EM_MASK test
+	andb	dl,#HCHIGH_MASK	! ds = source segment = address / 16 % 0x10000
 	andb	al,#HCLOW_MASK
 	orb	al,dl		! now bottom 4 bits of dx are in ax
 	movb	cl,#HCLICK_SHIFT ! rotate them to the top 4
@@ -593,7 +627,7 @@ _phys_copy:
 	mov	dx,DESTHI(bp)
 	mov	di,ax		! di = dest offset = address % 16
 	and	di,#OFF_MASK
-!	andb	dl,#HCHIGH_MASK	| es = dest segment = address / 16 % 0x10000
+	andb	dl,#HCHIGH_MASK	! es = dest segment = address / 16 % 0x10000
 	andb	al,#HCLOW_MASK
 	orb	al,dl
 	ror	ax,cl
@@ -643,141 +677,6 @@ pc_more:
 	add	cx,#0x800
 	mov	es,cx
 	jmp	pc_loop		! start next iteration
-
-! When source or target is above 1M, join em_xfer.
-! Rely on MM and MEMTASK not to provide bad parameters, and omit checking the
-! following:
-!	count must be even
-!	count must be < 64K
-!	machine must be AT-compatible
-! which are not required for phys_copy.
-
-to_em_xfer:
-	shr	COUNTLO(bp),#1	! convert count to words
-	pop	bp		! stack frame now agrees with em_xfer's
-	jmp	_em_xfer
-
-
-!*===========================================================================*
-!*				em_xfer					     *
-!*===========================================================================*
-!  This file contains one routine which transfers words between user memory
-!  and extended memory on an AT or clone.  A BIOS call (INT 15h, Func 87h)
-!  is used to accomplish the transfer.  The BIOS call is "faked" by pushing
-!  the processor flags on the stack and then doing a far call through the
-!  saved vector table to the actual BIOS location.  An actual INT 15h would
-!  get a MINIX complaint from an unexpected trap.
-
-!  This particular BIOS routine runs with interrupts off since the 80286
-!  must be placed in protected mode to access the memory above 1 Mbyte.
-!  So there should be no problems using the BIOS call, except it may take
-!  too long and cause interrupts to be lost.
-!
-	.text
-gdt:				! Begin global descriptor table
-					! Dummy descriptor
-	.data2 0		! segment length (limit)
-	.data2 0		! bits 15-0 of physical address
-	.data1 0		! bits 23-16 of physical address
-	.data1 0		! access rights byte
-	.data2 0		! reserved
-					! descriptor for GDT itself
-	.data2 0		! segment length (limit)
-	.data2 0		! bits 15-0 of physical address
-	.data1 0		! bits 23-16 of physical address
-	.data1 0		! access rights byte
-	.data2 0		! reserved
-src:					! source descriptor
-srcsz:	.data2 0		! segment length (limit)
-srcl:	.data2 0		! bits 15-0 of physical address
-srch:	.data1 0		! bits 23-16 of physical address
-	.data1 0x93	! access rights byte
-	.data2 0		! reserved
-tgt:					! target descriptor
-tgtsz:	.data2 0		! segment length (limit)
-tgtl:	.data2 0		! bits 15-0 of physical address
-tgth:	.data1 0		! bits 23-16 of physical address
-	.data1 0x93	! access rights byte
-	.data2 0		! reserved
-					! BIOS CS descriptor
-	.data2 0		! segment length (limit)
-	.data2 0		! bits 15-0 of physical address
-	.data1 0		! bits 23-16 of physical address
-	.data1 0		! access rights byte
-	.data2 0		! reserved
-					! stack segment descriptor
-	.data2 0		! segment length (limit)
-	.data2 0		! bits 15-0 of physical address
-	.data1 0		! bits 23-16 of physical address
-	.data1 0		! access rights byte
-	.data2 0		! reserved
-
-!
-!
-!  Execute a transfer between user memory and extended memory.
-!
-!  status = em_xfer(source, dest, count);
-!
-!    Where:
-!       status => return code (0 => OK)
-!       source => Physical source address (32-bit)
-!       dest   => Physical destination address (32-bit)
-!       count  => Number of words to transfer
-!
-!
-!
-_em_xfer:
-	push	bp		! Save registers
-	mov	bp,sp
-	push	si
-	push	es
-	push	cx
-!
-!  Pick up source and destination addresses and update descriptor tables
-!
-	mov ax,4(bp)
-	cseg
-	mov srcl,ax
-	mov ax,6(bp)
-	cseg
-	movb srch,al
-	mov ax,8(bp)
-	cseg
-	mov tgtl,ax
-	mov ax,10(bp)
-	cseg
-	movb tgth,al
-!
-!  Update descriptor table segment limits
-!
-	mov cx,12(bp)
-	mov ax,cx
-	add ax,ax
-	cseg
-	mov tgtsz,ax
-	cseg
-	mov srcsz,ax
-
-!
-!  Now do actual DOS call
-!
-	push cs
-	pop es
-	mov si,#gdt
-	movb ah,#EM_XFER_FUNC
-	pushf			! fake interrupt
-	callf	@_vec_table+4*EM_XFER_VEC
-
-!
-!  All done, return to caller.
-!
-
-	pop	cx		! restore registers
-	pop	es
-	pop	si
-	mov	sp,bp
-	pop	bp
-	ret
 
 
 !*===========================================================================*
@@ -834,34 +733,60 @@ _out_word:
 ! Transfer data from (hard disk controller) port to memory.
 
 _port_read:
-	cld
 	push	bp
 	mov	bp,sp
-	push	cx
-	push	dx
 	push	di
 	push	es
-	mov	ax,4+2(bp)	! destination addr in dx:ax
+
+	call	portio_setup
+	shr	cx,#1		! count in words
+	mov	di,bx		! di = destination offset
+	mov	es,ax		! es = destination segment
+	rep
+	ins
+
+	pop	es
+	pop	di
+	pop	bp
+	ret
+
+portio_setup:
+	mov	ax,4+2(bp)	! source/destination address in dx:ax
 	mov	dx,4+2+2(bp)
-	mov	di,ax		! di = dest offset = address % 16
-	and	di,#OFF_MASK
-	andb	dl,#HCHIGH_MASK	! es = dest segment = address / 16 % 0x10000
+	mov	bx,ax
+	and	bx,#OFF_MASK	! bx = offset = address % 16
+	andb	dl,#HCHIGH_MASK	! ax = segment = address / 16 % 0x10000
 	andb	al,#HCLOW_MASK
 	orb	al,dl
 	movb	cl,#HCLICK_SHIFT
 	ror	ax,cl
-	mov	es,ax
-
 	mov	cx,4+2+4(bp)	! count in bytes
-	shr	cx,#1		! count in words
 	mov	dx,4(bp)	! port to read from
+	cld			! direction is UP
+	ret
+
+
+!*===========================================================================*
+!*				port_read_byte				     *
+!*===========================================================================*
+! PUBLIC void port_read_byte(port_t port, phys_bytes destination,
+!							unsigned bytcount);
+! Transfer data port to memory.
+
+_port_read_byte:
+	push	bp
+	mov	bp,sp
+	push	di
+	push	es
+
+	call	portio_setup
+	mov	di,bx		! di = destination offset
+	mov	es,ax		! es = destination segment
 	rep
-	ins
+	insb
+
 	pop	es
 	pop	di
-	pop	dx
-	pop	cx
-	mov	sp,bp
 	pop	bp
 	ret
 
@@ -873,33 +798,45 @@ _port_read:
 ! Transfer data from memory to (hard disk controller) port.
 
 _port_write:
-	cld
 	push	bp
 	mov	bp,sp
-	push	cx
-	push	dx
 	push	si
 	push	ds
-	mov	ax,4+2(bp)	! source addr in dx:ax
-	mov	dx,4+2+2(bp)
-	mov	si,ax		! si = source offset = address % 16
-	and	si,#OFF_MASK
-	andb	dl,#HCHIGH_MASK	! ds = source segment = address / 16 % 0x10000
-	andb	al,#HCLOW_MASK
-	orb	al,dl
-	movb	cl,#HCLICK_SHIFT
-	ror	ax,cl
-	mov	ds,ax
-	mov	cx,4+2+4(bp)	! count in bytes
+
+	call	portio_setup
 	shr	cx,#1		! count in words
-	mov	dx,4(bp)	! port to read from
+	mov	si,bx		! si = source offset
+	mov	ds,ax		! ds = source segment
 	rep
 	outs
+
 	pop	ds
 	pop	si
-	pop	dx
-	pop	cx
-	mov	sp,bp
+	pop	bp
+	ret
+
+
+!*===========================================================================*
+!*				port_write_byte				     *
+!*===========================================================================*
+! PUBLIC void port_write_byte(port_t port, phys_bytes source,
+!							unsigned bytcount);
+! Transfer data from memory to port.
+
+_port_write_byte:
+	push	bp
+	mov	bp,sp
+	push	si
+	push	ds
+
+	call	portio_setup
+	mov	si,bx		! si = source offset
+	mov	ds,ax		! ds = source segment
+	rep
+	outsb
+
+	pop	ds
+	pop	si
 	pop	bp
 	ret
 
@@ -1024,8 +961,6 @@ vid.3:	in			! 0x3DA is set during retrace.  First wait
 
 vid.4:	cmp si,#0		! si = 0 means blank the screen
 	je vid.7		! jump for blanking
-	lock			! this is a trick for the IBM PC simulator only
-	inc vidlock		! 'lock' indicates a video ram access
 	rep			! this is the copy loop
 	movs			! ditto
 
@@ -1133,8 +1068,7 @@ p_cp_mess:
 	mov	ax,#ES_286_SELECTOR
 	mov	es,ax
 
-	eseg
-	mov	0,bx		! sender's proc no. from arg, not msg
+  eseg	mov	0,bx		! sender's proc no. from arg, not msg
 	mov	ax,si
 	mov	bx,di
 	mov	si,#2		! src offset is now 2 relative to start of seg
@@ -1209,53 +1143,21 @@ ppc_next:
 
 
 !*===========================================================================*
-!*				p_port_read				     *
+!*				p_portio_setup				     *
 !*===========================================================================*
-p_port_read:
-	cld
-	pop	bx
-	pop	dx		! port
-	pop	_gdt+ES_286_OFFSET+DESC_BASE
-	pop	ax		! pop destination into base of dst descriptor
-	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE,al
-	pop	cx		! byte count
-	sub	sp,#2+4+2
-	push	es
-	mov	ax,#ES_286_SELECTOR
-	mov	es,ax
-	mov	ax,di
-	sub	di,di		! dst offset is now 0 relative to start of seg
-	shr	cx,#1		! word count
-	rep
-	ins			! read everything
-	mov	di,ax
-	pop	es
-	jmp	(bx)
-
-
-!*===========================================================================*
-!*				p_port_write				     *
-!*===========================================================================*
-p_port_write:
-	cld
-	pop	bx
-	pop	dx		! port
-	pop	_gdt+DS_286_OFFSET+DESC_BASE
-	pop	ax		! pop offset into base of source descriptor
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,al
-	pop	cx		! byte count, discard high word
-	sub	sp,#2+4+2
-	push	ds
-	mov	ax,#DS_286_SELECTOR
-	mov	ds,ax
-	mov	ax,si
-	sub	si,si		! src offset is now 0 relative to start of seg
-	shr	cx,#1		! word count
-	rep
-	outs			! write everything
-	mov	si,ax
-	pop	ds
-	jmp	(bx)
+! The port_read, port_write, etc. functions need a setup routine that uses
+! a segment descriptor.
+p_portio_setup:
+	mov	ax,4+2(bp)	! source/destination address in dx:ax
+	mov	dx,4+2+2(bp)
+	mov	_gdt+DS_286_OFFSET+DESC_BASE,ax
+	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,dl
+	xor	bx,bx		! bx = 0 = start of segment
+	mov	ax,#DS_286_SELECTOR ! ax = segment selector
+	mov	cx,4+2+4(bp)	! count in bytes
+	mov	dx,4(bp)	! port to read from
+	cld			! direction is UP
+	ret
 
 
 !*===========================================================================*
@@ -1288,20 +1190,25 @@ p_level0:
 !*===========================================================================*
 	.data
 patch_table:			! pairs (old function, new function)
+#if ENABLE_BIOS_WINI
+	.data2	_bios13, p_bios13
+#endif
 	.data2	_cp_mess, p_cp_mess
 	.data2	_phys_copy, p_phys_copy
-	.data2	_port_read, p_port_read
-	.data2	_port_write, p_port_write
+	.data2	portio_setup, p_portio_setup
 	.data2	_reset, p_reset
 	.data2	_level0, p_level0
 	.data2	_restart, p_restart	! in mpx file
 	.data2	save, p_save	! in mpx file
-	.data2	0		! end of table
-vidlock:			! dummy variable for use with lock prefix
-	.data2 0
-idt_vectors:
-	.data2	0x3FF		! limit and base of real mode interrupt vectors
-	.data4	0
-	.data2	0
-idt_zero:
-	.data4	0, 0
+end_patch_table:		! end of table
+
+idt_vectors:			! limit and base of real mode interrupt vectors
+	.data2	0x3FF
+idt_zero:			! zero limit IDT to cause a processor shutdown
+	.data2	0, 0, 0
+
+	.bss
+save_sp:			! place to put sp when switching to real mode
+	.space	2
+msw:				! saved real mode machine status word
+	.space	2

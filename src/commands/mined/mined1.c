@@ -877,7 +877,7 @@ void open_device()
 int getchar()
 {
 #ifdef UNIX
-  return (_getchar() & 0177);
+  return (_getchar() & 0377);
 #else
   char c;
 
@@ -1200,19 +1200,6 @@ char *p;
 
 /* The mapping between input codes and functions. */
 
-#ifdef UNIX
-void     (*key_map[128])() = {	       /* map ASCII characters to functions */
-   /* 000-017 */ MA, BL, MP, YA, SD, RD, MN, IF, DPC, S, S, DT, LR, S, DNW,LIB,
-   /* 020-037 */ DPW, WB, GR, SH, DLN, SU, VI, XWT, XT, PT, EL, ESC, I, GOTO,
-		 HIGH, LOW,
-   /* 040-057 */ S, S, S, S, S, S, S, S, S, S, S, PD, S, PU, S, S,
-   /* 060-077 */ S, S, DN, S, LF, FS, RT, S, UP, S, S, S, S, S, S, S,
-   /* 100-117 */ S, S, S, CTL, S, EF, SF, S, HO, S, S, S, S, S, S, S,
-   /* 120-137 */ S, S, SR, S, S, S, S, S, S, S, S, S, S, S, S, S,
-   /* 140-157 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
-   /* 160-177 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, DCC
-};
-#else
 void (*key_map[256])() = {       /* map ASCII characters to functions */
    /* 000-017 */ MA, BL, MP, YA, SD, RD, MN, IF, DPC, S, S, DT, LR, S, DNW,LIB,
    /* 020-037 */ DPW, WB, GR, SH, DLN, SU, VI, XWT, XT, PT, EL, ESC, I, GOTO,
@@ -1223,16 +1210,15 @@ void (*key_map[256])() = {       /* map ASCII characters to functions */
    /* 120-137 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
    /* 140-157 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
    /* 160-177 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, DCC,
-   /* 200-217 */ I, I, I, I, I, I, I, I, I, SR, I, I, SF, I, I, I,
-   /* 220-237 */ MA, I, I, I, I, I, I, I, I, I, I, CTL, I, I, I, I,
-   /* 240-257 */ I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
-   /* 260-277 */ I, EF, DN, PD, LF, FS, RT, HO, UP, PU, I, I, I, I, I, I,
-   /* 300-317 */ I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
-   /* 320-337 */ I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
-   /* 340-357 */ I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I,
-   /* 360-377 */ I, I, I, I, I, I, I, I, I, I, I, I, I, I, I, I
+   /* 200-217 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 220-237 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 240-257 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 260-277 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 300-317 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 320-337 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 340-357 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
+   /* 360-377 */ S, S, S, S, S, S, S, S, S, S, S, S, S, S, S, S,
 };
-#endif /* UNIX */
 
 int nlines;			/* Number of lines in file */
 LINE *header;			/* Head of line list */
@@ -1405,8 +1391,8 @@ register char *buffer;
   		last = &screen[read_chars];
   		cur_pos = screen;
   	}
-	if ((unsigned char) *cur_pos >= 0177 || *cur_pos == '\0')
-		panic ("File contains non-ascii characters");
+	if (*cur_pos == '\0')
+		*cur_pos = ' ';
   } while ((*buffer++ = *cur_pos++) != '\n');
 
   current = cur_pos;
@@ -1952,7 +1938,7 @@ int _getchar()
 
   if (read(input_fd, &c, 1) != 1 && quit == FALSE)
 	panic ("Cannot read 1 byte from input");
-  return c & 0177;
+  return c & 0377;
 }
 
 void _flush()

@@ -1,0 +1,86 @@
+fultext		2048/tcp			# FT/NET server
+isis		1603/tcp
+remotefs	556/tcp		rfs_server rfs	# Brunhoff remote filesystem
+new-rwho	550/udp		new-who		# experimental
+netwall		533/udp				# -for emergency broadcasts
+tempo		526/tcp		newdate
+talk		517/udp
+at-echo		204/udp				#appletalk echo
+statsrv		133/tcp				# statistics server
+nntp            119/tcp         usenet readnews untp # Network News Transfer
+pop		110/tcp		pop postoffice	# Post Office version 3
+hostnames	101/tcp		hostname	# usually to sri-nic
+supdup		95/tcp
+link		87/tcp		ttylink
+mtp		57/tcp				# deprecated
+smtp		25/tcp		mail
+telnet		23/tcp
+ftp		21/tcp
+discard		9/tcp		sink null
+echo		7/udp
+
+console		2222/tcp			# consoled voor xdm
+pcserver	600/tcp				# ECD Integrated PC board srvr
+timed		525/udp		timeserver
+efs		520/tcp				# for LucasFilm
+printer		515/tcp		spooler		# experimental
+sftp		115/tcp
+finger		79/tcp
+time		37/udp		timserver
+chargen		19/udp		ttytst source
+netstat		15/tcp
+daytime		13/udp
+tcpmux		1/tcp		# rfc-1078
+license		1700/tcp			# matlab
+isis		1601/udp
+ingreslock      1524/tcp
+conference	531/tcp		chat
+courier		530/tcp		rpc		# experimental
+who		513/udp		whod
+login		513/tcp
+exec		512/tcp
+at-zip		206/udp				#appletalk zone information
+snmp-trap	162/udp		snmptrap	# SNMP trap (event) messages
+statsrv		133/udp
+pop-2		109/tcp		pop postoffice	# Post Office
+x400		103/tcp				# ISO Mail
+rje		77/tcp		netrjs
+domain		53/udp		nameserver
+whois		43/tcp		nicname		# usually to sri-nic
+rlp		39/udp		resource	# resource location
+qotd		17/tcp		quote
+echo		7/tcp
+isis		1602/bcast
+rmonitor	560/udp		rmonitord	# experimental
+netnews		532/tcp		readnews
+route		520/udp		router routed
+syslog		514/udp
+shell		514/tcp		cmd		# no passwords used
+biff		512/udp		comsat
+at-rtmp		201/udp				#appletalk routing maintenance
+ntp		123/tcp				# Network Time Protocol
+uucp-path	117/tcp
+sunrpc		111/udp
+sunrpc		111/tcp
+csnet-ns	105/tcp
+iso-tsap	102/tcp
+tftp		69/udp
+bootpc	68/udp		#bootp server
+ftp-data	20/tcp
+systat		11/tcp		users
+monitor		561/udp				# experimental
+uucp		540/tcp		uucpd		# uucp daemon
+ntalk		518/udp
+at-nbp		202/udp				#appletalk name binding
+snmp		161/udp				# Simple Network Mgmt Protocol
+NeWS		144/tcp		news		# Window System
+erpc		121/udp				#rpc server for Annex servers
+auth		113/tcp		authentication
+x400-snd	104/tcp
+bootps	67/udp		#bootp server
+domain		53/tcp		nameserver	# name-domain server
+name		42/udp		# nameserver
+time		37/tcp		timserver
+chargen		19/tcp		ttytst source
+daytime		13/tcp
+discard		9/udp		sink null

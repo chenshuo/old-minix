@@ -7,6 +7,7 @@
 #include "kernel.h"
 #include <sgtty.h>
 #include <signal.h>
+#include <unistd.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include <minix/keymap.h>
@@ -154,20 +155,13 @@ int irq;
 		return 1;
   }
 
-  /* Call debugger? (as early as practical, not in TTY which may be hung) */
-  if (map_key0(code) == F10 && db_exists) {
-	db_enabled = TRUE;
-	db();
-  }
-
   /* Store the character in memory so the task can get at it later. */
   kb = kb_addr(-NR_CONS);
-  *kb->iptr = code;
   if (kb->iptr < kb->ibufend) {
+	*kb->iptr++ = code;
 	lock();			/* protect shared variable */
 	tty_events += EVENT_THRESHOLD;	/* C doesn't guarantee atomic */
 	unlock();
-	++kb->iptr;
   }
   /* Else it doesn't fit - discard it. */
   return 1;	/* Reenable keyboard interrupt */
@@ -229,26 +223,23 @@ int scode;			/* scan code from key press */
  *				make_break				     *
  *===========================================================================*/
 PUBLIC int make_break(ch)
-char ch;			/* scan code of key just struck or released */
+int ch;				/* scan code of key just struck or released */
 {
 /* This routine can handle keyboards that interrupt only on key depression,
  * as well as keyboards that interrupt on key depression and key release.
  * For efficiency, the interrupt routine filters out most key releases.
  */
-
   int c, make, code;
-  static int reboot_count = 0;
+  static int CAD_count = 0;
 
-  /* Check for CTRL-ALT-DEL, and if found, reboot the computer. This would
+  /* Check for CTRL-ALT-DEL, and if found, halt the computer. This would
    * be better done in keyboard() in case TTY is hung, except control and
    * alt are set in the high level code.
    */
   if (control && (alt1 || alt2) && ch == DEL_SCAN)
   {
-	if (reboot_count >= 2)
-		reboot();
+  	if (++CAD_count == 2) wreboot(RBT_HALT);
 	cause_sig(INIT_PROC_NR, SIGABRT);
-	reboot_count++;
 	return -1;
   }
 
@@ -414,7 +405,7 @@ int minor;
 
 
 /*===========================================================================*
- *				load_dutch_table			     *
+ *				kbd_loadmap				     *
  *===========================================================================*/
 PUBLIC int kbd_loadmap(proc_nr, map_vir)
 int proc_nr;
@@ -450,7 +441,7 @@ char ch;			/* scan code for a function key */
   if (code == F3) toggle_scroll();	/* hardware vs. software scrolling */
 
 #if ENABLE_NETWORKING
-  if (code == F5) ehw_dump();		/* network statistics */
+  if (code == F5) dp_dump();		/* network statistics */
 #endif
   if (code == CF7) sigchar(&tty_struct[CONSOLE], SIGQUIT);
   if (code == CF8) sigchar(&tty_struct[CONSOLE], SIGINT);
@@ -489,83 +480,94 @@ PRIVATE int scan_keyboard()
 
 
 /*==========================================================================*
- *				reboot					    *
- *==========================================================================*/
-PUBLIC void reboot()
-{
-/* Reboot the machine. */
-
-  static u16_t magic = MEMCHECK_MAG;
-
-#if ENABLE_NETWORKING
-  ehw_stop();
-#endif
-  soon_reboot();
-
-  /* Stop the floppy motors the ugly way. */
-  out_byte(0x3F2, 0x0C);
-
-  /* Stop BIOS memory test. */
-  phys_copy(vir2phys(&magic), (phys_bytes) MEMCHECK_ADR,
-						(phys_bytes) sizeof magic);
-
-  if (protected_mode) {
-	/* Rebooting is nontrivial because the BIOS reboot code is in real
-	 * mode and there is no sane way to return to real mode on 286's.
-	 */
-	if (pc_at) {
-		/* Use the AT keyboard controller to reset the processor.
-		 * The A20 line is kept enabled in case this code is ever
-		 * run from extended memory, and because some machines
-		 * appear to drive the fake A20 high instead of low just
-		 * after reset, leading to an illegal opode trap.  This bug
-		 * is more of a problem if the fake A20 is in use, as it
-		 * would be if the keyboard reset were used for real mode.
-		 */
-		kb_wait(ps ? PS_KB_STATUS : KB_STATUS);
-		out_byte(KB_COMMAND,
-			 KB_PULSE_OUTPUT | (0x0F & ~(KB_GATE_A20 | KB_RESET)));
-		milli_delay(10);
-
-		/* If the nice method fails then do a reset.  In protected
-		 * mode this means a processor shutdown.
-		 */
-		printf("Hard reset...\n");
-		milli_delay(250);
-		level0(reset);
-	} else {
-		printf("No way to reboot from protected mode on this machine ");
-	}
-	while (TRUE)
-		;		/* no way to recover if the above fails */
-  }
-
-  /* In real mode, jumping to the reset address is good enough. */
-  reset();
-}
-
-
-/*==========================================================================*
  *				wreboot					    *
  *==========================================================================*/
-PUBLIC void wreboot()
+PUBLIC void wreboot(how)
+int how; 		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 {
 /* Wait for keystrokes for printing debugging info and reboot. */
 
   int quiet, code;
+  static u16_t magic = MEMCHECK_MAG;
+  struct tasktab *ttp;
 
-  printf("Hit ESC to reboot, F-keys for debug dumps\r\n");
+  /* Mask all interrupts. */
+  out_byte(INT_CTLMASK, ~0);
 
-  (void) scan_keyboard();	/* ack any old input */
-  quiet = scan_keyboard();	/* quiescent value (0 on PC, last code on AT)*/
-  while (TRUE) {
-	code = scan_keyboard();
-	if (code != quiet) {
-		/* A key has been pressed. */
-		if (code == ESC_SCAN) break;	/* reboot if ESC typed */
-		(void) func_key(code);		/* process function key */
-		quiet = scan_keyboard();
-	}
+  /* Tell several tasks to stop. */
+  cons_stop();
+#if ENABLE_NETWORKING
+  dp8390_stop();
+#endif
+  floppy_stop();
+  clock_stop();
+
+  if (how == RBT_HALT) {
+	printf("System Halted\n");
+	if (!mon_return) how = RBT_PANIC;
   }
-  reboot();
+
+  if (how == RBT_PANIC) {
+	/* A panic! */
+	printf("Hit ESC to reboot, F-keys for debug dumps\n");
+
+	(void) scan_keyboard();	/* ack any old input */
+	quiet = scan_keyboard();/* quiescent value (0 on PC, last code on AT)*/
+	for (;;) {
+		milli_delay(100);	/* pause for a decisecond */
+		code = scan_keyboard();
+		if (code != quiet) {
+			/* A key has been pressed. */
+			if (code == ESC_SCAN) break; /* reboot if ESC typed */
+			(void) func_key(code);	     /* process function key */
+			quiet = scan_keyboard();
+		}
+	}
+	how = RBT_REBOOT;
+  }
+
+  if (how == RBT_REBOOT) printf("Rebooting\n");
+
+  if (mon_return && how != RBT_RESET) {
+	/* Reinitialize the interrupt controllers to the BIOS defaults. */
+	init_8259(BIOS_IRQ0_VEC, BIOS_IRQ8_VEC);
+	out_byte(INT_CTLMASK, 0);
+	if (pc_at) out_byte(INT2_CTLMASK, 0);
+
+	/* Return to the boot monitor. */
+	if (how == RBT_HALT) {
+		reboot_code = vir2phys("");
+	} else
+	if (how == RBT_REBOOT) {
+		reboot_code = vir2phys("delay;boot");
+	}
+	level0(monitor);
+  }
+
+  /* Stop BIOS memory test. */
+  phys_copy(vir2phys(&magic), (phys_bytes) MEMCHECK_ADR,
+  						(phys_bytes) sizeof(magic));
+
+  if (protected_mode) {
+	/* Use the AT keyboard controller to reset the processor.
+	 * The A20 line is kept enabled in case this code is ever
+	 * run from extended memory, and because some machines
+	 * appear to drive the fake A20 high instead of low just
+	 * after reset, leading to an illegal opode trap.  This bug
+	 * is more of a problem if the fake A20 is in use, as it
+	 * would be if the keyboard reset were used for real mode.
+	 */
+	kb_wait(ps ? PS_KB_STATUS : KB_STATUS);
+	out_byte(KB_COMMAND,
+		 KB_PULSE_OUTPUT | (0x0F & ~(KB_GATE_A20 | KB_RESET)));
+	milli_delay(10);
+
+	/* If the nice method fails then do a reset.  In protected
+	 * mode this means a processor shutdown.
+	 */
+	printf("Hard reset...\n");
+	milli_delay(250);
+  }
+  /* In real mode, jumping to the reset address is good enough. */
+  level0(reset);
 }

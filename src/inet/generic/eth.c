@@ -93,7 +93,7 @@ put_userdata_t put_userdata;
 #endif
 	eth_port= &eth_port_table[port];
 	if (!(eth_port->etp_flags & EPF_ENABLED))
-		return ERROR;
+		return EGENERIC;
 
 	for (i=0; i<ETH_FD_NR && (eth_fd_table[i].ef_flags & EFF_INUSE);
 		i++);
@@ -317,7 +317,7 @@ assert (sizeof(nwio_ethstat_t) <= BUF_S);
 			eth_port= eth_fd->ef_port;
 			if (!(eth_port->etp_flags & EPF_ENABLED))
 			{
-				reply_thr_put(eth_fd, ERROR, TRUE);
+				reply_thr_put(eth_fd, EGENERIC, TRUE);
 				return NW_OK;
 			}
 
@@ -596,14 +596,14 @@ assert(pack->acc_linkC);
 #endif
 
 	packaddr= eth_hdr->eh_dst;
-	if (packaddr.ea_addr[0] & 0x80)
+	if (packaddr.ea_addr[0] & 0x01)
 	{
 		/* multi cast or broadcast */
 		if (!eth_addrcmp(packaddr, broadcast))
 			pack_stat= EPS_BROAD;
 		else
 		{
-			pack_stat= EPS_MULTI | EPS_PROMISC;
+			pack_stat= EPS_MULTI;
 #if DEBUG
  { where(); printf("Got a multicast packet\n"); }
 #endif
@@ -656,13 +656,6 @@ assert(pack->acc_linkC);
 	eth_fd->ef_ethopt.nweo_type, type); }
 #endif
 			continue;
-		}
-		if ((pack_stat & EPS_MULTI) && !(pack_stat &
-			eth_fd->ef_pack_stat & EPS_PROMISC))
-		{
-			multi_addr= eth_fd->ef_ethopt.nweo_rem;
-			if (eth_addrcmp (packaddr, multi_addr))
-				continue;
 		}
 #if DEBUG & 256
  { where(); printf("multi OK\n"); }
@@ -781,12 +774,12 @@ acc_t *pack;
 
 	eth_hdr= (eth_hdr_t *)ptr2acc_data(pack);
 	packaddr= eth_hdr->eh_dst;
-	if (packaddr.ea_addr[0] & 0x80)
+	if (packaddr.ea_addr[0] & 0x01)
 		/* multi cast or broadcast */
 		if (!eth_addrcmp (packaddr, broadcast))
 			pack_kind= EPS_BROAD;
 		else
-			pack_kind= EPS_MULTI | EPS_PROMISC;
+			pack_kind= EPS_MULTI;
 	else
 	{
 		portaddr= eth_port->etp_ethaddr;
@@ -807,12 +800,6 @@ acc_t *pack;
 		type != eth_fd->ef_ethopt.nweo_type)
 		return FALSE;
 
-	if ((pack_kind & EPS_MULTI) && !(pack_kind & EPS_PROMISC))
-	{
-		multi_addr= eth_fd->ef_ethopt.nweo_rem;
-		if (eth_addrcmp(packaddr, multi_addr))
-			return FALSE;
-	}
 	if (eth_fd->ef_ethopt.nweo_flags & NWEO_REMSPEC)
 	{
 		rem_addr= eth_fd->ef_ethopt.nweo_rem;

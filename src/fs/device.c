@@ -15,6 +15,7 @@
  */
 
 #include "fs.h"
+#include <fcntl.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "dev.h"
@@ -236,7 +237,18 @@ PUBLIC int do_ioctl()
   (*dmap[major].dmap_rw)(task, &dev_mess);
 
   /* Task has completed.  See if call completed. */
-  if (dev_mess.REP_STATUS == SUSPEND) suspend(task);
+  if (dev_mess.REP_STATUS == SUSPEND) {
+	if (f->filp_flags & O_NONBLOCK) {
+		/* Not supposed to block. */
+		dev_mess.m_type = CANCEL;
+		dev_mess.PROC_NR = who;
+		dev_mess.TTY_LINE = minor;
+		(*dmap[major].dmap_rw)(task, &dev_mess);
+		if (dev_mess.REP_STATUS == EINTR) dev_mess.REP_STATUS = EAGAIN;
+	} else {
+		suspend(task);
+	}
+  }
 					/* User must be suspended. */
   m1.TTY_SPEK = dev_mess.TTY_SPEK;	/* erase and kill */
   m1.TTY_FLAGS = dev_mess.TTY_FLAGS;	/* flags */

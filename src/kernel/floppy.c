@@ -4,6 +4,7 @@
  * The file contains one entry point:
  *
  *   floppy_task:	main entry when system is brought up
+ *   floppy_stop:	stop all activity
  *
  *  Changes:
  *	27 Oct. 1986 by Jakob Schripsema: fdc_results fixed for 8 MHz
@@ -118,7 +119,6 @@
 #define NR_DRIVES          2	/* maximum number of drives */
 #define DIVISOR          128	/* used for sector size encoding */
 #define SECTOR_SIZE_CODE   2	/* code to say "512" to the controller */
-#define POLLING		1000	/* max # times to try to output to FDC */
 #define TIMEOUT		 500	/* milliseconds waiting for FDC */
 #define NT                 7	/* number of diskette/drive combinations */
 #define UNCALIBRATED       0	/* drive needs to be calibrated at next use */
@@ -711,6 +711,18 @@ PRIVATE void stop_motor()
 
 
 /*===========================================================================*
+ *				floppy_stop				     *
+ *===========================================================================*/
+PUBLIC void floppy_stop()
+{
+/* Stop all activity. */
+
+  motor_goal = 0;
+  stop_motor();
+}
+
+
+/*===========================================================================*
  *				seek					     *
  *===========================================================================*/
 PRIVATE int seek(fp)
@@ -829,13 +841,14 @@ PRIVATE int fdc_results()
  * interrupts again.
  */
 
-  int result_nr, retries, status;
+  int result_nr, status;
+  struct milli_state ms;
 
   /* Extract bytes from FDC until it says it has no more.  The loop is
    * really an outer loop on result_nr and an inner loop on status.
    */
   result_nr = 0;
-  retries = POLLING + TIMEOUT;
+  milli_start(&ms);
   do {
 	/* Reading one byte is almost a mirror of fdc_out() - the DIRECTION
 	 * bit must be set instead of clear, but the CTL_BUSY bit destroys
@@ -845,15 +858,13 @@ PRIVATE int fdc_results()
 	if (status == (MASTER | DIRECTION | CTL_BUSY)) {
 		if (result_nr >= MAX_RESULTS) break;	/* too many results */
 		f_results[result_nr++] = in_byte(FDC_DATA);
-		retries = POLLING + TIMEOUT;
 		continue;
 	}
 	if (status == MASTER) {	/* all read */
 		enable_irq(FLOPPY_IRQ);
 		return(OK);	/* only good exit */
 	}
-	if (retries < TIMEOUT) milli_delay(1);	/* take it slow now */
-  } while (--retries != 0);
+  } while (milli_elapsed(&ms) < TIMEOUT);
   need_reset = TRUE;		/* controller chip must be reset */
   enable_irq(FLOPPY_IRQ);
   return(ERR_STATUS);
@@ -884,19 +895,18 @@ int val;		/* write this byte to floppy disk controller */
  * If the controller refuses to listen, the FDC chip is given a hard reset.
  */
 
-  int retries;
+  struct milli_state ms;
 
   if (need_reset) return;	/* if controller is not listening, return */
 
   /* It may take several tries to get the FDC to accept a command. */
-  retries = POLLING + TIMEOUT;
+  milli_start(&ms);
   while ((in_byte(FDC_STATUS) & (MASTER | DIRECTION)) != (MASTER | 0)) {
-	if (--retries == 0) {
+	if (milli_elapsed(&ms) >= TIMEOUT) {
 		/* Controller is not listening.  Hit it over the head. */
 		need_reset = TRUE;
 		return;
 	}
-	if (retries < TIMEOUT) milli_delay(1);
   }
   out_byte(FDC_DATA, val);
 }

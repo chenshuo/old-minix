@@ -6,45 +6,37 @@
 #define LDT_SIZE         2	/* contains CS and DS only */
 
 /* Fixed global descriptors.  1 to 7 are prescribed by the BIOS. */
-#define BIOS_GDT_INDEX   1	/* temp spot to store pointer to GDT */
-#define BIOS_IDT_INDEX   2	/* temp spot to store pointer to GDT */
+#define GDT_INDEX        1	/* GDT descriptor */
+#define IDT_INDEX        2	/* IDT descriptor */
 #define DS_INDEX         3	/* kernel DS */
-#define ES_INDEX         4	/* kernel ES */
-#define SS_INDEX         5	/* kernel SS */
+#define ES_INDEX         4	/* kernel ES (386: flag 4 Gb at startup) */
+#define SS_INDEX         5	/* kernel SS (386: monitor SS at startup) */
 #define CS_INDEX         6	/* kernel CS */
-#define BIOS_CS_INDEX    7	/* temp for BIOS */
+#define MON_CS_INDEX     7	/* temp for BIOS (386: monitor CS at startup) */
 #define TSS_INDEX        8	/* kernel TSS */
 #define DS_286_INDEX     9	/* scratch 16-bit source segment */
 #define ES_286_INDEX    10	/* scratch 16-bit destination segment */
-#define FLAT_DS_INDEX   11	/* 32-bit segment seg covering all of memory */
-#define COLOR_INDEX     12	/* color screen segment */
-#define MONO_INDEX      13	/* mono screen segment */
-#define DB_CS_INDEX     14	/* debugger CS */
-#define DB_CS16_INDEX   15	/* debugger 16-bit CS for 386 */
-#define DB_DS_INDEX     16	/* debugger DS */
-#define GDT_INDEX       17	/* GDT DS for debugger */
-#define EPLUS_INDEX	18	/* Western Digital Etherplus buffer */
-#define FIRST_LDT_INDEX 19	/* rest of descriptors are LDT's */
+#define COLOR_INDEX     11	/* color screen segment */
+#define MONO_INDEX      12	/* mono screen segment */
+#define DP_ETH0_INDEX	13	/* Western Digital Etherplus buffer */
+#define DP_ETH1_INDEX	14	/* Western Digital Etherplus buffer */
+#define FIRST_LDT_INDEX 15	/* rest of descriptors are LDT's */
 
-#define BIOS_GDT_SELECTOR 0x08	/* (BIOS_GDT_INDEX * DESC_SIZE) bad for asld */
-#define BIOS_IDT_SELECTOR 0x10	/* (BIOS_IDT_INDEX * DESC_SIZE) */
+#define GDT_SELECTOR      0x08	/* (GDT_INDEX * DESC_SIZE) bad for asld */
+#define IDT_SELECTOR      0x10	/* (IDT_INDEX * DESC_SIZE) */
 #define DS_SELECTOR       0x18	/* (DS_INDEX * DESC_SIZE) */
 #define ES_SELECTOR       0x20	/* (ES_INDEX * DESC_SIZE) */
+#define FLAT_DS_SELECTOR  0x21	/* less privileged ES */
 #define SS_SELECTOR       0x28	/* (SS_INDEX * DESC_SIZE) */
 #define CS_SELECTOR       0x30	/* (CS_INDEX * DESC_SIZE) */
-#define BIOS_CS_SELECTOR  0x38	/* (BIOS_CS_INDEX * DESC_SIZE) */
+#define MON_CS_SELECTOR   0x38	/* (MON_CS_INDEX * DESC_SIZE) */
 #define TSS_SELECTOR      0x40	/* (TSS_INDEX * DESC_SIZE) */
 #define DS_286_SELECTOR   0x49	/* (DS_286_INDEX * DESC_SIZE + 1) */
 #define ES_286_SELECTOR   0x51	/* (ES_286_INDEX * DESC_SIZE + 1) */
-#define FLAT_DS_SELECTOR  0x59	/* (FLAT_DS_INDEX * DESC_SIZE + 1) */
-#define COLOR_SELECTOR    0x61	/* (COLOR_INDEX * DESC_SIZE + 1) */
-#define MONO_SELECTOR     0x69	/* (MONO_INDEX * DESC_SIZE + 1) */
-#define DB_CS_SELECTOR    0x70	/* (DB_CS_INDEX * DESC_SIZE) */
-#define DB_CS16_SELECTOR  0x78	/* (DB_CS16_INDEX * DESC_SIZE) */
-#define DB_DS_SELECTOR    0x80	/* (DB_DS_INDEX * DESC_SIZE) */
-#define GDT_SELECTOR      0x88	/* (GDT_INDEX * DESC_SIZE) */
-
-#define EPLUS_SELECTOR	  0x91	/* (EPLUS_INDEX * DESC_SIZE) */
+#define COLOR_SELECTOR    0x59	/* (COLOR_INDEX * DESC_SIZE + 1) */
+#define MONO_SELECTOR     0x61	/* (MONO_INDEX * DESC_SIZE + 1) */
+#define DP_ETH0_SELECTOR  0x69	/* (DP_ETH0_INDEX * DESC_SIZE) */
+#define DP_ETH1_SELECTOR  0x71	/* (DP_ETH1_INDEX * DESC_SIZE) */
 
 /* Fixed local descriptors. */
 #define CS_LDT_INDEX     0	/* process CS */

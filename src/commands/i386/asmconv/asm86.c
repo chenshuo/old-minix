@@ -45,6 +45,7 @@ asm86_t *new_asm86(void)
 	a->opcode= -1;
 	get_file(&a->file, &a->line);
 	a->optype= -1;
+	a->oaz= 0;
 	a->rep= ONCE;
 	a->seg= DEFSEG;
 	a->args= nil;

@@ -37,9 +37,9 @@ dev_t dev;			/* which device? */
 
   sp = get_super(dev);		/* get the superblock pointer */
   if (bufs_in_use + sp->s_imap_blocks + sp->s_zmap_blocks >= NR_BUFS - 3)
-	return(ERROR);		/* insufficient buffers left for bit maps */
+	return(EGENERIC);	/* insufficient buffers left for bit maps */
   if (sp->s_imap_blocks > I_MAP_SLOTS || sp->s_zmap_blocks > Z_MAP_SLOTS)
-	return(ERROR);
+	return(EGENERIC);
 
   /* Load the inode map from the disk. */
   for (i = 0; i < sp->s_imap_blocks; i++)

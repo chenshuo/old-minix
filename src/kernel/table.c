@@ -34,19 +34,15 @@
  * The order of the names here MUST agree with the numerical values assigned to
  * the tasks in <minix/com.h>.
  */
-#define SMALL_STACK	(128 * sizeof (char *))
+#define SMALL_STACK	(128 * sizeof(char *))
 
 #define	TTY_STACK	(3 * SMALL_STACK)
 #define SYN_ALRM_STACK	SMALL_STACK
 
-#if ENABLE_NETWORKING
-#define EHW_STACK	SMALL_STACK
-#else
-#define EHW_STACK	0
-#endif
+#define DP8390_STACK	(SMALL_STACK * ENABLE_NETWORKING)
 
 #if (CHIP == INTEL)
-#define	IDLE_STACK	(3 * 2 + 3 * 2 + 4 * 2)	/* 3 intr, 3 temps, 4 db */
+#define	IDLE_STACK	((3+3+4) * sizeof(char *))  /* 3 intr, 3 temps, 4 db */
 #else
 #define IDLE_STACK	SMALL_STACK
 #endif
@@ -54,9 +50,9 @@
 #define	PRINTER_STACK	SMALL_STACK
 
 #if (CHIP == INTEL)
-#define	WINCH_STACK	(2 * SMALL_STACK)
+#define	WINCH_STACK	(2 * SMALL_STACK * ENABLE_WINI)
 #else
-#define	WINCH_STACK	(3 * SMALL_STACK)
+#define	WINCH_STACK	(3 * SMALL_STACK * ENABLE_WINI)
 #endif
 
 #if (MACHINE == ATARI)
@@ -64,13 +60,13 @@
 #endif
 
 #if (MACHINE == IBM_PC)
-#if ENABLE_ADAPTEC_SCSI
-#define	SCSI_STACK	(2 * SMALL_STACK)
-#else
-#define	SCSI_STACK	(SMALL_STACK / 2)
-#define scsi_task	nop_task
+#define	SCSI_STACK	(2 * SMALL_STACK * ENABLE_SCSI)
 #endif
-#endif
+
+/* XXX can be smaller? */
+#define CDROM_STACK	(4 * SMALL_STACK * ENABLE_CDROM)
+#define AUDIO_STACK	(4 * SMALL_STACK * ENABLE_AUDIO)
+#define MIXER_STACK	(4 * SMALL_STACK * ENABLE_AUDIO)
 
 #define	FLOP_STACK	(3 * SMALL_STACK)
 #define	MEM_STACK	SMALL_STACK
@@ -79,10 +75,19 @@
 #define	HARDWARE_STACK	0		/* dummy task, uses kernel stack */
 
 
-
-#define	TOT_STACK_SPACE		(TTY_STACK + EHW_STACK + SCSI_STACK + \
+#define	TOT_STACK_SPACE		(TTY_STACK + DP8390_STACK + SCSI_STACK + \
 	SYN_ALRM_STACK + IDLE_STACK + HARDWARE_STACK + PRINTER_STACK + \
-	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK)
+	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK + \
+	CDROM_STACK + AUDIO_STACK + MIXER_STACK)
+
+
+/* SCSI, CDROM and AUDIO may in the future have different choices like
+ * WINCHESTER, but for now the choice is fixed.
+ */
+#define scsi_task	aha_scsi_task
+#define cdrom_task	mcd_task
+#define audio_task	dsp_task
+
 
 /*
  * Some notes about the following table:
@@ -96,13 +101,24 @@
 PUBLIC struct tasktab tasktab[] = {
 	tty_task,		TTY_STACK,	"TTY   ",
 #if ENABLE_NETWORKING
-	ehw_task,		EHW_STACK,	"DL_ETH",
+	dp8390_task,		DP8390_STACK,	"DL_ETH",
 #endif
+#if ENABLE_CDROM
+	cdrom_task,		CDROM_STACK,	"CDROM ",
+#endif
+#if ENABLE_AUDIO
+	audio_task,		AUDIO_STACK,	"AUDIO ",
+	mixer_task,		MIXER_STACK,	"MIXER ",
+#endif
+#if ENABLE_SCSI
 	scsi_task,		SCSI_STACK,	"SCSI  ",
+#endif
+#if ENABLE_WINI
+	winchester_task,	WINCH_STACK,	"WINCHE",
+#endif
 	syn_alrm_task,		SYN_ALRM_STACK, "SYN_AL",
 	idle_task,		IDLE_STACK,	"IDLE  ",
 	printer_task,		PRINTER_STACK,	"PRINTR",
-	winchester_task,	WINCH_STACK,	"WINCHE",
 	floppy_task,		FLOP_STACK,	"FLOPPY",
 	mem_task,		MEM_STACK,	"RAMDSK",
 	clock_task,		CLOCK_STACK,	"CLOCK ",
@@ -116,7 +132,8 @@ PUBLIC struct tasktab tasktab[] = {
 	0,			0,		"INIT  "
 };
 
-PUBLIC char t_stack[TOT_STACK_SPACE + ALIGNMENT - 1];	/* to be aligned */
+/* Stack space for all the task stacks.  (Declared as (char *) to align it.) */
+PUBLIC char *t_stack[TOT_STACK_SPACE / sizeof(char *)];
 
 /*
  * The number of kernel tasks must be the same as NR_TASKS.
@@ -126,4 +143,4 @@ PUBLIC char t_stack[TOT_STACK_SPACE + ALIGNMENT - 1];	/* to be aligned */
 
 #define NKT (sizeof tasktab / sizeof (struct tasktab) - (INIT_PROC_NR + 1))
 
-extern int ___dummy[NR_TASKS == NKT ? 1 : -1];
+extern int dummy_tasktab_check[NR_TASKS == NKT ? 1 : -1];

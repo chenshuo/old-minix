@@ -13,7 +13,6 @@ _PROTOTYPE( void free_zone, (Dev_t dev, zone_t numb)			);
 _PROTOTYPE( struct buf *get_block, (Dev_t dev, block_t block,int only_search));
 _PROTOTYPE( void invalidate, (Dev_t device)				);
 _PROTOTYPE( void put_block, (struct buf *bp, int block_type)		);
-_PROTOTYPE( void rm_lru, (struct buf *bp)				);
 _PROTOTYPE( void rw_block, (struct buf *bp, int rw_flag)		);
 _PROTOTYPE( void rw_scattered, (Dev_t dev,
 			struct buf **bufq, int bufqsize, int rw_flag)	);
@@ -31,9 +30,15 @@ _PROTOTYPE( void tty_close, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void tty_open, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void ctty_close, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void ctty_open, (int task_nr, message *mess_ptr)		);
+#if ENABLE_NETWORKING
 _PROTOTYPE( void net_open, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void net_rw, (int task_nr, message *mess_ptr)		);
 _PROTOTYPE( void net_close, (int task_nr, message *mess_ptr)		);
+#else
+#define net_open  0
+#define net_rw    0
+#define net_close 0
+#endif
 
 /* filedes.c */
 _PROTOTYPE( struct filp *find_filp, (struct inode *rip, Mode_t bits)	);
@@ -56,6 +61,10 @@ _PROTOTYPE( int do_unlink, (void)					);
 _PROTOTYPE( int do_rename, (void)					);
 _PROTOTYPE( void truncate, (struct inode *rip)				);
 
+/* lock.c */
+_PROTOTYPE( int lock_op, (struct filp *f, int req)			);
+_PROTOTYPE( void lock_revive, (void)					);
+
 /* main.c */
 _PROTOTYPE( void main, (void)						);
 _PROTOTYPE( void reply, (int whom, int result)				);
@@ -69,7 +78,6 @@ _PROTOTYPE( int do_exec, (void)						);
 _PROTOTYPE( int do_revive, (void)					);
 _PROTOTYPE( int do_set, (void)						);
 _PROTOTYPE( int do_sync, (void)						);
-_PROTOTYPE( void lock_revive, (void)					);
 
 /* mount.c */
 _PROTOTYPE( int do_mount, (void)					);
@@ -119,8 +127,6 @@ _PROTOTYPE( void read_ahead, (void)					);
 _PROTOTYPE( block_t read_map, (struct inode *rip, off_t position)	);
 _PROTOTYPE( int read_write, (int rw_flag)				);
 _PROTOTYPE( zone_t rd_indir, (struct buf *bp, int index)		);
-_PROTOTYPE( int rw_user, (int s, int u, vir_bytes vir,
-			vir_bytes bytes, char *buff, int direction)	);
 
 /* stadir.c */
 _PROTOTYPE( int do_chdir, (void)					);
@@ -151,8 +157,6 @@ _PROTOTYPE( long conv4, (int norm, long x)				);
 _PROTOTYPE( int fetch_name, (char *path, int len, int flag)		);
 _PROTOTYPE( int no_sys, (void)						);
 _PROTOTYPE( void panic, (char *format, int num)				);
-_PROTOTYPE( void sys_kill, (int proc, int sig)				);
-_PROTOTYPE( void sys_times, (int proc, clock_t ptr[5])			);
 
 /* write.c */
 _PROTOTYPE( void clear_zone, (struct inode *rip, off_t pos, int flag)	);

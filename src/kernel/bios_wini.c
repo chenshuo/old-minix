@@ -31,7 +31,7 @@
 #define ERR		 (-1)	/* general error */
 
 /* Parameters for the disk drive. */
-#define MAX_DRIVES         2	/* this driver supports 2 drives (hd0 - hd9)*/
+#define MAX_DRIVES         4	/* this driver supports 4 drives (hd0 - hd19)*/
 #define MAX_SECS	 255	/* bios can transfer this many sectors */
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
@@ -51,7 +51,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned sectors;		/* number of sectors per track */
   unsigned open_ct;		/* in-use count */
   struct device part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device subpart[SUB_PER_DRIVE]; /* subpartititions: hd[1-4][a-d] */
+  struct device subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
 } wini[MAX_DRIVES], *w_wn;
 
 PRIVATE struct trans {
@@ -77,7 +77,7 @@ FORWARD _PROTOTYPE( int w_finish, (void) );
 FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
-FORWARD _PROTOTYPE( void replace, (int from, int to) );
+FORWARD _PROTOTYPE( void enable_vectors, (void) );
 FORWARD _PROTOTYPE( void w_geometry, (unsigned *chs));
 
 
@@ -124,9 +124,9 @@ int device;
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
-  } else
+  } else {
 	return(NIL_DEV);
-
+  }
   return(w_drive < nr_drives ? w_dv : NIL_DEV);
 }
 
@@ -221,6 +221,11 @@ struct iorequest_s *iop;	/* pointer to read or write request */
 		dma_phys = user_phys;
 		dma_count = dma_bytes_left(dma_phys);
 
+		if (dma_phys >= (1L << 20)) {
+			/* The BIOS can only address the first megabyte. */
+			count = SECTOR_SIZE;
+			dma_phys = tmp_phys;
+		} else
 		if (dma_count < count) {
 			/* Nearing a 64K boundary. */
 			if (dma_count >= SECTOR_SIZE) {
@@ -372,20 +377,19 @@ PRIVATE void w_init()
 
   int drive;
   struct wini *wn;
-  int irq;
 
-  /* Give control to the BIOS interrupt handler. */
-  irq = pc_at ? AT_WINI_IRQ : XT_WINI_IRQ;
-
-  replace(BIOS_VECTOR(irq), VECTOR(irq));
-  enable_irq(irq);	/* ready for winchester interrupts */
+  /* Enable real mode BIOS vectors. */
+  enable_vectors();
 
   /* Set the geometry of the drives */
-  for (drive = 0, wn = wini; drive < nr_drives; drive++, wn++) {
+  for (drive = 0; drive < nr_drives; drive++) {
+	(void) w_prepare(drive * DEV_PER_DRIVE);
+	wn = w_wn;
 	Dx = drive + HD_CODE;
 	Ax = (BIOS_ASK << 8);
 	level0(bios13);
 	nr_drives = (Ax & 0xFF00) == 0 ? (Dx & 0xFF) : drive;
+	if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 	if (drive >= nr_drives) break;
 
 	wn->heads = (Dx >> 8) + 1;
@@ -402,37 +406,51 @@ PRIVATE void w_init()
 
 
 /*===========================================================================*
- *				replace					     *
+ *				enable_vectors				     *
  *===========================================================================*/
-PRIVATE void replace(from, to)
-int from;			/* vector to get replacement from */
-int to;				/* vector to replace */
+PRIVATE void enable_vectors()
 {
-/* Replace the vector 'to' in the interrupt table with its original BIOS
- * vector 'from' in vec_table (they differ since the 8259 was reprogrammed).
- * On the first call only, also restore all software interrupt vectors from
- * vec_table except the trap vectors and SYS_VECTOR.
- * (Doing it only on the first call is redundant, since this is only called
- * once! We ought to swap our vectors back just before bios_wini replies.
- * Then this routine should be made more efficient.)
+/* Protected mode Minix has reprogrammed the interrupt controllers to
+ * use different vectors from the BIOS.  This means that the BIOS vectors
+ * must be copied to the Minix locations for use in real mode.  The bios13()
+ * function enables all interrupts that Minix doesn't use, and masks all
+ * interrupts that Minix does use when it makes the "INT 13" call.  Alas
+ * more than one clock tick may occur while the disk is active, so we need
+ * a special real mode clock interrupt handle to gather lost ticks.
  */
 
-  phys_bytes phys_b;
-  static int repl_called = FALSE;	/* set on first call of replace */
-  int vec;
+  int vec, irq;
+  static u8_t clock_handler[] = {
+	0x50, 0xB0, 0x20, 0xE6, 0x20, 0xEB, 0x06, 0xE4,
+	0x61, 0x0C, 0x80, 0xE6, 0x61, 0x58, 0x53, 0x1E,
+	0xE8, 0x00, 0x00, 0x5B, 0x2E, 0xC5, 0x5F, 0x0A,
+	0xFF, 0x07, 0x1F, 0x5B, 0xCF,
+	0x00, 0x00, 0x00, 0x00,
+  };
+  u16_t vector[2];
 
-  phys_b = vir2phys(vec_table);
-  if (!repl_called) {
-	for (vec = 16; vec < VECTOR_BYTES / 4; ++vec)
-		if (vec != SYS_VECTOR &&
-		    !(vec >= IRQ0_VECTOR && vec < IRQ0_VECTOR + 8) &&
-		    !(vec >= IRQ8_VECTOR && vec < IRQ8_VECTOR + 8))
-			phys_copy(phys_b + 4L * vec, 4L * vec, 4L);
-	repl_called = TRUE;
+  if (!protected_mode) return;
+
+  for (irq = 0; irq < NR_IRQ_VECTORS; irq++) {
+	phys_copy(BIOS_VECTOR(irq)*4L, VECTOR(irq)*4L, 4L);
   }
-  lock();
-  phys_copy(phys_b + 4L * from, 4L * to, 4L);
-  unlock();
+
+  /* Install a clock interrupt handler to collect clock ticks when the
+   * BIOS disk driver is active.  The handler is a simple bit of 8086 code
+   * that increments "lost_ticks".
+   */
+
+  /* Let the clock interrupt point to the handler. */
+  vector[0] = vir2phys(clock_handler) % HCLICK_SIZE;
+  vector[1] = vir2phys(clock_handler) / HCLICK_SIZE;
+  phys_copy(vir2phys(vector), VECTOR(CLOCK_IRQ)*4L, 4L);
+
+  /* Store the address of lost_ticks in the handler. */
+  vector[0] = vir2phys(&lost_ticks) % HCLICK_SIZE;
+  vector[1] = vir2phys(&lost_ticks) / HCLICK_SIZE;
+  memcpy(clock_handler + 0x1D, vector, 4);
+
+  if (ps_mca) clock_handler[6]= 0;	/* (PS/2 port B clock ack) */
 }
 
 

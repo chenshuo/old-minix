@@ -60,6 +60,7 @@ FORWARD _PROTOTYPE( void parse_escape, (struct tty_struct *tp, int c) );
 FORWARD _PROTOTYPE( void scroll_screen, (struct tty_struct *tp, int dir) );
 FORWARD _PROTOTYPE( void set_6845, (int reg, int val) );
 FORWARD _PROTOTYPE( void stop_beep, (void) );
+FORWARD _PROTOTYPE( void cons_org0, (void) );
 
 /*===========================================================================*
  *				console					     *
@@ -229,7 +230,7 @@ PRIVATE void scroll_screen(tp, dir)
 register struct tty_struct *tp;	/* pointer to tty struct */
 int dir;			/* GO_FORWARD or GO_BACKWARD */
 {
-  int amount, offset, bytes;
+  int offset, bytes;
 
   flush(tp);
   bytes = 2 * (SCR_LINES - 1) * LINE_WIDTH;	/* 2 * 24 * 80 bytes */
@@ -243,54 +244,44 @@ int dir;			/* GO_FORWARD or GO_BACKWARD */
 	if (dir == GO_FORWARD) {
 		scr_up(vid_base, LINE_WIDTH * 2, 0,
 		       (SCR_LINES - 1) * LINE_WIDTH);
-		vid_copy(NIL_PTR, vid_base, tp->tty_org+bytes, LINE_WIDTH);
+		offset = tp->tty_org + bytes;
 	} else {
 		scr_down(vid_base,
 			 (SCR_LINES - 1) * LINE_WIDTH * 2 - 2,
 			 SCR_LINES * LINE_WIDTH * 2 - 2,
 			 (SCR_LINES - 1) * LINE_WIDTH);
-		vid_copy(NIL_PTR, vid_base, tp->tty_org, LINE_WIDTH);
+		offset = tp->tty_org;
 	}
-  } else if (ega) {
-	/* Use video origin, but don't assume the hardware can wrap */
+  } else {
+	/* Use video origin, but don't assume EGA can wrap */
 	if (dir == GO_FORWARD) {
 		/* after we scroll by one line, end of screen */
 		offset = tp->tty_org + (SCR_LINES + 1) * LINE_WIDTH * 2;
-		if (offset > vid_mask) {
+		if (offset > vid_mask && ega) {
 			scr_up(vid_base, tp->tty_org + LINE_WIDTH * 2, 0, 
 			       (SCR_LINES - 1) * LINE_WIDTH);
 			tp->tty_org = 0;
-		} else
-			tp->tty_org += 2 * LINE_WIDTH;
-		offset = tp->tty_org + bytes;
+		} else {
+			tp->tty_org = (tp->tty_org + 2 * LINE_WIDTH) & vid_mask;
+		}
+		offset = (tp->tty_org + bytes) & vid_mask;
 	} else {  /* scroll backwards */
 		offset = tp->tty_org - 2 * LINE_WIDTH;
-		if (offset < 0) {
+		if (offset < 0 && ega) {
 			scr_down(vid_base, 
 			   tp->tty_org + (SCR_LINES - 1) * LINE_WIDTH * 2 - 2,
 			   vid_mask - 1,
 			   (SCR_LINES - 1) * LINE_WIDTH);
 			tp->tty_org = vid_mask + 1 - SCR_LINES*LINE_WIDTH * 2;
-		} else
-			tp->tty_org -= 2 * LINE_WIDTH;
+		} else {
+			tp->tty_org = (tp->tty_org - 2 * LINE_WIDTH) & vid_mask;
+		}
 		offset = tp->tty_org;
 	}			
-	/* Blank the new line at top or bottom. */
-	vid_copy(NIL_PTR, vid_base, offset, LINE_WIDTH);
-	set_6845(VID_ORG, tp->tty_org >> 1);	/* 6845 thinks in words */
-  } else {
-	/* Normal scrolling using the 6845 registers. */
-	amount = (dir == GO_FORWARD ? 2 * LINE_WIDTH : -2 * LINE_WIDTH);
-	tp->tty_org = (tp->tty_org + amount) & vid_mask;
-	if (dir == GO_FORWARD)
-		offset = (tp->tty_org + bytes) & vid_mask;
-	else
-		offset = tp->tty_org;
-
-	/* Blank the new line at top or bottom. */
-	vid_copy(NIL_PTR, vid_base, offset, LINE_WIDTH);
 	set_6845(VID_ORG, tp->tty_org >> 1);	/* 6845 thinks in words */
   }
+  /* Blank the new line at top or bottom. */
+  vid_copy(NIL_PTR, vid_base, offset, LINE_WIDTH);
 }
 
 /*===========================================================================*
@@ -808,6 +799,7 @@ int minor;
 	vid_retrace = C_VID_MASK + 1;
   }
 
+  if (0)
   set_6845(CUR_SIZE, CURSOR_SHAPE);	/* set cursor shape */
   set_6845(VID_ORG, 0);			/* use page 0 of video ram */
   move_to(&tty_struct[0], 0, 0);	/* move cursor to upper left */
@@ -836,10 +828,107 @@ PUBLIC void toggle_scroll()
 {
 /* Toggle between hardware and software scroll. */
 
+  cons_org0();
   softscroll = 1 - softscroll;
-  tty_struct[0].tty_org = 0;
-  move_to(&tty_struct[0], 0, SCR_LINES-1);	/* cursor to lower left */
+  printf("%sware scrolling enabled.\n", softscroll ? "Soft" : "Hard");
+}
+
+
+/*===========================================================================*
+ *				cons_stop				     *
+ *===========================================================================*/
+PUBLIC void cons_stop()
+{
+/* Prepare for halt or reboot. */
+  cons_org0();
+  softscroll = 1;
+}
+
+
+/*===========================================================================*
+ *				cons_org0				     *
+ *===========================================================================*/
+PRIVATE void cons_org0()
+{
+/* Reset the video origin. */
+  struct tty_struct *cons;
+
+  cons= &tty_struct[0];
+  scr_up(vid_base, cons->tty_org, 0, SCR_LINES * LINE_WIDTH);
+  cons->tty_vid -= cons->tty_org;
+  cons->tty_org = 0;
   set_6845(VID_ORG, 0);
-  printf("\033[H\033[J%sware scrolling enabled.\n",
-	 softscroll ? "Soft" : "Hard");
+}
+
+
+/*===========================================================================*
+ *				con_loadfont				     *
+ *===========================================================================*/
+
+#define GA_SEQUENCER_INDEX	0x3C4
+#define GA_SEQUENCER_DATA	0x3C5
+#define GA_GRAPHICS_INDEX	0x3CE
+#define GA_GRAPHICS_DATA	0x3CF
+#define GA_VIDEO_ADDRESS	0xA0000L
+#define GA_FONT_SIZE		8192
+
+struct sequence {
+	unsigned short index;
+	unsigned char port;
+	unsigned char value;
+};
+
+FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq) );
+
+PRIVATE void ga_program(seq)
+struct sequence *seq;
+{
+  int len= 7;
+  do {
+	out_byte(seq->index, seq->port);
+	out_byte(seq->index+1, seq->value);
+	seq++;
+  } while (--len > 0);
+}
+
+PUBLIC int con_loadfont(proc_nr, font_vir)
+int proc_nr;
+vir_bytes font_vir;
+{
+/* Load a font into the EGA or VGA adapter. */
+  phys_bytes user_phys;
+  static struct sequence seq1[7] = {
+	{ GA_SEQUENCER_INDEX, 0x00, 0x01 },
+	{ GA_SEQUENCER_INDEX, 0x02, 0x04 },
+	{ GA_SEQUENCER_INDEX, 0x04, 0x07 },
+	{ GA_SEQUENCER_INDEX, 0x00, 0x03 },
+	{ GA_GRAPHICS_INDEX, 0x04, 0x02 },
+	{ GA_GRAPHICS_INDEX, 0x05, 0x00 },
+	{ GA_GRAPHICS_INDEX, 0x06, 0x00 },
+  };
+  static struct sequence seq2[7] = {
+	{ GA_SEQUENCER_INDEX, 0x00, 0x01 },
+	{ GA_SEQUENCER_INDEX, 0x02, 0x03 },
+	{ GA_SEQUENCER_INDEX, 0x04, 0x03 },
+	{ GA_SEQUENCER_INDEX, 0x00, 0x03 },
+	{ GA_GRAPHICS_INDEX, 0x04, 0x00 },
+	{ GA_GRAPHICS_INDEX, 0x05, 0x10 },
+	{ GA_GRAPHICS_INDEX, 0x06,    0 },
+  };
+
+  seq2[6].value= color ? 0x0E : 0x0A;
+
+  user_phys = numap(proc_nr, font_vir, GA_FONT_SIZE);
+  if (user_phys == 0) return(EFAULT);
+  if (!ega) return(ENOTTY);
+
+  lock();
+  ga_program(seq1);	/* bring font memory into view */
+
+  phys_copy(user_phys, (phys_bytes)GA_VIDEO_ADDRESS, (phys_bytes)GA_FONT_SIZE);
+
+  ga_program(seq2);	/* restore */
+  unlock();
+
+  return(OK);
 }

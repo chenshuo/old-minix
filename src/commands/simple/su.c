@@ -11,7 +11,6 @@
 #define privileged()	(getgid() == 0)
 
 _PROTOTYPE(int main, (int argc, char **argv));
-_PROTOTYPE(int putenv, (char *env));
 
 int main(argc, argv)
 int argc;

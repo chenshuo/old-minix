@@ -25,6 +25,7 @@ all:
 	cd posix && $(MAKE)
 	cd stdio && $(MAKE)
 	cd syscall && $(MAKE)
+	cd syslib && $(MAKE)
 	cd termios && $(MAKE)
 	cd `arch` && $(MAKE)
 
@@ -35,7 +36,6 @@ install:	all
 LIB=	/usr/lib
 
 install_i86:	\
-	$(LIB)/head.o \
 	$(LIB)/ncrtso.o \
 	$(LIB)/libc.a \
 	$(LIB)/libd.a \
@@ -47,9 +47,6 @@ install_i86:	\
 	$(LIB)/liby.a \
 
 $(LIB)/ncrtso.o:	ncrtso.o
-	install -c -o bin $? $@
-
-$(LIB)/head.o:	head.o
 	install -c -o bin $? $@
 
 $(LIB)/libc.a:	libc.a
@@ -81,7 +78,6 @@ LIB386=	/usr/lib/i386
 LIB86=	/usr/lib/i86
 
 install_i386:	\
-	$(LIB)/head.o \
 	$(LIB386)/crtso.o \
 	$(LIB386)/libc.a \
 	$(LIB386)/libd.a \

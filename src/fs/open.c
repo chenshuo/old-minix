@@ -20,6 +20,7 @@
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
+#include "lock.h"
 #include "param.h"
 
 PRIVATE message dev_mess;

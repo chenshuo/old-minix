@@ -34,6 +34,8 @@ struct proc {
 #endif
 #endif /* (CHIP == M68000) */
 
+  reg_t *p_stguard;		/* stack guard word */
+
   int p_nr;			/* number of this process (for fast access) */
 
   int p_int_blocked;		/* nonzero if int msg blocked by busy task */
@@ -60,6 +62,9 @@ struct proc {
   sigset_t p_pending;		/* bit map for pending signals */
   unsigned p_pendcount;		/* count of pending and unfinished signals */
 };
+
+/* Guard word for task stacks. */
+#define STACK_GUARD	((reg_t) (sizeof(reg_t) == 2 ? 0xBEEF : 0xDEADBEEF))
 
 /* Bits for p_flags in proc[].  A process is runnable iff p_flags == 0. */
 #define P_SLOT_FREE      001	/* set when slot is not in use */

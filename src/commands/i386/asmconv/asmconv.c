@@ -1,7 +1,7 @@
-/*	asmconv 1.5 - convert 80X86 assembly		Author: Kees J. Bot
+/*	asmconv 1.8 - convert 80X86 assembly		Author: Kees J. Bot
  *								24 Dec 1993
  */
-static char version[] = "1.5";
+static char version[] = "1.8";
 
 #define nil 0
 #include <stdio.h>
@@ -21,7 +21,7 @@ void fatal(char *label)
 }
 
 void *allocate(void *mem, size_t size)
-/* A checked malloc/realloc().  (Yes I know ISO C allows realloc(NULL, size) */
+/* A checked malloc/realloc().  Yes, I know ISO C allows realloc(NULL, size). */
 {
 	mem= mem == nil ? malloc(size) : realloc(mem, size);
 	if (mem == nil) fatal("malloc()");

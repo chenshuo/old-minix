@@ -1,15 +1,5 @@
 /* Constants used by the Memory Manager. */
 
-#define ZEROBUF_SIZE	1024	/* buffer size for erasing memory */
-
-/* Size of MM's stack depends mostly on do_exec(). */
-#define MM_STACK_BYTES	((ARG_MAX + PATH_MAX +  ZEROBUF_SIZE + \
-	256 *sizeof (char *)) / sizeof(char *) * sizeof(char *))
-
-/* DEBUG.  Rounding the stack size to a multiple of sizeof (char *) is
- * not sufficient on all machines.
- */
-
 #define NO_MEM ((phys_clicks) 0)  /* returned by alloc_mem() with mem is up */
 
 /*DEBUG*/

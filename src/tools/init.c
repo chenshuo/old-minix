@@ -62,7 +62,6 @@
 
 #define PIDSLOTS	8		/* maximum number of ttys entries */
 #define TTYSBUF		(8 * PIDSLOTS)	/* buffer for reading /etc/ttys */
-#define STACKSIZE	(192 * sizeof(char *))	/* init's stack */
 
 #define EXIT_TTYFAIL	253		/* child had problems with tty */
 #define EXIT_EXECFAIL	254		/* child couldn't exec something */
@@ -110,10 +109,6 @@ struct slotent {
 
 struct slotent slots[PIDSLOTS];	/* init table of ttys and pids */
 
-char stack[STACKSIZE];		/* init's stack */
-char *stackpt = &stack[STACKSIZE];
-char **environ;			/* declaration required by library routines */
-
 char *CONSOLE = CONSNAME;	/* name of system console */
 struct sgttyb args;		/* buffer for TIOCGETP */
 int gothup = 0;			/* flag, showing signal 1 was received */
@@ -155,7 +150,7 @@ PUBLIC int main()
   if(pid = fork()) {
 	/* Parent just waits. */
 	while (wait(&status) != pid) {
-		if (gotabrt) reboot(1);
+		if (gotabrt) reboot(RBT_HALT);
 	}
   } else {
 	/* Child exec's the shell to do the work. */
@@ -225,7 +220,7 @@ PUBLIC int main()
 	if (gotabrt) {
 		error("CTRL-ALT-DEL", NOHANG);
 		wtmp("C-A-D", "~~", "~", 0, BOOT_TIME, -1);
-		reboot(1);
+		reboot(RBT_HALT);
 	}
 
 	if (spawn) {
@@ -255,7 +250,7 @@ int s;
 PRIVATE void onabrt(s)
 int s;
 {
-  if (++gotabrt == 2) reboot(1);
+  if (++gotabrt == 2) reboot(RBT_HALT);
 }
 
 PRIVATE void readttys()

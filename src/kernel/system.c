@@ -98,6 +98,7 @@
 
 #include "kernel.h"
 #include <signal.h>
+#include <unistd.h>
 #include <sys/sigcontext.h>
 #include <minix/boot.h>
 #include <minix/callnr.h>
@@ -295,28 +296,26 @@ register message *m_ptr;	/* pointer to request message */
 /* Handle sys_exec().  A process has done a successful EXEC. Patch it up. */
 
   register struct proc *rp;
-  int *sp;			/* new sp */
+  reg_t sp;			/* new sp */
 
-  sp = (int *) m_ptr->STACK_PTR;	/* bad ptr type */
   if (!isoksusern(m_ptr->PROC1)) return E_BAD_PROC;
   if (m_ptr->PROC2) cause_sig(m_ptr->PROC1, SIGTRAP);
+  sp = (reg_t) m_ptr->STACK_PTR;
   rp = proc_addr(m_ptr->PROC1);
-  rp->p_reg.sp = (reg_t) sp;	/* set the stack pointer (bad type) */
+  rp->p_reg.sp = sp;		/* set the stack pointer */
 #if (CHIP == M68000)
-  rp->p_splow = (reg_t) sp;	/* set the stack pointer low water */
-  rp->p_reg.pc = (reg_t) ((vir_bytes)rp->p_map[T].mem_vir << CLICK_SHIFT);
+  rp->p_splow = sp;		/* set the stack pointer low water */
 #ifdef FPP
   /* Initialize fpp for this process */
   fpp_new_state(rp);
 #endif
-#else
-  rp->p_reg.pc = (reg_t) m_ptr->IP_PTR;	/* reset pc */
 #endif
+  rp->p_reg.pc = (reg_t) m_ptr->IP_PTR;	/* set pc */
   rp->p_alarm = 0;		/* reset alarm timer */
   rp->p_flags &= ~RECEIVING;	/* MM does not reply to EXEC call */
   if (rp->p_flags == 0) lock_ready(rp);
   set_name(m_ptr->m_source, m_ptr->PROC1, m_ptr->NAME_PTR);
-	/* save command string for F1 display */
+				/* save command string for F1 display */
   return(OK);
 }
 
@@ -441,16 +440,19 @@ PRIVATE int do_abort(m_ptr)
 message *m_ptr;			/* pointer to request message */
 {
 /* Handle sys_abort.  MINIX is unable to continue.  Terminate operation. */
+  char monitor_code[64];
+  phys_bytes src_phys;
 
-  switch (m_ptr->m1_i1) {
-  case 0:
-	printf("System Halted\r\n");
-	wreboot();
-  case 1:
-	reboot();
-  default:
-	panic("", NO_NUM);
+  if (m_ptr->m1_i1 == RBT_MONITOR) {
+	/* The monitor is to run user specified instructions. */
+	src_phys = numap(m_ptr->m_source, (vir_bytes) m_ptr->m1_p1,
+					(vir_bytes) sizeof(monitor_code));
+	if (src_phys == 0) panic("bad monitor code from", m_ptr->m_source);
+	phys_copy(src_phys, vir2phys(monitor_code),
+					(phys_bytes) sizeof(monitor_code));
+	reboot_code = vir2phys(monitor_code);
   }
+  wreboot(m_ptr->m1_i1);
   return(OK);			/* pro-forma (really EDISASTER) */
 }
 

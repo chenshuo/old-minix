@@ -6,6 +6,7 @@
  */
 
 #include "kernel.h"
+#include "assert.h"
 #include <stdlib.h>
 #include <minix/com.h>
 
@@ -134,3 +135,33 @@ badenv:
   panic("", NO_NUM);
   /*NOTREACHED*/
 }
+
+#if DEBUG
+/*=========================================================================*
+ *				bad_assertion				   *
+ *=========================================================================*/
+PUBLIC void bad_assertion(file, line, what)
+char *file;
+int line;
+char *what;
+{
+  printf("panic at %s(%d): assertion \"%s\" failed\n", file, line, what);
+  panic(NULL, NO_NUM);
+}
+
+
+/*=========================================================================*
+ *				bad_compare				   *
+ *=========================================================================*/
+PUBLIC void bad_compare(file, line, lhs, what, rhs)
+char *file;
+int line;
+int lhs;
+char *what;
+int rhs;
+{
+  printf("panic at %s(%d): compare (%d) %s (%d) failed\n",
+	file, line, lhs, what, rhs);
+  panic(NULL, NO_NUM);
+}
+#endif /* DEBUG */

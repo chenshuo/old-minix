@@ -33,6 +33,15 @@ typedef int ssize_t;
 #define STDOUT_FILENO      1	/* file descriptor for stdout */
 #define STDERR_FILENO      2	/* file descriptor for stderr */
 
+#ifdef _MINIX
+/* How to exit the system. */
+#define RBT_HALT	   0
+#define RBT_REBOOT	   1
+#define RBT_PANIC	   2	/* for servers */
+#define RBT_MONITOR	   3	/* let the monitor do this */
+#define RBT_RESET	   4	/* hard reset the system */
+#endif
+
 /* NULL must be defined in <unistd.h> according to POSIX Sec. 2.7.1. */
 #define NULL    ((void *)0)
 
@@ -139,7 +148,7 @@ _PROTOTYPE( long ptrace, (int _req, pid_t _pid, long _addr, long _data)	);
 _PROTOTYPE( char *sbrk, (int _incr)					);
 _PROTOTYPE( int sync, (void)						);
 _PROTOTYPE( int umount, (const char *_name)				);
-_PROTOTYPE( int reboot, (int _how)					);
+_PROTOTYPE( int reboot, (int _how, ...)					);
 _PROTOTYPE( int gethostname, (char *_hostname, size_t _len)		);
 _PROTOTYPE( int getdomainname, (char *_domain, size_t _len)		);
 #endif

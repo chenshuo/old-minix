@@ -13,8 +13,6 @@
 /* Miscellaneous */
 char core_name[] = "core";	/* file name where core images are produced */
 
-char *stackpt = &mm_stack[MM_STACK_BYTES];	/* initial stack pointer */
-
 _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	no_sys,		/*  0 = unused	*/
 	do_mm_exit,	/*  1 = exit	*/
@@ -91,7 +89,7 @@ _PROTOTYPE (int (*call_vec[NCALLS]), (void) ) = {
 	do_sigaction,	/* 71 = SIGACTION */
 	do_sigsuspend,	/* 72 = SIGSUSPEND */
 	do_sigpending,	/* 73 = SIGPENDING */
-	do_sigmask,	/* 74 = SIGMASK */
+	do_sigprocmask,	/* 74 = SIGPROCMASK */
 	do_sigreturn,	/* 75 = SIGRETURN */
 	do_reboot,	/* 76 = REBOOT */
 };

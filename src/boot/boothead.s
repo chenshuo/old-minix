@@ -17,24 +17,34 @@ begdata:
 .bss
 begbss:
 
-	BOOTOFF	   =	0x7C00	! 0x0000:BOOTOFF load a bootstrap here
-	LOADSEG    =	0x1000	! Where this code is loaded.
-	BUFFER	   =	0x0600	! First free memory
-	PENTRYSIZE =	    16	! Partition table entry size.
-	DSKBASE    =	   120	! 120 = 4 * 0x1E = ptr to disk parameters
-	DSKPARSIZE =	    11	! 11 bytes of floppy parameters
-	SECTORS	   =	     4	! Offset into parameters to sectors per track
-	a_flags	   =	     2	! From a.out.h, struct exec
-	a_text	   =	     8
-	a_data	   =	    12
-	a_bss	   =	    16
-	a_total	   =	    24
-	A_SEP	   =	  0x20	! Separate I&D flag.
+	o32	    =	  0x66	! This assembler doesn't know 386 extensions
+	BOOTOFF	    =	0x7C00	! 0x0000:BOOTOFF load a bootstrap here
+	LOADSEG     =	0x1000	! Where this code is loaded.
+	BUFFER	    =	0x0600	! First free memory
+	PENTRYSIZE  =	    16	! Partition table entry size.
+	DSKBASE     =	   120	! 120 = 4 * 0x1E = ptr to disk parameters
+	DSKPARSIZE  =	    11	! 11 bytes of floppy parameters
+	SECTORS	    =	     4	! Offset into parameters to sectors per track
+	a_flags	    =	     2	! From a.out.h, struct exec
+	a_text	    =	     8
+	a_data	    =	    12
+	a_bss	    =	    16
+	a_total	    =	    24
+	A_SEP	    =	  0x20	! Separate I&D flag
+	K_I386	    =	0x0001	! Call Minix in 386 mode
+	K_RET	    =	0x0020	! Returns to the monitor on reboot
+
+	DS_SELECTOR =	   3*8	! Kernel data selector
+	ES_SELECTOR =	   4*8	! Flat 4 Gb
+	SS_SELECTOR =	   5*8	! Monitor stack
+	CS_SELECTOR =	   6*8	! Kernel code
+	MCS_SELECTOR=	   7*8	! Monitor code
 
 ! Imported variables and functions:
 .extern _caddr, _daddr, _runsize, _edata, _end	! Runtime environment
 .extern _device, _dskpars, _heads, _sectors	! Boot disk parameters
 .extern _rem_part				! To pass partition info
+.extern _k_flags				! Special kernel flags
 
 .text
 begtext:
@@ -122,18 +132,18 @@ sepID:
 ! Time to switch to a higher level language (not much higher)
 	call	_boot
 
-.define	_exit, __exit, ___exit, _main	! Make various compilers happy
-.define _reboot				! Normal reboot entry point
+.define	_exit, __exit, ___exit		! Make various compilers happy
 _exit:
 __exit:
 ___exit:
-_main:
-_reboot:
-	mov	ax, #any_key
+	mov	bx, sp
+	cmp	2(bx), #0		! Good exit status?
+	jz	reboot
+quit:	mov	ax, #any_key
 	push	ax
 	call	_printk
 	call	_getchar
-	int	0x19
+reboot:	int	0x19			! Reboot the system
 .data
 any_key:
 	.ascii	"\nHit any key to reboot\n\0"
@@ -161,38 +171,33 @@ _vec2abs:
 	!jmp	seg2abs		! Translate
 
 seg2abs:			! Translate dx:ax to the 32 bit address dx-ax
-	push	bx
 	push	cx
-	mov	bx, ax
-	mov	ax, dx
-	xor	dx, dx		! Segment number in dx-ax
-	mov	cx, #4
-shld4:	shl	ax, #1
-	rcl	dx, #1		! dx-ax <<= 4
-	loop	shld4
-	add	ax, bx		! Add offset
-	adc	dx, #0
+	movb	ch, dh
+	movb	cl, #4
+	shl	dx, cl
+	shrb	ch, cl		! ch-dx = dx << 4
+	add	ax, dx
+	adcb	ch, #0		! ch-ax = ch-dx + ax
+	movb	dl, ch
+	xorb	dh, dh		! dx-ax = ch-ax
 	pop	cx
-	pop	bx
 	ret
 
 abs2seg:			! Translate the 32 bit address dx-ax to dx:ax
-	push	bx
 	push	cx
-	mov	bx, ax
+	movb	ch, dl
+	mov	dx, ax		! ch-dx = dx-ax
 	and	ax, #0x000F	! Offset in ax
-	mov	cx, #4
-shrd4:	shr	dx, #1
-	rcr	bx, #1		! dx-bx >>= 4
-	loop	shrd4
-	mov	dx, bx		! Segment in dx
+	movb	cl, #4
+	shr	dx, cl
+	shlb	ch, cl
+	orb	dh, ch		! dx = ch-dx >> 4
 	pop	cx
-	pop	bx
 	ret
 
 ! void raw_copy(u32_t dstaddr, u32_t srcaddr, u32_t count)
 !	Copy count bytes from srcaddr to dstaddr.  Don't do overlaps.
-!	Also handles copying words to extended memory.
+!	Also handles copying words to or from extended memory.
 .define _raw_copy
 _raw_copy:
 	push	bp
@@ -212,6 +217,8 @@ smallcopy:
 	mov	ax, 4(bp)
 	mov	dx, 6(bp)
 	cmp	dx, #0x0010	! Copy to extended memory?
+	jae	ext_copy
+	cmp	10(bp), #0x0010	! Copy from extended memory?
 	jae	ext_copy
 	call	abs2seg
 	mov	di, ax
@@ -348,7 +355,7 @@ heaperr:mov	ax, #chmem
 	mov	ax, #nomem
 	push	ax
 	call	_printk
-	call	_reboot
+	jmp	quit
 .data
 nomem:	.ascii	"\nOut of%s\0"
 memwarn:.ascii	"\nLow on"
@@ -361,6 +368,8 @@ chmem:	.ascii	" memory, use chmem to increase the heap\n\0"
 !	exists.
 .define	_dev_geometry
 _dev_geometry:
+	push	es
+	push	di		! Save registers used by BIOS calls
 	movb	dl, _device	! The default device
 	cmpb	dl, #0x80	! Floppy < 0x80, winchester >= 0x80
 	jae	winchester
@@ -373,11 +382,9 @@ floppy:
 	andb	ah, #0x03	! Extract bits
 	cmpb	dl, ah		! Must be dl <= ah for drive to exist
 	ja	geoerr		! Alas no drive dl.
-	movb	dh, #2
-	movb	_heads, dh	! Number of heads for this device
+	movb	dh, #2		! Floppies have two sides
 	mov	bx, #_dskpars	! bx = disk parameters
 	movb	cl, SECTORS(bx)
-	movb	_sectors, cl	! Sectors per track
 	xor	ax, ax
 	mov	es, ax		! es = 0 = vector segment
 	eseg
@@ -390,21 +397,19 @@ winchester:
 	int	0x13		! dl still contains drive
 	jb	geoerr		! No such drive?
 	andb	cl, #0x3F	! cl = max sector number (1-origin)
-	movb	_sectors, cl	! Number of sectors per track
 	incb	dh		! dh = 1 + max head number (0-origin)
-	movb	_heads, dh
 geoboth:
-	mov	ax, #1		! Code for success
-	push	ax
+	movb	_heads, dh	! Number of heads for this device
+	movb	_sectors, cl	! Sectors per track
 	movb	al, cl		! al = sectors per track
 	mulb	dh		! ax = heads * sectors
 	mov	secspcyl, ax	! Sectors per cylinder = heads * sectors
-geodone:push	ds
-	pop	es		! Restore es register
-	pop	ax		! Return code
+	mov	ax, #1		! Code for success
+geodone:
+	pop	di
+	pop	es		! Restore di and es registers
 	ret
-geoerr:	xor	ax, ax
-	push	ax
+geoerr:	xor	ax, ax		! Code for failure
 	jmp	geodone
 .bss
 secspcyl:	.space 1*2
@@ -473,11 +478,15 @@ doit:	movb	ah, 13(bp)	! Code for disk read (2) or write (3)
 	jnz	more		! Not all sectors have been transferred
 done:	xorb	ah, ah		! No error here!
 	jmp	finish
-ioerr:	dec	di		! Do we allow another reset?
+ioerr:	cmpb	ah, #0x80	! Disk timed out?  (Floppy drive empty)
+	je	finish
+	cmpb	ah, #0x03	! Disk write protected?
+	je	finish
+	dec	di		! Do we allow another reset?
 	jl	finish		! No, report the error
 	xorb	ah, ah		! Code for a reset (0)
 	int	0x13
-	jae	more		! Succesful reset, try request again
+	jnb	more		! Succesful reset, try request again
 finish:	movb	al, ah
 	xorb	ah, ah		! ax = error number
 	pop	es
@@ -507,15 +516,15 @@ nocr:	xorb	ah, ah		! ax = al
 ! int putchar(int c);
 !	Write a character in teletype mode.  The putc and putk synonyms
 !	are for the kernel printk function that uses one of them.
-!	Newlines are automatically prepended by a carriage return.
+!	Newlines are automatically preceded by a carriage return.
 !
 .define _putchar, _putc, _putk
 _putchar:
 _putc:
 _putk:	mov	bx, sp
 	movb	al, 2(bx)	! al = character to be printed
-	testb	al, al		! 1.6.* printk prints null characters
-	jz	nulch		! that appear as blanks, so don't do it.
+	testb	al, al		! 1.6.* printk adds a trailing null
+	jz	nulch
 	cmpb	al, #0x0A	! al = newline?
 	jnz	putc		! No
 	movb	al, #0x0D	! putc('\r')
@@ -635,12 +644,9 @@ no_ext:	sub	ax, ax		! Error, probably a PC
 got_ext_memsize:
 	ret
 
-! Functions to leave the boot monitor by calling a bootstrap, Minix in 16 bit
-! mode, or Minix in 32 bit mode.
-
+! Functions to leave the boot monitor.
 .define		_bootstrap	! Call another bootstrap
-.define		_minix86	! Call 16 bit Minix
-.define		_minix386	! Call 32 bit Minix
+.define		_minix		! Call Minix
 
 ! void _bootstrap(int device, struct part_entry *entry)
 !	Call another bootstrap routine to boot MS-DOS for instance.  (No real
@@ -654,8 +660,7 @@ _bootstrap:
 	mov	es, ax		! Vector segment
 	mov	di, #BUFFER	! es:di = buffer in low core
 	mov	cx, #PENTRYSIZE	! cx = size of partition table entry
-	rep
-	movsb			! Copy the entry to low core
+ rep	movsb			! Copy the entry to low core
 	mov	si, #BUFFER	! es:si = partition table entry
 	mov	ds, ax		! Some bootstraps need zero segment registers
 	cli
@@ -664,53 +669,60 @@ _bootstrap:
 	sti
 	jmpf	BOOTOFF, 0	! Back to where the BIOS loads the boot code
 
-! To my surprise this code is so fast that floppy drive 0 was still running
-! (tries to boot floppy first), when Minix was started after a hard disk boot.
-stop_motor:
-	mov	dx, #0x03F2	! Motor drive control bits
+! u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
+!					char *bootparams, size_t paramsize);
+!	Call Minix.
+_minix:
+	push	bp
+	mov	bp, sp		! Pointer to arguments
+
+	mov	dx, #0x03F2	! Floppy motor drive control bits
 	movb	al, #0x0C	! Bits 4-7 for floppy 0-3 are off
 	outb	dx		! Kill the motors
-	ret
+	cli			! No more interruptions
 
-! void minix86(u32_t koff, u32_t kcs, u32_t kds,
-!					char *bootparams, size_t paramsize);
-!	Call 8086 Minix.
-_minix86:
-	call	stop_motor	! Turn off floppy drives
-	mov	bp, sp		! Pointer to arguments
-	push	16(bp)		! # bytes of boot parameters
-	push	14(bp)		! address of boot parameters
-	mov	ax, 6(bp)
-	mov	dx, 8(bp)
+	test	_k_flags, #K_I386 ! Switch to 386 mode?
+	jnz	minix386
+
+! Call Minix in real mode.
+minix86:
+	push	18(bp)		! # bytes of boot parameters
+	push	16(bp)		! address of boot parameters
+
+	test	_k_flags, #K_RET ! Can the kernel return?
+	jz	noret86
+	push	cs
+	mov	ax, #ret86
+	push	ax		! Monitor far return address
+noret86:
+
+	mov	ax, 8(bp)
+	mov	dx, 10(bp)
 	call	abs2seg
 	push	dx		! Kernel code segment
-	push	2(bp)		! Kernel code offset
-	mov	ax, 10(bp)
-	mov	dx, 12(bp)
+	push	4(bp)		! Kernel code offset
+	mov	ax, 12(bp)
+	mov	dx, 14(bp)
 	call	abs2seg
 	mov	ds, dx		! Kernel data segment
 	mov	es, dx		! Set es to kernel data too
-	cli			! Disable interrupts
-	retf			! Finally out of this mess!
+	retf			! Make a far call to the kernel
 
-! void minix386(u32_t koff, u32_t kcs, u32_t kds,
-!					char *bootparams, size_t paramsize);
-!	Call 386 Minix with a 386 mode switch.  Code inspired by the Amoeba
-!	386 bootstrap by Leendert van Doorn.
-_minix386:
-	call	stop_motor	! Turn off floppy drives
-	mov	bp, sp		! Pointer to arguments
+! Call Minix in 386 mode.
+minix386:
+  cseg	mov	cs_real-2, cs	! Patch CS and DS into the instructions that
+  cseg	mov	ds_real-2, ds	! reload them when switching back to real mode
 
 	mov	dx, ds		! Monitor ds
 	mov	ax, #p_gdt	! dx:ax = Global descriptor table
 	call	seg2abs
 	mov	p_gdt_desc+2, ax
-	movb	p_gdt_desc+4, dl ! Set base of kernel data segment
+	movb	p_gdt_desc+4, dl ! Set base of global descriptor table
 
-	mov	ax, 10(bp)
-	mov	dx, 12(bp)	! Kernel ds (absolute address)
+	mov	ax, 12(bp)
+	mov	dx, 14(bp)	! Kernel ds (absolute address)
 	mov	p_ds_desc+2, ax
-	movb	p_ds_desc+4, dl	! Set base of the kernel data segment
+	movb	p_ds_desc+4, dl ! Set base of kernel data segment
 
 	mov	dx, ss		! Monitor ss
 	xor	ax, ax		! dx:ax = Monitor stack segment
@@ -718,39 +730,155 @@ _minix386:
 	mov	p_ss_desc+2, ax
 	movb	p_ss_desc+4, dl
 
-	mov	ax, 6(bp)
-	mov	dx, 8(bp)	! Kernel cs (absolute address)
+	mov	ax, 8(bp)
+	mov	dx, 10(bp)	! Kernel cs (absolute address)
 	mov	p_cs_desc+2, ax
 	movb	p_cs_desc+4, dl
 
-	xor	ax, ax
-	push	ax
-	push	16(bp)		! 32 bit size of parameters on stack
-	push	ax
-	push	14(bp)		! 32 bit address of parameters (ss relative)
+	mov	dx, cs		! Monitor cs
+	xor	ax, ax		! dx:ax = Monitor code segment
+	call	seg2abs
+	mov	p_mcs_desc+2, ax
+	movb	p_mcs_desc+4, dl
 
-! Use the BIOS to kick us into protected mode.  This is the most portable
-! way to enable the A20 address line.  A real programmer would use cr0.
+	push	#MCS_SELECTOR
+	push	#bios13		! Far address to BIOS int 13 support
 
-	mov	ax, 6(bp)
-	mov	dx, 8(bp)
-	call	abs2seg		! dx = kernel cs
-	mov	si, #p_gdt	! es:si = global descriptor table
-	xor	bx, bx		! 8259's must be initialized by the kernel
-	movb	ah, #0x89	! Protected mode function code
-! Fake an interrupt stack frame as if called from the kernel entry point
-	cli			! No more interruptions
-	pushf			! Flags
-	push	dx		! Kernel cs
-	push	2(bp)		! Kernel entry point
-	mov	ds, bx		! ds = vector segment
-	jmpf	@4*0x15		! "int 0x15"
+	push	#0
+	push	18(bp)		! 32 bit size of parameters on stack
+	push	#0
+	push	16(bp)		! 32 bit address of parameters (ss relative)
 
-! The "interrupt" will return directly to the Minix kernel in 386 mode.  The
-! split is clean:  No 386 code here, and no 8086 code in the kernel.  The
-! boot parameters address and size are on the stack.  They may be retrieved
-! using the ss descriptor.
+	test	_k_flags, #K_RET ! Can the kernel return?
+	jz	noret386
+	push	#MCS_SELECTOR
+	push	#ret386		! Monitor far return address
+noret386:
 
+	push	#0
+	push	#CS_SELECTOR
+	push	6(bp)
+	push	4(bp)		! 32 bit far address to kernel entry point
+
+	call	real2prot	! Switch to protected mode
+	mov	ax, #DS_SELECTOR ! Kernel data
+	mov	ds, ax
+	mov	ax, #ES_SELECTOR ! Flat 4 Gb
+	mov	es, ax
+	.data1	o32		! Make a far call to the kernel
+	retf
+
+! Minix-86 returns here on a halt or reboot.
+ret86:
+	mov	8(bp), ax
+	mov	10(bp), dx	! Return value
+	jmp	return
+
+! Minix-386 returns here on a halt or reboot.
+ret386:
+	.data1	o32
+	mov	8(bp), ax	! Return value
+	call	prot2real	! Switch to real mode
+
+return:
+	mov	sp, bp		! Pop parameters
+	sti			! Can take interrupts again
+	call	_get_video	! MDA, CGA, EGA, ...
+	movb	dh, #24		! dh = row 24
+	cmp	ax, #2		! At least EGA?
+	jb	is25		! Otherwise 25 rows
+	push	ds
+	mov	ax, #0x0040	! BIOS data segment
+	mov	ds, ax
+	movb	dh, 0x0084	! Number of rows on display minus one
+	pop	ds
+is25:
+	xorb	dl, dl		! dl = column 0
+	xorb	bh, bh		! Page 0
+	movb	ah, #0x02	! Set cursor position
+	int	0x10
+
+	mov	ax, 8(bp)
+	mov	dx, 10(bp)	! dx-ax = return value from the kernel
+	pop	bp
+	ret			! Continue as if nothing happened
+
+! Support function for Minix-386 to make a BIOS int 13 call (disk I/O).
+.define bios13
+bios13:
+	mov	bp, sp
+	call	prot2real
+
+	mov	ax, 8(bp)	! Load parameters
+	mov	bx, 10(bp)
+	mov	cx, 12(bp)
+	mov	dx, 14(bp)
+	mov	es, 16(bp)
+	sti			! Enable interrupts
+	int	0x13		! Make the BIOS call
+	cli			! Disable interrupts
+	mov	8(bp), ax	! Save results
+	mov	10(bp), bx
+	mov	12(bp), cx
+	mov	14(bp), dx
+	mov	16(bp), es
+
+	call	real2prot
+	mov	ax, #DS_SELECTOR ! Kernel data
+	mov	ds, ax
+	.data1	o32
+	retf			! Return to the kernel
+
+! Switch from real to protected mode.
+real2prot:
+	lgdt	p_gdt_desc	! Global descriptor table
+	.data1	0x0F,0x20,0xC0	! mov	eax, cr0
+	.data1	o32
+	mov	msw, ax		! Save cr0
+	orb	al, #0x01	! Set PE (protection enable) bit
+	.data1	0x0F,0x22,0xC0	! mov	cr0, eax
+	jmpf	cs_prot, MCS_SELECTOR ! Set code segment selector
+cs_prot:
+	mov	ax, #SS_SELECTOR ! Set data selectors
+	mov	ds, ax
+	mov	es, ax
+	mov	ss, ax
+
+	movb	ah, #0xDF	! Code for A20 enable
+	jmp	gate_A20
+
+! Switch from protected to real mode.
+prot2real:
+	lidt	p_idt_desc	! Real mode interrupt vectors
+	.data1	o32
+	mov	ax, msw		! Saved cr0
+	.data1	0x0F,0x22,0xC0	! mov	cr0, eax
+	jmpf	cs_real, 0xDEAD	! Reload cs register
+cs_real:
+	mov	ax, #0xBEEF
+ds_real:
+	mov	ds, ax		! Reload data segment registers
+	mov	es, ax
+	mov	ss, ax
+
+	movb	ah, #0xDD	! Code for A20 disable
+	!jmp	gate_A20
+
+! Enable (ah = 0xDF) or disable (ah = 0xDD) the A20 address line.
+gate_A20:
+	call	kb_wait
+	movb	al, #0xD1	! Tell keyboard that a command is coming
+	outb	0x64
+	call	kb_wait
+	movb	al, ah		! Enable or disable code
+	outb	0x60
+	!call	kb_wait
+	!ret
+kb_wait:
+	inb	0x64
+	testb	al, #0x02	! Keyboard input buffer full?
+	jnz	kb_wait		! If so, wait
+	ret
 
 .data
 	.align	2
@@ -785,7 +913,7 @@ x_ss_desc:
 	.data2	UNSET, UNSET
 	.data1	UNSET, UNSET, UNSET, UNSET
 
-! For "Switch Processor to Protected Mode".
+! Protected mode descriptor table.
 p_gdt:
 p_null_desc:
 	! Null descriptor
@@ -796,26 +924,30 @@ p_gdt_desc:
 	.data2	8*8-1, UNSET
 	.data1	UNSET, 0x00, 0x00, 0x00
 p_idt_desc:
-	! Interrupt descriptor table descriptor (no interrupts allowed)
-	.data2	0x0000, 0x0000
+	! Real mode interrupt descriptor table descriptor
+	.data2	0x03FF, 0x0000
 	.data1	0x00, 0x00, 0x00, 0x00
 p_ds_desc:
-	! Kernel data segment descriptor (4Gb flat)
+	! Kernel data segment descriptor (4 Gb flat)
 	.data2	0xFFFF, UNSET
 	.data1	UNSET, 0x92, 0xCF, 0x00
 p_es_desc:
-	! Physical memory descriptor (4Gb flat)
+	! Physical memory descriptor (4 Gb flat)
 	.data2	0xFFFF, 0x0000
 	.data1	0x00, 0x92, 0xCF, 0x00
 p_ss_desc:
-	! Monitor data segment descriptor (64Kb flat)
+	! Monitor data segment descriptor (64 kb flat)
 	.data2	0xFFFF, UNSET
-	.data1	UNSET, 0x92, 0x40, 0x00
+	.data1	UNSET, 0x92, 0x00, 0x00
 p_cs_desc:
-	! Kernel code segment descriptor (4Gb flat)
+	! Kernel code segment descriptor (4 Gb flat)
 	.data2	0xFFFF, UNSET
 	.data1	UNSET, 0x9A, 0xCF, 0x00
-p_bios_desc:
-	! BIOS segment descriptor (scratch for int 0x15)
-	.data2	UNSET, UNSET
-	.data1	UNSET, UNSET, UNSET, UNSET
+p_mcs_desc:
+	! Monitor code segment descriptor (64 kb flat)
+	.data2	0xFFFF, UNSET
+	.data1	UNSET, 0x9A, 0x00, 0x00
+
+.bss
+! Saved machine status word (cr0)
+	.comm	msw, 4

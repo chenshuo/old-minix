@@ -16,15 +16,17 @@ LDFLAGS = -i
 
 HEAD =	mpx.o
 
-OBJS =	start.o protect.o klib.o aha_scsi.o wini.o \
-	at_wini.o bios_wini.o esdi_wini.o ps_wini.o xt_wini.o \
-	table.o main.o tty.o floppy.o system.o proc.o \
-	clock.o memory.o console.o rs232.o rs2.o printer.o \
-	dmp.o exception.o i8259.o misc.o keyboard.o driver.o ether.o
+OBJS =	start.o protect.o klib.o table.o main.o proc.o \
+	exception.o system.o clock.o memory.o tty.o keyboard.o \
+	console.o i8259.o rs232.o rs2.o dmp.o misc.o driver.o \
+	floppy.o wini.o at_wini.o bios_wini.o esdi_wini.o \
+	ps_wini.o xt_wini.o printer.o aha_scsi.o dp8390.o \
+	wdeth.o ne2000.o mcd.o sb16_dsp.o sb16_mixer.o
 
 # What to make.
 kernel: $(HEAD) $(OBJS)
 	$(LD) $(LDFLAGS) -o $@ $(HEAD) $(OBJS)
+	install -S 0 $@
 
 all install:
 	cd keymaps && $(MAKE) -$(MAKEFLAGS) $@
@@ -34,7 +36,7 @@ clean:
 	rm -f *.o *.bak kernel
 
 # Dependencies
-a =	kernel.h $h/config.h $h/const.h $h/type.h \
+a =	kernel.h $h/config.h $h/const.h $h/type.h $h/syslib.h \
 	$s/types.h $i/string.h $i/limits.h $i/errno.h \
 	const.h type.h proto.h glo.h
 d =	driver.h $h/callnr.h $h/com.h $h/partition.h proc.h
@@ -60,6 +62,7 @@ console.o:	tty.h
 
 start.o:	$a
 start.o:	$i/string.h
+start.o:	$i/stdlib.h
 start.o:	$h/boot.h
 start.o:	protect.h
 
@@ -67,18 +70,6 @@ dmp.o:		$a
 dmp.o:		$h/com.h
 dmp.o:		proc.h
 dmp.o:		tty.h
-
-ether.o:	$a
-ether.o:	$h/com.h
-ether.o:	$h/dl_eth.h
-ether.o:	$i/net/gen/ether.h
-ether.o:	protect.h
-ether.o:	assert.h
-ether.o:	ether.h
-ether.o:	hw_conf.h
-ether.o:	dp8390.h
-ether.o:	epl.h
-ether.o:	proc.h
 
 exception.o:	$a
 exception.o:	$i/signal.h
@@ -97,6 +88,7 @@ i8259.o:	$a
 keyboard.o:	$a
 keyboard.o:	$i/sgtty.h
 keyboard.o:	$i/signal.h
+keyboard.o:	$i/unistd.h
 keyboard.o:	$h/callnr.h
 keyboard.o:	$h/com.h
 keyboard.o:	$h/keymap.h
@@ -104,6 +96,7 @@ keyboard.o:	tty.h
 keyboard.o:	keymaps/us-std.src
 
 main.o:	$a
+main.o:	$i/unistd.h
 main.o:	$i/signal.h
 main.o:	$h/callnr.h
 main.o:	$h/com.h
@@ -115,6 +108,7 @@ memory.o:	$d
 misc.o:	$a
 misc.o:	$i/stdlib.h
 misc.o:	$h/com.h
+misc.o:	assert.h
 
 printer.o:	$a
 printer.o:	$h/callnr.h
@@ -135,6 +129,7 @@ rs232.o:	tty.h
 
 system.o:	$a
 system.o:	$i/signal.h
+system.o:	$i/unistd.h
 system.o:	$s/sigcontext.h
 system.o:	$h/boot.h
 system.o:	$h/callnr.h
@@ -182,3 +177,45 @@ ps_wini.o:	$d
 
 xt_wini.o:	$a
 xt_wini.o:	$d
+
+mcd.o:	$a
+mcd.o:	$d
+mcd.o:	$h/cdrom.h
+mcd.o:	$s/ioctl.h
+
+dp8390.o:	$a
+dp8390.o:	$i/stdlib.h
+dp8390.o:	$h/com.h
+dp8390.o:	$i/net/hton.h
+dp8390.o:	$i/net/gen/ether.h
+dp8390.o:	$i/net/gen/eth_io.h
+dp8390.o:	assert.h
+dp8390.o:	protect.h
+dp8390.o:	dp8390.h
+dp8390.o:	proc.h
+
+wdeth.o:	$a
+wdeth.o:	$i/net/gen/ether.h
+wdeth.o:	$i/net/gen/eth_io.h
+wdeth.o:	assert.h
+wdeth.o:	dp8390.h
+wdeth.o:	wdeth.h
+
+ne2000.o:	$a
+ne2000.o:	$i/net/gen/ether.h
+ne2000.o:	$i/net/gen/eth_io.h
+ne2000.o:	dp8390.h
+ne2000.o:	ne2000.h
+
+sb16_dsp.o:	$a
+sb16_dsp.o:	$h/com.h
+sb16_dsp.o:	$h/callnr.h
+sb16_dsp.o:	$s/ioctl.h
+sb16_dsp.o:	sb16.h
+
+sb16_mixer.o:	$a
+sb16_mixer.o:	$h/com.h
+sb16_mixer.o:	$h/callnr.h
+sb16_mixer.o:	$s/ioctl.h
+sb16_mixer.o:	$h/sound.h
+sb16_mixer.o:	sb16.h

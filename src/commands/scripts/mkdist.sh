@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 1.4 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 1.6 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -118,7 +118,7 @@ fi
 
 read ret
 umount /dev/fd$drive 2>/dev/null
-mkfs -i 240 /dev/fd$drive 600 || exit
+mkfs -1 -i 240 /dev/fd$drive 600 || exit
 mount /dev/fd$drive /mnt || exit
 cpdir -vx $rootdir /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
@@ -154,7 +154,7 @@ else
 	part=
 fi
 
-mkfs -i 96 /dev/fd$drive$part 600 || exit
+mkfs -1 -i 96 /dev/fd$drive$part 600 || exit
 mount /dev/fd$drive$part /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 (cd /usr && exec tar cfD - $usrlist) | (cd /mnt && exec tar xvfp -) || exit
@@ -172,32 +172,48 @@ size=`expr \\( $6 \\* 6 / 10 + 999 \\) / 1000`
 
 echo -n "
 You now need enough diskettes to hold /usr in compressed form, close to
-$size Mb total.  How big are the floppies you want to use in kilobytes? [1440] "
-read size
+$size Mb total.  "
 
-case $size in
-'')	size=1440
-	;;
-360|720|1200|1440)	# Fine.
-	;;
-*)	echo "Sorry, Minix doesn't like $size kb floppies" >&2; exit 1
-esac
+size=
+while [ -z "$size" ]
+do
+	if [ "$single" ]; then defsize=1440; else defsize=720; fi
 
-echo -n "Which drive to use? [0] "; read drive
+	echo -n "What is the size of the diskettes? [$defsize] "; read size
 
-case $drive in
-'')	drive=0
-	;;
-[01])	;;
-*)	echo "Please type '0' or '1'" >&2; exit 1
-esac
+	case $size in
+	'')	size=$defsize
+		;;
+	360|720|1200|1440)
+		;;
+	*)	echo "Sorry, I don't believe \"$size\", try again." >&2
+		size=
+	esac
+done
+
+drive=
+while [ -z "$drive" ]
+do
+	echo -n "What floppy drive to use? [0] "; read drive
+
+	case $drive in
+	'')	drive=0
+		;;
+	[01])
+		;;
+	*)	echo "It must be 0 or 1, not \"$drive\"."
+		drive=
+	esac
+done
 
 echo "
 Enter the floppies in drive $drive when asked to.  Mark them with the volume
 numbers!
 "
 
+if [ `arch` = i86 ]; then bits=13; else bits=16; fi
+
 >/tmp/LAST
 cd /usr && tar cvf - . /tmp/LAST \
-	| compress -b13 | vol -w $size /dev/fd$drive &&
+	| compress -b$bits | vol -w $size /dev/fd$drive &&
 echo Done.

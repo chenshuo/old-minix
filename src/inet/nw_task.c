@@ -41,7 +41,7 @@ from DL_ETH:
 */
 
 #include "nw_task.h"
-#include <lib.h>
+#include <unistd.h>
 #include "mq.h"
 #include "proto.h"
 #include "generic/assert.h"
@@ -59,7 +59,6 @@ from DL_ETH:
 INIT_PANIC();
 
 _PROTOTYPE( void main, (void) );
-_PROTOTYPE( void _exit, (void) );
 
 FORWARD _PROTOTYPE( void nw_init, (void) );
 
@@ -161,26 +160,7 @@ PRIVATE void nw_init()
 #endif
 }
 
-char nw_stack[STACK_SIZE];
-
-char *stackpt= nw_stack + STACK_SIZE;
-
 void abort()
 {
-	static message m;
-
-	sys_abort(2);
-	while (receive(HARDWARE, &m) == OK)
-		;
-	_exit();
-}
-
-void panic(str, num)
-const char *str;
-int num;
-{
-	if (num == NO_NUM)
-		ip_panic(("%s", str));
-	else
-		ip_panic(("%s: %d", str, num));
+	sys_abort(RBT_PANIC);
 }

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 2.13 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 2.14 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -10,7 +10,7 @@ esac
 case $#:$1 in
 1:std)		# Standard devices.
 	set -$- mem fd0 fd1 fd0a fd1a \
-		hd0 hd1a hd5 hd6a sd0 sd1a sd5 sd6a \
+		hd0 hd1a hd5 hd6a cd0 cd1a sd0 sd1a sd5 sd6a \
 		st4 tty eth
 	;;
 0:|1:-\?)
@@ -24,8 +24,10 @@ Where key is one of the following:
 	hd1a hd2a ... hd6a ...	# Make hd1[a-d], hd2[a-d], hd6[a-d], ...
 	sd0 sd5 sd1a ...	# Make SCSI disks
 	st0 st1 ...		# Make SCSI tapes rst0, nrst0, rst1 ...
+	cd0 cd1a		# Make CD-ROM devices (non SCSI)
 	console lp tty tty[0-2]	# One of these makes all six
 	eth psip ip tcp udp	# One of these makes TCP/IP devices
+	audio mixer		# Make audio devices
 	std			# All standard devices
 EOF
 	exit 1
@@ -79,11 +81,13 @@ do
 		done
 		$e chmod 666 $alldev
 		;;
-	[hs]d[0-9]|[hs]d[123][0-9])
+	[hs]d[0-9]|[hs]d[123][0-9]|cd[0-4])
 		# Hard disk drive & partitions.
 		#
 		case $dev in
 		h*)	name=hd maj=3		# Winchester.
+			;;
+		c*)	name=cd maj=8		# CD-ROM.
 			;;
 		s*)	name=sd maj=10		# SCSI.
 		esac
@@ -99,11 +103,13 @@ do
 		done
 		$e chmod 600 $alldev
 		;;
-	[hs]d[1-9][a-d]|[hs]d[123][1-9][a-d])
+	[hs]d[1-46-9][a-d]|[hs]d[123][1-46-9][a-d]|cd[1-4][a-d])
 		# Hard disk subpartitions.
 		#
 		case $dev in
 		h*)	name=hd maj=3		# Winchester.
+			;;
+		c*)	name=cd maj=8		# CD-ROM.
 			;;
 		s*)	name=sd maj=10		# SCSI.
 		esac
@@ -162,6 +168,13 @@ do
 		$e mknod udp c 7 4
 		$e chmod 666 eth ip	# These two should be mode 600!
 		$e chmod 666 tcp udp
+		;;
+	audio|mixer)
+		# Audio devices.
+		#
+		$e mknod audio c 13 0
+		$e mknod mixer c 14 0
+		$e chmod 666 audio mixer
 		;;
 	*)
 		echo "$0: don't know about $dev" >&2

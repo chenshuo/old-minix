@@ -1,7 +1,7 @@
 /* halt / reboot - halt or reboot system (depends on name)
 
-   halt   - calling reboot() with DO_HALT
-   reboot - calling reboot() with DO_REBOOT
+   halt   - calling reboot() with RBT_HALT
+   reboot - calling reboot() with RBT_REBOOT
 
    author: Edvard Tuinder   v892231@si.hhs.NL
 
@@ -20,9 +20,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-#define DO_HALT    0
-#define DO_REBOOT  1
-
 void write_log _ARGS(( void ));
 int main _ARGS(( int argc, char *argv[] ));
 
@@ -33,7 +30,7 @@ main(argc,argv)
 int argc;
 char **argv;
 {
-  int flag = DO_HALT;		/* halting system is default */
+  int flag = RBT_HALT;		/* halting system is default */
   int fast = 0;			/* fast halt/reboot, don't kill all. */
   struct stat dummy;
 
@@ -61,20 +58,20 @@ char **argv;
     fast = 1;
   }
 
-  if (!fast) {
+  if (fast) {
+    sleep(1);	/* Not too fast, people like to see it "do something". */
+  } else {
     /* Tell init to stop spawning getty's. */
     kill(1, SIGTERM);
     /* Give everybody a chance to die peacefully. */
-    kill(-1, SIGHUP);
-    sleep(2);
     kill(-1, SIGTERM);
+    sleep(2);
   }
-  sleep(2);	/* Not too fast, people like to see it "do something". */
 
   if (strcmp(prog,"reboot"))
-    flag=DO_HALT;
+    flag=RBT_HALT;
   else
-    flag=DO_REBOOT;
+    flag=RBT_REBOOT;
   
   write_log();
   reboot(flag);

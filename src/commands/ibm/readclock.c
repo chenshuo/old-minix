@@ -140,9 +140,7 @@ int main()
 	exit(1);
   }
   if (cpu_type != PS_386 && cpu_type != PC_AT) {
-	errmsg( "Machine ID unknown.\n" );
-	fprintf( stderr, "Machine ID byte = %x\n", cpu_type );
-
+	/* This is probably an XT, exit without complaining. */
 	printf("-q\n");
 	exit(1);
   }

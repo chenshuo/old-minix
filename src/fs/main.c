@@ -24,7 +24,6 @@ struct super_block;		/* proto.h needs to know this */
 #include "param.h"
 #include "super.h"
 
-#define M64K     0xFFFF0000L	/* 16 bit mask for DMA check */
 #define MAX_RAM        16384	/* maximum RAM disk size in blocks */
 #define RAM_IMAGE (dev_t)0x303	/* major-minor dev where root image is kept */
 
@@ -332,7 +331,7 @@ got_root_dev:
 	put_block(bp, I_MAP_BLOCK);
 	put_block(bp1, I_MAP_BLOCK);
 	k_loaded = ( (long) b * BLOCK_SIZE)/1024L;	/* K loaded so far */
-	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b%4DK %c", k_loaded, 0);
+	if (k_loaded % 5 == 0) printf("\b\b\b\b\b\b\b%5ldK ", k_loaded);
   }
 #endif /* !FASTLOAD */
 

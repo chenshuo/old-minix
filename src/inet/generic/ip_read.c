@@ -354,7 +354,7 @@ assert (pack->acc_length >= ETH_HDR_SIZE);
 	eth_hdr= (eth_hdr_t *)ptr2acc_data(pack);
 	eth_dst= eth_hdr->eh_dst;
 	eth_src= eth_hdr->eh_src;
-	if (eth_dst.ea_addr[0] & 0x80)
+	if (eth_dst.ea_addr[0] & 0x01)
 		broadcast_pack= TRUE;
 	else
 		broadcast_pack= FALSE;

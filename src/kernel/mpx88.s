@@ -40,16 +40,12 @@
 #include <minix/com.h>
 #include "const.h"
 #include "sconst.h"
+#include "protect.h"
 
 ! The external entry points into this file are:
 
-.define	_db		! trap to external debugger
-.define	_get_word	! returns word at given segment:offset
-.define	_put_word	! writes given word to given segment:offset
-! _get_word and _put_word may only be called in real mode from cstart().
-
 .define	_idle_task	! executed when there is no work
-.define	_int00		! handlers for unused interrupt vectors < 17
+.define	_int00		! handlers for traps and exceptions
 .define	_int01
 .define	_int02
 .define	_int03
@@ -57,15 +53,6 @@
 .define	_int05
 .define	_int06
 .define	_int07
-.define	_int08
-.define	_int09
-.define	_int10
-.define	_int11
-.define	_int12
-.define	_int13
-.define	_int14
-.define	_int15
-.define	_int16
 .define _hwint00	! handlers for hardware interrupts
 .define _hwint01
 .define _hwint02
@@ -82,12 +69,9 @@
 .define _hwint13
 .define _hwint14
 .define _hwint15
-.define	_mpx_1hook	! init from real mode for real or protected mode
-.define	_mpx_2hook	! init from protected mode for real or protected mode
 .define	_restart	! start running a task or process
 .define	save		! save the machine state in the proc table
 .define	_s_call		! process or task wants to send or receive a message
-.define	_trp		! all traps with vector >= 17 are vectored here
 
 ! Imported functions.
 
@@ -95,9 +79,10 @@
 .extern	_main
 .extern	_exception
 .extern	_interrupt
-.extern	kernel_ds
 .extern	_sys_call
 .extern	_unhold
+.extern	klib_init_prot
+.extern	real2prot
 
 ! Exported variables.
 
@@ -110,11 +95,10 @@
 
 ! Imported variables.
 
+.extern kernel_cs
 .extern	_gdt
 .extern	_code_base
 .extern	_data_base
-.extern	_break_vector
-.extern	_db_enabled
 .extern	_held_head
 .extern	_k_reenter
 .extern	_pc_at
@@ -122,12 +106,7 @@
 .extern	_protected_mode
 .extern	_ps
 .extern	_ps_mca
-.extern	_sstep_vector
 .extern	_irq_table
-
-/* BIOS software interrupts, subfunctions and return values. */
-#define SET_PROTECT_VEC		0x15	/* set protected mode */
-#	define SET_PROTECT_FUNC 0x89
 
 	.text
 !*===========================================================================*
@@ -137,119 +116,61 @@ MINIX:				! this is the entry point for the MINIX kernel
 	jmp	over_kernel_ds	! skip over the next few bytes
 	.data2	CLICK_SHIFT	! for the monitor: memory granularity
 kernel_ds:
-	.data2	0x0000		! flags for the boot monitor, later kernel DS
+	.data2	0x0024		! boot monitor flags:  (later kernel DS)
+				!	make stack, will return
 over_kernel_ds:
 
-! Set up kernel segment registers and stack.
-! The monitor sets cs and ds right.  ss still points to the monitor data,
-! because the boot parameters offset and size are on its stack.
+! Set up a C stack frame on the monitor stack.  (The monitor sets cs and ds
+! right.  The ss register still references the monitor data segment.)
+	push	bp
+	mov	bp, sp
+	push	si
+	push	di
+	mov	cx, 4(bp)	! monitor code segment
+	test	cx, cx		! nonzero if return possible
+	jz	noret
+	inc	_mon_return
+noret:	mov	_mon_ss, ss	! save stack location for later return
+	mov	_mon_sp, sp
 
-! Locate boot parameters and set segment registers.
-	pop	bx		! boot parameters offset
-	pop	cx		! boot parameters length
-	mov	dx,ss		! monitor data
-	mov	ax,ds		! kernel data
-	mov	es,ax
-	mov	ss,ax
-	mov	sp,#k_stktop	! set sp to point to the top of kernel stack
+! Locate boot parameters, set up kernel segment registers and stack.
+	mov	bx, 6(bp)	! boot parameters offset
+	mov	dx, 8(bp)	! boot parameters length
+	mov	ax, ds		! kernel data
+	mov	es, ax
+	mov	ss, ax
+	mov	sp, #k_stktop	! set sp to point to the top of kernel stack
 
-! Real mode needs to get kernel DS from the code segment.
+! Real mode needs to get kernel DS from the code segment.  Protected mode
+! needs CS in the jump back to real mode.
 
-	cseg
-	mov	kernel_ds,ds
+  cseg	mov	kernel_cs, cs
+  cseg	mov	kernel_ds, ds
 
-! Call C startup code to prepare for switching modes.
-
-	push	cx
+! Call C startup code to set up a proper environment to run main().
 	push	dx
 	push	bx
+	push	_mon_ss
+	push	cx
 	push	ds
 	push	cs
-	call	_cstart		! cstart(cs, ds, parmoff, parmseg, parmlen)
-	add	sp,#5*2
+	call	_cstart		! cstart(cs, ds, mcs, mds, parmoff, parmlen)
+	add	sp, #6*2
 
-! Call the BIOS to switch to protected mode.
-! This is just to do any cleanup necessary, typically to disable a hardware
-! kludge which holds the A20 address line low.
+	cmp	_protected_mode, #0
+	jz	nosw		! ok to switch to protected mode?
 
-! The call requires the gdt as set up by prot_init():
-!	gdt pointer in gdt[1]
-!	idt pointer in gdt[2]
-!	new ds in gdt[3]
-!	new es in gdt[4]
-!	new ss in gdt[5]
-!	new cs in gdt[6]
-!	nothing in gdt[7] (overwritten with BIOS cs)
-!	ICW2 for master 8259 in bh
-!	ICW2 for slave 8259 in bl
-! The BIOS enables interrupts briefly - this is OK since the BIOS vectors
-! are still valid.
-! Most registers are destroyed.
-! The 8259's are reinitialised.
+	call	klib_init_prot	! initialize klib functions for protected mode
+	call	real2prot	! switch to protected mode
 
-	mov	si,#_gdt
-	mov	bx,#IRQ0_VECTOR * 256 + IRQ8_VECTOR
-	movb	ah,#SET_PROTECT_FUNC
-	int	SET_PROTECT_VEC
-
-! Now the processor is in protected mode.
-! There is a little more protected mode initialization to do, but leave it
-! to main().
-
-	call	_main
+	push	#0		! set flags to known good state
+	popf			! especially, clear nested task and int enable
+nosw:
+	jmp	_main		! main()
 
 
 !*===========================================================================*
-!*				db					     *
-!*===========================================================================*
-
-! PUBLIC void db();
-! Trap to external debugger.
-
-_db:
-	int	3
-	ret
-
-
-!*===========================================================================*
-!*				get_word				     *
-!*===========================================================================*
-
-! PUBLIC u16_t get_word(u16_t segment, u16_t *offset);
-! Load and return the word at the far pointer  segment:offset.
-
-_get_word:
-	mov	cx,ds		! save ds
-	pop	dx		! return adr
-	pop	ds		! segment
-	pop	bx		! offset
-	sub	sp,#2+2		! adjust for parameters popped
-	mov	ax,(bx)		! load the word to return
-	mov	ds,cx		! restore ds
-	jmp	(dx)		! return
-
-
-!*===========================================================================*
-!*				put_word				     *
-!*===========================================================================*
-
-! PUBLIC void put_word(u16_t segment, u16_t *offset, u16_t value);
-! Store the word  value  at the far pointer  segment:offset.
-
-_put_word:
-	mov	cx,ds		! save ds
-	pop	dx		! return adr
-	pop	ds		! segment
-	pop	bx		! offset
-	pop	ax		! value
-	sub	sp,#2+2+2	! adjust for parameters popped
-	mov	(bx),ax		! store the word
-	mov	ds,cx		! restore ds
-	jmp	(dx)		! return
-
-
-!*===========================================================================*
-!*				int00-16				     *
+!*				int00-07				     *
 !*===========================================================================*
 _int00:				! interrupt through vector 0
 	push	ax
@@ -257,16 +178,6 @@ _int00:				! interrupt through vector 0
 	jmp	exception
 
 _int01:				! interrupt through vector 1, etc
-	push	ds
-	cseg
-	mov	ds,kernel_ds
-	cmpb	_db_enabled,#0
-	pop	ds
-	jz	over_sstep
-	cseg
-	jmpf	@cs_sstep_vector
-
-over_sstep:
 	push	ax
 	movb	al,#1
 	jmp	exception
@@ -277,16 +188,6 @@ _int02:
 	jmp	exception
 
 _int03:
-	push	ds
-	cseg
-	mov	ds,kernel_ds
-	cmpb	_db_enabled,#0
-	pop	ds
-	jz	over_breakpoint
-	cseg
-	jmpf	@cs_break_vector
-
-over_breakpoint:
 	push	ax
 	movb	al,#3
 	jmp	exception
@@ -309,64 +210,13 @@ _int06:
 _int07:
 	push	ax
 	movb	al,#7
-	jmp	exception
-
-_int08:
-	push	ax
-	movb	al,#8
-	jmp	exception
-
-_int09:
-	push	ax
-	movb	al,#9
-	jmp	exception
-
-_int10:
-	push	ax
-	movb	al,#10
-	jmp	exception
-
-_int11:
-	push	ax
-	movb	al,#11
-	jmp	exception
-
-_int12:
-	push	ax
-	movb	al,#12
-	jmp	exception
-
-_int13:
-	push	ax
-	movb	al,#13
-	jmp	exception
-
-_int14:
-	push	ax
-	movb	al,#14
-	jmp	exception
-
-_int15:
-	push	ax
-	movb	al,#15
-	jmp	exception
-
-_int16:
-	push	ax
-	movb	al,#16
-	jmp	exception
-
-_trp:
-	push	ax
-	movb	al,#17		! any vector above 17 becomes 17
+	!jmp	exception
 
 exception:
-	cseg
-	movb	ex_number,al	! it's cumbersome to get this into dseg
+  cseg	movb	ex_number,al	! it's cumbersome to get this into dseg
 	pop	ax
 	call	save
-	cseg
-	push	ex_number	! high byte is constant 0
+  cseg	push	ex_number	! high byte is constant 0
 	call	_exception	! do whatever's necessary (sti only if safe)
 	add	sp,#2
 	cli
@@ -499,8 +349,7 @@ save:				! save the machine state in the proc table.
 	cld			! set direction flag to a known value
 	push	ds
 	push	si
-	cseg
-	mov	ds,kernel_ds
+  cseg	mov	ds,kernel_ds
 	incb	_k_reenter	! from -1 if not reentering
 	jnz	push_current_stack	! stack is already kernel's
 
@@ -564,8 +413,7 @@ _s_call:			! System calls are vectored here.
 	cld			! set direction flag to a known value
 	push	ds
 	push	si
-	cseg
-	mov	ds,kernel_ds
+  cseg	mov	ds,kernel_ds
 	incb	_k_reenter
 	mov	si,_proc_ptr
 	pop	SIREG(si)
@@ -657,42 +505,10 @@ _idle_task:			! executed when there is no work
 
 
 !*===========================================================================*
-!*				mpx_1hook				     *
-!*===========================================================================*
-! PUBLIC void mpx_1hook();
-! Initialize klib from real mode for real or protected mode:
-! Copy real mode debugger vectors to code segment.
-! They are too hard to access at interrupt time.
-
-_mpx_1hook:
-	push	ds
-	mov	ax,#0		! VEC_TABLE_SEG
-	mov	ds,ax
-	mov	ax,4*BREAKPOINT_VECTOR
-	cseg
-	mov	cs_break_vector,ax
-	mov	ax,4*BREAKPOINT_VECTOR+2
-	cseg
-	mov	cs_break_vector+2,ax
-	mov	ax,4*DEBUG_VECTOR
-	cseg
-	mov	cs_sstep_vector,ax
-	mov	ax,4*DEBUG_VECTOR+2
-	cseg
-	mov	cs_sstep_vector+2,ax
-	pop	ds
-	ret
-
-
-!*===========================================================================*
 !*				data					     *
 !*===========================================================================*
 ! NB some variables are stored in code segment.
 
-cs_break_vector:		! copy of real mode breakpoint vector
-	.space	4
-cs_sstep_vector:		! copy of real mode single-step vector
-	.space	4
 ex_number:			! exception number
 	.space	2
 
@@ -705,7 +521,7 @@ ex_number:			! exception number
 ! The only essential difference is that an interrupt in protected mode
 ! (usually) switches the stack, so there is less to do in software.
 
-! These functions are reached along jumps patched in by klib286_init():
+! These functions are reached along jumps patched in by klib_init_prot():
 
 	.define		p_restart	! replaces _restart
 	.define		p_save		! replaces save
@@ -721,14 +537,14 @@ ex_number:			! exception number
 	.define		_bounds_check		! _int05
 	.define		_inval_opcode		! _int06
 	.define		_copr_not_available	! _int07
-	.define		_double_fault		! _int08
-	.define		_copr_seg_overrun	! _int09
-	.define		_inval_tss		! _int10
-	.define		_segment_not_present	! _int11
-	.define		_stack_exception	! _int12
-	.define		_general_protection	! _int13
+	.define		_double_fault		! (286 trap)
+	.define		_copr_seg_overrun	! (etc)
+	.define		_inval_tss
+	.define		_segment_not_present
+	.define		_stack_exception
+	.define		_general_protection
 	.define		_p_s_call		! _s_call
-	.define		_level0_call		! (none)
+	.define		_level0_call
 
 ! The hardware interrupt handlers need not be altered apart from putting
 ! them in the new table (save() handles the differences).
@@ -756,13 +572,6 @@ _divide_error:
 	jmp	p_exception
 
 _single_step_exception:
-	sseg
-	cmpb	_db_enabled,#0
-	jz	p_over_sstep
-	sseg
-	jmpf	@_sstep_vector
-
-p_over_sstep:
 	push	#DEBUG_VECTOR
 	jmp	p_exception
 
@@ -771,13 +580,6 @@ _nmi:
 	jmp	p_exception
 
 _breakpoint_exception:
-	sseg
-	cmpb	_db_enabled,#0
-	jz	p_over_breakpoint
-	sseg
-	jmpf	@_break_vector
-
-p_over_breakpoint:
 	push	#BREAKPOINT_VECTOR
 	jmp	p_exception
 
@@ -832,8 +634,7 @@ _level0_call:
 ! This is called for all exceptions which don't push an error code.
 
 p_exception:
-	sseg
-	pop	ds_ex_number
+  sseg	pop	ds_ex_number
 	call	p_save
 	jmp	p1_exception
 
@@ -844,10 +645,8 @@ p_exception:
 ! This is called for all exceptions which push an error code.
 
 errexception:
-	sseg
-	pop	ds_ex_number
-	sseg
-	pop	trap_errno
+  sseg	pop	ds_ex_number
+  sseg	pop	trap_errno
 	call	p_save
 p1_exception:			! Common for all exceptions.
 	push	ds_ex_number
@@ -937,17 +736,6 @@ p1_restart:
 	popa
 	add	sp,#2		! skip return adr
 	iret			! continue process
-
-
-!*===========================================================================*
-!*				mpx_2hook				     *
-!*===========================================================================*
-! PUBLIC void mpx_2hook();
-! Initialize klib from protected mode for real or protected mode:
-! Nothing to do.
-
-_mpx_2hook:
-	ret
 
 
 !*===========================================================================*

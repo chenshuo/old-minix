@@ -7,6 +7,7 @@ Created:	Dec 30, 1991 by Philip Homburg
 #ifndef INET__NW_TASK_H
 #define INET__NW_TASK_H
 
+#define _MINIX	1
 #define _SYSTEM	1	/* get OK and negative error codes */
 
 #include <sys/types.h>
@@ -75,10 +76,6 @@ Created:	Dec 30, 1991 by Philip Homburg
 		printf("\n"), \
 		0 \
 	)
-
-#define sendrec(tofrom, mess) _sendrec(tofrom, mess)
-#define receive(from, mess) _receive(from, mess)
-#define send(to, mess) _send(to, mess)
 
 #if _ANSI
 #define ARGS(x) x

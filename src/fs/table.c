@@ -12,9 +12,8 @@
 #include "file.h"
 #include "fproc.h"
 #include "inode.h"
+#include "lock.h"
 #include "super.h"
-
-PUBLIC char *stackpt = &fstack[FS_STACK_BYTES];	/* initial stack pointer */
 
 PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 	no_sys,		/*  0 = unused	*/
@@ -98,6 +97,11 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
 };
 
 
+/* Some devices may or may not be there in the next table. */
+#define DT(enable, open, rw, close, task) \
+	{ (enable ? (open) : no_dev), (enable ? (rw) : no_dev), \
+	  (enable ? (close) : no_dev), (enable ? (task) : 0) },
+
 /* The order of the entries here determines the mapping between major device
  * numbers and tasks.  The first entry (major device 0) is not used.  The
  * next entry is major device 1, etc.  Character and block devices can be
@@ -108,33 +112,37 @@ PUBLIC _PROTOTYPE (int (*call_vector[NCALLS]), (void) ) = {
  * is changed from 1, NULL_MAJOR must be changed in <include/minix/com.h>.
  */
 PUBLIC struct dmap dmap[] = {
-/*  Open       Read/Write   Close       Task #      Device  File
-    ----       ----------   -----       -------     ------  ----      */
-    no_dev,    no_dev,      no_dev,     0,           /* 0 = not used  */
-    dev_opcl,  call_task,   dev_opcl,   MEM,         /* 1 = /dev/mem  */
-    dev_opcl,  call_task,   dev_opcl,   FLOPPY,      /* 2 = /dev/fd0  */
-    dev_opcl,  call_task,   dev_opcl,   WINCHESTER,  /* 3 = /dev/hd0  */
-    tty_open,  call_task,   tty_close,  TTY,         /* 4 = /dev/tty0 */
-    ctty_open, rw_dev2,     ctty_close, TTY,         /* 5 = /dev/tty  */
-    no_call,   call_task,   no_call,    PRINTER,     /* 6 = /dev/lp   */
-#if (MACHINE == ATARI)
-    dev_opcl,  call_task,   dev_opcl,   SCSI,        /* 7 = /dev/hdscsi0 */
-#endif
+/*  ?   Open       Read/Write   Close       Task #      Device  File
+    -   ----       ----------   -----       -------     ------  ----       */
+  DT(1, no_dev,    no_dev,      no_dev,     0)           /* 0 = not used   */
+  DT(1, dev_opcl,  call_task,   dev_opcl,   MEM)         /* 1 = /dev/mem   */
+  DT(1, dev_opcl,  call_task,   dev_opcl,   FLOPPY)      /* 2 = /dev/fd0   */
+  DT(ENABLE_WINI,
+        dev_opcl,  call_task,   dev_opcl,   WINCHESTER)  /* 3 = /dev/hd0   */
+  DT(1, tty_open,  call_task,   tty_close,  TTY)         /* 4 = /dev/tty0  */
+  DT(1, ctty_open, rw_dev2,     ctty_close, TTY)         /* 5 = /dev/tty   */
+  DT(1, no_call,   call_task,   no_call,    PRINTER)     /* 6 = /dev/lp    */
+
 #if (MACHINE == IBM_PC)
-#if ENABLE_NETWORKING
-    net_open,  net_rw,      net_close,	INET_PROC_NR,/* 7 = /dev/ip   */
-#if ALLOW_USER_SEND
-    net_open,  net_rw,      net_close,  7,           /* 8 = debug /dev/ip */
-#else /* !ALLOW_USER_SEND */
-    no_dev,    no_dev,      no_dev,     0,           /* 8 = not used  */
-#endif /* !ALLOW_USER_SEND */
-#else /* !ENABLE_NETWORKING */
-    no_dev,    no_dev,      no_dev,     0,           /* 7 = not used  */
-    no_dev,    no_dev,      no_dev,     0,           /* 8 = not used  */
-#endif /* !ENABLE_NETWORKING */
-    no_dev,    no_dev,      no_dev,     0,           /* 9 = not used  */
-    dev_opcl,  call_task,   dev_opcl,   SCSI,        /*10 = /dev/sd0  */
+  DT(ENABLE_NETWORKING,
+        net_open,  net_rw,      net_close,  INET_PROC_NR)/* 7 = /dev/ip    */
+  DT(ENABLE_CDROM,
+        dev_opcl,  call_task,   dev_opcl,   CDROM)       /* 8 = /dev/cd0   */
+  DT(0, 0,         0,           0,          0)           /* 9 = not used   */
+  DT(ENABLE_SCSI,
+        dev_opcl,  call_task,   dev_opcl,   SCSI)        /*10 = /dev/sd0   */
+  DT(0, 0,         0,           0,          0)           /*11 = not used   */
+  DT(0, 0,         0,           0,          0)           /*12 = not used   */
+  DT(ENABLE_AUDIO,
+        dev_opcl,  call_task,   dev_opcl,   AUDIO)       /*13 = /dev/audio */
+  DT(ENABLE_AUDIO,
+        dev_opcl,  call_task,   dev_opcl,   MIXER)       /*14 = /dev/mixer */
 #endif /* IBM_PC */
+
+#if (MACHINE == ATARI)
+  DT(ENABLE_SCSI,
+        dev_opcl,  call_task,   dev_opcl,   SCSI)        /* 7 = /dev/hdscsi0 */
+#endif
 };
 
 PUBLIC int max_major = sizeof(dmap)/sizeof(struct dmap);

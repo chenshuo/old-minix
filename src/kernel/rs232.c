@@ -64,6 +64,8 @@
 
 /* Modem status bits. */
 #define MS_CTS               0x10
+#define MS_RLSD              0x80       /* Received Line Signal Detect */
+#define MS_DRLSD             0x08       /* RLSD Delta */
 
 #else /* MACHINE == ATARI */		/* Atari ST 68901 USART */
 
@@ -140,6 +142,16 @@
 /* Macro to tell if transmitter is ready. */
 #define txready(rs) (in_byte(rs->line_status_port) & LS_TRANSMITTER_READY)
 
+/* Macro to tell if carrier has dropped.
+ * The RS232 Carrier Detect (CD) line is usually connected to the 8250
+ * Received Line Signal Detect pin, reflected by bit MS_RLSD in the Modem
+ * Status Register.  The MS_DRLSD bit tells if MS_RLSD has just changed state.
+ * So if MS_DRLSD is set and MS_RLSD cleared, we know that carrier has just
+ * dropped.
+ */
+#define devhup(rs)	\
+	(in_byte(rs->modem_status_port) & (MS_RLSD|MS_DRLSD) == MS_DRLSD)
+
 #else /* MACHINE == ATARI */
 
 /* Macros to handle flow control.
@@ -191,13 +203,17 @@ struct rs232_s {
   char *iptr;			/* next free spot in input buffer */
 
   unsigned char ostate;		/* combination of flags: */
-#define ODEVREADY MS_CTS	/* external device hardware ready (CTS) */
 #define ODONE          1	/* output completed (< output enable bits) */
-#define OQUEUED     0x20	/* output buffer not empty */
 #define ORAW           2	/* raw mode for xoff disable (< enab. bits) */
-#define OSWREADY    0x40	/* external device software ready (no xoff) */
 #define OWAKEUP        4	/* tty_wakeup() pending (asm code only) */
-#if (ODEVREADY | 0x63) == 0x63
+#define ODEVREADY MS_CTS	/* external device hardware ready (CTS) */
+#define OQUEUED     0x20	/* output buffer not empty */
+#define OSWREADY    0x40	/* external device software ready (no xoff) */
+#define ODEVHUP  MS_RLSD 	/* external device has dropped carrier */
+#define OSOFTBITS  (ODONE | ORAW | OWAKEUP | OQUEUED | OSWREADY)
+				/* user-defined bits */
+#if (OSOFTBITS | ODEVREADY | ODEVHUP) == OSOFTBITS
+				/* a weak sanity check */
 #error				/* bits are not unique */
 #endif
   unsigned char oxoff;		/* char to stop output */
@@ -252,7 +268,7 @@ FORWARD _PROTOTYPE( void in_int, (struct rs232_s *rs) );
 FORWARD _PROTOTYPE( void line_int, (struct rs232_s *rs) );
 FORWARD _PROTOTYPE( void modem_int, (struct rs232_s *rs) );
 #else
-/* rs2.x */
+/* rs2.s */
 PUBLIC _PROTOTYPE( int rs232_1handler, (int irq) );
 PUBLIC _PROTOTYPE( int rs232_2handler, (int irq) );
 #endif
@@ -635,6 +651,41 @@ int nbytes;			/* number of bytes to write */
 }
 
 
+/*==========================================================================*
+ *				rs_dcd					    *
+ *==========================================================================*/
+PUBLIC int rs_dcd(minor)
+int minor;
+{
+/* Return state of dcd line - could be a macro if PRIVATE */
+  struct rs232_s *rs = rs_addr(minor);
+
+  return((in_byte(rs->modem_status_port) & MS_RLSD) == 0);
+}
+
+
+/*==========================================================================*
+ *                           rs_hangup                                   *
+ *==========================================================================*/
+PUBLIC int rs_hangup(minor)
+int minor;                   /* which rs line */
+{
+/* Tell TTY whether a hangup has occured, and if so, clear ODEVHUP state. */
+
+  struct rs232_s *rs = rs_addr(minor);
+  int hangup = FALSE;
+
+  lock();
+  if ((rs->ostate & ODEVHUP) != 0) {
+	rs->ostate &= ~ODEVHUP;
+	--tty_events;
+	hangup = TRUE;
+  }
+  unlock();
+  return(hangup);
+}
+
+
 /* Low level (interrupt) routines. */
 
 #if C_RS232_INT_HANDLERS
@@ -827,6 +878,12 @@ register struct rs232_s *rs;	/* line with modem interrupt */
   MFP->mf_aer = (MFP->mf_aer | (IO_SCTS|IO_SDCD)) ^
 		 (MFP->mf_gpip & (IO_SCTS|IO_SDCD));
 #endif
+
+  if (devhup(rs)) {
+	rs->ostate |= ODEVHUP;
+	++tty_events;
+  }
+
   if (!devready(rs))
 	rs->ostate &= ~ODEVREADY;
   else if (!(rs->ostate & ODEVREADY)) {

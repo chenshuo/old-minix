@@ -88,6 +88,7 @@ char *getcwd(char *path, size_t size)
 		cycle= above.st_dev == current.st_dev ? 0 : 1;
 
 		do {
+			tmp.st_ino= 0;
 			if ((entry= readdir(d)) == nil) {
 				switch (++cycle) {
 				case 1:

@@ -9,7 +9,7 @@ LD86=	$(CC86) -.o
 BIN=	/usr/bin
 MDEC=	/usr/mdec
 
-all:	bootblock boot masterboot installboot edparams
+all:	bootblock boot masterboot extboot installboot edparams
 
 installboot.o bootimage.o: image.h
 boot.o bootimage.o: boot.h
@@ -20,6 +20,9 @@ bootblock:	bootblock.s
 
 masterboot:	masterboot.s
 	$(LD86) masterboot.s -o masterboot
+
+extboot:	extboot.s
+	$(LD86) extboot.s -o extboot
 
 boot.o:	boot.c
 	$(CC86) $(CFLAGS) -c boot.c
@@ -46,7 +49,7 @@ edparams:	edparams.c
 	install -S 16kw edparams
 
 install:	$(MDEC)/bootblock $(MDEC)/boot $(MDEC)/masterboot \
-		$(BIN)/installboot $(BIN)/edparams
+		$(MDEC)/extboot $(BIN)/installboot $(BIN)/edparams
 
 $(MDEC)/bootblock:	bootblock
 	install -cs -o bin -m 644 $? $@
@@ -57,6 +60,9 @@ $(MDEC)/boot:		boot
 $(MDEC)/masterboot:	masterboot
 	install -cs -o bin -m 644 $? $@
 
+$(MDEC)/extboot:	extboot
+	install -cs -o bin -m 644 $? $@
+
 $(BIN)/installboot:	installboot
 	install -cs -o bin $? $@
 
@@ -65,4 +71,4 @@ $(BIN)/edparams:	edparams
 
 clean:
 	rm -f *.bak *.o
-	rm -f bootblock installboot boot masterboot edparams
+	rm -f bootblock installboot boot masterboot extboot edparams

@@ -17,7 +17,7 @@ static char RcsId[] = "$Header: archiver.c,v 1.23 91/06/20 14:22:37 ceriel Exp $
  *	  d: delete
  *	  t: print contents of archive
  *	  p: print named files
- *	  l: temporaries in current directory instead of /tmp
+ *	  l: temporaries in current directory instead of /usr/tmp
  *	  c: don't give "create" message
 #ifdef DISTRIBUTION
  *	  D: make distribution: use distr_time, uid=2, gid=2, mode=0644
@@ -261,7 +261,7 @@ char *argv[];
   }
 #endif
   if (local_fl) strcpy(temp_arch, "ar.XXXXXX");
-  else	strcpy(temp_arch, "/tmp/ar.XXXXXX");
+  else	strcpy(temp_arch, "/usr/tmp/ar.XXXXXX");
 
   if (app_fl + ex_fl + del_fl + rep_fl + show_fl + pr_fl != 1)
 	usage();

@@ -39,7 +39,7 @@ PUBLIC int do_fork()
   int i, child_nr, t;
   char *sptr, *dptr;
   phys_clicks prog_clicks, child_base = 0;
-  long prog_bytes, parent_abs, child_abs;	/* Intel only */
+  phys_bytes prog_bytes, parent_abs, child_abs;	/* Intel only */
 
  /* If tables might fill up during FORK, don't even start since recovery half
   * way through is such a nuisance.
@@ -53,15 +53,15 @@ PUBLIC int do_fork()
   prog_clicks += (rmp->mp_seg[S].mem_vir - rmp->mp_seg[D].mem_vir);
 #if (SHADOWING == 0)
   if (rmp->mp_flags & SEPARATE) prog_clicks += rmp->mp_seg[T].mem_len;
-  prog_bytes = (long) prog_clicks << CLICK_SHIFT;
+  prog_bytes = (phys_bytes) prog_clicks << CLICK_SHIFT;
 #endif
   if ( (child_base = alloc_mem(prog_clicks)) == NO_MEM) return(EAGAIN);
 
 #if (SHADOWING == 0)
   /* Create a copy of the parent's core image for the child. */
-  child_abs = (long) child_base << CLICK_SHIFT;
-  parent_abs = (long) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
-  i = mem_copy(ABS, 0, parent_abs, ABS, 0, child_abs, prog_bytes);
+  child_abs = (phys_bytes) child_base << CLICK_SHIFT;
+  parent_abs = (phys_bytes) rmp->mp_seg[T].mem_phys << CLICK_SHIFT;
+  i = sys_copy(ABS, 0, parent_abs, ABS, 0, child_abs, prog_bytes);
   if ( i < 0) panic("do_fork can't copy", i);
 #endif
 

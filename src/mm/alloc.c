@@ -17,6 +17,7 @@
  */
 
 #include "mm.h"
+#include <minix/com.h>
 
 #define NR_HOLES         128	/* max # entries in hole table */
 #define NIL_HOLE (struct hole *) 0
@@ -33,6 +34,7 @@ PRIVATE struct hole *free_slots;	/* ptr to list of unused table slots */
 
 FORWARD _PROTOTYPE( void del_slot, (struct hole *prev_ptr, struct hole *hp) );
 FORWARD _PROTOTYPE( void merge, (struct hole *hp)			    );
+
 
 /*===========================================================================*
  *				alloc_mem				     *
@@ -217,6 +219,7 @@ phys_clicks *total, *free;		/* memory size summaries */
   register struct hole *hp;
   phys_clicks base;		/* base address of chunk */
   phys_clicks size;		/* size of chunk */
+  message mess;
 
   /* Put all holes on the free list. */
   for (hp = &hole[0]; hp < &hole[NR_HOLES]; hp++) hp->h_next = hp + 1;
@@ -224,10 +227,20 @@ phys_clicks *total, *free;		/* memory size summaries */
   hole_head = NIL_HOLE;
   free_slots = &hole[0];
 
-  /* Allocate a hole for each chunk of physical memory. */
+  /* Ask the kernel for chunks of physical memory and allocate a hole for
+   * each of them.  The SYS_MEM call responds with the base and size of the
+   * next chunk and the total amount of memory.
+   */
   *free = 0;
-  while (get_mem(&base, &size, total) != 0) {
+  for (;;) {
+	mess.m_type = SYS_MEM;
+	if (sendrec(SYSTASK, &mess) != OK) panic("bad SYS_MEM?", NO_NUM);
+	base = mess.m1_i1;
+	size = mess.m1_i2;
+	if (size == 0) break;		/* no more? */
+
 	free_mem(base, size);
+	*total = mess.m1_i3;
 	*free += size;
   }
 }

@@ -1,0 +1,5 @@
+# Poor man's File System Table.
+
+root=/dev/ROOT
+tmp=/dev/TMP
+usr=/dev/USR

@@ -140,7 +140,8 @@ PUBLIC void tty_task()
   tty_init(0);
 
   /* Display the Minix startup banner. */
-  printf("Minix %s.   Copyright 1995 Prentice-Hall, Inc.\n\n", OS_RELEASE);
+  printf("Minix %s.%s  Copyright 1995 Prentice-Hall, Inc.\n\n",
+						OS_RELEASE, OS_VERSION);
 
 #if (CHIP == INTEL)
   /* Real mode, protected mode, or 386 mode? */
@@ -153,13 +154,12 @@ PUBLIC void tty_task()
 
 #if (CHIP == INTEL) && ENABLE_NETWORKING
   /* Can the second RS232 line be used? */
-  {
-  long irq;
-
-  irq = ETHER_IRQ;
-  (void) env_parse("DPETH0", "x:d:x", 1, &irq, 0L, (long) NR_IRQ_VECTORS - 1);
-  if (irq == SECONDARY_IRQ) nr_rs_lines = 1;
-  }
+  {long irq = ETHER_IRQ;
+  switch (env_parse("DPETH0", "x:d:x", 1, &irq, 0L, (long) NR_IRQ_VECTORS-1)) {
+  case EP_ON:
+  case EP_SET:
+	if (irq == SECONDARY_IRQ) nr_rs_lines = 1;
+  }}
 #endif
 
   /* Initialize the other lines. */
@@ -234,6 +234,10 @@ PRIVATE void do_int()
   tp = last_tp;
   do {
 	if (++tp >= END_TTY) tp = FIRST_TTY;
+
+	/* Check for hangup from rs232 devices */
+	if (isrs232(tp) && rs_hangup(tp->tty_line))  
+		sigchar(tp, SIGHUP);
 
 	/* Transfer any fresh input to TTY's buffer, and test output done. */
 	remaining = (*tp->tty_devread)(tp->tty_line, &buf, &odone);
@@ -709,8 +713,7 @@ message *m_ptr;			/* pointer to message sent to task */
 		register char *rtail;
 
 		tp->tty_lfct = 0;
-		for (rtail = tp->tty_intail, ct = tp->tty_incount;
-		     ct-- != 0;) {
+		for (rtail = tp->tty_intail, ct = tp->tty_incount; ct-- != 0;) {
 			if (*rtail == '\n' || *rtail == MARKER)
 				++tp->tty_lfct;
 			if (++rtail == tp->tty_inbufend)
@@ -720,12 +723,13 @@ message *m_ptr;			/* pointer to message sent to task */
 		 * is too much trouble.
 		 */
 	}
-	if (tp->tty_mode & RAW)
+	if (tp->tty_mode & RAW) {
 		/* Inhibited RAW mode makes no sense since there is no way
 		 * to uninhibit it. The inhibition flag must be cleared
 		 * explicitly since the drivers check it in all modes.
 		 */
 		uninhibit(tp);
+	}
 	speed = (int) (m_ptr->TTY_SPEK >> 16);
 	if (speed != 0) tp->tty_speed = speed;
 	if (isrs232(tp)) tp->tty_speed = rs_ioctl(tp->tty_line, tp->tty_mode,
@@ -748,6 +752,8 @@ message *m_ptr;			/* pointer to message sent to task */
 	kill  = ((long) tp->tty_kill) & BYTE;
 	erki  = ((long) tp->tty_speed << 16) | (erase << 8) | kill;
 	flags =  (long) tp->tty_mode;
+	if (isrs232(tp) && rs_dcd(tp->tty_line))
+		flags |= DCD;
 	break;
 
      case TIOCGETC:
@@ -761,6 +767,7 @@ message *m_ptr;			/* pointer to message sent to task */
 	flags = (eof <<8);
 	break;
 
+#if (MACHINE == IBM_PC)
      case KIOCSMAP:
 	/* Load a new keymap (only /dev/console). */
 	if (isconsole(tp)) {
@@ -769,6 +776,16 @@ message *m_ptr;			/* pointer to message sent to task */
 		r = ENOTTY;
 	}
 	break;
+
+     case TIOCSFON:
+	/* Load a font into a EGA or VGA card (hs@hck.hr) */
+	if (isconsole(tp)) {
+		r = con_loadfont(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS);
+	} else {
+		r = ENOTTY;
+	}
+	break;
+#endif
 
 #if (MACHINE == ATARI)
      case VDU_LOADFONT:
@@ -837,8 +854,7 @@ message *m_ptr;			/* pointer to message sent to task */
   int ctl;
 
   /* TTY_SPEK is now a boolean to tell if it is the last file to close */
-  if ((m_ptr->PROC_NR == tp->tty_pgrp) && (m_ptr->TTY_SPEK))
-  {
+  if ((m_ptr->PROC_NR == tp->tty_pgrp) && (m_ptr->TTY_SPEK)) {
 	tp->tty_pgrp = 0;
 	sigchar(tp, SIGHUP);
   }
@@ -905,9 +921,11 @@ int status;			/* reply code */
  *===========================================================================*/
 PUBLIC void sigchar(tp, sig)
 register struct tty_struct *tp;
-int sig;			/* SIGINT, SIGQUIT, or SIGKILL */
+int sig;			/* SIGINT, SIGQUIT, SIGKILL or SIGHUP */
 {
-/* Process a SIGINT, SIGQUIT or SIGKILL char from the keyboard */
+/* Process a SIGINT, SIGQUIT or SIGKILL char from the keyboard
+ * or SIGHUP from an RS-232 line.
+ */
 
   uninhibit(tp);		/* do implied CRTL-Q */
   finish(tp, EINTR);		/* reply and/or cancel output if necessary */
@@ -1113,8 +1131,9 @@ int line;			/* TTY line to initialize. */
   if (isconsole(tp)) {
 	tp->tty_devread = kb_read;
 	tp->tty_devstart = console;
-	tp->tty_mode = CRMOD | XTABS | ECHO;
+	tp->tty_mode = CRMOD | XTABS | ECHO | BITS8;
 	tp->tty_makebreak = TWO_INTS;
+	tp->tty_speed = (B9600 << 8) | (B9600 << 0);
 #if (CHIP == INTEL)
 	scr_init(tp->tty_line);
 	kb_init(tp->tty_line);
@@ -1127,6 +1146,7 @@ int line;			/* TTY line to initialize. */
 	tp->tty_devread = rs_read;
 	tp->tty_devstart = rs_start;
 	tp->tty_mode = RAW | BITS8;
+	if (rs_dcd(tp->tty_line)) tp->tty_mode |= DCD;
 	tp->tty_makebreak = ONE_INT;
 	tp->tty_speed = rs_init(tp->tty_line);
 	rs_setc(tp->tty_line, tp->tty_xoff);

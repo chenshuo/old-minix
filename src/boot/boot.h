@@ -23,6 +23,7 @@
 				 * play with.
 				 */
 #define MSEC_PER_TICK	55	/* Clock does 18.2 ticks per second. */
+#define TICKS_PER_DAY 0x1800B0L	/* After 24 hours it wraps. */
 
 #define BOOTPOS	       0x07C00L	/* Bootstraps are loaded here. */
 #define SIGNATURE	0xAA55	/* Proper bootstraps have this signature. */
@@ -54,8 +55,8 @@ EXTERN u16_t heads, sectors;	/* Its number of heads and sectors. */
 
 /* Functions defined by boothead.s: */
 
-void reboot(void);
-			/* When disaster strikes. */
+void exit(int code);
+			/* Exit the monitor. */
 u32_t mon2abs(void *ptr);
 			/* Local monitor address to absolute address. */
 u32_t vec2abs(vector *vec);
@@ -94,12 +95,9 @@ u32_t get_tick(void);
 
 void bootstrap(int device, struct part_entry *entry);
 			/* Execute a bootstrap routine for a different O.S. */
-void minix86(u32_t koff, u32_t kcs, u32_t kds,
+u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
 					char *bootparams, size_t paramsize);
-			/* Start 8086 Minix. */
-void minix386(u32_t koff, u32_t kcs, u32_t kds,
-					char *bootparams, size_t paramsize);
-			/* Start 80386 Minix by switching to 386 mode. */
+			/* Start Minix. */
 
 
 /* Shared between boot.c and bootimage.c: */
@@ -130,10 +128,11 @@ char *b_value(char *name);	/* Get the value of a variable. */
 
 EXTERN int fsok;	/* True if the boot device contains an FS. */
 EXTERN u32_t lowsec;	/* Offset to the file system on the boot device. */
+EXTERN u32_t reboot_code; /* Program returned by a rebooting Minix. */
 
 /* Called by boot.c: */
 
-void minix(void);		/* Load and start a Minix image. */
+void bootminix(void);		/* Load and start a Minix image. */
 
 
 /* Called by bootimage.c: */
@@ -160,3 +159,13 @@ void init_cache(void);
 			/* Turn the block cache back on. */
 int delay(char *msec);
 			/* Delay for several millisec. */
+
+#if DOS
+/* The monitor runs under MS-DOS. */
+int dos_open(char *name);
+			/* Open file to use as the Minix virtual disk. */
+extern char PSP[256];	/* Program Segment Prefix. */
+#else
+/* The monitor uses only the BIOS. */
+#define DOS	0
+#endif

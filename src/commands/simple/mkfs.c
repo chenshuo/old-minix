@@ -49,8 +49,8 @@
 #define BIN                  2
 #define BINGRP               2
 #define BIT_MAP_SHIFT       13
-#define N_BLOCKS       0x20000L	/* must be multiple of 8 */
-#define INODE_MAX ((unsigned) 65535)
+#define N_BLOCKS        (8L * Z_MAP_SLOTS * BLOCK_SIZE)
+#define INODE_MAX       ((unsigned) 65535)
 
 
 #ifdef DOS

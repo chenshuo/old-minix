@@ -3,14 +3,14 @@
 CFLAGS=		$(OPT)
 LDFLAGS=	-i
 
+all:	asmconv
+
 OBJ=	asm86.o asmconv.o parse_ack.o parse_bas.o tokenize.o \
 	emit_ack.o emit_gnu.o
 
-all:	asmconv
-
 asmconv:	$(OBJ)
 	$(CC) $(LDFLAGS) -o $@ $(OBJ)
-	install -S 16kw $@
+	install -S 8kw $@
 
 install:	/usr/lib/asmconv
 

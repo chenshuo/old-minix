@@ -37,6 +37,9 @@ LS_TRANSMITTER_READY	=	0x20
 MC_DTR			=	1
 MC_OUT2			=	8
 MS_CTS			=	0x10
+MS_RLSD			=	0x80
+MS_DRLSD		=	0x08
+ODEVHUP			=	0x80
 ODEVREADY		=	MS_CTS
 ODONE			=	1
 OQUEUED			=	0x20
@@ -230,6 +233,15 @@ outint1:
 modemint:
 	addb	dl, MODEM_STATUS_OFFSET-INT_ID_OFFSET
 	inb	dx
+
+	testb	al, MS_RLSD	! hungup = MS_RLSD false and MS_DRLSD true
+	jne	m_handshake
+	testb	al, MS_DRLSD
+	je	m_handshake
+	orb	ah, ODEVHUP
+	inc	(_tty_events)
+
+m_handshake:
 #if NO_HANDSHAKE
 	orb	al, MS_CTS
 #endif
@@ -403,6 +415,15 @@ outint1:
 modemint:
 	addb	dl,#MODEM_STATUS_OFFSET-INT_ID_OFFSET
 	inb
+
+	testb	al, #MS_RLSD	! hungup = MS_RLSD false and MS_DRLSD true
+	jne	m_handshake
+	testb	al, #MS_DRLSD
+	je	m_handshake
+	orb	ah, #ODEVHUP
+	inc	_tty_events
+
+m_handshake:
 #if NO_HANDSHAKE
 	orb	al,#MS_CTS
 #endif

@@ -25,11 +25,9 @@ struct driver {
 #if (CHIP == INTEL)
 
 /* Number of bytes you can DMA before hitting a 64K boundary: */
-#if _WORD_SIZE > 2
-#define dma_bytes_left(phys)	(0x10000 - ((phys) & 0xFFFF))
-#else
-#define dma_bytes_left(phys)	(0 - (unsigned) ((phys) & 0xFFFF))
-#endif
+#define dma_bytes_left(phys)    \
+   ((unsigned) (sizeof(int) == 2 ? 0 : 0x10000) - (unsigned) ((phys) & 0xFFFF))
+
 #endif /* CHIP == INTEL */
 
 /* Base and size of a partition in bytes. */
@@ -46,10 +44,8 @@ _PROTOTYPE( int do_rdwt, (struct driver *dr, message *m_ptr) );
 _PROTOTYPE( int do_vrdwt, (struct driver *dr, message *m_ptr) );
 _PROTOTYPE( char *no_name, (void) );
 _PROTOTYPE( int do_nop, (struct driver *dp, message *m_ptr) );
-_PROTOTYPE( struct device *nop_prepare, (int device) );
 _PROTOTYPE( int nop_finish, (void) );
 _PROTOTYPE( void nop_cleanup, (void) );
-_PROTOTYPE( void nop_task, (void) );
 _PROTOTYPE( void clock_mess, (int ticks, watchdog_t func) );
 
 #if (CHIP == INTEL)
@@ -61,9 +57,6 @@ _PROTOTYPE( int do_diocntl, (struct driver *dr, message *m_ptr) );
 #define SECTOR_SIZE      512	/* physical sector size in bytes */
 #define SECTOR_SHIFT       9	/* for division */
 #define SECTOR_MASK      511	/* and remainder */
-
-/* Size of the scattered I/O vector. */
-#define NR_IOREQS	NR_BUFS
 
 /* Size of the DMA buffer buffer in bytes. */
 #define DMA_BUF_SIZE	(DMA_SECTORS * SECTOR_SIZE)

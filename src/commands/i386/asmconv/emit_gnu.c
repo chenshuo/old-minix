@@ -133,7 +133,7 @@ static mnemonic_t mnemtab[] = {
 	{ FLDS,		"flds"		},
 	{ FLDX,		"fldt"		},
 	{ FLDZ,		"fldz"		},
-	{ FMULD,	"fmuld"		},
+	{ FMULD,	"fmull"		},
 	{ FMULP,	"fmulp"		},
 	{ FMULS,	"fmuls"		},
 	{ FNOP,		"fnop"		},
@@ -244,7 +244,7 @@ static mnemonic_t mnemtab[] = {
 	{ RCL,		"rcl%"		},
 	{ RCR,		"rcr%"		},
 	{ RET,		"ret"		},
-	{ RETF,		"retf"		},
+	{ RETF,		"lret"		},
 	{ ROL,		"rol%"		},
 	{ ROR,		"ror%"		},
 	{ SAHF,		"sahf"		},
@@ -397,6 +397,7 @@ static void gnu_put_expression(asm86_t *a, expression_t *e, int deref)
 		}
 		break;
 	case 'O':
+		if (deref && a->optype == JUMP) gnu_putchar('*');
 		if (e->left != nil) gnu_put_expression(a, e->left, 0);
 		gnu_putchar('(');
 		if (e->middle != nil) gnu_put_expression(a, e->middle, 0);
@@ -408,8 +409,7 @@ static void gnu_put_expression(asm86_t *a, expression_t *e, int deref)
 		break;
 	case '(':
 		if (!deref) gnu_putchar('(');
-		if (deref && a->optype == JUMP && !farjmp(a->opcode))
-			gnu_putchar('*');
+		if (deref && a->optype == JUMP) gnu_putchar('*');
 		gnu_put_expression(a, e->middle, 0);
 		if (!deref) gnu_putchar(')');
 		break;
@@ -594,13 +594,18 @@ void gnu_emit_instruction(asm86_t *a)
 		}
 
 		/* Exceptions, exceptions... */
-		if (a->opcode == CBW && a->optype == WORD) p= "cwde";
-		if (a->opcode == CWD && a->optype == WORD) p= "cdq";
+		if (a->opcode == CBW) {
+			if (!(a->oaz & OPZ)) p= "cwde";
+			a->oaz&= ~OPZ;
+		}
+		if (a->opcode == CWD) {
+			if (!(a->oaz & OPZ)) p= "cdq";
+			a->oaz&= ~OPZ;
+		}
 
 		if (a->opcode == RET && a->args != nil) {
 			/* RET with argument not supported. */
-			gnu_printf(".byte\t0xC2; ");
-			p=".short";
+			p=".byte\t0xC2; .short";
 		}
 
 		if (a->opcode == MUL && a->args != nil
@@ -609,19 +614,27 @@ void gnu_emit_instruction(asm86_t *a)
 			p="imul%";
 		}
 
+		/* GAS doesn't understand the interesting combinations. */
+		if (a->oaz & ADZ) gnu_printf(".byte 0x67; ");
+		if (a->oaz & OPZ && strchr(p, '%') == nil)
+			gnu_printf(".byte 0x66; ");
+
 		while (*p != 0) {
 			if (*p == '%') {
-				switch (a->optype) {
-				case BYTE:	gnu_putchar('b'); break;
-				case OWORD:	gnu_putchar('w'); break;
-				case WORD:	gnu_putchar('l'); break;
-				default:	assert(0);
+				if (a->optype == BYTE) {
+					gnu_putchar('b');
+				} else
+				if (a->optype == WORD) {
+					gnu_putchar((a->oaz & OPZ) ? 'w' : 'l');
+				} else {
+					assert(0);
 				}
 			} else {
 				gnu_putchar(*p);
 			}
 			p++;
 		}
+
 		if (a->args != nil) {
 			static char *aregs[] = { "al", "ax", "eax" };
 

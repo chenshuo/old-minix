@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 1.13 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 1.14 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -15,7 +15,7 @@ sed	-e '/^total/d' \
 	-e '/^[^bc]/s/.* /BAD BAD /' \
 	-e '/^[bc]/s/.* \([0-9][0-9]*\), *\([0-9][0-9]*\).* /\1 \2 /' \
 | {
-ex=true
+ex=0	# exit code
 
 while read major minor path
 do
@@ -75,7 +75,7 @@ do
 		par=`expr $minor % 5`
 		des="hard disk $drive, partition $par" dev=hd$minor
 		;;
-	3,128|3,129|3,1[3-9]?|3,2??)
+	3,12[89]|3,1[3-9]?|3,2??)
 		drive=`expr \\( $minor - 128 \\) / 16`
 		par=`expr \\( \\( $minor - 128 \\) / 4 \\) % 4 + 1`
 		sub=`expr \\( $minor - 128 \\) % 4 + 1`
@@ -109,6 +109,22 @@ do
 		;;
 	7,4)	des="UDP" dev=udp
 		;;
+	8,0)	des="CD-ROM" dev=cd0
+		;;
+	8,[1-4])
+		des="CD-ROM, partition $minor" dev=cd$minor
+		;;
+	8,12[89]|8,13?|8,14[0-3])
+		par=`expr \\( $minor - 128 \\) / 4 + 1`
+		sub=`expr \\( $minor - 128 \\) % 4 + 1`
+		des="CD-ROM, partition $par, subpartition $sub"
+		case $sub in
+		1)	dev=cd${par}a ;;
+		2)	dev=cd${par}b ;;
+		3)	dev=cd${par}c ;;
+		4)	dev=cd${par}d ;;
+		esac
+		;;
 	10,[05]|10,[123][05])
 		drive=`expr $minor / 5`
 		des="scsi disk drive $drive" dev=sd$minor
@@ -118,7 +134,7 @@ do
 		par=`expr $minor % 5`
 		des="scsi disk $drive, partition $par" dev=sd$minor
 		;;
-	10,128|10,129|10,1[3-9]?|10,2??)
+	10,12[89]|10,1[3-9]?|10,2??)
 		drive=`expr \\( $minor - 128 \\) / 16`
 		par=`expr \\( \\( $minor - 128 \\) / 4 \\) % 4 + 1`
 		sub=`expr \\( $minor - 128 \\) % 4 + 1`
@@ -141,6 +157,12 @@ do
 			des="scsi tape $tape (rewinding)" dev=rst$tape
 		esac
 		;;
+	13,0)
+		des="audio" dev=audio
+		;;
+	14,0)
+		des="audio mixer" dev=mixer
+		;;
 	BAD,BAD)
 		des= dev=
 		;;
@@ -150,11 +172,11 @@ do
 	case $name:$dev in
 	*:)
 		echo "$path: not a device" >&2
-		ex=false
+		ex=1
 		;;
 	*:*BAD*)
 		echo "$path: cannot describe: major=$major, minor=$minor" >&2
-		ex=false
+		ex=1
 		;;
 	$dev:*)
 		echo "$path: $des"
@@ -163,5 +185,5 @@ do
 	esac
 done
 
-$ex
+exit $ex
 }

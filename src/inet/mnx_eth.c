@@ -33,7 +33,9 @@ PUBLIC void eth_init0()
 	eth_port->etp_osdep.etp_task= DL_ETH;
 	eth_port->etp_osdep.etp_minor= ETH_DEV;
 
+#if XXX
 	mess.m_type= DL_STOP;
+	mess.DL_PORT= eth_port->etp_osdep.etp_port;
 #if DEBUG & 256
  { where(); printf("sending DL_STOP\n"); }
 #endif
@@ -45,6 +47,7 @@ assert (eth_port->etp_osdep.etp_task != MM_PROC_NR);
 		printf("eth_init0: unable to stop ethernet task\n");
 		return;
 	}
+#endif
 
 #if DEBUG & 256
  { where(); printf("sending DL_INIT\n"); }
@@ -296,7 +299,9 @@ assert (result == 0);
 
 	if (mess.DL_STAT)
 	{
+#if XXX
 		mess.m_type= DL_INT_TASK;
+#endif
 #if DEBUG
  { where(); printf("calling eth_rec()\n"); }
 #endif

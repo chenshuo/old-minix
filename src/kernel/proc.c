@@ -404,6 +404,10 @@ register struct proc *rp;	/* this process is no longer runnable */
   register struct proc **qtail;  /* TASK_Q, SERVER_Q, or USER_Q rdy_tail */
 
   if (istaskp(rp)) {
+	/* task stack still ok? */
+	if (*rp->p_stguard != STACK_GUARD)
+		panic("stack overrun by task", proc_number(rp));
+
 	if ( (xp = rdy_head[TASK_Q]) == NIL_PROC) return;
 	if (xp == rp) {
 		/* Remove head of queue */

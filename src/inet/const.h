@@ -23,7 +23,6 @@ Created:	Dec 30, 1991 by Philip Homburg
 #define NW_OK		OK
 
 #define THIS_PROC       INET_PROC_NR
-#define STACK_SIZE      10000
 
 #define BUF_S		512
 

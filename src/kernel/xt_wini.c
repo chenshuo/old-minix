@@ -100,7 +100,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned wn_ctlbyte;		/* control byte for COMMANDS (10-Apr-87 GO) */
   unsigned wn_open_ct;		/* in-use count */
   struct device wn_part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device wn_subpart[SUB_PER_DRIVE]; /* subpartititions: hd[1-4][a-d] */
+  struct device wn_subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
 } wini[MAX_DRIVES], *w_wn;
 
 PRIVATE struct trans {
@@ -194,9 +194,9 @@ int device;
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->wn_subpart[device % SUB_PER_DRIVE];
-  } else
+  } else {
 	return(NIL_DEV);
-
+  }
   return(w_drive < nr_drives ? w_dv : NIL_DEV);
 }
 
@@ -779,7 +779,8 @@ PRIVATE void init_params()
 /* This routine is called at startup to initialize the number of drives and
  * the controller.
  */
-  unsigned int drive, segment, offset;
+  u16_t parv[2];
+  unsigned int drive;
   int dtype;
   phys_bytes address, buf_phys;
   char buf[16];
@@ -801,12 +802,11 @@ PRIVATE void init_params()
 		/* Calculate the drive type */
 		dtype = (w_switches >> (2 * drive)) & 03;
 
-		/* Copy the parameter vector from the saved vector table */
-		offset = vec_table[2 * WINI_0_PARM_VEC];
-		segment = vec_table[2 * WINI_0_PARM_VEC + 1];
+		/* Copy the BIOS parameter vector */
+		phys_copy(WINI_0_PARM_VEC * 4L, vir2phys(parv), 4L);
 
 		/* Calculate the parameters' address and copy them to buf */
-		address = hclick_to_physb(segment) + offset + 16 * dtype;
+		address = hclick_to_physb(parv[1]) + parv[0] + 16 * dtype;
 		phys_copy(address, buf_phys, 16L);
 
 		/* Copy the parameters to the structure of the drive. */

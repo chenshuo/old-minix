@@ -162,21 +162,3 @@ PRIVATE void mm_init()
   if (send(FS_PROC_NR, &mess) != OK)
 	panic("MM can't sync up with FS", NO_NUM);
 }
-
-
-/*===========================================================================*
- *				get_mem					     *
- *===========================================================================*/
-PUBLIC int get_mem(base, size, total)
-phys_clicks *base, *size, *total;
-{
-/* Ask kernel for the next chunk of memory. */
-  mm_out.m_type = SYS_MEM;
-  if (sendrec(SYSTASK, &mm_out) != OK)
-	panic("kernel didn't respond to get_mem", NO_NUM);
-  if (mm_out.m1_i2 == 0) return(0);
-  *base = mm_out.m1_i1;
-  *size = mm_out.m1_i2;
-  *total = mm_out.m1_i3;
-  return(1);
-}

@@ -90,21 +90,17 @@ all:	bin \
 	bin/file \
 	bin/find \
 	bin/finger \
-	bin/fix \
 	bin/fold \
 	bin/fortune \
 	bin/fsck \
 	bin/fsck1 \
 	bin/gather \
-	bin/getlf \
 	bin/getty \
 	bin/gomoku \
 	bin/grep \
-	bin/gres \
 	bin/head \
 	bin/host \
 	bin/hostaddr \
-	bin/hyphenate \
 	bin/id \
 	bin/ifconfig \
 	bin/ifdef \
@@ -113,12 +109,12 @@ all:	bin \
 	bin/inodes \
 	bin/install \
 	bin/irdpd \
+	bin/isoread \
 	bin/join \
 	bin/kill \
 	bin/last \
 	bin/leave \
 	bin/life \
-	bin/loadkeys \
 	bin/login \
 	bin/look \
 	bin/lpr \
@@ -163,7 +159,6 @@ all:	bin \
 	bin/rmdir \
 	bin/roff \
 	bin/rsh \
-	bin/screendump \
 	bin/sed \
 	bin/shar \
 	bin/size \
@@ -182,7 +177,6 @@ all:	bin \
 	bin/tar \
 	bin/tcpd \
 	bin/tee \
-	bin/term \
 	bin/termcap \
 	bin/test \
 	bin/time \
@@ -421,10 +415,6 @@ bin/finger:	finger.c
 	$(CCLD) -m -o $@ finger.c
 	install -S 8kw $@
 
-bin/fix:	fix.c
-	$(CCLD) -o $@ $?
-	install -S 32kw $@
-
 bin/fold:	fold.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -445,10 +435,6 @@ bin/gather:	gather.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/getlf:	getlf.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/getty:	getty.c /usr/include/minix/config.h
 	$(CCLD) -o $@ getty.c
 	install -S 4kw $@
@@ -461,10 +447,6 @@ bin/grep:	grep.c
 	$(CCLD) -o $@ $?
 	install -S 32kw $@
 
-bin/gres:	gres.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/head:	head.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -475,10 +457,6 @@ bin/host:	host.c
 
 bin/hostaddr:	hostaddr.c
 	$(CCLD) -o $@ hostaddr.c
-	install -S 4kw $@
-
-bin/hyphenate:	hyphenate.c
-	$(CCLD) -m -o $@ $?
 	install -S 4kw $@
 
 bin/id:	id.c
@@ -513,6 +491,10 @@ bin/irdpd:	irdpd.c
 	$(CCLD) -m -o $@ $?
 	install -S 4kw $@
 
+bin/isoread:	isoread.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
 bin/join:	join.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -532,10 +514,6 @@ bin/leave:	leave.c
 bin/life:	life.c
 	$(CCLD) -o $@ $? -lcurses
 	install -S 15kw $@
-
-bin/loadkeys:	loadkeys.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/login:	login.c
 	$(CCLD) -o $@ $?
@@ -630,7 +608,7 @@ bin/pathchk:	pathchk.c
 	install -S 4kw $@
 
 bin/ping:	ping.c
-	$(CCLD) -o $@ ping.c
+	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
 bin/pr:	pr.c
@@ -638,7 +616,7 @@ bin/pr:	pr.c
 	install -S 16kw $@
 
 bin/pr_routes:	pr_routes.c
-	$(CCLD) -o $@ pr_routes.c
+	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
 bin/prep:	prep.c
@@ -672,7 +650,7 @@ bin/pwd:	pwd.c
 	install -S 4kw $@
 
 bin/rarpd:	rarpd.c
-	$(CCLD) -o $@ rarpd.c
+	$(CCLD) -m -o $@ rarpd.c
 	install -S 4kw $@
 
 bin/rcp:	rcp.c
@@ -701,7 +679,7 @@ bin/rev:	rev.c
 
 bin/rlogin:	rlogin.c
 	$(CCLD) -o $@ -m $?
-	install -S 4kw $@
+	install -S 8kw $@
 
 bin/rmdir:	rmdir.c
 	$(CCLD) -o $@ $?
@@ -713,10 +691,6 @@ bin/roff:	roff.c
 
 bin/rsh:	rsh.c
 	$(CCLD) -o $@ rsh.c
-	install -S 8kw $@
-
-bin/screendump:	screendump.c
-	$(CCLD) -o $@ $?
 	install -S 8kw $@
 
 bin/sed:	sed.c
@@ -788,10 +762,6 @@ bin/tcpd:	tcpd.c
 	install -S 4kw $@
 
 bin/tee:	tee.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/term:	term.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -976,21 +946,17 @@ install:	bin \
 	/usr/bin/file \
 	/usr/bin/find \
 	/usr/bin/finger \
-	/usr/bin/fix \
 	/usr/bin/fold \
 	/usr/bin/fortune \
 	/usr/bin/fsck \
 	/usr/bin/fsck1 \
 	/usr/bin/gather \
-	/usr/bin/getlf \
 	/usr/bin/getty \
 	/usr/bin/gomoku \
 	/usr/bin/grep \
-	/usr/bin/gres \
 	/usr/bin/head \
 	/usr/bin/host \
 	/usr/bin/hostaddr \
-	/usr/bin/hyphenate \
 	/usr/bin/id \
 	/usr/bin/ifconfig \
 	/usr/bin/ifdef \
@@ -999,12 +965,14 @@ install:	bin \
 	/usr/bin/inodes \
 	/usr/bin/install \
 	/usr/bin/irdpd \
+	/usr/bin/isoread \
+		/usr/bin/isodir \
+		/usr/bin/isoinfo \
 	/usr/bin/join \
 	/usr/bin/kill \
 	/usr/bin/last \
 	/usr/bin/leave \
 	/usr/bin/life \
-	/usr/bin/loadkeys \
 	/usr/bin/login \
 	/usr/bin/look \
 	/usr/bin/lpr \
@@ -1051,7 +1019,6 @@ install:	bin \
 	/usr/bin/rmdir \
 	/usr/bin/roff \
 	/usr/bin/rsh \
-	/usr/bin/screendump \
 	/usr/bin/sed \
 	/usr/bin/shar \
 	/usr/bin/size \
@@ -1070,7 +1037,6 @@ install:	bin \
 	/usr/bin/tar \
 	/usr/bin/tcpd \
 	/usr/bin/tee \
-	/usr/bin/term \
 	/usr/bin/termcap \
 	/usr/bin/test \
 		/usr/bin/[ \
@@ -1120,7 +1086,6 @@ install:	bin \
 	/bin/expr \
 	/bin/fsck \
 	/bin/kill \
-	/bin/loadkeys \
 	/bin/ls \
 	/bin/mkdir \
 	/bin/mount \
@@ -1299,9 +1264,6 @@ install:	bin \
 /usr/bin/finger:	bin/finger
 	install -cs -o bin $? $@
 
-/usr/bin/fix:	bin/fix
-	install -cs -o bin $? $@
-
 /usr/bin/fold:	bin/fold
 	install -cs -o bin $? $@
 
@@ -1317,9 +1279,6 @@ install:	bin \
 /usr/bin/gather:	bin/gather
 	install -cs -o bin $? $@
 
-/usr/bin/getlf:	bin/getlf
-	install -cs -o bin $? $@
-
 /usr/bin/getty:	bin/getty
 	install -cs -o bin $? $@
 
@@ -1327,9 +1286,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/grep:	bin/grep
-	install -cs -o bin $? $@
-
-/usr/bin/gres:	bin/gres
 	install -cs -o bin $? $@
 
 /usr/bin/head:	bin/head
@@ -1340,9 +1296,6 @@ install:	bin \
 
 /usr/bin/hostaddr:	bin/hostaddr
 	install -cs -o root -m 4755 $? $@
-
-/usr/bin/hyphenate:	bin/hyphenate
-	install -cs -o bin $? $@
 
 /usr/bin/id:	bin/id
 	install -cs -o bin $? $@
@@ -1368,6 +1321,12 @@ install:	bin \
 /usr/bin/irdpd:	bin/irdpd
 	install -cs -o bin $? $@
 
+/usr/bin/isoread:	bin/isoread
+	install -cs -o bin $? $@
+
+/usr/bin/isodir /usr/bin/isoinfo:	/usr/bin/isoread
+	install -l $? $@
+
 /usr/bin/join:	bin/join
 	install -cs -o bin $? $@
 
@@ -1381,9 +1340,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/life:	bin/life
-	install -cs -o bin $? $@
-
-/usr/bin/loadkeys:	bin/loadkeys
 	install -cs -o bin $? $@
 
 /usr/bin/login:	bin/login
@@ -1521,9 +1477,6 @@ install:	bin \
 /usr/bin/rsh:	bin/rsh
 	install -cs -o bin $? $@
 
-/usr/bin/screendump:	bin/screendump
-	install -cs -o bin $? $@
-
 /usr/bin/sed:	bin/sed
 	install -cs -o bin $? $@
 
@@ -1576,9 +1529,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/tee:	bin/tee
-	install -cs -o bin $? $@
-
-/usr/bin/term:	bin/term
 	install -cs -o bin $? $@
 
 /usr/bin/termcap:	bin/termcap
@@ -1717,9 +1667,6 @@ install:	bin \
 	install -lcs $? $@
 
 /bin/ls:	/usr/bin/ls
-	install -lcs $? $@
-
-/bin/loadkeys:	/usr/bin/loadkeys
 	install -lcs $? $@
 
 /bin/mkdir:	/usr/bin/mkdir

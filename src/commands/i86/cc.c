@@ -654,7 +654,7 @@ ex_vec(vec)
 		prs("Cannot execute ");
 		prs(vec->al_argv[1]);
 		prs(". Not enough memory.\n");
-		prs("Use chmem to reduce its stack allocation\n");
+		prs("Reduce the memory use of your system and try again\n");
 	} else {
 		prs(vec->al_argv[1]);
 		prs(" is not executable\n");

@@ -144,6 +144,11 @@ char *argv[];
 			result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
 			if (result<0)
 			{
+				if (errno == EADDRINUSE)
+				{
+					close(err_fd);
+					continue;
+				}
 				fprintf(stderr, 
 					"%s: ioctl(NWIOTCPCONF)= %d : %s\n",
 					errno, strerror(errno));

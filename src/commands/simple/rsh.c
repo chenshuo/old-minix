@@ -65,7 +65,7 @@ char *copyargs _ARGS(( char **argv ));
 void sendsig _ARGS(( int signo ));
 void talk _ARGS(( int nflag, long omask, int pid, int rem ));
 
-#define _PATH_RLOGIN	"/usr/ucb/rlogin"
+#define _PATH_RLOGIN	"/usr/bin/rlogin"
 
 typedef unsigned u_int;
 #else

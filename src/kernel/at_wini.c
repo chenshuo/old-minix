@@ -108,7 +108,6 @@ struct command {
 #define NR_DEVICES      (MAX_DRIVES * DEV_PER_DRIVE)
 #define SUB_PER_DRIVE	(NR_PARTITIONS * NR_PARTITIONS)
 #define NR_SUBDEVS	(MAX_DRIVES * SUB_PER_DRIVE)
-#define POLLING		1000	/* retries waiting for controller */
 #define TIMEOUT        32000	/* controller timeout in ms */
 #define RECOVERYTIME     500	/* controller recovery time in ms */
 #define INITIALIZED	0x01	/* drive is initialized */
@@ -135,7 +134,7 @@ PRIVATE struct wini {		/* main drive struct, one entry per drive */
   unsigned max_count;		/* max request for this drive */
   unsigned open_ct;		/* in-use count */
   struct device part[DEV_PER_DRIVE];    /* primary partitions: hd[0-4] */
-  struct device subpart[SUB_PER_DRIVE]; /* subpartititions: hd[1-4][a-d] */
+  struct device subpart[SUB_PER_DRIVE]; /* subpartitions: hd[1-4][a-d] */
 } wini[MAX_DRIVES], *w_wn;
 
 PRIVATE struct trans {
@@ -227,9 +226,9 @@ int device;
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
-  } else
+  } else {
 	return(NIL_DEV);
-
+  }
   return(w_dv);
 }
 
@@ -883,17 +882,14 @@ PRIVATE int w_waitfor(mask, value)
 int mask;			/* status mask */
 int value;			/* required status */
 {
-/* Wait until controller is in the required state.  Return zero on timeout.
- * The controller is polled fast at first, because it usually responds early,
- * then once per millisecond to catch it when its slow.
- */
+/* Wait until controller is in the required state.  Return zero on timeout. */
 
-  int retries = POLLING + TIMEOUT;
+  struct milli_state ms;
 
+  milli_start(&ms);
   do {
        if ((in_byte(w_wn->base + REG_STATUS) & mask) == value) return 1;
-       if (retries < TIMEOUT) milli_delay(1);
-  } while (--retries != 0);
+  } while (milli_elapsed(&ms) < TIMEOUT);
 
   w_need_reset();	/* Controller gone deaf. */
   return(0);
@@ -921,7 +917,7 @@ PRIVATE void init_params()
 {
 /* This routine is called at startup to initialize the drive parameters. */
 
-  u16_t segment, offset;
+  u16_t parv[2];
   unsigned int vector;
   int drive, nr_drives, i;
   struct wini *wn;
@@ -932,13 +928,12 @@ PRIVATE void init_params()
 
   for (drive = 0, wn = wini; drive < MAX_DRIVES; drive++, wn++) {
 	if (drive < nr_drives) {
-		/* Copy the parameter vector from the saved vector table */
+		/* Copy the BIOS parameter vector */
 		vector = drive == 0 ? WINI_0_PARM_VEC : WINI_1_PARM_VEC;
-		offset = vec_table[2 * vector];
-		segment = vec_table[2 * vector + 1];
+		phys_copy(vector * 4L, vir2phys(parv), 4L);
 
 		/* Calculate the address of the parameters and copy them */
-		phys_copy(hclick_to_physb(segment) + offset, tmp_phys, 16L);
+		phys_copy(hclick_to_physb(parv[1]) + parv[0], tmp_phys, 16L);
 
 		/* Copy the parameters to the structures of the drive */
 		wn->lcylinders = bp_cylinders(tmp_buf);

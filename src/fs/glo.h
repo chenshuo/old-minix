@@ -13,7 +13,6 @@ EXTERN int nr_locks;		/* number of locks currently in place */
 EXTERN int reviving;		/* number of pipe processes to be revived */
 EXTERN off_t rdahedpos;		/* position to read ahead */
 EXTERN struct inode *rdahed_inode;	/* pointer to inode to read ahead */
-EXTERN char fstack[FS_STACK_BYTES];	/* the File System's stack. */
 
 /* The parameters of the call are kept here. */
 EXTERN message m;		/* the input message itself */

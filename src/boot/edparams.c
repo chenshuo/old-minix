@@ -1,4 +1,4 @@
-/*	edparams 1.13 - Modify boot parameters		Author: Kees J. Bot
+/*	edparams 1.15 - Modify boot parameters		Author: Kees J. Bot
  *								20 May 1992
  */
 
@@ -22,14 +22,14 @@
 #include <sgtty.h>
 #endif
 
+/* The Minix boot block must start with these bytes: */
+char boot_magic[] = { 0x31, 0xC0, 0x8E, 0xD8, 0xFA, 0x8E, 0xD0, 0xBC };
+
 #define SECTOR_SIZE	512
 
 #define PARAMSEC	1	/* Sector containing boot parameters. */
 
 #define ESC		1234	/* Escape key (interrupt). */
-
-#define get_tick()	time(nil)
-#define MSEC_PER_TICK	1000	/* Resolution of time(2). */
 
 int device;			/* Device to edit parameters. */
 char *devname;			/* Name of device. */
@@ -454,6 +454,7 @@ void get_parameters(void)
 	b_setvar(E_RESERVED, "echo", null);
 	b_setvar(E_RESERVED, "trap", null);
 	b_setvar(E_RESERVED, "help", null);
+	b_setvar(E_RESERVED, "exit", null);
 
 	memset(params, 0, sizeof(params));
 
@@ -545,6 +546,16 @@ int numeric(char *s)
 	return n != s && *n == 0;
 }
 
+u32_t milli_time(void)
+{
+	return 1000 * (u32_t) time(nil);	/* Overflow is no problem. */
+}
+
+u32_t milli_since(u32_t base)
+{
+	return milli_time() - base;
+}
+
 char *Thandler;
 u32_t Tbase, Tcount;
 
@@ -564,8 +575,8 @@ void schedule(long msec, char *cmd)
 {
 	unschedule();
 	Thandler= cmd;
-	Tbase= get_tick();
-	Tcount= (msec + MSEC_PER_TICK - 1) / MSEC_PER_TICK;
+	Tbase= milli_time();
+	Tcount= msec;
 	alarm(1);
 }
 
@@ -576,7 +587,7 @@ int expired(void)
 {
 	int fundef= 0;
 
-	if (Thandler == nil || (get_tick() - Tbase) < Tcount) return 0;
+	if (Thandler == nil || milli_since(Tbase) < Tcount) return 0;
 
 	(void) tokenize(tokenize(&cmds, Thandler, &fundef), ";", &fundef);
 	unschedule();
@@ -598,8 +609,7 @@ int delay(char *msec)
 		printf("\nInsert the root diskette then hit RETURN\n");
 	} else
 	if ((count= a2l(msec)) > 0) {
-		count/= MSEC_PER_TICK;
-		base= get_tick();
+		base= milli_time();
 	}
 
 	alarm(1);	/* Let the "counter" run. */
@@ -616,7 +626,7 @@ int delay(char *msec)
 			if (trapsig == SIGINT) interrupt();
 		}
 	} while (!expired()
-		&& (swap || (count > 0 && (get_tick() - base) < count))
+		&& (swap || (count > 0 && milli_since(base) < count))
 	);
 	return 1;
 }
@@ -733,6 +743,7 @@ void help(void)
 		{ "set",		"Show environment" },
 		{ "trap msec command",	"Schedule command" },
 		{ "unset name ...",	"Unset variable or set to default" },
+		{ "exit",		"Exit to UNIX" },
 	};
 
 	for (pi= info; pi < arraylimit(info); pi++) {
@@ -891,6 +902,7 @@ void execute(void)
 		if (strcmp(cmd, "save") == 0) { save_parameters(); ok= 1; }
 		if (strcmp(cmd, "set") == 0) { show_env(); ok= 1; }
 		if (strcmp(cmd, "help") == 0) { help(); ok= 1; }
+		if (strcmp(cmd, "exit") == 0) exit(0);
 
 		/* Command to check bootparams: */
 		if (strcmp(cmd, ":") == 0) ok= 1;
@@ -938,6 +950,7 @@ void main(int argc, char **argv)
 /* Do not load or start anything, just edit parameters. */
 {
 	int i;
+	char bootcode[SECTOR_SIZE];
 
 #if __minix_vmd
 	if (tcgetattr(0, &termbuf) < 0) istty= 0;
@@ -960,15 +973,23 @@ void main(int argc, char **argv)
 		}
 	}
 
+	devname= argv[1];
+	if ((device= open(devname, O_RDWR | O_CREAT, 0666)) < 0)
+		fatal(devname);
+
+	/* Check if it is a bootable Minix device. */
+	if (read(device, bootcode, SECTOR_SIZE) != SECTOR_SIZE
+		|| memcmp(bootcode, boot_magic, sizeof(boot_magic)) != 0) {
+		fprintf(stderr, "edparams: %s: not a bootable Minix device\n",
+			devname);
+		exit(1);
+	}
+
 	/* Print greeting message.  */
 	if (istty) printf("Boot parameters editor.\n");
 
 	signal(SIGINT, trap);
 	signal(SIGALRM, trap);
-
-	devname= argv[1];
-	if ((device= open(devname, O_RDWR | O_CREAT, 0666)) < 0)
-		fatal(devname);
 
 	/* Get environment variables from the parameter sector. */
 	get_parameters();

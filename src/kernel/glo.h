@@ -26,10 +26,10 @@ EXTERN struct memory mem[NR_MEMS];	/* base and size of chunks of memory */
 EXTERN phys_clicks tot_mem_size;	/* total system memory size */
 
 /* Miscellaneous. */
-EXTERN int rebooting;		/* nonzero while rebooting */
 extern u16_t sizes[8];		/* table filled in by build */
 extern struct tasktab tasktab[];/* initialized in table.c, so extern here */
-extern char t_stack[];		/* initialized in table.c, so extern here */
+extern char *t_stack[];		/* initialized in table.c, so extern here */
+EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */
 
 #if (CHIP == INTEL)
 
@@ -38,13 +38,11 @@ EXTERN int pc_at;		/* PC-AT compatible hardware interface */
 EXTERN int ps;			/* PS/2 */
 EXTERN int ps_mca;		/* PS/2 with Micro Channel */
 EXTERN unsigned int processor;	/* 86, 186, 286, 386, ... */
+#if _WORD_SIZE == 2
 EXTERN int protected_mode;	/* nonzero if running in Intel protected mode*/
-
-/* Debugger control. */
-EXTERN struct farptr_s break_vector;	/* debugger breakpoint hook */
-EXTERN int db_enabled;		/* nonzero if external debugger is enabled */
-EXTERN int db_exists;		/* nonzero if external debugger exists */
-EXTERN struct farptr_s sstep_vector;	/* debugger single-step hook */
+#else
+#define protected_mode	1	/* 386 mode implies protected mode */
+#endif
 
 /* Video cards and keyboard types. */
 EXTERN int color;		/* nonzero if console is color, 0 if mono */
@@ -58,8 +56,11 @@ EXTERN unsigned low_memsize;
 
 /* Miscellaneous. */
 EXTERN u16_t Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
-EXTERN u16_t vec_table[VECTOR_BYTES / sizeof(u16_t)]; /* copy of BIOS vectors*/
 EXTERN irq_handler_t irq_table[NR_IRQ_VECTORS];
+EXTERN int irq_use;		/* bit map of all in-use irq's */
+EXTERN reg_t mon_ss, mon_sp;	/* monitor stack */
+EXTERN int mon_return;		/* true if return to the monitor possible */
+EXTERN phys_bytes reboot_code;	/* program for the boot monitor */
 
 /* Variables that are initialized elsewhere are just extern here. */
 extern struct segdesc_s gdt[];	/* global descriptor table for protected mode*/

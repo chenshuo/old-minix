@@ -21,6 +21,8 @@
 
 #define NULL     ((void *)0)	/* null pointer */
 #define CPVEC_NR          16	/* max # of entries in a SYS_VCOPY request */
+#define NR_IOREQS	MIN(NR_BUFS, 64)
+				/* maximum number of entries in an iorequest */
 
 #define NR_SEGS            3	/* # segments per process */
 #define T                  0	/* proc[i].mem_map[T] is for text */
@@ -30,11 +32,14 @@
 /* Process numbers of some important processes. */
 #define MM_PROC_NR         0	/* process number of memory manager */
 #define FS_PROC_NR         1	/* process number of file system */
+#define INET_PROC_NR       2	/* process number of the TCP/IP server */
+#define INIT_PROC_NR	(INET_PROC_NR + ENABLE_NETWORKING)
+				/* init -- the process that goes multiuser */
+#define LOW_USER	(INET_PROC_NR + ENABLE_NETWORKING)
+				/* first user not part of operating system */
 
 /* Miscellaneous */
 #define BYTE            0377	/* mask for 8 bits */
-#define TO_USER            0	/* flag telling to copy from fs to user */
-#define FROM_USER          1	/* flag telling to copy from user to fs */
 #define READING            0	/* copy data to user */
 #define WRITING            1	/* copy data from user */
 #define NO_NUM        0x8000	/* used as numerical argument to panic() */
@@ -48,15 +53,9 @@
 #define MAX(a, b)   ((a) > (b) ? (a) : (b))
 #define MIN(a, b)   ((a) < (b) ? (a) : (b))
 
-/* Machine dependent stuff. */
-#if ENABLE_NETWORKING
-#define NR_INET_TASKS	   1	/* Add one ethernet task */
-#else
-#define NR_INET_TASKS	   0
-#endif
-
 /* Number of tasks. */
-#define NR_TASKS	(11 + NR_INET_TASKS)
+#define NR_TASKS	(10 + ENABLE_SCSI + ENABLE_CDROM + ENABLE_NETWORKING \
+			+ 2 * ENABLE_AUDIO)
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)
@@ -75,15 +74,6 @@
 #define k_to_click(n) ((n) * (1024 / CLICK_SIZE))
 #else
 #define k_to_click(n) ((n) / (CLICK_SIZE / 1024))
-#endif
-
-#if ENABLE_NETWORKING
-#define INET_PROC_NR       2	/* process number of network task */
-#define INIT_PROC_NR       3	/* init -- the process that goes multiuser */
-#define LOW_USER           3	/* first user not part of operating system */
-#else
-#define INIT_PROC_NR       2	/* init -- the process that goes multiuser */
-#define LOW_USER           2	/* first user not part of operating system */
 #endif
 
 #define ABS             -999	/* this process means absolute memory */

@@ -6,7 +6,17 @@
 
 /* Task numbers, function codes and reply codes. */
 
-#define TTY         -NR_TASKS	/* terminal I/O class */
+/* The values of several task numbers depend on whether they or other tasks
+ * are enabled.  They are defined as (PREVIOUS_TASK - ENABLE_TASK) in general.
+ * ENABLE_TASK is either 0 or 1, so a task either gets a new number, or gets
+ * the same number as the previous task and is further unused.
+ * The TTY task must always have the most negative number so that it is
+ * initialized first.  Many of the TTY function codes are shared with other
+ * tasks.
+ */
+
+#define TTY		(DL_ETH - 1)
+				/* terminal I/O class */
 #	define CANCEL       0	/* general req to force a task to cancel */
 #	define HARD_INT     2	/* fcn code for all hardware interrupts */
 #	define DEV_READ	    3	/* fcn code for reading from tty */
@@ -21,9 +31,8 @@
 #	define NO_CTL_TTY  -1	/* returned by DEV_OPEN if no ctl tty exists */
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#ifdef ENABLE_NETWORKING
-#define DL_ETH		-11
-#endif
+#define DL_ETH		(CDROM - ENABLE_NETWORKING)
+				/* networking task */
 
 /* Message type for data link layer reqests. */
 #	define DL_WRITE		3
@@ -37,7 +46,9 @@
 /* Message type for data link layer replies. */
 #	define DL_INIT_REPLY	20
 #	define DL_TASK_REPLY	21
+#if XXX
 #	define DL_INT_TASK	22
+#endif
 
 #	define DL_PORT		m2_i1
 #	define DL_PROC		m2_i2
@@ -51,11 +62,15 @@
 #	define DL_PACK_SEND	0x01
 #	define DL_PACK_RECV	0x02
 #	define DL_READ_IP	0x04
+#if XXX
 #	define DL_DISABLED	0x10
+#endif
 
 /* Bits in `DL_MODE' field of DL requests. */
 #	define DL_NOMODE	0x0
+#if XXX
 #	define DL_WRITEINT_REQ	0x1
+#endif
 #	define DL_PROMISC_REQ	0x2
 #	define DL_MULTI_REQ	0x4
 #	define DL_BROAD_REQ	0x8
@@ -67,15 +82,25 @@
 #	define NW_IOCTL		DEV_IOCTL
 #	define NW_CANCEL	CANCEL
 
-#define SCSI		 -10	/* scsi device task */
+#define CDROM		(AUDIO - ENABLE_CDROM)
+				/* cd-rom device task */
 
-#define SYN_ALRM_TASK     -9	/* task to send CLOCK_INT messages */
+#define AUDIO		(MIXER - ENABLE_AUDIO)
+#define MIXER		(SCSI - ENABLE_AUDIO)
+				/* audio & mixer device tasks */
 
-#define IDLE              -8	/* task to run when there's nothing to run */
+#define SCSI		(WINCHESTER - ENABLE_SCSI)
+				/* scsi device task */
 
-/* The printer and disks use the same commands as TTY. */
-#define PRINTER           -7	/* printer  I/O class */
-#define WINCHESTER        -6	/* winchester (hard) disk class */
+#define WINCHESTER	(SYN_ALRM_TASK - ENABLE_WINI)
+				/* winchester (hard) disk class */
+
+#define SYN_ALRM_TASK     -8	/* task to send CLOCK_INT messages */
+
+#define IDLE              -7	/* task to run when there's nothing to run */
+
+#define PRINTER           -6	/* printer I/O class */
+
 #define FLOPPY            -5	/* floppy disk class */
 
 #define MEM               -4	/* /dev/ram, /dev/(k)mem and /dev/null class */

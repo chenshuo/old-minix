@@ -232,16 +232,6 @@ message *m_ptr;
 
 
 /*===========================================================================*
- *				nop_prepare				     *
- *===========================================================================*/
-PUBLIC struct device *nop_prepare(device)
-{
-/* Nothing to prepare for. */
-  return(NIL_DEV);
-}
-
-
-/*===========================================================================*
  *				nop_finish				     *
  *===========================================================================*/
 PUBLIC int nop_finish()
@@ -257,28 +247,6 @@ PUBLIC int nop_finish()
 PUBLIC void nop_cleanup()
 {
 /* Nothing to clean up. */
-}
-
-
-/*===========================================================================*
- *				nop_task				     *
- *===========================================================================*/
-PUBLIC void nop_task()
-{
-/* Drivers that are configured out call this. */
-  struct driver nop_tab = {
-	no_name,
-	do_nop,
-	do_nop,
-	do_nop,
-	nop_prepare,
-	NULL,
-	nop_finish,
-	nop_cleanup,
-	NULL,
-  };
-
-  driver_task(&nop_tab);
 }
 
 
@@ -344,7 +312,6 @@ int style;		/* partitioning style: floppy, primary, sub. */
  * partitions are sorted, because they are shared with other operating
  * systems that expect this.
  */
-  message mess;
   struct part_entry table[NR_PARTITIONS], *pe;
   int disk, par;
   struct device *dv;
@@ -413,7 +380,6 @@ unsigned long extbase;	/* offset of the base extended partition */
 /* Extended partitions cannot be ignored alas, because people like to move
  * files to and from DOS partitions.  Avoid reading this code, it's no fun.
  */
-  message mess;
   struct part_entry table[NR_PARTITIONS], *pe;
   int subdev, disk, par;
   struct device *dv;

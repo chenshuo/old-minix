@@ -89,7 +89,7 @@
 PRIVATE struct wini {		/* disk/partition information            */
   unsigned open_ct;			/* in-use count			 */
   struct device part[DEV_PER_DRIVE];	/* primary partitions: hd[0-4]   */
-  struct device subpart[SUB_PER_DRIVE];	/* subpartititions: hd[1-4][a-d] */
+  struct device subpart[SUB_PER_DRIVE];	/* subpartitions: hd[1-4][a-d] */
 } wini[MAX_DRIVES], *w_wn;
 
 PRIVATE struct trans {
@@ -174,9 +174,9 @@ int device;
 	w_drive = device / SUB_PER_DRIVE;
 	w_wn = &wini[w_drive];
 	w_dv = &w_wn->subpart[device % SUB_PER_DRIVE];
-  } else
+  } else {
 	return(NIL_DEV);
-
+  }
   return(w_drive < nr_drives ? w_dv : NIL_DEV);
 }
 
@@ -637,7 +637,6 @@ int dma;			/* i dma transfer is underway            */
  *     and to avoid busy waits.
  */
   message dummy;		/* -- scratch --                         */
-  int status;			/* basic status register value           */
 
   out_byte(BCTL_REG, dma ? 0x03 : 0x01);
 

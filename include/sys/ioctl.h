@@ -59,6 +59,9 @@
 #define NWIOSUDPOPT	_IOW('n', 64, struct nwio_udpopt)
 #define NWIOGUDPOPT	_IOR('n', 65, struct nwio_udpopt)
 
+/* Terminal ioctl's */
+#define TIOCSFON	_IOW('T', 20, u8_t [8192])
+
 /* Disk ioctl's */
 #define DIOCSETP	_IOW('d', 3, struct part_entry)
 #define DIOCGETP	_IOR('d', 4, struct part_entry)
@@ -73,6 +76,36 @@
 
 /* SCSI command */
 #define SCIOCCMD	_IOW('S', 1, struct scsicmd)
+
+/* Cdrom ioctls */
+#define	CDIOPLAYTI	_IOR('c', 1, struct cd_play_track)
+#define CDIOPLAYMSS	_IOR('c', 2, struct cd_play_mss)
+#define CDIOREADTOCHDR	_IOW('c', 3, struct cd_toc_entry)
+#define CDIOREADTOC	_IOW('c', 4, struct cd_toc_entry)
+#define CDIOREADSUBCH	_IOW('c', 5, struct cd_toc_entry)
+#define CDIOSTOP	_IO ('c', 10)
+#define CDIOPAUSE	_IO ('c', 11)
+#define CDIORESUME	_IO ('c', 12)
+#define CDIOEJECT	DIOCEJECT
+
+/* Soundcard DSP ioctls */
+#define	DSPIORATE	_IOR('s', 1, unsigned int)
+#define DSPIOSTEREO	_IOR('s', 2, unsigned int)
+#define DSPIOSIZE	_IOR('s', 3, unsigned int)
+#define DSPIOBITS	_IOR('s', 4, unsigned int)
+#define DSPIOSIGN	_IOR('s', 5, unsigned int)
+#define DSPIOMAX	_IOW('s', 6, unsigned int)
+#define DSPIORESET	_IO ('s', 7)
+
+/* Soundcard mixer ioctls */
+#define MIXIOGETVOLUME		_IORW('s', 10, struct volume_level)
+#define MIXIOGETINPUTLEFT	_IORW('s', 11, struct inout_ctrl)
+#define MIXIOGETINPUTRIGHT	_IORW('s', 12, struct inout_ctrl)
+#define MIXIOGETOUTPUT		_IORW('s', 13, struct inout_ctrl)
+#define MIXIOSETVOLUME		_IORW('s', 20, struct volume_level)
+#define MIXIOSETINPUTLEFT	_IORW('s', 21, struct inout_ctrl)
+#define MIXIOSETINPUTRIGHT	_IORW('s', 22, struct inout_ctrl)
+#define MIXIOSETOUTPUT		_IORW('s', 23, struct inout_ctrl)
 
 #ifndef _ANSI
 #include <ansi.h>

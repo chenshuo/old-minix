@@ -12,9 +12,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define DO_HALT    0
-#define DO_REBOOT  1
-
 int main(int argc, char **argv)
 {
 	int flag;
@@ -31,7 +28,7 @@ int main(int argc, char **argv)
 
 	sleep(2);	/* Not too fast. */
 
-	reboot(strcmp(prog, "reboot") == 0 ? DO_REBOOT : DO_HALT);
+	reboot(strcmp(prog, "reboot") == 0 ? RBT_REBOOT : RBT_HALT);
 
 	write(2, "reboot call failed\n", 19);
 	return 1;

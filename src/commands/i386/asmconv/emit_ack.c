@@ -294,6 +294,8 @@ static mnemonic_t mnemtab[] = {
 	{ XOR,		"xor%"		},
 };
 
+#define farjmp(o)	((o) == JMPF || (o) == CALLF)
+
 static FILE *ef;
 static long eline= 1;
 static char *efile;
@@ -375,33 +377,28 @@ static void ack_put_expression(asm86_t *a, expression_t *e, int deref)
 
 	switch (e->operator) {
 	case ',':
-		if (dialect == NCC && (a->opcode == JMPF
-						|| a->opcode == CALLF)) {
+		if (dialect == NCC && farjmp(a->opcode)) {
 			/* ACK jmpf seg:off  ->  NCC jmpf off,seg */
 			ack_put_expression(a, e->right, deref);
 			ack_printf(", ");
 			ack_put_expression(a, e->left, deref);
 		} else {
 			ack_put_expression(a, e->left, deref);
-			if (a->opcode == JMPF || a->opcode == CALLF) {
-				ack_putchar(':');
-			} else {
-				ack_printf(", ");
-			}
+			ack_printf(farjmp(a->opcode) ? ":" : ", ");
 			ack_put_expression(a, e->right, deref);
 		}
 		break;
 	case 'O':
+		if (deref && a->optype == JUMP) ack_putchar('@');
 		if (e->left != nil) ack_put_expression(a, e->left, 0);
 		if (e->middle != nil) ack_put_expression(a, e->middle, 0);
 		if (e->right != nil) ack_put_expression(a, e->right, 0);
 		break;
 	case '(':
-		if (dialect == ACK || !deref) ack_putchar('(');
-		if (dialect == NCC && deref && a->optype == JUMP)
-			ack_putchar('@');
+		if (deref && a->optype == JUMP) ack_putchar('@');
+		if (!deref) ack_putchar('(');
 		ack_put_expression(a, e->middle, 0);
-		if (dialect == ACK || !deref) ack_putchar(')');
+		if (!deref) ack_putchar(')');
 		break;
 	case 'B':
 		ack_printf("(%s)", e->name);
@@ -410,13 +407,14 @@ static void ack_put_expression(asm86_t *a, expression_t *e, int deref)
 	case '2':
 	case '4':
 	case '8':
-		ack_printf("(%s*%c)", e->name, e->operator);
+		ack_printf((use16() && e->operator == '1')
+				? "(%s)" : "(%s*%c)", e->name, e->operator);
 		break;
 	case '+':
 	case '-':
 	case '~':
 		if (e->middle != nil) {
-			if (dialect == NCC && deref) ack_putchar('#');
+			if (deref && a->optype != JUMP) ack_putchar('#');
 			ack_putchar(e->operator);
 			ack_put_expression(a, e->middle, 0);
 			break;
@@ -430,7 +428,7 @@ static void ack_put_expression(asm86_t *a, expression_t *e, int deref)
 	case '^':
 	case S_LEFTSHIFT:
 	case S_RIGHTSHIFT:
-		if (dialect == NCC && deref) ack_putchar('#');
+		if (deref && a->optype != JUMP) ack_putchar('#');
 		ack_put_expression(a, e->left, 0);
 		if (e->operator == S_LEFTSHIFT) {
 			ack_printf("<<");
@@ -443,13 +441,18 @@ static void ack_put_expression(asm86_t *a, expression_t *e, int deref)
 		ack_put_expression(a, e->right, 0);
 		break;
 	case '[':
-		if (dialect == NCC && deref) ack_putchar('#');
+		if (deref && a->optype != JUMP) ack_putchar('#');
 		ack_putchar('[');
 		ack_put_expression(a, e->middle, 0);
 		ack_putchar(']');
 		break;
 	case 'W':
-		if (dialect == NCC && deref && !isregister(e->name)) {
+		if (deref && a->optype == JUMP && isregister(e->name))
+		{
+			ack_printf("(%s)", e->name);
+			break;
+		}
+		if (deref && a->optype != JUMP && !isregister(e->name)) {
 			ack_putchar('#');
 		}
 		ack_printf("%s", e->name);
@@ -536,7 +539,16 @@ void ack_emit_instruction(asm86_t *a)
 		if (a->seg != DEFSEG) {
 			ack_printf(dialect == ACK ? " " : "; ");
 		}
-		if (a->optype == OWORD) ack_printf(use16() ? "o32 " : "o16 ");
+		if (a->oaz & OPZ) ack_printf(use16() ? "o32 " : "o16 ");
+		if (a->oaz & ADZ) ack_printf(use16() ? "a32 " : "a16 ");
+
+		if (a->opcode == CBW) {
+			p= !(a->oaz & OPZ) == use16() ? "cbw" : "cwde";
+		}
+
+		if (a->opcode == CWD) {
+			p= !(a->oaz & OPZ) == use16() ? "cwd" : "cdq";
+		}
 
 		if (a->opcode == DOT_COMM && a->args != nil
 			&& a->args->operator == ','
@@ -561,7 +573,7 @@ void ack_emit_instruction(asm86_t *a)
 				deref= 0;
 				break;
 			default:
-				deref= (a->optype >= BYTE);
+				deref= (dialect == NCC && a->optype != PSEUDO);
 			}
 			ack_put_expression(a, a->args, deref);
 		}

@@ -79,6 +79,7 @@ int num()
 #define UCASE 0x0004
 #define NOERROR 0x0008
 #define SYNC 0x0010
+#define SILENT 0x0020
 #define BLANK ' '
 #define DEFAULT 512
 
@@ -118,6 +119,7 @@ void puto()
 
 void statistics()
 {
+  if (convflag & SILENT) return;
   fprintf(stderr, "%u+%u records in\n", nifull, nipartial);
   fprintf(stderr, "%u+%u records out\n", nofull, nopartial);
   if (ntr) fprintf(stderr, "%d truncated records\n", ntr);
@@ -211,6 +213,10 @@ char *argv[];
 			}
 			if (is("swab")) {
 				convflag |= SWAB;
+				continue;
+			}
+			if (is("silent")) {
+				convflag |= SILENT;
 				continue;
 			}
 			if (is(",")) continue;

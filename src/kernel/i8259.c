@@ -2,7 +2,6 @@
  *	get_irq_handler: address of handler for a given interrupt
  *	put_irq_handler: register an interrupt handler
  *	init_8259:	initialize the 8259(s), since the BIOS does it poorly
- *	soon_reboot:	prepare to reboot the system
  */
 
 #include "kernel.h"
@@ -15,23 +14,22 @@
 
 FORWARD _PROTOTYPE( int spurious_irq, (int irq) );
 
+#if _WORD_SIZE == 2
+typedef _PROTOTYPE( void (*vecaddr_t), (void) );
 
-/*=========================================================================*
- *				get_irq_handler				   *
- *=========================================================================*/
-PUBLIC irq_handler_t get_irq_handler(irq)
-int irq;
-{
-/* Return the handler registered for interrupt irq, null if no handler. */
+FORWARD _PROTOTYPE( void set_vec, (int vec_nr, vecaddr_t addr) );
 
-  if (irq < 0 || irq >= NR_IRQ_VECTORS)
-	panic("invalid call to get_irq_handler", irq);
+PRIVATE vecaddr_t int_vec[] = {
+  int00, int01, int02, int03, int04, int05, int06, int07,
+};
 
-  if (irq_table[irq] == spurious_irq)
-	return(0);	/* Not a real handler */
-
-  return irq_table[irq];
-}
+PRIVATE vecaddr_t irq_vec[] = {
+  hwint00, hwint01, hwint02, hwint03, hwint04, hwint05, hwint06, hwint07,
+  hwint08, hwint09, hwint10, hwint11, hwint12, hwint13, hwint14, hwint15,
+};
+#else
+#define set_vec(nr, addr)	((void)0)
+#endif
 
 
 /*=========================================================================*
@@ -52,7 +50,10 @@ irq_handler_t handler;
   if (irq_table[irq] != spurious_irq)
 	panic("attempt to register second irq handler for irq", irq);
 
+  disable_irq(irq);
+  if (!protected_mode) set_vec(BIOS_VECTOR(irq), irq_vec[irq]);
   irq_table[irq]= handler;
+  irq_use |= 1 << irq;
 }
 
 
@@ -80,13 +81,19 @@ PUBLIC void init_8259(master_base, slave_base)
 unsigned master_base;
 unsigned slave_base;
 {
-/* Initialize the 8259(s), finishing with all interrupts disabled. */
+/* Initialize the 8259s, finishing with all interrupts disabled.  This is
+ * only done in protected mode, in real mode we don't touch the 8259(s),
+ * but use the BIOS locations instead.
+ */
 
   int i;
 
   lock();
-  if (pc_at) {
-	/* Two interrupt controllers, one master, one slaved at IRQ 2. */
+  if (protected_mode) {
+	/* The AT and newer PS/2 have two interrupt controllers, one master,
+	 * one slaved at IRQ 2.  (We don't have to deal with the PC that
+	 * has just one controller, because it must run in real mode.)
+	 */
 	out_byte(INT_CTL, ps_mca ? ICW1_PS : ICW1_AT);
 	out_byte(INT_CTLMASK, master_base);		/* ICW2 for master */
 	out_byte(INT_CTLMASK, (1 << CASCADE_IRQ));	/* ICW3 tells slaves */
@@ -98,29 +105,35 @@ unsigned slave_base;
 	out_byte(INT2_CTLMASK, ICW4_AT);
 	out_byte(INT2_CTLMASK, ~0);			/* IRQ 8-15 mask */
   } else {
-	/* One interrupt controller. */
-	out_byte(INT_CTL, ICW1_PC);
-	out_byte(INT_CTLMASK, master_base);
-	out_byte(INT_CTLMASK, ICW4_PC);
-	out_byte(INT_CTLMASK, ~0);			/* IRQ 0-7 mask */
+	/* Use the BIOS interrupt vectors in real mode.  We just reprogram the
+	 * exceptions here, the interrupt vectors are reprogrammed on demand.
+	 * SYS_VECTOR is the Minix system call for message passing.
+	 */
+	for (i = 0; i < 8; i++) set_vec(i, int_vec[i]);
+	set_vec(SYS_VECTOR, s_call);
   }
 
   /* Initialize the table of interrupt handlers. */
   for (i = 0; i< NR_IRQ_VECTORS; i++) irq_table[i]= spurious_irq;
 }
 
-
-/*==========================================================================*
- *				soon_reboot				    *
- *==========================================================================*/
-PUBLIC void soon_reboot()
+#if _WORD_SIZE == 2
+/*===========================================================================*
+ *                                   set_vec                                 *
+ *===========================================================================*/
+PRIVATE void set_vec(vec_nr, addr)
+int vec_nr;			/* which vector */
+vecaddr_t addr;			/* where to start */
 {
-/* Prepare to reboot the system.  This mainly stops all interrupts.  lock()
- * is not enough since functions may call unlock() (e.g. panic calls printf
- * which calls set_6845 which calls unlock).  Set the 'rebooting' flag to
- * show that the system is unreliable.
- */
+/* Set up a real mode interrupt vector. */
 
-  out_byte(INT_CTLMASK, ~0);
-  rebooting = TRUE;
+  u16_t vec[2];
+
+  /* Build the vector in the array 'vec'. */
+  vec[0] = (u16_t) addr;
+  vec[1] = (u16_t) physb_to_hclick(code_base);
+
+  /* Copy the vector into place. */
+  phys_copy(vir2phys(vec), vec_nr * 4L, 4L);
 }
+#endif /* _WORD_SIZE == 2 */

@@ -17,6 +17,23 @@
  *
  * 11 Oct 88 BDE: Cleaned up baud rates and parity stripping.
  *
+ * 09 Oct 90 MAT (Michael A. Temari): Fixed bug where terminal isn't reset
+ * if an error occurs.
+ *
+ * Nov 90 BDE: Don't broadcast kill(0, SIGINT) since two or more of these
+ * in a row will kill the parent shell.
+ *
+ * 19 Oct 89 RW (Ralf Wenk): Adapted to MINIX ST 1.1 + RS232 driver. Split
+ * error into error_n and error. Added resetting of the terminal settings
+ * in error.
+ *
+ * 24 Nov 90 RW: Adapted to MINIX ST 1.5.10.2. Forked processes are now
+ * doing an exec to get a better performance. This idea is stolen from
+ * a terminal program written by Felix Croes.
+ *
+ * 01 May 91 RW: Merged the MINIX ST patches with Andys current version.
+ * Most of the 19 Oct 89 patches are deleted because they are already there.
+ *
  * Example usage:
  *	term			: baud, bits/char, parity from /dev/tty1
  *	term 9600 7 even	: 9600 baud, 7 bits/char, even parity
@@ -31,11 +48,14 @@
 #include <fcntl.h>
 #include <sgtty.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 
 #define MAXARGS  3		/* maximum number of uart params */
 #define CHUNK 1024		/* how much to read at once */
-#define NULL     0
 
+#if 0
 /* Hack some new baud rates for Minix. Minix uses a divide-by-100 encoding. */
 #define B200     2
 #define B600     6
@@ -44,6 +64,7 @@
 #define B7200   72
 #define B19200 192
 #define EXTA   192
+
 /* We can't handle some standard (slow) V7 speeds and speeds above 25500 since
  * since the speed is packed into a char :-(. Trap them with an illegal value.
  */
@@ -51,9 +72,18 @@
 #define B75      0
 #define B134     0
 #define EXTB     0
+#ifndef B38400
 #define B38400   0
+#endif
+#ifndef B57600
 #define B57600   0
+#endif
+#ifndef B115200
 #define B115200  0
+#endif
+#endif
+
+#define TERM_LINE "/dev/tty1"	/* which serial port to use */
 
 int commfd;			/* open file no. for comm device */
 int readpid;			/* pid of child reading commfd */
@@ -61,12 +91,20 @@ struct sgttyb sgcommfd;		/* saved terminal parameters for commfd */
 struct sgttyb sgstdin;		/* saved terminal parameters for stdin */
 int writepid;			/* pid of child writing commfd */
 
+/* Sequence to leave simulator.  It must arrive in a single read. */
 #if (MACHINE == ATARI)
-char endseq[] = "Ou";	/* sequence to leave simulator */
-#else
-char endseq[] = "\033[G";	/* sequence to leave simulator */
+#if 0
+char endseq[] = "\033OY";	/* 'F10' (pre 1.6.20) */
 #endif
- /* Keypad '5', and must arrive in 1 piece */
+char endseq[] = "\033[20~";	/* 'F10' */
+#endif
+#if (CHIP == INTEL)
+#if 0
+char endseq[] = "\005";		/* Ctrl-E (if no numeric keypad) */
+#endif
+char endseq[] = "\033[G";	/* numeric keypad '5' */
+#endif
+
 struct param_s {
   char *pattern;
   int value;
@@ -113,31 +151,59 @@ struct param_s {
 };
 unsigned char strip_parity = 1;	/* nonzero to strip high bits before output */
 
-int quit();			/* forward declare signal handler */
+_PROTOTYPE(int main, (int argc, char *argv[]));
+_PROTOTYPE(void set_uart, (int argc, char *argv[]));
+_PROTOTYPE(void set_mode, (int fd, int speed, int parity, int bits,
+			   struct sgttyb * sgsavep));
+_PROTOTYPE(void copy, (int in, char *inname, int out,char *outname,char *end));
+_PROTOTYPE(void error, (char *s1, char *s2));
+_PROTOTYPE(void quit, (int dummy));
+_PROTOTYPE(void write2sn, (char *s1, char *s2));
 
-main(argc, argv)
+int main(argc, argv)
 int argc;
 char *argv[];
 {
-  char *commdev = NULL;
+  char *commdev = (char *) NULL;
   int i;
   int pipefd[2];
+#if ( CHIP == M68000 )
+  char in[2], out[2];
+  in[1] = out[1] = '\0';
+
+/* Ugly way to process both hidden special arguments "read" or "write" early
+ * enough. If one of the special arguments is given the other arguments are
+ * ASCII values used by the copy() function. File descriptors are encoded
+ * as characters starting with '0'.
+ */
+  if (argc > 1 &&
+      (strcmp(argv[1], "-read") == 0 || strcmp(argv[1], "-write") == 0))
+	copy(*argv[2] - '0', argv[3], *argv[4] - '0', argv[5], argv[6]);
+#endif
 
   sync();
   for (i = 1; i < argc; ++i)
 	if (argv[i][0] == '/') {
-		if (commdev != NULL)
-			error("Too many communication devices", "");
+		if (commdev != (char *) NULL) {
+			write2sn("Too many communication devices", "");
+			exit(1);
+		}
 		commdev = argv[i];
 	}
-  if (commdev == NULL) {
+  if (commdev == (char *) NULL) {
 	i = MAXARGS + 1;
-	commdev = "/dev/tty1";
+	commdev = TERM_LINE;
   } else
 	i = MAXARGS + 2;
-  if (argc > i) error("Usage: term [baudrate] [data_bits] [parity]", "");
+  if (argc > i) {
+	write2sn("Usage: term [baudrate] [data_bits] [parity]", "");
+	exit(1);
+  }
   commfd = open(commdev, O_RDWR);
-  if (commfd < 0) error("Can't open ", commdev);
+  if (commfd < 0) {
+	write2sn("Can't open ", commdev);
+	exit(1);
+  }
 
   /* Save state of both devices before altering either (may be identical!). */
   ioctl(0, TIOCGETP, &sgstdin);
@@ -156,6 +222,13 @@ char *argv[];
       case 0:
 	/* Piped stdin to tty */
 	close(pipefd[1]);
+#if (CHIP == M68000)
+	in[0] = '0' + pipefd[0];
+	out[0] = '0' + commfd;
+	execlp(argv[0], argv[0], "-write", in, "piped stdin", out, commdev, "",
+	       (char *) NULL);
+	/* If execlp() failed, try the usual way. */
+#endif
 	copy(pipefd[0], "piped stdin", commfd, commdev, "");
   }
   close(pipefd[0]);
@@ -164,15 +237,23 @@ char *argv[];
 	error("Can't create process to read from comm device", "");
       case 0:
 	/* Tty to stdout */
+#if (CHIP == M68000)
+	in[0] = '0' + commfd;
+	out[0] = '0' + 1;
+	execlp(argv[0], argv[0], "-read", in, commdev, out, "stdout", "",
+	       (char *) NULL);
+	/* If execlp() failed, try the usual way. */
+#endif
 	copy(commfd, commdev, 1, "stdout", "");
   }
 
   /* Stdin to pipe */
   copy(0, "stdin", pipefd[1], "redirect stdin", endseq);
+  return(0);
 }
 
 
-set_uart(argc, argv)
+void set_uart(argc, argv)
 int argc;
 char *argv[];
 {
@@ -215,7 +296,8 @@ char *argv[];
 }
 
 
-set_mode(fd, speed, parity, bits, sgsavep)
+void set_mode(fd, speed, parity, bits, sgsavep)
+int fd;
 int speed;
 int parity;
 int bits;
@@ -241,7 +323,7 @@ struct sgttyb *sgsavep;
 }
 
 
-copy(in, inname, out, outname, end)
+void copy(in, inname, out, outname, end)
 int in;
 char *inname;
 int out;
@@ -265,46 +347,48 @@ char *end;
   while (1) {
 	if ((count = read(in, buf, CHUNK)) <= 0) {
 		write2sn("Can't read from ", inname);
-		quit();
+		quit(0);
 	}
-	if (count == len && strncmp(buf, end, count) == 0) quit();
+	if (count == len && strncmp(buf, end, (size_t) count) == 0) quit(0);
 	if (strip_parity) for (bufp = buf, bufend = bufp + count;
 		     bufp < bufend; ++bufp)
 			*bufp &= 0x7F;
-	if (write(out, buf, count) != count) {
+	if (write(out, buf, (size_t) count) != count) {
 		write2sn("Can't write to ", outname);
-		quit();
+		quit(0);
 	}
   }
 }
 
 
-error(s1, s2)
+void error(s1, s2)
 char *s1;
 char *s2;
 {
+  ioctl(commfd, TIOCSETP, &sgcommfd);
+  ioctl(0, TIOCSETP, &sgstdin);
   write2sn(s1, s2);
   exit(1);
 }
 
 
-nicequit()
+void quit(s)
+int s;				/* not used, just to make prototype ok */
 {
+  if (readpid != 0 && writepid != 0) {
+	/* This is the parent of the other two processes.  It cleans up. */
+	ioctl(commfd, TIOCSETP, &sgcommfd);
+	ioctl(0, TIOCSETP, &sgstdin);
+	kill(readpid, SIGINT);
+	kill(writepid, SIGINT);
+  }
   exit(0);
 }
 
 
-quit()
-{
-  ioctl(commfd, TIOCSETP, &sgcommfd);
-  ioctl(0, TIOCSETP, &sgstdin);
-  signal(SIGINT, nicequit);	/* if not caught, sh prints extra newline */
-  kill(0, SIGINT);
-  nicequit();
-}
-
-
-write2sn(s1, s2)
+void write2sn(s1, s2)
+char *s1;
+char *s2;
 {
   write(1, s1, strlen(s1));
   write(1, s2, strlen(s2));

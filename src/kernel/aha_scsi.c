@@ -46,14 +46,14 @@
  *
  * The file contains one entry point:
  *
- *   scsi_task:		main entry when system is brought up
+ *   aha_scsi_task:	main entry when system is brought up
  *
  *
  * Changes:
  *	 5 May 1992 by Kees J. Bot: device dependent/independent split.
  *	 7 Jul 1992 by Kees J. Bot: speedup & features.
- *	28 Dec 1992 by Kees J. Bot: completely remodeled & virtual memory
- *	15 Nov 1994 by Kees J. Bot: dressed down for standard Minix
+ *	28 Dec 1992 by Kees J. Bot: completely remodeled & virtual memory.
+ *	18 Sep 1994 by Kees J. Bot: removed "send 2 commands at once" junk.
  */
 #include "kernel.h"
 #include "driver.h"
@@ -61,10 +61,13 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/mtio.h>
+#include "assert.h"
+INIT_ASSERT
+
 
 #ifndef AHA_DEBUG
 #define AHA_DEBUG	0	/* 1=print all SCSI errors | 2=dump ccb
-				 * 4=show window | 8=dump scsi cmd
+				 * 4=show request | 8=dump scsi cmd
 				 */
 #endif
 
@@ -104,6 +107,15 @@
 #define AHA_HACC	0x04	/* bit 2 - Host Adapter Command Complete */
 #define AHA_MBOE	0x02	/* bit 1 - Mailbox Out Empty */
 #define AHA_MBIF	0x01	/* bit 0 - Mailbox In Full */
+
+/* AHA board models */
+#define AHA1540		0x30
+#define AHA1540A	0x41
+#define AHA1640		0x42
+#define AHA1740		0x43
+#define AHA1540C	0x44
+#define AHA1540CF	0x45
+#define BT545		0x20	/* BusLogic */
 
 /* AHA Command Codes */
 #define AHACOM_INITBOX		0x01	/* Mailbox Initialization */
@@ -280,17 +292,6 @@ typedef struct {
 } ccb_t;
 
 
-/* The "number of windows" tells the number of commands that are computed
- * before the device is accessed.  Two is enough to have one under execution
- * and one pending.  Only if your machine is dead slow does it pay to
- * increase it.  (The name "window" is used because one is usally looking
- * through a window of 16 elements at the I/O vector.)
- */
-#define NR_WINDOWS	2
-
-/* Max length of a scatter/gather list, wish it were four times as much. */
-#define DMA_LIST_MAX	16
-
 	/* End of one chunk must be as "odd" as the start of the next. */
 #define DMA_CHECK(end, start)	((((int) (end) ^ (int) (start)) & 1) == 0)
 
@@ -360,15 +361,6 @@ PRIVATE struct scsi {	/* Per-device table */
 #define DS_ERR		1	/* Error state */
 #define DS_EOF		2	/* Last read or space hit EOF */
 
-/* Maximum request that can be given to a tape.  The limit is only really
- * there for a virtual memory system, but if one wants to exchange tapes...
- */
-#if _WORD_SIZE > 2
-#define COUNT_MAX	((DMA_LIST_MAX-1) * 4096)
-#else
-#define COUNT_MAX	((unsigned) INT_MAX)
-#endif
-
 /* SCSI device types */
 PRIVATE char *scsi_devstr[SCSI_DEVMAX+1] = {
   "DISK", "TAPE", "PRINTER", "CPU", "WORM", "CDROM", "SCANNER", "OPTICAL",
@@ -390,28 +382,27 @@ PRIVATE char *str_scsi_sense[] = {
 #define sense_serious(key)	((0xFE1C & (1 << (key))) != 0)
 #endif
 
-/* All window related variables. */
-typedef struct window {
+/* Administration for one SCSI request. */
+typedef struct request {
   unsigned count;		/* number of bytes to transfer */
+  unsigned retry;		/* number of tries allowed if retryable */
   unsigned long pos;		/* first byte on the device to transfer */
   ccb_t ccb;			/* Command Control Block */
-  phys_bytes ccb_phys;		/* phys address of ccb */
-  mailbox_t *outbox;		/* out-mailbox for this ccb */
-  dma_t dmalist[DMA_LIST_MAX];	/* scatter/gather dma list */
-  struct iorequest_s *iov[DMA_LIST_MAX];	/* affected I/O requests */
-  phys_bytes dmalist_phys;	/* phys address of dmalist */
-} window_t;
+  dma_t dmalist[NR_IOREQS];	/* scatter/gather dma list */
+  dma_t *dmaptr;		/* to add scatter/gather entries */
+  dma_t *dmalimit;		/* adapter model dependent limit to list */
+  struct iorequest_s *iov[NR_IOREQS];	/* affected I/O requests */
+} request_t;
 
-PRIVATE window_t window[NR_WINDOWS], *outw = window, *inw = window;
+PRIVATE request_t request;
+#define rq (&request)		/* current request (there is only one) */
 
-#define nextwin(pw)	\
-	(void)(++*(pw) == window + NR_WINDOWS ? *(pw) = window : 0)
-
-#define ccb_cmd0	(* (cdb0_t *) outw->ccb.cmd)
-#define ccb_cmd1	(* (cdb1_t *) outw->ccb.cmd)
-#define ccb_sense	(* (sense_t *) (inw->ccb.cmd + inw->ccb.cmdlen))
+#define ccb_cmd0(rq)	(* (cdb0_t *) (rq)->ccb.cmd)
+#define ccb_cmd1(rq)	(* (cdb1_t *) (rq)->ccb.cmd)
+#define ccb_sense(rq)	(* (sense_t *) ((rq)->ccb.cmd + (rq)->ccb.cmdlen))
 
 PRIVATE int aha_basereg;	/* base I/O register */
+PRIVATE int aha_model;		/* board model */
 PRIVATE struct scsi *s_sp;	/* active SCSI device struct */
 PRIVATE struct device *s_dv;	/* active partition */
 PRIVATE int s_type;		/* sd, rst, nrst? */
@@ -420,15 +411,8 @@ PRIVATE unsigned long s_buf_pos;  /* disk postition of bytes in tmp_buf */
 PRIVATE int s_opcode;		/* DEV_READ or DEV_WRITE */
 PRIVATE int s_must;		/* must finish the current request? */
 PRIVATE int aha_irq;		/* configured IRQ */
-PRIVATE mailbox_t mailbox[2][NR_WINDOWS]; /* out and in mailboxes */
+PRIVATE mailbox_t mailbox[2];	/* out and in mailboxes */
 PRIVATE inquiry_t inqdata;	/* results of Inquiry command */
-PRIVATE dma_t *dmaptr;		/* to add scatter/gather entries */
-PRIVATE int pending = 0;	/* number of outstanding SCSI requests */
-
-
-/* Phys address and length of the current scatter/gather list. */
-#define list_phys()	(outw->dmalist_phys)
-#define list_length()	((byte *) dmaptr - (byte *) outw->dmalist)
 
 
 /* Functions */
@@ -442,20 +426,15 @@ FORWARD _PROTOTYPE( int scsi_inquiry, (void) );
 FORWARD _PROTOTYPE( int scsi_ndisk, (void) );
 FORWARD _PROTOTYPE( int scsi_ntape, (void) );
 FORWARD _PROTOTYPE( int s_schedule, (int proc_nr, struct iorequest_s *iop) );
-FORWARD _PROTOTYPE( int s_1schedule, (void) );
-FORWARD _PROTOTYPE( int s_1finish, (void) );
+FORWARD _PROTOTYPE( int s_finish, (void) );
 FORWARD _PROTOTYPE( int s_rdcdrom, (int proc_nr, struct iorequest_s *iop,
 		unsigned long pos, unsigned nbytes, phys_bytes user_phys) );
-FORWARD _PROTOTYPE( int s_finish, (void) );
-FORWARD _PROTOTYPE( void s_cleanup, (void) );
 FORWARD _PROTOTYPE( int s_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int s_do_ioctl, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int scsi_simple, (int opcode, int count) );
 FORWARD _PROTOTYPE( void group0, (void) );
 FORWARD _PROTOTYPE( void group1, (void) );
-FORWARD _PROTOTYPE( void scsi_schedule, (int checkbits, phys_bytes data,
-							vir_bytes len) );
-FORWARD _PROTOTYPE( int scsi_finish, (void) );
+FORWARD _PROTOTYPE( int scsi_command, (phys_bytes data, vir_bytes len) );
 FORWARD _PROTOTYPE( void aha_command, (int outlen, byte *outptr,
 						int inlen, byte *inptr) );
 FORWARD _PROTOTYPE( int aha_reset, (void) );
@@ -468,6 +447,7 @@ FORWARD _PROTOTYPE( u16_t b2h16, (big16 b) );
 FORWARD _PROTOTYPE( u32_t b2h24, (big24 b) );
 FORWARD _PROTOTYPE( u32_t b2h32, (big32 b) );
 
+
 #if AHA_DEBUG & 2
 FORWARD _PROTOTYPE( void errordump, (void) );
 #else
@@ -475,9 +455,9 @@ FORWARD _PROTOTYPE( void errordump, (void) );
 #endif
 
 #if AHA_DEBUG & 4
-FORWARD _PROTOTYPE( void show_win, (void) );
+FORWARD _PROTOTYPE( void show_req, (void) );
 #else
-#define show_win()
+#define show_req()
 #endif
 
 #if AHA_DEBUG & 8
@@ -498,35 +478,37 @@ PRIVATE struct driver s_dtab = {
   s_prepare,	/* prepare for I/O on a given minor device */
   s_schedule,	/* precompute SCSI transfer parameters, etc. */
   s_finish,	/* do the I/O */
-  s_cleanup,	/* remove pending requests after an error */
+  nop_cleanup,	/* no cleanup needed */
   s_geometry	/* tell the geometry of the disk */
 };
 
 
 /*===========================================================================*
- *				scsi_task				     *
+ *				aha_scsi_task				     *
  *===========================================================================*/
-PUBLIC void scsi_task()
+PUBLIC void aha_scsi_task()
 {
 /* Set target and logical unit numbers, then call the generic main loop. */
   int i;
-  long id;
+  struct scsi *sp;
+  long v;
   char *name;
   static char fmt[] = "d,d";
 
   for (i = 0; i < MAX_DEVICES; i++) {
 	(void) s_prepare(i * DEV_PER_DRIVE);
+	sp = s_sp;
 
-	/* Look into the environment for an override of address (i, 0). */
+	/* Look into the environment for special parameters. */
 	name = s_name();
 
-	id = i;
-	(void) env_parse(name, fmt, 0, &id, 0L, 7L);
-	s_sp->targ = id;
+	v = i;
+	(void) env_parse(name, fmt, 0, &v, 0L, 7L);
+	sp->targ = v;
 
-	id = 0;
-	(void) env_parse(name, fmt, 1, &id, 0L, 7L);
-	s_sp->lun = id;
+	v = 0;
+	(void) env_parse(name, fmt, 1, &v, 0L, 7L);
+	sp->lun = v;
   }
   driver_task(&s_dtab);
 }
@@ -539,6 +521,10 @@ PRIVATE struct device *s_prepare(device)
 int device;
 {
 /* Prepare for I/O on a device. */
+
+  rq->count = 0;	/* no requests as yet */
+  s_must = TRUE;	/* the first transfers must be done */
+  s_buf_pos = -1;	/* invalidate s_buf_pos */
 
   if (device < NR_DISKDEVS) {			/* sd0, sd1, ... */
 	s_type = TYPE_SD;
@@ -556,11 +542,9 @@ int device;
 	s_type = device & 1 ? TYPE_RST : TYPE_NRST;
 	s_sp = &scsi[device >> 1];
 	s_dv = &s_sp->dummypart;
-  } else
+  } else {
 	return(NIL_DEV);
-
-  s_must = TRUE;	/* the first transfers must be done */
-  s_buf_pos = -1;	/* invalidate s_buf_pos */
+  }
 
   return(s_dv);
 }
@@ -604,7 +588,6 @@ struct driver *dp;
 message *m_ptr;
 {
   struct scsi *sp;
-  byte cmd[1], haidata[4], getcdata[3];
   int r;
 
   if (aha_irq == 0 && !aha_reset()) return(EIO); /* no controller, forget it */
@@ -648,6 +631,7 @@ PRIVATE int scsi_probe()
 {
 /* See if a device exists and if it is ready. */
   struct scsi *sp = s_sp;
+  sense_t *sense;
   int r, key;
 
   /* Something out there? */
@@ -688,7 +672,8 @@ PRIVATE int scsi_probe()
 		/* Look at the additional sense data to see why it isn't
 		 * ready.
 		 */
-		switch ((ccb_sense.add_code << 8) | ccb_sense.add_qual) {
+		sense = &ccb_sense(rq);
+		switch ((sense->add_code << 8) | sense->add_qual) {
 		case 0x0401:
 			/* "It is becoming ready."  Fine, we wait. */
 			milli_delay(1000);
@@ -751,9 +736,6 @@ PRIVATE int scsi_probe()
 		return(EIO);
 	}
   }
-
-  /* Finally we recognize its existence. */
-  sp->state |= S_PRESENT|S_READY;
   return(OK);
 }
 
@@ -771,12 +753,12 @@ PRIVATE int scsi_sense()
    */
   key = scsi_simple(SCSI_REQSENSE, sizeof(sense_t));
 
-  if (inw->ccb.hastat == HST_TIMEOUT) return(ENXIO);	/* nothing there */
-  if (inw->ccb.hastat != 0) return(EIO);		/* something very bad */
+  if (rq->ccb.hastat == HST_TIMEOUT) return(ENXIO);	/* nothing there */
+  if (rq->ccb.hastat != 0) return(EIO);		/* something very bad */
 
   /* There is something out there for sure. */
   if (key == SENSE_UNIT_ATT || sense_key(sense->key) == SENSE_UNIT_ATT) {
-	/* Device is a "look at me" state, probably changed media. */
+	/* Device is in a "look at me" state, probably changed media. */
 	s_sp->state &= ~S_READY;
   }
   return(OK);
@@ -839,11 +821,10 @@ PRIVATE int scsi_ndisk()
 
   /* Get drive capacity and block size. */
   group1();
-  outw->ccb.opcode = CCB_INIT;
-  ccb_cmd1.scsi_op = SCSI_CAPACITY;
-  scsi_schedule(CCB_NOCHECK, tmp_phys, 8);
+  rq->ccb.opcode = CCB_INIT;
+  ccb_cmd1(rq).scsi_op = SCSI_CAPACITY;
 
-  if (scsi_finish() == SENSE_NO_SENSE) {
+  if (scsi_command(tmp_phys, 8) == SENSE_NO_SENSE) {
 	capacity = b2h32(buf + 0) + 1;
 	block_size = b2h32(buf + 4);
 	printf("%s: capacity %lu x %lu bytes\n",
@@ -863,7 +844,7 @@ PRIVATE int scsi_ndisk()
   /* Keep it within reach of a group 0 command. */
   sp->count_max = 0x100 * block_size;
 #else
-  sp->count_max = block_size >= 0x100 ? -1 : 0x100 * block_size;
+  sp->count_max = block_size > UINT_MAX/0x100 ? UINT_MAX : 0x100 * block_size;
 #endif
 
   /* The fun ends at 4GB. */
@@ -871,6 +852,9 @@ PRIVATE int scsi_ndisk()
 	sp->part[0].dv_size = -1;
   else
 	sp->part[0].dv_size = capacity * block_size;
+
+  /* Finally we recognize its existence. */
+  sp->state |= S_PRESENT|S_READY;
 
   return(OK);
 }
@@ -914,17 +898,13 @@ PRIVATE int scsi_ntape()
 	sp->tfixed = TRUE;
 	sp->block_size = minblk;
 	sp->tstat.mt_blksize = minblk;
-	/* Count_max is the maximum single request that can be issued to the
-	 * drive, it is the number of blocks an s/g vector can hold.
-	 */
-	sp->count_max = COUNT_MAX / minblk * minblk;
+	sp->count_max = UINT_MAX;
   } else {
 	/* Variable block length. */
 	sp->tfixed = FALSE;
 	sp->block_size = 1;
 	sp->tstat.mt_blksize = 0;
-	if (maxblk == 0 || maxblk > COUNT_MAX) maxblk = COUNT_MAX;
-	sp->count_max = maxblk;
+	sp->count_max = maxblk == 0 ? UINT_MAX : maxblk;
   }
 
   /* SCSI modesense. */
@@ -943,6 +923,7 @@ PRIVATE int scsi_ntape()
 	printf(sp->tfixed ? "%lu\n" : "variable\n", b2h24(buf + 4 + 5));
   }
 
+  sp->state |= S_PRESENT|S_READY;
   return(OK);
 }
 
@@ -961,7 +942,7 @@ struct iorequest_s *iop;	/* pointer to read or write request */
   int r, opcode, spanning;
   unsigned nbytes, count;
   unsigned long pos;
-  phys_bytes user_phys;
+  phys_bytes user_phys, dma_phys;
   static unsigned dma_count;
   static struct iorequest_s **iopp;	/* to add I/O request pointers */
   static phys_bytes dma_last;	/* address of end of the last added entry */
@@ -1010,9 +991,12 @@ struct iorequest_s *iop;	/* pointer to read or write request */
 	return(iop->io_nbytes = EIO);
   }
 
-  if (outw->count > 0 && pos != s_nextpos) {
+  /* Probe a device that isn't ready. */
+  if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
+
+  if (rq->count > 0 && pos != s_nextpos) {
 	/* This new request can't be chained to the job being built. */
-	if ((r = s_1schedule()) != OK) return(r);
+	if ((r = s_finish()) != OK) return(r);
   }
 
   /* The next consecutive block starts at byte position... */
@@ -1022,59 +1006,46 @@ struct iorequest_s *iop;	/* pointer to read or write request */
 
   /* While there are "unscheduled" bytes in the request: */
   do {
-	if (outw->count > 0 && (
-		outw->count == sp->count_max
-		|| dmaptr == outw->dmalist + DMA_LIST_MAX
-		|| !DMA_CHECK(dma_last, user_phys)
+	dma_phys = user_phys;
+
+	if (rq->count > 0 && (
+		rq->count == sp->count_max
+		|| rq->dmaptr == rq->dmalimit
+		|| !DMA_CHECK(dma_last, dma_phys)
 	)) {
-		/* This request can not be added to the scatter/gather list.
-		 * Round outw->count down to a block sized multiple, this may
-		 * require the removal of a transfer entry on a page break
-		 * (virtual memory).
-		 */
-		if ((count = outw->count % sp->block_size) > 0) {
-			/* Don't do these bytes yet. */
-			outw->count -= count;
-			pos -= count;
-			user_phys -= count;
-			nbytes += count;
-			if ((dma_count -= count) > 0) {
-				h2b24(dmaptr[-1].datalen, (u32_t) dma_count);
-			} else {
-				dmaptr--;
-			}
-		}
-		if ((r = s_1schedule()) != OK) return(r);
+		/* This request can not be added to the scatter/gather list. */
+		if ((r = s_finish()) != OK) return(r);
 		s_must = spanning;
 
 		continue;	/* try again */
 	}
 
-	if (outw->count == 0) {
+	if (rq->count == 0) {
 		/* The first request in a row, initialize. */
-		outw->pos = pos;
+		rq->pos = pos;
 		s_opcode = opcode;
-		iopp = outw->iov;
-		dmaptr = outw->dmalist;
+		iopp = rq->iov;
+		rq->dmaptr = rq->dmalist;
+		rq->retry = 2;
 	}
 
-	count = nbytes;		/* what page boundary? */
+	count = nbytes;
 
 	/* Don't exceed the maximum transfer count. */
-	if (outw->count + count > sp->count_max)
-		count = sp->count_max - outw->count;
+	if (rq->count + count > sp->count_max)
+		count = sp->count_max - rq->count;
 
 	/* New scatter/gather entry. */
-	h2b24(dmaptr->dataptr, user_phys);
-	h2b24(dmaptr->datalen, (u32_t) (dma_count = count));
-	dma_last = user_phys + count;
-	dmaptr++;
+	h2b24(rq->dmaptr->dataptr, dma_phys);
+	h2b24(rq->dmaptr->datalen, (u32_t) (dma_count = count));
+	rq->dmaptr++;
+	dma_last = dma_phys + count;
 
 	/* Which I/O request? */
 	*iopp++ = iop;
 
 	/* Update counters. */
-	outw->count += count;
+	rq->count += count;
 	pos += count;
 	user_phys += count;
 	nbytes -= count;
@@ -1088,111 +1059,88 @@ struct iorequest_s *iop;	/* pointer to read or write request */
 
 
 /*===========================================================================*
- *				s_1schedule				     *
+ *				s_finish				     *
  *===========================================================================*/
-PRIVATE int s_1schedule()
+PRIVATE int s_finish()
 {
-/* Send the I/O requests gathered in *outw to the host adapter. */
+/* Send the I/O requests gathered in *rq to the host adapter. */
 
   struct scsi *sp = s_sp;
   unsigned long block;
+  struct iorequest_s **iopp, *iop;
+  int key;
 
-  show_win();
+  if (rq->count == 0) return(OK);	/* spurious finish */
+
+  show_req();
 
   /* If all the requests are optional then don't do just a few. */
-  if (!s_must && dmaptr < outw->dmalist + DMA_LIST_MAX/2) {
-	outw->count = 0;
+  if (!s_must && rq->count < 0x2000) {
+	rq->count = 0;
 	return(OK);
   }
 
+  iopp = rq->iov;
+  iop = *iopp++;
+
+retry:
   switch (sp->devtype) {
   case SCSI_DEVCDROM:
   case SCSI_DEVWORM:
   case SCSI_DEVDISK:
 	/* A read or write SCSI command for a random access device. */
-	block = outw->pos / sp->block_size;
+	block = rq->pos / sp->block_size;
 
 	if (block < (1L << 21)) {
 		/* We can use a group 0 command for small disks. */
 		group0();
-		outw->ccb.opcode = CCB_SCATTER;
-		ccb_cmd0.scsi_op =
+		rq->ccb.opcode = CCB_SCATTER;
+		ccb_cmd0(rq).scsi_op =
 			s_opcode == DEV_WRITE ? SCSI_WRITE : SCSI_READ;
-		h2b24(ccb_cmd0.lba, block);
-		ccb_cmd0.nblocks = outw->count / sp->block_size;
+		h2b24(ccb_cmd0(rq).lba, block);
+		ccb_cmd0(rq).nblocks = rq->count / sp->block_size;
 	} else {
 		/* Large disks require a group 1 command. */
 		group1();
-		outw->ccb.opcode = CCB_SCATTER;
-		ccb_cmd1.scsi_op =
+		rq->ccb.opcode = CCB_SCATTER;
+		ccb_cmd1(rq).scsi_op =
 			s_opcode == DEV_WRITE ? SCSI_WRITE1 : SCSI_READ1;
-		h2b32(ccb_cmd1.lba, block);
-		h2b16(ccb_cmd1.nblocks, outw->count / sp->block_size);
+		h2b32(ccb_cmd1(rq).lba, block);
+		h2b16(ccb_cmd1(rq).nblocks, rq->count / sp->block_size);
 	}
 
-	scsi_schedule(s_opcode == DEV_READ ? CCB_INCHECK : CCB_OUTCHECK,
-						list_phys(), list_length());
+	key = scsi_command(0L, 0);
 
-	/* If not out of windows then exit early to compute another command. */
-	if (pending < NR_WINDOWS) return(OK);
+	if (key == SENSE_NO_SENSE) {
+		/* fine */;
+	} else
+	if (key == SENSE_UNIT_ATT) {
+		/* Check condition?  Bus reset most likely.  Retry? */
+		if (--rq->retry > 0) goto retry;
+		return(iop->io_nbytes = EIO);
+	} else
+	if (key == SENSE_RECOVERED) {
+		/* Disk drive managed to recover from a read error. */
+		printf("%s: soft read error at block %lu (recovered)\n",
+			s_name(), b2h32(ccb_sense(rq).info));
+		key = SENSE_NO_SENSE;
+		break;
+	} else {
+		/* A fatal error occurred, bail out. */
+		return(iop->io_nbytes = EIO);
+	}
 	break;
 
   case SCSI_DEVTAPE:
 	/* A read or write SCSI command for a sequential access device. */
 	group0();
-	outw->ccb.opcode = CCB_SCATTER;
-	ccb_cmd0.scsi_op = s_opcode == DEV_WRITE ? SCSI_WRITE : SCSI_READ;
-	ccb_cmd0.fixed = sp->tfixed;
-	h2b24(ccb_cmd0.trlength, outw->count / sp->block_size);
+	rq->ccb.opcode = CCB_SCATTER;
+	ccb_cmd0(rq).scsi_op = s_opcode == DEV_WRITE ? SCSI_WRITE : SCSI_READ;
+	ccb_cmd0(rq).fixed = sp->tfixed;
+	h2b24(ccb_cmd0(rq).trlength, rq->count / sp->block_size);
 
-	scsi_schedule(s_opcode == DEV_READ ? CCB_INCHECK : CCB_OUTCHECK,
-						list_phys(), list_length());
-  }
-  /* If out of windows (a disk) or if it is a tape device then wait for
-   * a command to finish.  A tape, other then a disk, can't have more than
-   * one outstanding request, because the first request may hit EOF.
-   */
-  return(s_1finish());
-}
+	key = scsi_command(0L, 0);
 
-
-/*===========================================================================*
- *				s_1finish				     *
- *===========================================================================*/
-PRIVATE int s_1finish()
-{
-/* Collect the results of a s_1schedule call. */
-
-  struct scsi *sp = s_sp;
-  struct iorequest_s **iopp, *iop;
-  unsigned count;
-  int key;
-
-  key = scsi_finish();
-  count = inw->count;
-  inw->count = 0;	/* <<< This is important, it defuses the request! */
-  iopp = inw->iov;
-  iop = *iopp++;
-
-  switch (sp->devtype) {
-  case SCSI_DEVCDROM:
-  case SCSI_DEVWORM:
-  case SCSI_DEVDISK:
-	if (key != SENSE_NO_SENSE) {
-		if (key == SENSE_RECOVERED) {
-			/* Disk drive managed to recover from a read error. */
-			printf("%s: soft read error at block %lu (recovered)\n",
-				s_name(), b2h32(ccb_sense.info));
-			key = SENSE_NO_SENSE;
-			break;
-		} else {
-			/* A fatal error occurred, bail out. */
-			return(iop->io_nbytes = EIO);
-		}
-	}
-	break;
-
-  case SCSI_DEVTAPE:
 	if (key != SENSE_NO_SENSE) {
 		/* Either at EOF or EOM, or an I/O error. */
 
@@ -1202,11 +1150,12 @@ PRIVATE int s_1finish()
 			sp->tstat.mt_dsreg = DS_EOF;
 
 			/* The residual tells how much has not been read. */
-			count -= sp->tstat.mt_resid * sp->block_size;
+			rq->count -= sp->tstat.mt_resid * sp->block_size;
 
 			if (sense_eof(key)) {
 				/* Went over a filemark. */
-				sp->tstat.mt_blkno = -1;
+				sp->tstat.mt_blkno = !sp->tfixed ? -1 :
+					- (int) (rq->count / sp->block_size);
 				sp->tstat.mt_fileno++;
 			}
 		}
@@ -1218,7 +1167,7 @@ PRIVATE int s_1finish()
 				return(iop->io_nbytes = EIO);
 			}
 			/* Small block read, this is ok. */
-			count -= sp->tstat.mt_resid;
+			rq->count -= sp->tstat.mt_resid;
 			sp->tstat.mt_dsreg = DS_OK;
 		}
 		if (key == SENSE_RECOVERED) {
@@ -1236,23 +1185,28 @@ PRIVATE int s_1finish()
 	} else {
 		sp->tstat.mt_dsreg = DS_OK;
 	}
-	if (sp->tstat.mt_blkno == -1 || !sp->tfixed) {
-		/* EOF or a variable block length tape. */
+	if (!sp->tfixed) {
+		/* Variable block length tape reads record by record. */
 		sp->tstat.mt_blkno++;
 	} else {
 		/* Fixed length tape, multiple blocks transferred. */
-		sp->tstat.mt_blkno += count / sp->block_size;
+		sp->tstat.mt_blkno += rq->count / sp->block_size;
 	}
 	sp->need_eof = (s_opcode == DEV_WRITE);
+	break;
+
+  default:
+	assert(0);
   }
 
   /* Remove bytes transferred from the I/O requests. */
   for (;;) {
-	if (count > iop->io_nbytes) {
-		count -= iop->io_nbytes;
+	if (rq->count > iop->io_nbytes) {
+		rq->count -= iop->io_nbytes;
 		iop->io_nbytes = 0;
 	} else {
-		iop->io_nbytes -= count;
+		iop->io_nbytes -= rq->count;
+		rq->count = 0;
 		break;
 	}
 	iop = *iopp++;
@@ -1275,19 +1229,19 @@ phys_bytes user_phys;		/* user address */
  * virtual block size, but many don't support it.  So we use this function.
  */
   struct scsi *sp = s_sp;
-  int r;
+  int r, key;
   unsigned count;
+  unsigned long block;
 
-  /* Only do reads. */
-  if ((iop->io_request & ~OPTIONAL_IO) != DEV_READ)
-	return(iop->io_nbytes = EINVAL);
+  /* Only do read-only devices. */
+  if (!(sp->state & S_RDONLY)) return(iop->io_nbytes = EINVAL);
+
+  /* Finish any outstanding I/O. */
+  if ((r = s_finish()) != OK) return(r);
 
   do {
 	/* Probe a device that isn't ready. */
 	if (!(sp->state & S_READY) && scsi_probe() != OK) return(EIO);
-
-	/* Finish any outstanding I/O. */
-	if ((r = s_finish()) != OK) return(r);
 
 	if (s_buf_pos <= pos && pos < s_buf_pos + sp->block_size) {
 		/* Some of the requested bytes are in the buffer. */
@@ -1298,47 +1252,26 @@ phys_bytes user_phys;		/* user address */
 		pos += count;
 		user_phys += count;
 		nbytes -= count;
+		iop->io_nbytes -= count;
 	} else {
-		/* Set up a read of one block around the bytes wanted. */
-		outw->pos = s_buf_pos = pos - (pos % sp->block_size);
-		outw->count = sp->block_size;
-		s_opcode = DEV_READ;
-		h2b24(outw->dmalist[0].dataptr, tmp_phys);
-		h2b24(outw->dmalist[0].datalen, (u32_t) sp->block_size);
-		dmaptr = outw->dmalist + 1;
-		outw->iov[0] = iop;
-		s_must = TRUE;
+		/* Read a block that contains (some of) the bytes wanted. */
+		block = pos / sp->block_size;
+		group1();
+		rq->ccb.opcode = CCB_INIT;
+		ccb_cmd1(rq).scsi_op = SCSI_READ1;
+		h2b32(ccb_cmd1(rq).lba, block);
+		h2b16(ccb_cmd1(rq).nblocks, 1);
+		rq->retry = 2;
+		do {
+			key = scsi_command(tmp_phys, sp->block_size);
+		} while (key == SENSE_UNIT_ATT && --rq->retry > 0);
+
+		if (key != SENSE_NO_SENSE) return(iop->io_nbytes = EIO);
+
+		s_buf_pos = block * sp->block_size;
 	}
   } while (nbytes > 0);
   return(OK);
-}
-
-
-/*===========================================================================*
- *				s_finish				     *
- *===========================================================================*/
-PRIVATE int s_finish()
-{
-/* Execute the last dangling requests. */
-
-  int r;
-
-  if (outw->count > 0 && (r = s_1schedule()) != OK) return(r);
-
-  while (pending > 0) if ((r = s_1finish()) != OK) return(r);
-
-  return(OK);
-}
-
-
-/*===========================================================================*
- *				s_cleanup				     *
- *===========================================================================*/
-PRIVATE void s_cleanup()
-{
-/* Get rid of pending requests left over after an error. */
-
-  while (pending > 0) (void) s_1finish();
 }
 
 
@@ -1471,6 +1404,7 @@ message *m_ptr;
 			if (scsi_simple(SCSI_ERASE, 1) != SENSE_NO_SENSE)
 				return(EIO);
 			/* Rewind once more. */
+			/*FALL THROUGH*/
 		case MTREW:
 			if (scsi_simple(SCSI_REWIND, 0) != SENSE_NO_SENSE)
 				return(EIO);
@@ -1485,15 +1419,15 @@ message *m_ptr;
 	case MTBSR:
 		if (sp->tstat.mt_dsreg == DS_ERR) return(EIO);
 		group0();
-		outw->ccb.opcode = CCB_INIT;
-		ccb_cmd0.scsi_op = SCSI_SPACE;
+		rq->ccb.opcode = CCB_INIT;
+		ccb_cmd0(rq).scsi_op = SCSI_SPACE;
 		delta = op.mt_count;
 		if (op.mt_op == MTBSR) delta = -delta;
 		if (op.mt_op == MTBSF) delta = -delta - 1;
-		h2b24(ccb_cmd0.trlength, delta);
-		ccb_cmd0.fixed = op.mt_op == MTFSR || op.mt_op == MTBSR ? 0 : 1;
-		scsi_schedule(CCB_NOCHECK, 0L, 0);
-		if ((key = scsi_finish()) != SENSE_NO_SENSE) {
+		h2b24(ccb_cmd0(rq).trlength, delta);
+		ccb_cmd0(rq).fixed =
+				op.mt_op == MTFSR || op.mt_op == MTBSR ? 0 : 1;
+		if ((key = scsi_command(0L, 0)) != SENSE_NO_SENSE) {
 			if (sense_key(key) != SENSE_NO_SENSE) return(EIO);
 
 			if (sense_eom(key)) {
@@ -1510,14 +1444,17 @@ message *m_ptr;
 			}
 			if (sense_eof(key)) {
 				/* Reaching a filemark. */
-				if (op.mt_op == MTBSR) {
-					/* Not backwards please! */
-					return(EIO);
-				}
 				sp->tstat.mt_dsreg = DS_EOF;
-				sp->tstat.mt_blkno = 0;
-				sp->tstat.mt_fileno++;
 				sp->at_eof = TRUE;
+				if (op.mt_op == MTFSR) {
+					/* Forwards. */
+					sp->tstat.mt_blkno = 0;
+					sp->tstat.mt_fileno++;
+				} else {
+					/* Backwards (bad idea!) */
+					sp->tstat.mt_blkno = -1;
+					sp->tstat.mt_fileno--;
+				}
 			}
 		} else {
 			if (op.mt_op == MTFSR || op.mt_op == MTBSR) {
@@ -1529,12 +1466,11 @@ message *m_ptr;
 			if (op.mt_op == MTBSF) {
 				/* n+1 backwards, and 1 forward. */
 				group0();
-				outw->ccb.opcode = CCB_INIT;
-				ccb_cmd0.scsi_op = SCSI_SPACE;
-				h2b24(ccb_cmd0.trlength, 1L);
-				ccb_cmd0.fixed = 1;
-				scsi_schedule(CCB_NOCHECK, 0L, 0);
-				if (scsi_finish() != SENSE_NO_SENSE)
+				rq->ccb.opcode = CCB_INIT;
+				ccb_cmd0(rq).scsi_op = SCSI_SPACE;
+				h2b24(ccb_cmd0(rq).trlength, 1L);
+				ccb_cmd0(rq).fixed = 1;
+				if (scsi_command(0L, 0) != SENSE_NO_SENSE)
 					return(EIO);
 				sp->tstat.mt_fileno++;
 			}
@@ -1547,11 +1483,10 @@ message *m_ptr;
 		if (op.mt_count < 0) return(EIO);
 		if (op.mt_count == 0) return(OK);
 		group0();
-		outw->ccb.opcode = CCB_INIT;
-		ccb_cmd0.scsi_op = SCSI_WREOF;
-		h2b24(ccb_cmd0.trlength, op.mt_count);
-		scsi_schedule(CCB_NOCHECK, 0L, 0);
-		if (scsi_finish() != SENSE_NO_SENSE) return(EIO);
+		rq->ccb.opcode = CCB_INIT;
+		ccb_cmd0(rq).scsi_op = SCSI_WREOF;
+		h2b24(ccb_cmd0(rq).trlength, op.mt_count);
+		if (scsi_command(0L, 0) != SENSE_NO_SENSE) return(EIO);
 		sp->tstat.mt_dsreg = DS_OK;
 		sp->tstat.mt_blkno = 0;
 		sp->tstat.mt_fileno += op.mt_count;
@@ -1562,12 +1497,11 @@ message *m_ptr;
 		if (sp->tstat.mt_dsreg == DS_ERR) return(EIO);
 		do {
 			group0();
-			outw->ccb.opcode = CCB_INIT;
-			ccb_cmd0.scsi_op = SCSI_SPACE;
-			h2b24(ccb_cmd0.trlength, 0x7FFFFF);
-			ccb_cmd0.fixed = 1;
-			scsi_schedule(CCB_NOCHECK, 0L, 0);
-			key = scsi_finish();
+			rq->ccb.opcode = CCB_INIT;
+			ccb_cmd0(rq).scsi_op = SCSI_SPACE;
+			h2b24(ccb_cmd0(rq).trlength, 0x7FFFFF);
+			ccb_cmd0(rq).fixed = 1;
+			key = scsi_command(0L, 0);
 			sp->tstat.mt_blkno = 0;
 			sp->tstat.mt_fileno += 0x7FFFFF;
 			if (key != SENSE_NO_SENSE) {
@@ -1578,10 +1512,8 @@ message *m_ptr;
 		sp->tstat.mt_dsreg = DS_OK;
 		break;
 	case MTBLKZ:
-		/* Select tape block size. */
-		if ((unsigned) op.mt_count > COUNT_MAX) return(EINVAL);
 	case MTMODE:
-		/* Select the tape density. */
+		/* Select tape block size or tape density. */
 
 		/* Rewind tape. */
 		if (scsi_simple(SCSI_REWIND, 0) != SENSE_NO_SENSE)
@@ -1664,8 +1596,8 @@ int count;				/* count or flag */
   vir_bytes len = 0;	/* Sometimes a buffer is used. */
 
   group0();
-  outw->ccb.opcode = CCB_INIT;
-  ccb_cmd0.scsi_op = opcode;
+  rq->ccb.opcode = CCB_INIT;
+  ccb_cmd0(rq).scsi_op = opcode;
 
   /* Fill in the count argument at the proper place. */
   switch (opcode) {
@@ -1673,13 +1605,13 @@ int count;				/* count or flag */
   case SCSI_INQUIRY:
   case SCSI_MDSENSE:
   case SCSI_MDSELECT:
-	ccb_cmd0.nblocks = count;
+	ccb_cmd0(rq).nblocks = count;
 	len = count;
 	break;
 
   case SCSI_STRTSTP:
     /* SCSI_LOADUNLD: (synonym) */
-	ccb_cmd0.nblocks = count;
+	ccb_cmd0(rq).nblocks = count;
 	break;
 
   case SCSI_RDLIMITS:
@@ -1687,16 +1619,15 @@ int count;				/* count or flag */
 	break;
 
   case SCSI_WREOF:
-	h2b24(ccb_cmd0.trlength, (long) count);
+	h2b24(ccb_cmd0(rq).trlength, (long) count);
 	break;
 
   case SCSI_REWIND:
   case SCSI_ERASE:
-	ccb_cmd0.fixed = count;
+	ccb_cmd0(rq).fixed = count;
 	break;
   }
-  scsi_schedule(CCB_NOCHECK, tmp_phys, len);
-  return(scsi_finish());
+  return(scsi_command(tmp_phys, len));
 }
 
 
@@ -1707,11 +1638,11 @@ PRIVATE void group0()
 {
   /* Prepare the ccb for a group 0 SCSI command. */
 
-  outw->ccb.cmdlen = sizeof(cdb0_t);
+  rq->ccb.cmdlen = sizeof(cdb0_t);
 
   /* Clear cdb to zeros the ugly way. */
-  * (u32_t *) (outw->ccb.cmd + 0) = 0;
-  * (u16_t *) (outw->ccb.cmd + 4) = 0;
+  * (u32_t *) (rq->ccb.cmd + 0) = 0;
+  * (u16_t *) (rq->ccb.cmd + 4) = 0;
 }
 
 
@@ -1720,97 +1651,70 @@ PRIVATE void group0()
  *===========================================================================*/
 PRIVATE void group1()
 {
-  outw->ccb.cmdlen = sizeof(cdb1_t);
-  * (u32_t *) (outw->ccb.cmd + 0) = 0;
-  * (u32_t *) (outw->ccb.cmd + 4) = 0;
-  * (u16_t *) (outw->ccb.cmd + 8) = 0;
+  rq->ccb.cmdlen = sizeof(cdb1_t);
+  * (u32_t *) (rq->ccb.cmd + 0) = 0;
+  * (u32_t *) (rq->ccb.cmd + 4) = 0;
+  * (u16_t *) (rq->ccb.cmd + 8) = 0;
 }
 
 
 /*===========================================================================*
- *				scsi_schedule				     *
+ *				scsi_command				     *
  *===========================================================================*/
-PRIVATE void scsi_schedule(checkbits, data, len)
-int checkbits;
+PRIVATE int scsi_command(data, len)
 phys_bytes data;
 vir_bytes len;
 {
-/* Set up aha command block. */
-
-  outw->ccb.addrcntl = ccb_scid(s_sp->targ) | ccb_lun(s_sp->lun) | checkbits;
-  h2b24(outw->ccb.datalen, (u32_t) len);
-  h2b24(outw->ccb.dataptr, data);
-  dump_scsi_cmd();
-
-  outw->outbox->status = AHA_MBOXSTART;
-
-  pending++;		/* one more pending for execution */
-  nextwin(&outw);	/* next window to fill */
-
-  if (NR_WINDOWS <= 2) {
-	/* Tell the controller to execute the SCSI command. */
-
-	out_byte(AHA_DATAREG, AHACOM_STARTSCSI);  /* hey, you've got mail! */
-  }
-}
-
-
-/*===========================================================================*
- *				scsi_finish				     *
- *===========================================================================*/
-PRIVATE int scsi_finish()
-{
-/* Return the results of a command.  Unlike most other routines, this routine
- * returns the sense key of a SCSI command instead of OK or EIO.
+/* Execute a SCSI command and return the results.  Unlike most other routines,
+ * this routine returns the sense key of a SCSI command instead of OK or EIO.
  */
   struct scsi *sp = s_sp;
-  int i, key;
-  phys_bytes ccb_phys;
-  static mailbox_t *inptr = mailbox[1];	/* current inbox. */
+  int key;
   message intr_mess;
 
-  if (NR_WINDOWS > 2) {
-	/* Same as above, but delayed until all windows have been filled. */
-	out_byte(AHA_DATAREG, AHACOM_STARTSCSI);
-  }
+  rq->ccb.addrcntl = ccb_scid(s_sp->targ) | ccb_lun(s_sp->lun);
 
-  /* Wait for the SCSI command to complete. */
-  i = 0;
-  for (;;) {
-	/* Look for an incoming message. */
-	if (++inptr == mailbox[1] + NR_WINDOWS) inptr = mailbox[1];
-	if (inptr->status != AHA_MBOXFREE) break;
-
-	if (++i == NR_WINDOWS) {
-		/* No mail yet, wait for an interrupt. */
-		receive(HARDWARE, &intr_mess);
-		i = 0;
+  if (rq->ccb.opcode == CCB_SCATTER) {
+	/* Device read/write; add checks and use scatter/gather vector. */
+	rq->ccb.addrcntl |= s_opcode == DEV_READ ? CCB_INCHECK : CCB_OUTCHECK;
+	data = vir2phys(rq->dmalist);
+	len = (byte *) rq->dmaptr - (byte *) rq->dmalist;
+	if (aha_model == AHA1540) {
+		/* A plain 1540 can't do s/g. */
+		rq->ccb.opcode = CCB_INIT;
+		data = b2h24(rq->dmalist[0].dataptr);
+		len = b2h24(rq->dmalist[0].datalen);
 	}
   }
+  h2b24(rq->ccb.datalen, (u32_t) len);
+  h2b24(rq->ccb.dataptr, data);
+  dump_scsi_cmd();
 
-  pending--;
+  mailbox[0].status = AHA_MBOXSTART;
 
-  ccb_phys = b2h24(inptr->ccbptr);
-  inptr->status = AHA_MBOXFREE;	/* free up inbox */
+  out_byte(AHA_DATAREG, AHACOM_STARTSCSI);  /* hey, you've got mail! */
 
-  /* Find the window containing the finished command's ccb. */
-  do nextwin(&inw); while (inw->ccb_phys != ccb_phys);
+  /* Wait for the SCSI command to complete. */
+  while (mailbox[1].status == AHA_MBOXFREE) {
+	/* No mail yet, wait for an interrupt. */
+	receive(HARDWARE, &intr_mess);
+  }
+  mailbox[1].status = AHA_MBOXFREE;	/* free up inbox */
 
   /* Check the results of the operation. */
-
-  if (inw->ccb.hastat != 0) {
+  if (rq->ccb.hastat != 0) {
 	/* Weird host adapter status. */
-	printf("%s: host adapter error 0x%02x%s\n", s_name(), inw->ccb.hastat,
-		inw->ccb.hastat == HST_TIMEOUT ? " (Selection timeout)" : "");
+	printf("%s: host adapter error 0x%02x%s\n", s_name(), rq->ccb.hastat,
+		rq->ccb.hastat == HST_TIMEOUT ? " (Selection timeout)" : "");
 	errordump();
 	if (sp->devtype == SCSI_DEVTAPE) sp->tstat.mt_dsreg = DS_ERR;
-	memset((void *) &ccb_sense, 0, sizeof(sense_t));
+	memset((void *) &ccb_sense(rq), 0, sizeof(sense_t));
 	return(SENSE_HARDWARE);
   }
 
-  if (inw->ccb.tarstat != 0) {
+  if (rq->ccb.tarstat != 0) {
 	/* A SCSI error has occurred. */
-	sense_t *sense = &ccb_sense;
+	sense_t *sense = &ccb_sense(rq);
 
 	if (sense->len < 2) {
 		/* No additional code and qualifier, zero them. */
@@ -1818,7 +1722,7 @@ PRIVATE int scsi_finish()
 	}
 
 	/* Check sense data, report error if interesting. */
-	if (inw->ccb.tarstat == TST_CHECK) {
+	if (rq->ccb.tarstat == TST_CHECK) {
 		if ((sense->errc & 0x7E) == 0x70) {
 			/* Standard SCSI error. */
 			key = sense->key;
@@ -1827,7 +1731,7 @@ PRIVATE int scsi_finish()
 			key = SENSE_VENDOR;
 		}
 	} else {
-		if (inw->ccb.tarstat == TST_LUNBUSY) {
+		if (rq->ccb.tarstat == TST_LUNBUSY) {
 			/* Logical unit is too busy to react... */
 			key = SENSE_NOT_READY;
 		} else {
@@ -1840,9 +1744,9 @@ PRIVATE int scsi_finish()
 	if (sense_serious(sense_key(key))) {
 		/* Something bad happened. */
 		printf("%s: error on command 0x%02x, ", s_name(),
-							inw->ccb.cmd[0]);
-		if (inw->ccb.tarstat != TST_CHECK) {
-			printf("target status 0x%02x\n", inw->ccb.tarstat);
+							rq->ccb.cmd[0]);
+		if (rq->ccb.tarstat != TST_CHECK) {
+			printf("target status 0x%02x\n", rq->ccb.tarstat);
 		} else {
 			printf("sense key 0x%02x (%s), additional 0x%02x%02x\n",
 				sense->key,
@@ -1875,8 +1779,8 @@ PRIVATE void aha_command(outlen, outptr, inlen, inptr)
 int outlen, inlen;
 byte *outptr, *inptr;
 {
+  /* Send a low level command to the host adapter. */
   int i;
-  message intr_mess;
 
   /* Send command bytes. */
   for (i = 0; i < outlen; i++) {
@@ -1892,7 +1796,7 @@ byte *outptr, *inptr;
   }
 
   /* Wait for command completion. */
-  while (!(in_byte(AHA_INTRREG) & AHA_HACC)) {}		/* !! timeout */
+  while (!(in_byte(AHA_INTRREG) & AHA_HACC)) {}	/* !! timeout */
   out_byte(AHA_CNTLREG, AHA_IRST);	/* clear interrupt */
   if (aha_irq != 0) enable_irq(aha_irq);
 
@@ -1905,16 +1809,17 @@ byte *outptr, *inptr;
  *===========================================================================*/
 PRIVATE int aha_reset()
 {
-  int i, stat, retries;
+  int stat;
   int irq, bus_on, bus_off, tr_speed;
+  unsigned sg_max;
   long v;
   static char aha0_env[] = "AHA0", aha_fmt[] = "x:d:d:x";
   byte cmd[5], haidata[4], getcdata[3], extbios[2];
-  window_t *w;
+  struct milli_state ms;
 
   /* Get the configuration info from the environment. */
   v = AHA_BASEREG;
-  if (env_parse(aha0_env, aha_fmt, 0, &v, 0x000L, 0x3ffL) == EP_OFF) return 0;
+  if (env_parse(aha0_env, aha_fmt, 0, &v, 0x000L, 0x3FFL) == EP_OFF) return 0;
   aha_basereg = v;
 
   v = 15;
@@ -1930,13 +1835,13 @@ PRIVATE int aha_reset()
   tr_speed = v;
 
   /* Reset controller, wait for self test to complete. */
-  retries = AHA_TIMEOUT;
   out_byte(AHA_CNTLREG, AHA_HRST);
-  while (in_byte(AHA_STATREG) & AHA_STST && --retries != 0) milli_delay(1);
-
-  if (retries == 0) {
-	printf("aha0: AHA154x controller not responding\n");
-	return(0);
+  milli_start(&ms);
+  while (in_byte(AHA_STATREG) & AHA_STST) {
+	if (milli_elapsed(&ms) >= AHA_TIMEOUT) {
+		printf("aha0: AHA154x controller not responding\n");
+		return(0);
+	}
   }
 
   /* Check for self-test failure. */
@@ -1955,17 +1860,28 @@ PRIVATE int aha_reset()
   cmd[0] = AHACOM_GETCONFIG;
   aha_command(1, cmd, 3, getcdata);
 
-  /* Disable the 1542C or 1542CF's extended BIOS to unlock the mailbox
-   * interface.  (Assume that later boards share this quirk.)
+  /* First inquiry byte tells what type of board. */
+  aha_model = haidata[0];
+
+  /* Unlock the 1540C or 1540CF's mailbox interface.  (This is to keep old
+   * drivers from using the adapter if extended features are enabled.)
    */
-  if (haidata[0] >= 0x43) {
-	cmd[0] = AHACOM_EXTBIOS;
+  if (aha_model >= AHA1540C) {
+	cmd[0] = AHACOM_EXTBIOS;	/* get extended BIOS information */
 	aha_command(1, cmd, 2, extbios);
-	cmd[0] = AHACOM_MBOX_ENABLE;
-	cmd[1] = 0;
-	cmd[2] = extbios[1];	/* lock code to unlock mailbox */
-	aha_command(3, cmd, 0, 0);
+	if (extbios[1] != 0) {
+		/* Mailbox interface is locked, so unlock it. */
+		cmd[0] = AHACOM_MBOX_ENABLE;
+		cmd[1] = 0;		/* bit 0 = 0 (enable mailbox) */
+		cmd[2] = extbios[1];	/* lock code to unlock mailbox */
+		aha_command(3, cmd, 0, 0);
+	}
   }
+
+  /* The maximum scatter/gather DMA list length depends on the board model. */
+  sg_max = 16;
+  if (aha_model == AHA1540) sg_max = 1;		/* 1540 has no s/g */
+  if (aha_model >= AHA1540C) sg_max = 255;	/* 1540C has plenty */
 
   /* Set up the DMA channel. */
   switch (getcdata[0]) {
@@ -2008,35 +1924,32 @@ PRIVATE int aha_reset()
   aha_irq = irq;
   enable_irq(irq);
 
-  /* Initialize window related data: Command Control Blocks, mailboxes.
-   * (We want to have the mailboxes initialized early, because the 1542C
+  /* Initialize request related data: Command Control Block, mailboxes.
+   * (We want to have the mailboxes initialized early, because the 1540C
    * wants to know it now.)
    */
-  for (i = 0, w = window; i < NR_WINDOWS; i++, w++) {
-	/* Init ccb. */
-	w->ccb.senselen = CCB_SENSEREQ;		/* always want sense info */
-	h2b24(w->ccb.linkptr, 0L);		/* never link commands */
-	w->ccb.linkid = 0;
-	w->ccb.reserved[0] = 0;
-	w->ccb.reserved[1] = 0;
 
-	/* Outgoing mailbox. */
-	w->outbox = &mailbox[0][i];
-	mailbox[0][i].status = AHA_MBOXFREE;
-	w->ccb_phys = vir2phys(&w->ccb);
-	h2b24(mailbox[0][i].ccbptr, w->ccb_phys);
+  /* Init ccb. */
+  rq->ccb.senselen = CCB_SENSEREQ;	/* always want sense info */
+  h2b24(rq->ccb.linkptr, 0L);		/* never link commands */
+  rq->ccb.linkid = 0;
+  rq->ccb.reserved[0] = 0;
+  rq->ccb.reserved[1] = 0;
 
-	/* Incoming mailbox. */
-	mailbox[1][i].status = AHA_MBOXFREE;
-	/* mailbox[1][i].ccbptr filled by adapter after command execution. */
+  /* Scatter/gather maximum. */
+  rq->dmalimit = rq->dmalist + (sg_max < NR_IOREQS ? sg_max : NR_IOREQS);
 
-	/* Precomputed phys address of the scatter/gather lists. */
-	w->dmalist_phys = vir2phys(w->dmalist);
-  }
+  /* Outgoing mailbox. */
+  mailbox[0].status = AHA_MBOXFREE;
+  h2b24(mailbox[0].ccbptr, vir2phys(&rq->ccb));
+
+  /* Incoming mailbox. */
+  mailbox[1].status = AHA_MBOXFREE;
+  /* mailbox[1].ccbptr filled by adapter after command execution. */
 
   /* Tell controller where the mailboxes are and how many. */
   cmd[0] = AHACOM_INITBOX;
-  cmd[1] = NR_WINDOWS;
+  cmd[1] = 1;
   h2b24(cmd + 2, vir2phys(mailbox));
   aha_command(5, cmd, 0, 0);
 
@@ -2076,7 +1989,7 @@ int irq;
 /* Host adapter interrupt, send message to SCSI task and reenable interrupts. */
 
   if (in_byte(AHA_INTRREG) & AHA_HACC) {
-	/* Use polling for simple commands. */
+	/* Simple commands are polled. */
 	return 0;
   } else {
 	out_byte(AHA_CNTLREG, AHA_IRST);	/* clear interrupt */
@@ -2171,9 +2084,9 @@ PRIVATE void errordump()
   int i;
 
   printf("aha ccb dump:");
-  for (i = 0; i < sizeof(inw->ccb); i++) {
+  for (i = 0; i < sizeof(rq->ccb); i++) {
 	if (i % 26 == 0) printf("\n");
-	printf(" %02x",((byte *) &inw->ccb)[i]);
+	printf(" %02x", ((byte *) &rq->ccb)[i]);
   }
   printf("\n");
 }
@@ -2182,40 +2095,34 @@ PRIVATE void errordump()
 
 #if AHA_DEBUG & 4
 /*===========================================================================*
- *				show_win				     *
+ *				show_req				     *
  *===========================================================================*/
-PRIVATE void show_win()
+PRIVATE void show_req()
 {
-  int i;
-  window_t *w;
   struct iorequest_s **iopp;
   dma_t *dmap;
   unsigned count, nbytes, len;
 
-  for (i = 0, w = window; i < NR_WINDOWS; i++, w++) {
-	iopp = w->iov;
-	dmap = w->dmalist;
-	count = w->count;
-	nbytes = 0;
+  iopp = rq->iov;
+  dmap = rq->dmalist;
+  count = rq->count;
+  nbytes = 0;
 
-	printf("%d %c%c %lu:%u", i,
-		w == inw ? '<' : ' ', w == outw ? '>' : ' ',
-		w->pos, count);
+  printf("%lu:%u", rq->pos, count);
 
-	while (count > 0) {
-		if (iopp == w->iov || *iopp != iopp[-1])
-			nbytes = (*iopp)->io_nbytes;
+  while (count > 0) {
+	if (iopp == rq->iov || *iopp != iopp[-1])
+		nbytes = (*iopp)->io_nbytes;
 
-		printf(" (%u,%lx,%u)", nbytes, b2h24(dmap->dataptr),
-						len = b2h24(dmap->datalen));
-		dmap++;
-		iopp++;
-		count -= len;
-		nbytes -= len;
-	}
-	if (nbytes > 0) printf(" ...(%u)", nbytes);
-	printf("\n");
+	printf(" (%u,%lx,%u)", nbytes, b2h24(dmap->dataptr),
+					len = b2h24(dmap->datalen));
+	dmap++;
+	iopp++;
+	count -= len;
+	nbytes -= len;
   }
+  if (nbytes > 0) printf(" ...(%u)", nbytes);
+  printf("\n");
 }
 #endif /* AHA_DEBUG & 4 */
 
@@ -2229,7 +2136,7 @@ PRIVATE void dump_scsi_cmd()
   int i;
 
   printf("scsi cmd:");
-  for (i = 0; i < inw->ccb.cmdlen; i++) printf(" %02x", outw->ccb.cmd[i]);
+  for (i = 0; i < rq->ccb.cmdlen; i++) printf(" %02x", rq->ccb.cmd[i]);
   printf("\n");
 }
 #endif /* AHA_DEBUG & 8 */
@@ -2249,19 +2156,19 @@ unsigned *chs;			/* {cylinder, head, sector} */
  * head and sector numbers in the partition table, so fdisk needs to know the
  * geometry.
  */
+  unsigned long size = s_sp->part[0].dv_size;
   unsigned heads, sectors;
 
-  if (0 /* XXX - How do we tell? */) {
-	/* BIOS configured for large drives. */
-	heads = 255;
-	sectors = 63;
-  } else {
-	/* BIOS configured for small drives. */
+  if (size < 1024L * 64 * 32 * 512) {
+	/* Small drive. */
 	heads = 64;
 	sectors = 32;
+  } else {
+	/* Assume that this BIOS is configured for large drives. */
+	heads = 255;
+	sectors = 63;
   }
-  chs[0] = (s_sp->part[0].dv_size >> SECTOR_SHIFT) / (heads * sectors);
-  if (chs[0] > 1024) chs[0] = 1024;
+  chs[0] = (size >> SECTOR_SHIFT) / (heads * sectors);
   chs[1] = heads;
   chs[2] = sectors;
 }

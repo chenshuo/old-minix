@@ -8,7 +8,6 @@
  *   read_write: actually do the work of READ and WRITE
  *   read_map:	 given an inode and file position, look up its zone number
  *   rd_indir:	 read an entry in an indirect block 
- *   rw_user:	 call the kernel to read and write user space
  *   read_ahead: manage the block read ahead business
  */
 
@@ -203,9 +202,9 @@ int rw_flag;			/* READING or WRITING */
 	if (partial_pipe) {
 		partial_pipe = 0;
 			/* partial write on pipe with */
-			/* O_NOBLOCK, return write count */
+			/* O_NONBLOCK, return write count */
 		if (!(oflags & O_NONBLOCK)) {
-			fp->fp_cum_io_partial += cum_io;
+			fp->fp_cum_io_partial = cum_io;
 			suspend(XPIPE); /* partial write on pipe with */
 			return(0);	/* nbyte > PIPE_SIZE - non-atomic */
 		}
@@ -236,8 +235,7 @@ int usr;			/* which user process */
 
   register struct buf *bp;
   register int r;
-  int dir, n, block_spec;
-  vir_bytes vbuff, vchunk;
+  int n, block_spec;
   block_t b;
   dev_t dev;
 
@@ -274,13 +272,21 @@ int usr;			/* which user process */
 
   /* In all cases, bp now points to a valid buffer. */
   if (rw_flag == WRITING && chunk != BLOCK_SIZE && !block_spec &&
-					position >= rip->i_size && off == 0)
+					position >= rip->i_size && off == 0) {
 	zero_block(bp);
-  dir = (rw_flag == READING ? TO_USER : FROM_USER);
-  vbuff = (vir_bytes) buff;
-  vchunk = (vir_bytes) chunk;
-  r = rw_user(seg, usr, vbuff, vchunk, bp->b_data+off,dir);
-  if (rw_flag == WRITING) bp->b_dirt = DIRTY;
+  }
+  if (rw_flag == READING) {
+	/* Copy a chunk from the block buffer to user space. */
+	r = sys_copy(FS_PROC_NR, D, (phys_bytes) (bp->b_data+off),
+			usr, seg, (phys_bytes) buff,
+			(phys_bytes) chunk);
+  } else {
+	/* Copy a chunk from user space to the block buffer. */
+	r = sys_copy(usr, seg, (phys_bytes) buff,
+			FS_PROC_NR, D, (phys_bytes) (bp->b_data+off),
+			(phys_bytes) chunk);
+	bp->b_dirt = DIRTY;
+  }
   n = (off + chunk == BLOCK_SIZE ? FULL_DATA_BLOCK : PARTIAL_DATA_BLOCK);
   put_block(bp, n);
   return(r);
@@ -385,46 +391,6 @@ int index;			/* index into *bp */
 
 
 /*===========================================================================*
- *				rw_user					     *
- *===========================================================================*/
-PUBLIC int rw_user(s, u, vir, bytes, buff, direction)
-int s;				/* D or T space (stack is also D) */
-int u;				/* process number to r/w (usually = 'who') */
-vir_bytes vir;			/* virtual address to move to/from */
-vir_bytes bytes;		/* how many bytes to move */
-char *buff;			/* pointer to FS space */
-int direction;			/* TO_USER or FROM_USER */
-{
-/* Transfer a block of data.  Two options exist, depending on 'direction':
- *     TO_USER:     Move from FS space to user virtual space
- *     FROM_USER:   Move from user virtual space to FS space
- */
-
-  if (direction == TO_USER ) {
-	/* Write from FS space to user space. */
-	umess.SRC_SPACE  = D;
-	umess.SRC_PROC_NR = FS_PROC_NR;
-	umess.SRC_BUFFER = (long) (vir_bytes) buff;
-	umess.DST_SPACE  = s;
-	umess.DST_PROC_NR = u;
-	umess.DST_BUFFER = (long) vir;
-  } else {
-	/* Read from user space to FS space. */
-	umess.SRC_SPACE  = s;
-	umess.SRC_PROC_NR = u;
-	umess.SRC_BUFFER = (long) vir;
-	umess.DST_SPACE  = D;
-	umess.DST_PROC_NR = FS_PROC_NR;
-	umess.DST_BUFFER = (long) (vir_bytes) buff;
-  }
-
-  umess.COPY_BYTES = (long) bytes;
-  sys_copy(&umess);
-  return(umess.m_type);
-}
-
-
-/*===========================================================================*
  *				read_ahead				     *
  *===========================================================================*/
 PUBLIC void read_ahead()
@@ -509,7 +475,7 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
   blocks_ahead = (bytes_ahead + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
   if (block_spec && rip->i_size == 0) {
-	blocks_left = NR_BUFS;
+	blocks_left = NR_IOREQS;
   } else {
 	blocks_left = (rip->i_size - position + BLOCK_SIZE - 1) / BLOCK_SIZE;
 
@@ -525,7 +491,7 @@ unsigned bytes_ahead;		/* bytes beyond position for immediate use */
   }
 
   /* No more than the maximum request. */
-  if (blocks_ahead > NR_BUFS) blocks_ahead = NR_BUFS;
+  if (blocks_ahead > NR_IOREQS) blocks_ahead = NR_IOREQS;
 
   /* Read at least the minimum number of blocks, but not after a seek. */
   if (blocks_ahead < BLOCKS_MINIMUM && rip->i_seek == NO_SEEK)

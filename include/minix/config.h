@@ -3,7 +3,7 @@
 
 /* Minix release and version numbers. */
 #define OS_RELEASE "1.7"
-#define OS_VERSION "0"
+#define OS_VERSION "1"
 
 /* This file sets configuration parameters for the MINIX kernel, FS, and MM.
  * It is divided up into two main sections.  The first section contains
@@ -65,7 +65,7 @@
  * Each I_MAP_SLOT allows 8K files; each Z_MAP_SLOT allows 8M of data.
  */
 #define I_MAP_SLOTS        8	/* max # of blocks in the inode bit map */
-#define Z_MAP_SLOTS       16	/* max # of blocks in the zone bit map */
+#define Z_MAP_SLOTS       32	/* max # of blocks in the zone bit map */
 
 /* Defines for kernel configuration. */
 #define AUTO_BIOS          0	/* xt_wini.c - use Western's autoconfig BIOS */
@@ -79,11 +79,13 @@
 /* Include or exclude device drivers.  Set to 1 to include, 0 to exclude. */
 #define ENABLE_NETWORKING  0	/* enable TCP/IP code */
 #define ENABLE_AT_WINI     1	/* enable AT winchester driver */
-#define ENABLE_BIOS_WINI   0	/* enable BIOS winchester driver */
-#define ENABLE_PS_WINI     1	/* enable PS/2 winchester driver */
+#define ENABLE_BIOS_WINI   1	/* enable BIOS winchester driver */
+#define ENABLE_PS_WINI     0	/* enable PS/2 winchester driver */
 #define ENABLE_ESDI_WINI   1	/* enable ESDI winchester driver */
 #define ENABLE_XT_WINI     1	/* enable XT winchester driver */
 #define ENABLE_ADAPTEC_SCSI 1	/* enable ADAPTEC SCSI driver */
+#define ENABLE_MITSUMI_CDROM 0	/* enable Mitsumi CD-ROM driver */
+#define ENABLE_SB_AUDIO    0	/* enable Soundblaster audio driver */
 
 /* DMA_SECTORS may be increased to speed up DMA based drivers. */
 #define DMA_SECTORS        1	/* DMA buffer size (must be >= 1) */
@@ -162,6 +164,11 @@
 #if (MACHINE == IBM_PC)
 #define CHIP          INTEL
 #define SHADOWING	  0
+#define ENABLE_WINI	(ENABLE_AT_WINI || ENABLE_BIOS_WINI || \
+			ENABLE_PS_WINI || ENABLE_ESDI_WINI || ENABLE_XT_WINI)
+#define ENABLE_SCSI	(ENABLE_ADAPTEC_SCSI)
+#define ENABLE_CDROM	(ENABLE_MITSUMI_CDROM)
+#define ENABLE_AUDIO	(ENABLE_SB_AUDIO)
 #endif
 
 #if (MACHINE == ATARI) || (MACHINE == AMIGA) || (MACHINE == MACINTOSH)

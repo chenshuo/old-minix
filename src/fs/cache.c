@@ -10,7 +10,6 @@
  *   free_zone:	  release a zone (when a file is removed)
  *   rw_block:	  read or write a block from the disk itself
  *   invalidate:  remove all the cache blocks on some device
- *   rm_lru:	  remove a block from its LRU chain
  */
 
 #include "fs.h"
@@ -20,6 +19,8 @@
 #include "file.h"
 #include "fproc.h"
 #include "super.h"
+
+FORWARD _PROTOTYPE( void rm_lru, (struct buf *bp) );
 
 /*===========================================================================*
  *				get_block				     *
@@ -307,7 +308,7 @@ dev_t dev;			/* device to flush */
 /*===========================================================================*
  *				rm_lru					     *
  *===========================================================================*/
-PUBLIC void rm_lru(bp)
+PRIVATE void rm_lru(bp)
 struct buf *bp;
 {
 /* Remove a block from its LRU chain. */
@@ -343,16 +344,9 @@ int rw_flag;			/* READING or WRITING */
   register struct buf *bp;
   int gap;
   register int i;
-
-#if HAVE_SCATTERED_IO
   register struct iorequest_s *iop;
-  static struct iorequest_s iovec[NR_BUFS];  /* static so it isn't on stack */
-#endif
-
+  static struct iorequest_s iovec[NR_IOREQS];  /* static so it isn't on stack */
   int j;
-
-  if (bufqsize <= 0) return;
-  if (bufqsize > NR_BUFS) panic("Too much scattered i/o", NO_NUM);
 
   /* (Shell) sort buffers on b_blocknr. */
   gap = 1;
@@ -372,45 +366,39 @@ int rw_flag;			/* READING or WRITING */
 	}
   }
 
-#if HAVE_SCATTERED_IO
   /* Set up i/o vector and do i/o.  The result of dev_io is discarded because
    * all results are returned in the vector.  If dev_io fails completely, the
    * vector is unchanged and all results are taken as errors.
    */  
-  for (i = 0, iop = iovec; i < bufqsize; i++, iop++) {
-	bp = bufq[i];
-	iop->io_position = (off_t) bp->b_blocknr * BLOCK_SIZE;
-	iop->io_buf = bp->b_data;
-	iop->io_nbytes = BLOCK_SIZE;
-	iop->io_request = rw_flag == WRITING ?
-			  DEV_WRITE : DEV_READ | OPTIONAL_IO;
-  }
-  (void) dev_io(SCATTERED_IO, 0, dev, (off_t) 0, bufqsize, FS_PROC_NR,
-		(char *)iovec);
-
-  /* Harvest the results.  Leave read errors for rw_block() to complain. */
-  for (i = 0, iop = iovec; i < bufqsize; i++, iop++) {
-	bp = bufq[i];
-	if (rw_flag == READING) {
-	    if (iop->io_nbytes == 0)
-	 	bp->b_dev = dev;	/* validate block */
-	    put_block(bp, PARTIAL_DATA_BLOCK);
-  	} else {
-	    if (iop->io_nbytes != 0) {
-	     printf("Unrecoverable write error on device %d/%d, block %ld\n",
-			(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE, bp->b_blocknr);
-	 	bp->b_dev = NO_DEV;	/* invalidate block */
-	    }
-	    bp->b_dirt = CLEAN;
+  while (bufqsize > 0) {
+	for (j = 0, iop = iovec; j < NR_IOREQS && j < bufqsize; j++, iop++) {
+		bp = bufq[j];
+		iop->io_position = (off_t) bp->b_blocknr * BLOCK_SIZE;
+		iop->io_buf = bp->b_data;
+		iop->io_nbytes = BLOCK_SIZE;
+		iop->io_request = rw_flag == WRITING ?
+				  DEV_WRITE : DEV_READ | OPTIONAL_IO;
 	}
+	(void) dev_io(SCATTERED_IO, 0, dev, (off_t) 0, j, FS_PROC_NR,
+							(char *) iovec);
+
+	/* Harvest the results.  Leave read errors for rw_block() to complain. */
+	for (i = 0, iop = iovec; i < j; i++, iop++) {
+		bp = bufq[i];
+		if (rw_flag == READING) {
+		    if (iop->io_nbytes == 0)
+			bp->b_dev = dev;	/* validate block */
+		    put_block(bp, PARTIAL_DATA_BLOCK);
+		} else {
+		    if (iop->io_nbytes != 0) {
+		     printf("Unrecoverable write error on device %d/%d, block %ld\n",
+				(dev>>MAJOR)&BYTE, (dev>>MINOR)&BYTE, bp->b_blocknr);
+			bp->b_dev = NO_DEV;	/* invalidate block */
+		    }
+		    bp->b_dirt = CLEAN;
+		}
+	}
+	bufq += j;
+	bufqsize -= j;
   }
-#else				/* temporary version for old drivers */
-  for (i = 0; i < bufqsize; i++) {
-	bp = bufq[i];
-	bp->b_dev = dev;
-	rw_block(bp, rw_flag);
-	if (rw_flag == READING)
-		put_block(bp, PARTIAL_DATA_BLOCK);
-  }
-#endif
 }

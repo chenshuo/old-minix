@@ -9,7 +9,7 @@
  *   do_kill:	perform the KILL system call
  *   do_sigaction:   perform the SIGACTION system call
  *   do_sigpending:  perform the SIGPENDING system call
- *   do_sigmask:     perform the SIGMASK system call
+ *   do_sigprocmask: perform the SIGPROCMASK system call
  *   do_sigreturn:   perform the SIGRETURN system call
  *   do_sigsuspend:  perform the SIGSUSPEND system call
  *   do_ksig:	accept a signal originating in the kernel (e.g., SIGINT)
@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <sys/sigcontext.h>
 #include <unistd.h>
+#include <string.h>
 #include "mproc.h"
 #include "param.h"
 
@@ -104,23 +105,23 @@ PUBLIC int do_kill()
 PUBLIC int do_sigaction()
 {
   int r;
-  long svec_size;
   struct sigaction svec;
   struct sigaction *svp;
 
   if (sig_nr == SIGKILL) return(OK);
   if (sig_nr < 1 || sig_nr > _NSIG) return (EINVAL);
   svp = &mp->mp_sigact[sig_nr];
-  svec_size = (long) sizeof(svec);
   if ((struct sigaction *) sig_osa != (struct sigaction *) NULL) {
-	r = mem_copy(MM_PROC_NR,D, (long)svp, who,D, (long)sig_osa, svec_size);
+	r = sys_copy(MM_PROC_NR,D, (phys_bytes) svp,
+		who, D, (phys_bytes) sig_osa, (phys_bytes) sizeof(svec));
 	if (r != OK) return(r);
   }
 
   if ((struct sigaction *) sig_nsa == (struct sigaction *) NULL) return(OK);
 
   /* Read in the sigaction structure. */
-  r = mem_copy(who, D, (long) sig_nsa, MM_PROC_NR, D, (long) &svec, svec_size);
+  r = sys_copy(who, D, (phys_bytes) sig_nsa,
+  		MM_PROC_NR, D, (phys_bytes) &svec, (phys_bytes) sizeof(svec));
   if (r != OK) return(r);
 
   if (svec.sa_handler == SIG_IGN) {
@@ -152,12 +153,12 @@ PUBLIC int do_sigpending()
 }
 
 /*===========================================================================*
- *                            do_sigmask                                     *
+ *                            do_sigprocmask                                 *
  *===========================================================================*/
-PUBLIC int do_sigmask()
+PUBLIC int do_sigprocmask()
 {
 /* Note that the library interface passes the actual mask in sigmask_set,
- * not a pointer to the mask, in order to save a mem_copy.  Similarly,
+ * not a pointer to the mask, in order to save a sys_copy.  Similarly,
  * the old mask is placed in the return message which the library
  * interface copies (if requested) to the user specified address.
  *
@@ -346,6 +347,7 @@ PUBLIC int do_ksig()
 	    			 * is still necessary; however it would be
 	    			 * nice to eliminate the special test for
 	    			 * SIGSTKFLT above */
+	    case SIGHUP: 
 	    case SIGINT: 
 	    case SIGQUIT: 
 		id = 0; break;	/* broadcast to process group */
@@ -694,9 +696,27 @@ register struct mproc *rmp;	/* whose core is to be dumped */
 PUBLIC int do_reboot()
 {
   register struct mproc *rmp = mp;
+  char monitor_code[64];
 
   if (rmp->mp_effuid != SUPER_USER)   return EPERM;
-  if (reboot_flag != 0 && reboot_flag != 1)   return EINVAL;
+
+  switch (reboot_flag) {
+  case RBT_HALT:
+  case RBT_REBOOT:
+  case RBT_PANIC:
+  case RBT_RESET:
+	break;
+  case RBT_MONITOR:
+	if (reboot_size > sizeof(monitor_code)) return EINVAL;
+	memset(monitor_code, 0, sizeof(monitor_code));
+	if (sys_copy(who, D, (phys_bytes) reboot_code,
+		MM_PROC_NR, D, (phys_bytes) monitor_code,
+		(phys_bytes) reboot_size) != OK) return EFAULT;
+	if (monitor_code[sizeof(monitor_code)-1] != 0) return EINVAL;
+	break;
+  default:
+	return EINVAL;
+  }
 
   /* Kill all processes except init. */
   check_sig(-1, SIGKILL);
@@ -705,6 +725,6 @@ PUBLIC int do_reboot()
 
   tell_fs(SYNC,0,0,0);
 
-  sys_abort(reboot_flag);
+  sys_abort(reboot_flag, monitor_code);
   /* NOTREACHED */
 }

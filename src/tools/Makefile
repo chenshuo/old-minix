@@ -2,10 +2,8 @@
 #
 u=/usr
 CC=	exec cc
-LD=	$(CC) -.o
 CFLAGS=	-O -D_MINIX -D_POSIX_SOURCE
 LDFLAGS=
-HEAD=	$u/lib/head.o
 MDEC=	/usr/mdec
 MAKE=	exec make -$(MAKEFLAGS)
 inet=
@@ -26,14 +24,15 @@ programs:
 image:	$(PROGRAMS)
 	installboot -image $@ $(PROGRAMS)
 
-init:	$(HEAD) init.c
-	$(LD) $(LDFLAGS) $(CFLAGS) $(HEAD) init.c -o init
+init:	init.c
+	$(CC) $(LDFLAGS) $(CFLAGS) init.c -o $@
+	install -S 192w $@
 
 bootable:
-	exec ./mkboot bootable
+	exec su root mkboot bootable
 
 hdinstall hdtest fdboot:	programs
-	exec ./mkboot $@
+	exec su root mkboot $@
 
 all install clean::
 	cd ../kernel && $(MAKE) $@

@@ -80,6 +80,7 @@ static mnemonic_t mnemtab[] = {			/* This array is sorted. */
 	{ "bz",		JE,		JUMP },
 	{ "call",	CALL,		JUMP },
 	{ "callf",	CALLF,		JUMP },
+	{ "cbw",	CBW,		WORD },
 	{ "cdq",	CWD,		WORD },
 	{ "clc",	CLC,		WORD },
 	{ "cld",	CLD,		WORD },
@@ -90,6 +91,7 @@ static mnemonic_t mnemtab[] = {			/* This array is sorted. */
 	{ "cmps",	CMPS,		WORD },
 	{ "cmpsb",	CMPS,		BYTE },
 	{ "cmpxchg",	CMPXCHG,	WORD },
+	{ "cwd",	CWD,		WORD },
 	{ "cwde",	CBW,		WORD },
 	{ "daa",	DAA,		WORD },
 	{ "das",	DAS,		WORD },
@@ -498,6 +500,12 @@ static expression_t *bas_get_operand(int *pn)
 		}
 		if (op_idx < arraysize(optypes)) optypes[op_idx++]= optype;
 		(*pn)++;
+
+		/* It may even be "byte ptr"... */
+		if ((t= get_token(*pn))->type == T_WORD
+					&& strcmp(t->name, "ptr") == 0) {
+			(*pn)++;
+		}
 	}
 
 	/* Is it [memory]? */
@@ -749,6 +757,10 @@ static asm86_t *bas_get_statement(void)
 	}
 	a->opcode= m->opcode;
 	a->optype= m->optype;
+	if (a->opcode == CBW || a->opcode == CWD) {
+		a->optype= (strcmp(t->name, "cbw") == 0
+		    || strcmp(t->name, "cwd") == 0) == use16() ? WORD : OWORD;
+	}
 	for (op_idx= 0; op_idx < arraysize(optypes); op_idx++)
 		optypes[op_idx]= m->optype;
 	op_idx= 0;
@@ -919,6 +931,10 @@ asm86_t *bas_get_instruction(void)
 		parse_err(1, t, "syntax error\n");
 		zap();
 		a= bas_get_instruction();
+	}
+	if (a->optype == OWORD) {
+		a->optype= WORD;
+		a->oaz|= OPZ;
 	}
 	return a;
 }

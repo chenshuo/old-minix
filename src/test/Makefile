@@ -27,9 +27,6 @@ $(ROOTOBJ):
 	install -S 10kw -o root -m 4755 $@
 
 clean:	
-	@rm -f *.o *.s *.bak 
-
-veryclean:
 	@rm -f *.o *.s *.bak test? test?? t10a t11a t11b
 
 test1:	test1.c

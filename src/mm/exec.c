@@ -23,8 +23,8 @@
 
 FORWARD _PROTOTYPE( void load_seg, (int fd, int seg, vir_bytes seg_bytes) );
 FORWARD _PROTOTYPE( int new_mem, (vir_bytes text_bytes, vir_bytes data_bytes,
-		vir_bytes bss_bytes, vir_bytes stk_bytes, phys_bytes tot_bytes,
-		char bf [ZEROBUF_SIZE ], int zs)			);
+		vir_bytes bss_bytes, vir_bytes stk_bytes,
+		phys_bytes tot_bytes)					);
 FORWARD _PROTOTYPE( void patch_ptr, (char stack [ARG_MAX ], vir_bytes base) );
 FORWARD _PROTOTYPE( int read_header, (int fd, int *ft, vir_bytes *text_bytes,
 		vir_bytes *data_bytes, vir_bytes *bss_bytes,
@@ -47,9 +47,8 @@ PUBLIC int do_exec()
 
   register struct mproc *rmp;
   int m, r, fd, ft, sn;
-  char mbuf[ARG_MAX];		/* buffer for stack and zeroes */
-  char name_buf[PATH_MAX];	/* the name of the file to exec */
-  char zb[ZEROBUF_SIZE];	/* used to zero bss */
+  static char mbuf[ARG_MAX];	/* buffer for stack and zeroes */
+  static char name_buf[PATH_MAX]; /* the name of the file to exec */
   char *new_sp;
   vir_bytes src, dst, text_bytes, data_bytes, bss_bytes, stk_bytes, vsp;
   phys_bytes tot_bytes;		/* total space for program, including gap */
@@ -67,7 +66,8 @@ PUBLIC int do_exec()
   /* Get the exec file name and see if the file is executable. */
   src = (vir_bytes) exec_name;
   dst = (vir_bytes) name_buf;
-  r = mem_copy(who, D, (long) src, MM_PROC_NR, D, (long) dst, (long) exec_len);
+  r = sys_copy(who, D, (phys_bytes) src,
+		MM_PROC_NR, D, (phys_bytes) dst, (phys_bytes) exec_len);
   if (r != OK) return(r);	/* file name not in user data segment */
   tell_fs(CHDIR, who, FALSE, 0);	/* switch to the user's FS environ. */
   fd = allowed(name_buf, &s_buf, X_BIT);	/* is file executable? */
@@ -85,15 +85,15 @@ PUBLIC int do_exec()
   /* Fetch the stack from the user before destroying the old core image. */
   src = (vir_bytes) stack_ptr;
   dst = (vir_bytes) mbuf;
-  r = mem_copy(who, D, (long) src, MM_PROC_NR, D, (long) dst, (long)stk_bytes);
+  r = sys_copy(who, D, (phys_bytes) src,
+  			MM_PROC_NR, D, (phys_bytes) dst, (phys_bytes)stk_bytes);
   if (r != OK) {
 	close(fd);		/* can't fetch stack (e.g. bad virtual addr) */
 	return(EACCES);
   }
 
   /* Allocate new memory and release old memory.  Fix map and tell kernel. */
-  r = new_mem(text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes,
-							zb, ZEROBUF_SIZE);
+  r = new_mem(text_bytes, data_bytes, bss_bytes, stk_bytes, tot_bytes);
   if (r != OK) {
 	close(fd);		/* insufficient core or program too big */
 	return(r);
@@ -105,7 +105,8 @@ PUBLIC int do_exec()
   vsp -= stk_bytes;
   patch_ptr(mbuf, vsp);
   src = (vir_bytes) mbuf;
-  r = mem_copy(MM_PROC_NR, D, (long) src, who, D, (long) vsp, (long)stk_bytes);
+  r = sys_copy(MM_PROC_NR, D, (phys_bytes) src,
+  			who, D, (phys_bytes) vsp, (phys_bytes)stk_bytes);
   if (r != OK) panic("do_exec stack copy err", NO_NUM);
 
   /* Read in text and data segments. */
@@ -115,6 +116,7 @@ PUBLIC int do_exec()
 #if (SHADOWING == 1)
   if (lseek(fd, (off_t)sym_bytes, SEEK_CUR) == (off_t) -1) ;	/* error */
   if (relocate(fd, (unsigned char *)mbuf) < 0) 	;		/* error */
+  pc += (vir_bytes) rp->p_map[T].mem_vir << CLICK_SHIFT;
 #endif
 
   close(fd);			/* don't need exec file any more */
@@ -167,7 +169,7 @@ vir_bytes *bss_bytes;		/* place to return bss size */
 phys_bytes *tot_bytes;		/* place to return total size */
 long *sym_bytes;		/* place to return symbol table size */
 vir_clicks sc;			/* stack size in clicks */
-vir_bytes *pc;
+vir_bytes *pc;			/* program entry point (initial PC) */
 {
 /* Read the header and extract the text, data, bss and total sizes from it. */
 
@@ -190,7 +192,7 @@ vir_bytes *pc;
    *	Bytes  8-11: size of text segments in bytes
    *	Bytes 12-15: size of initialized data segment in bytes
    *	Bytes 16-19: size of bss in bytes
-   *	Bytes 20-23: 0x00000000L
+   *	Bytes 20-23: program entry point
    *	Bytes 24-27: total memory allocated to program (text, data + stack)
    *	Bytes 28-31: size of symbol table in bytes
    * The longs are represented in a machine dependent order,
@@ -245,7 +247,7 @@ vir_bytes *pc;
 #endif
 
   }
-  *pc = 0x0;	/* XXX */
+  *pc = hdr.a_entry;	/* initial address to start execution */
 
   /* Check to see if segment sizes are feasible. */
   tc = ((unsigned long) *text_bytes + CLICK_SIZE - 1) >> CLICK_SHIFT;
@@ -264,14 +266,12 @@ vir_bytes *pc;
 /*===========================================================================*
  *				new_mem					     *
  *===========================================================================*/
-PRIVATE int new_mem(text_bytes, data_bytes,bss_bytes,stk_bytes,tot_bytes,bf,zs)
+PRIVATE int new_mem(text_bytes, data_bytes,bss_bytes,stk_bytes,tot_bytes)
 vir_bytes text_bytes;		/* text segment size in bytes */
 vir_bytes data_bytes;		/* size of initialized data in bytes */
 vir_bytes bss_bytes;		/* size of bss in bytes */
 vir_bytes stk_bytes;		/* size of initial stack segment in bytes */
 phys_bytes tot_bytes;		/* total memory to allocate, including gap */
-char bf[ZEROBUF_SIZE];		/* buffer to use for zeroing data segment */
-int zs;				/* true size of 'bf' */
 {
 /* Allocate new memory and release the old memory.  Change the map and report
  * the new map to the kernel.  Zero the new core image's bss, gap and stack.
@@ -284,8 +284,7 @@ int zs;				/* true size of 'bf' */
 #if (SHADOWING == 1)
   phys_clicks base, size;
 #else
-  char *rzp;
-  vir_bytes vzb;
+  static char zero[1024];		/* used to zero bss */
   phys_clicks old_clicks;
   phys_bytes bytes, base, count, bss_offset;
 #endif
@@ -355,9 +354,7 @@ int zs;				/* true size of 'bf' */
   sys_newmap(who, rmp->mp_seg);   /* report new map to the kernel */
 
   /* Zero the bss, gap, and stack segment. Start just above text.  */
-  for (rzp = &bf[0]; rzp < &bf[zs]; rzp++) *rzp = 0;	/* clear buffer */
   bytes = (phys_bytes)(data_clicks + gap_clicks + stack_clicks) << CLICK_SHIFT;
-  vzb = (vir_bytes) bf;
   base = (long) rmp->mp_seg[T].mem_phys + rmp->mp_seg[T].mem_len;
   base = base << CLICK_SHIFT;
   bss_offset = (data_bytes >> CLICK_SHIFT) << CLICK_SHIFT;
@@ -365,9 +362,11 @@ int zs;				/* true size of 'bf' */
   bytes -= bss_offset;
 
   while (bytes > 0) {
-	count = (long) MIN(bytes, (phys_bytes) zs);
-	if (mem_copy(MM_PROC_NR, D, (long) vzb, ABS, 0, base, count) != OK)
+	count = MIN(bytes, (phys_bytes) sizeof(zero));
+	if (sys_copy(MM_PROC_NR, D, (phys_bytes) zero,
+						ABS, 0, base, count) != OK) {
 		panic("new_mem can't zero", NO_NUM);
+	}
 	base += count;
 	bytes -= count;
   }

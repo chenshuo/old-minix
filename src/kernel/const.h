@@ -2,7 +2,7 @@
 
 #if (CHIP == INTEL)
 
-#define K_STACK_BYTES    512	/* how many bytes for the kernel stack */
+#define K_STACK_BYTES   1024	/* how many bytes for the kernel stack */
 
 #define INIT_PSW      0x0200	/* initial psw */
 #define INIT_TASK_PSW 0x1200	/* initial psw for tasks (with IOPL 1) */
@@ -31,9 +31,6 @@
 #define hclick_to_physb(n) ((phys_bytes) (n) << HCLICK_SHIFT)
 #define physb_to_hclick(n) ((n) >> HCLICK_SHIFT)
 
-#define ALIGNMENT	   4	/* align large items to a multiple of this */
-#define VECTOR_BYTES    1024	/* bytes of interrupt vectors to save (all) */
-
 /* Interrupt vectors defined/reserved by processor. */
 #define DIVIDE_VECTOR      0	/* divide error */
 #define DEBUG_VECTOR       1	/* single step (trace) */
@@ -60,14 +57,13 @@
 #define CLOCK_IRQ          0
 #define KEYBOARD_IRQ       1
 #define CASCADE_IRQ        2	/* cascade enable for 2nd AT controller */
-#define ETHER_IRQ          3	/* ethernet interrupt vector */
+#define ETHER_IRQ          3	/* default ethernet interrupt vector */
 #define SECONDARY_IRQ      3	/* RS232 interrupt vector for port 2 */
 #define RS232_IRQ          4	/* RS232 interrupt vector for port 1 */
 #define XT_WINI_IRQ        5	/* xt winchester */
 #define FLOPPY_IRQ         6	/* floppy disk */
 #define PRINTER_IRQ        7
 #define PS_KEYB_IRQ        9	/* keyboard interrupt vector for PS/2 */
-#define AHA_SCSI_IRQ      11	/* Adaptec 154x SCSI controller */
 #define AT_WINI_IRQ       14	/* at winchester */
 
 /* Interrupt number to hardware vector. */
@@ -76,7 +72,7 @@
 #define VECTOR(irq)	\
 	(((irq) < 8 ? IRQ0_VECTOR : IRQ8_VECTOR) + ((irq) & 0x07))
 
-/* BIOS parameter vectors. */
+/* BIOS hard disk parameter vectors. */
 #define WINI_0_PARM_VEC 0x41
 #define WINI_1_PARM_VEC 0x46
 
@@ -97,11 +93,6 @@
 #define COLOR_SIZE    0x8000L	/* maximum usable color video memory */
 #define MONO_BASE    0xB0000L	/* base of mono video memory */
 #define MONO_SIZE     0x8000L	/* maximum usable mono video memory */
-
-/* What memory address the Etherplus card will use as the starting
-   address of its 8K buffer. If conflicts arise, change EPLUS_BASE. */
-#define EPLUS_BASE   0xD0000L
-#define EPLUS_SIZE    0x8000L
 
 /* Cursor shape is needed by debugger as well as console driver. */
 #define CURSOR_SHAPE      15	/* block cursor for MDA/HGC/CGA/EGA/VGA... */
@@ -130,8 +121,6 @@
 	((rp)->p_reg.psw = (rp)->p_reg.psw & ~0xFF | (new) & 0xFF)
  
 #define MEM_BYTES  0xffffffff	/* memory size for /dev/mem */
-#define ALIGNMENT	   4	/* align large items to a multiple of this */
-		/* 2 would do for an 68000, but 4 is nicer for 68020/68030 */
  
 #ifdef __ACK__
 #define FSTRUCOPY

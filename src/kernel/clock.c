@@ -369,52 +369,76 @@ PRIVATE void init_clock()
 }
 
 
+/*===========================================================================*
+ *				clock_stop				     *
+ *===========================================================================*/
+PUBLIC void clock_stop()
+{
+/* Reset the clock to the BIOS rate. */
+
+  out_byte(TIMER_MODE, 0x36);
+  out_byte(TIMER0, 0);
+  out_byte(TIMER0, 0);
+}
+
+
+/*==========================================================================*
+ *				milli_start				    *
+ *==========================================================================*/
+PUBLIC void milli_start(msp)
+struct milli_state *msp;
+{
+/* Prepare for calls to milli_elapsed(). */
+
+  msp->prev_count = 0;
+  msp->accum_count = 0;
+}
+
+
+/*==========================================================================*
+ *				milli_elapsed				    *
+ *==========================================================================*/
+PUBLIC unsigned milli_elapsed(msp)
+struct milli_state *msp;
+{
+/* Return the number of milliseconds since the call to milli_start().  Must be
+ * polled rapidly.
+ */
+  unsigned count;
+
+  /* Read the counter for channel 0 of the 8253A timer.  The counter
+   * decrements at twice the timer frequency (one full cycle for each
+   * half of square wave).  The counter normally has a value between 0
+   * and TIMER_COUNT, but before the clock task has been initialized,
+   * its maximum value is 65535, as set by the BIOS.
+   */
+  out_byte(TIMER_MODE, LATCH_COUNT);	/* make chip copy count to latch */
+  count = in_byte(TIMER0);	/* countdown continues during 2-step read */
+  count |= in_byte(TIMER0) << 8;
+
+  /* Add difference between previous and new count unless the counter has
+   * increased (restarted its cycle).  We may lose a tick now and then, but
+   * microsecond precision is not needed.
+   */
+  msp->accum_count += count <= msp->prev_count ? (msp->prev_count - count) : 1;
+  msp->prev_count = count;
+
+  return msp->accum_count / (TIMER_FREQ / 1000);
+}
+
+
 /*==========================================================================*
  *				milli_delay				    *
  *==========================================================================*/
 PUBLIC void milli_delay(millisec)
 unsigned millisec;
 {
-/* Delay some milliseconds (or longer - interrupts may interfere). */
+/* Delay some milliseconds. */
 
-  register unsigned count;
-  register unsigned diff;
-  unsigned prev_count;
-  unsigned long total_count;
+  struct milli_state ms;
 
-  total_count = (unsigned long) millisec * (COUNTER_FREQ / 1000);
-  diff = 100;			/* guess for emergencies */
-  prev_count = read_counter();
-  while (TRUE) {
-	count = read_counter();
-	/* Use difference between counts unless counter has not changed
-	 * (broken?) or has increased (due to reset).
-	 */
-	if (count < prev_count) diff = prev_count - count;
-	if (diff >= total_count) break;
-	total_count -= diff;
-	prev_count = count;
-  }
-}
-
-
-/*==========================================================================*
- *				read_counter				    *
- *==========================================================================*/
-PUBLIC unsigned read_counter()
-{
-/* Read the counter for channel 0 of the 8253A timer. The counter decrements
- * at twice the timer frequency (one full cycle for each half of square wave).
- * The counter normally has a value between 0 and TIMER_COUNT, but before
- * the clock task has been initialized, its maximum value is 65535, as set by
- * the BIOS.
- */
-
-  register unsigned low_byte;
-
-  out_byte(TIMER_MODE, LATCH_COUNT);	/* make chip copy count to latch */
-  low_byte = in_byte(TIMER0);	/* countdown continues during 2-step read */
-  return((in_byte(TIMER0) << 8) + low_byte);
+  milli_start(&ms);
+  while (milli_elapsed(&ms) < millisec) {}
 }
 #endif
 
@@ -476,6 +500,8 @@ int irq;
  *		This is protected by explicit locks in clock.c.  Don't
  *		update realtime directly, since there are too many
  *		references to it to guard conveniently.
+ *	lost_ticks:
+ *		Clock ticks counted outside the clock task.
  *	sched_ticks, prev_ptr:
  *		Updating these competes with similar code in do_clocktick().
  *		No lock is necessary, because if bad things happen here
@@ -489,6 +515,7 @@ int irq;
  */
 
   register struct proc *rp;
+  register unsigned ticks;
 
   if (ps_mca) {
 	/* Acknowledge the PS/2 clock interrupt. */
@@ -505,10 +532,12 @@ int irq;
 	rp = proc_addr(HARDWARE);
   else
 	rp = proc_ptr;
-  ++rp->user_time;
-  if (rp != bill_ptr && rp != proc_addr(IDLE)) ++bill_ptr->sys_time;
+  ticks = lost_ticks + 1;
+  lost_ticks = 0;
+  rp->user_time += ticks;
+  if (rp != bill_ptr && rp != proc_addr(IDLE)) bill_ptr->sys_time += ticks;
 
-  ++pending_ticks;
+  pending_ticks += ticks;
   tty_wakeup();			/* possibly wake up TTY */
 #if (CHIP != M68000)
   pr_restart();			/* possibly restart printer */

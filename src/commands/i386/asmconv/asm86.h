@@ -179,6 +179,9 @@ typedef enum opcode {	/* 80486 opcodes, from the i486 reference manual.
 #define is_pseudo(o)	((o) <= DOT_USE32)
 #define N_OPCODES	((int) XOR + 1)
 
+#define OPZ	0x01		/* Operand size prefix. */
+#define ADZ	0x02		/* Address size prefix. */
+
 typedef enum optype {
 	PSEUDO,	JUMP,	BYTE,	WORD,	OWORD		/* Ordered list! */
 } optype_t;
@@ -203,7 +206,8 @@ typedef struct asm86 {
 	opcode_t	opcode;		/* DOT_TEXT, MOV, ... */
 	char		*file;		/* Name of the file it is found in. */
 	long		line;		/* Line number. */
-	optype_t	optype;		/* Type of operands, like word size. */
+	optype_t	optype;		/* Type of operands: byte, word... */
+	int		oaz;		/* Operand/address size prefix? */
 	repeat_t	rep;		/* Repeat prefix used on this instr. */
 	segment_t	seg;		/* Segment override. */
 	expression_t	*args;		/* Arguments in ACK order. */

@@ -1,6 +1,6 @@
 #
 ! This file contains the assembler startup code for Minix and the 32-bit
-! interrupt handlers.  It cooperates with cstart.c to set up a good
+! interrupt handlers.  It cooperates with start.c to set up a good
 ! environment for main().
 
 ! This file is part of the lowest layer of the MINIX kernel.  The other part
@@ -59,12 +59,7 @@ begbss:
 ! Exported functions
 
 .sect .text
-.define	_db		! trap to external debugger
-.define	_get_word	! returns word at given segment:offset
-.define	_put_word	! writes given word to given segment:offset
 .define	_idle_task
-.define	_mpx_1hook
-.define	_mpx_2hook
 .define	_restart
 .define	save
 
@@ -128,16 +123,16 @@ begbss:
 .extern	_gdt
 .extern	_code_base
 .extern	_data_base
-.extern	_break_vector
-.extern	_db_enabled
 .extern	_held_head
 .extern	_k_reenter
 .extern	_pc_at
 .extern	_proc_ptr
 .extern	_ps_mca
-.extern	_sstep_vector
 .extern	_tss
 .extern	_level0_func
+.extern _mon_sp
+.extern _mon_return
+.extern	_reboot_code
 
 .sect .text
 !*===========================================================================*
@@ -147,32 +142,46 @@ MINIX:				! this is the entry point for the MINIX kernel
 	jmp	over_flags	! skip over the next few bytes
 	.data2	CLICK_SHIFT	! for the monitor: memory granularity
 flags:
-	.data2	0x0009		! boot monitor flags: call in 386 mode,
-				!	load high
+	.data2	0x002D		! boot monitor flags:
+				!	call in 386 mode, make stack,
+				!	load high, will return
 	nop			! extra byte to sync up disassembler
 over_flags:
 
-! Set up kernel segment registers and stack.
-! The monitor sets cs and ds right.  ss still points to the monitor data,
-! because the boot parameters offset and size are on its stack.
+! Set up a C stack frame on the monitor stack.  (The monitor sets cs and ds
+! right.  The ss descriptor still references the monitor data segment.)
+	movzx	esp, sp		! monitor stack is a 16 bit stack
+	push	ebp
+	mov	ebp, esp
+	push	esi
+	push	edi
+	cmp	4(ebp), 0	! nonzero if return possible
+	jz	noret
+	inc	(_mon_return)
+noret:	mov	(_mon_sp), esp	! save stack pointer for later return
 
-! Copy the monitor gdt to the kernel`s address space for cstart.  (There is
-! no other reason for this than to get it into our address space.)
-	sgdt	(_gdt)		! Get the monitor gdtr
-	mov	esi, (_gdt+2)	! Absolute address of global descriptor table
-	mov	ebx, _gdt	! Address of kernel`s global descriptor table
-	mov	ecx, 8*8	! Copying eight descriptors
+! Copy the monitor global descriptor table to the kernel`s address space and
+! switch over to it.  Prot_init() can then update it with immediate effect.
+
+	sgdt	(_gdt+GDT_SELECTOR)		! get the monitor gdtr
+	mov	esi, (_gdt+GDT_SELECTOR+2)	! absolute address of GDT
+	mov	ebx, _gdt			! address of kernel GDT
+	mov	ecx, 8*8			! copying eight descriptors
 copygdt:
  eseg	movb	al, (esi)
 	movb	(ebx), al
 	inc	esi
 	inc	ebx
 	loop	copygdt
+	mov	eax, (_gdt+DS_SELECTOR+2)	! base of kernel data
+	and	eax, 0x00FFFFFF			! only 24 bits
+	add	eax, _gdt			! eax = vir2phys(gdt)
+	mov	(_gdt+GDT_SELECTOR+2), eax	! set base of GDT
+	lgdt	(_gdt+GDT_SELECTOR)		! switch over to kernel GDT
 
-! Locate boot parameters and set segment registers
-	pop	ebx		! boot parameters offset
-	pop	ecx		! boot parameters length
-	mov	dx, ss		! monitor data
+! Locate boot parameters, set up kernel segment registers and stack.
+	mov	ebx, 8(ebp)	! boot parameters offset
+	mov	edx, 12(ebp)	! boot parameters length
 	mov	ax, ds		! kernel data
 	mov	es, ax
 	mov	fs, ax
@@ -180,37 +189,21 @@ copygdt:
 	mov	ss, ax
 	mov	esp, k_stktop	! set sp to point to the top of kernel stack
 
-! Call C startup code to set up a proper gdt and idt
-
-	push	ecx
-	movzx	edx, dx
+! Call C startup code to set up a proper environment to run main().
 	push	edx
 	push	ebx
-	mov	ax, ds
-	movzx	eax, ax
-	push	eax
-	mov	ax, cs
-	movzx	eax, ax
-	push	eax
-	call	_cstart		! cstart(cs, ds, parmoff, parmseg, parmlen)
-	add	esp, 5*4
+	push	SS_SELECTOR
+	push	MON_CS_SELECTOR
+	push	DS_SELECTOR
+	push	CS_SELECTOR
+	call	_cstart		! cstart(cs, ds, mcs, mds, parmoff, parmlen)
+	add	esp, 6*4
 
-! prot_init() has set up a gdt compatible with the BIOS interrupt to switch
-! modes.  The boot monitor has done this already however, but without a proper
-! idt.  So we reload gdtr, idtr and the segment registers to this better table.
-! This is what the BIOS call would have needed:
-!	gdt pointer in gdt[1]
-!	ldt pointer in gdt[2]
-!	new ds in gdt[3]
-!	new es in gdt[4]
-!	new ss in gdt[5]
-!	new cs in gdt[6]
-!	nothing in gdt[7] (overwritten with BIOS cs)
-!	ICW2 for master 8259 in bh
-!	ICW2 for slave 8259 in bl
+! Reload gdtr, idtr and the segment registers to global descriptor table set
+! up by prot_init().
 
-	lgdt	(_gdt+BIOS_GDT_SELECTOR)
-	lidt	(_gdt+BIOS_IDT_SELECTOR)
+	lgdt	(_gdt+GDT_SELECTOR)
+	lidt	(_gdt+IDT_SELECTOR)
 
 	jmpf	CS_SELECTOR:csinit
 csinit:
@@ -220,65 +213,12 @@ csinit:
 	mov	fs, ax
 	mov	gs, ax
 	mov	ss, ax
+    o16	mov	ax, TSS_SELECTOR	! no other TSS is used
+	ltr	ax
+	push	0			! set flags to known good state
+	popf				! esp, clear nested task and int enable
 
-! There is a little more protected mode initialization to do, but leave it
-! to main().
-
-	call	_main
-
-
-!*===========================================================================*
-!*				db					     *
-!*===========================================================================*
-
-! PUBLIC void db();
-! Trap to external debugger.
-! This may be called from all modes (real or protected, 16 or 32-bit).
-
-_db:
-	int	3
-	ret
-
-
-!*===========================================================================*
-!*				get_word				     *
-!*===========================================================================*
-
-! PUBLIC u16_t get_word(u16_t segment, u16_t *offset);
-! Load and return the word at the far pointer  segment:offset.
-
-_get_word:
-	push	ds			! save ds
-#if __ACK__
-	mov	ds, 4+4(esp)		! segment
-#else
-	.data1	0x8E,0x5C,0x24, 4+4	! segment
-#endif
-	mov	eax, 4+4+4(esp)		! offset
-	movzx	eax, (eax)		! load the word to return
-	pop	ds			! restore ds
-	ret
-
-
-!*===========================================================================*
-!*				put_word				     *
-!*===========================================================================*
-
-! PUBLIC void put_word(u16_t segment, u16_t *offset, u16_t value);
-! Store the word  value  at the far pointer  segment:offset.
-
-_put_word:
-	push	ds			! save ds
-#if __ACK__
-	mov	ds, 4+4(esp)		! segment
-#else
-	.data1	0x8E,0x5C,0x24, 4+4	! segment
-#endif
-	mov	eax, 4+4+4(esp)		! offset
-	mov	edx, 4+4+4+4(esp) 	! value
-    o16	mov	(eax), dx		! store the word
-	pop	ds			! restore ds
-	ret
+	jmp	_main			! main()
 
 
 !*===========================================================================*
@@ -295,13 +235,6 @@ _divide_error:
 	jmp	exception
 
 _single_step_exception:
-	sseg
-	cmpb	(_db_enabled), 0
-	jz	over_sstep
-	sseg
-	jmpf	(_sstep_vector)
-
-over_sstep:
 	push	DEBUG_VECTOR
 	jmp	exception
 
@@ -310,13 +243,6 @@ _nmi:
 	jmp	exception
 
 _breakpoint_exception:
-	sseg
-	cmpb	(_db_enabled), 0
-	jz	over_breakpoint
-	sseg
-	jmpf	(_break_vector)
-
-over_breakpoint:
 	push	BREAKPOINT_VECTOR
 	jmp	exception
 
@@ -649,23 +575,6 @@ restart1:
 !*===========================================================================*
 _idle_task:			! executed when there is no work 
 	jmp	_idle_task	! a "hlt" before this fails in protected mode
-
-
-!*===========================================================================*
-!*				mpx_1hook				     *
-!*				mpx_2hook				     *
-!*===========================================================================*
-! PUBLIC void mpx_1hook();
-! Initialize mpx from real mode for protected mode (no real mode).
-! Nothing to do.
-
-! PUBLIC void mpx_2hook();
-! Initialize mpx from protected mode for protected mode (no real mode).
-! Nothing to do.
-
-_mpx_1hook:
-_mpx_2hook:
-	ret
 
 
 !*===========================================================================*

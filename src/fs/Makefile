@@ -5,22 +5,20 @@ u = /usr
 i = $u/include
 s = $i/sys
 h = $i/minix
-l = $u/lib
 
 # Programs, flags, etc.
 CC =	exec cc
-LD =	$(CC) -.o
 CFLAGS = -I$i
 LDFLAGS = -i
-HEAD =	$l/head.o
 
 OBJ =	main.o open.o read.o write.o pipe.o \
 	device.o path.o mount.o link.o super.o inode.o \
 	cache.o filedes.o stadir.o protect.o time.o \
-	misc.o utility.o table.o putk.o
+	lock.c misc.o utility.o table.o putk.o
 
-fs:	Makefile $(HEAD) $(OBJ)
-	$(LD) -o $@ $(LDFLAGS) $(HEAD) $(OBJ)
+fs:	$(OBJ)
+	$(CC) -o $@ $(LDFLAGS) $(OBJ)
+	install -S 512w $@
 
 all install:	# Nothing.
 
@@ -41,6 +39,7 @@ cache.o:	fproc.h
 cache.o:	super.h
 
 device.o:	$a
+device.o:	$i/fcntl.h
 device.o:	$h/callnr.h
 device.o:	$h/com.h
 device.o:	dev.h
@@ -72,6 +71,15 @@ link.o:	fproc.h
 link.o:	inode.h
 link.o:	param.h
 link.o:	super.h
+
+lock.o:	$a
+lock.o:	$i/fcntl.h
+lock.o:	$i/tiny-unistd.h
+lock.o:	file.h
+lock.o:	fproc.h
+lock.o:	inode.h
+lock.o:	lock.h
+lock.o:	param.h
 
 main.o:	$a
 main.o:	$i/fcntl.h
@@ -121,6 +129,7 @@ open.o:	dev.h
 open.o:	file.h
 open.o:	fproc.h
 open.o:	inode.h
+open.o:	lock.h
 open.o:	param.h
 
 path.o:	$a
@@ -189,6 +198,7 @@ table.o:	dev.h
 table.o:	file.h
 table.o:	fproc.h
 table.o:	inode.h
+table.o:	lock.h
 table.o:	super.h
 
 time.o:	$a
@@ -202,6 +212,7 @@ time.o:	param.h
 utility.o:	$a
 utility.o:	$h/com.h
 utility.o:	$h/boot.h
+utility.o:	$i/unistd.h
 utility.o:	buf.h
 utility.o:	file.h
 utility.o:	fproc.h

@@ -16,18 +16,16 @@ struct memory {
   phys_clicks size;
 };
 
+/* Administration for clock polling. */
+struct milli_state {
+  unsigned long accum_count;	/* accumulated clock ticks */
+  unsigned prev_count;		/* previous clock value */
+};
+
 #if (CHIP == INTEL)
 typedef unsigned port_t;
 typedef unsigned segm_t;
-
-/* The register type is usually the natural 'unsigned', but not during 386
- * initialization, when it has to be unsigned long!
- */
-#if _WORD_SIZE == 4
-typedef u32_t reg_t;		/* machine register */
-#else
-typedef u16_t reg_t;
-#endif
+typedef unsigned reg_t;		/* machine register */
 
 /* The stack frame layout is determined by the software, but for efficiency
  * it is laid out so the assembly code to use it is as simple as possible.
@@ -70,14 +68,6 @@ struct segdesc_s {		/* segment descriptor for protected mode */
   u8_t base_high;
 #else
   u16_t reserved;
-#endif
-};
-
-struct farptr_s {		/* far pointer for debugger hooks */
-  reg_t offset;
-  u16_t selector;
-#if _WORD_SIZE == 4
-  u16_t pad;
 #endif
 };
 

@@ -13,7 +13,7 @@
 .define begtext, begdata, begbss
 .data
 begdata:
-	.ascii	"(null)\0"
+	.ascii	"(null)\0"	! Just in case someone follows a null pointer
 .bss
 begbss:
 
@@ -22,9 +22,6 @@ begbss:
 	LOADSEG     =	0x1000	! Where this code is loaded.
 	BUFFER	    =	0x0600	! First free memory
 	PENTRYSIZE  =	    16	! Partition table entry size.
-	DSKBASE     =	   120	! 120 = 4 * 0x1E = ptr to disk parameters
-	DSKPARSIZE  =	    11	! 11 bytes of floppy parameters
-	SECTORS	    =	     4	! Offset into parameters to sectors per track
 	a_flags	    =	     2	! From a.out.h, struct exec
 	a_text	    =	     8
 	a_data	    =	    12
@@ -33,6 +30,8 @@ begbss:
 	A_SEP	    =	  0x20	! Separate I&D flag
 	K_I386	    =	0x0001	! Call Minix in 386 mode
 	K_RET	    =	0x0020	! Returns to the monitor on reboot
+	K_INT86	    =	0x0040	! Requires generic INT support
+	K_MEML	    =	0x0080	! Pass a list of free memory
 
 	DS_SELECTOR =	   3*8	! Kernel data selector
 	ES_SELECTOR =	   4*8	! Flat 4 Gb
@@ -40,11 +39,14 @@ begbss:
 	CS_SELECTOR =	   6*8	! Kernel code
 	MCS_SELECTOR=	   7*8	! Monitor code
 
+	ESC	    =	  0x1B	! Escape character
+
 ! Imported variables and functions:
 .extern _caddr, _daddr, _runsize, _edata, _end	! Runtime environment
-.extern _device, _dskpars, _heads, _sectors	! Boot disk parameters
+.extern _device					! BIOS device number
 .extern _rem_part				! To pass partition info
 .extern _k_flags				! Special kernel flags
+.extern _mem					! Free memory list
 
 .text
 begtext:
@@ -130,15 +132,56 @@ sepID:
 	add	ax, a_text+0
 	adc	dx, a_text+2	! dx:ax = text + data + bss + heap + stack
 	pop	ds
-	add	ax, #0x000F
-	adc	dx, #0
-	and	ax, #0xFFF0	! Round up to a segment
 	mov	_runsize+0, ax
 	mov	_runsize+2, dx	! 32 bit size of this process
+
+! Determine available memory as a list of (base,size) pairs as follows:
+! mem[0] = low memory, mem[1] = memory between 1M and 16M, mem[2] = memory
+! above 16M.  Last two coalesced into mem[1] if adjacent.
+	mov	di, #_mem	! di = memory list
+	int	0x12		! Returns low memory size (in K) in ax
+	mul	c1024
+	mov	4(di), ax	! mem[0].size = low memory size in bytes
+	mov	6(di), dx
+	call	_getprocessor
+	cmp	ax, #286	! Only 286s and above have extended memory
+	jb	no_ext
+	cmp	ax, #486	! Assume 486s were the first to have >64M
+	jb	small_ext	! (It helps to be paranoid when using the BIOS)
+big_ext:
+	mov	ax, #0xE801	! Code for get memory size for >64M
+	int	0x15		! ax = mem at 1M per 1K, bx = mem at 16M per 64K
+	jnc	got_ext
+small_ext:
+	movb	ah, #0x88	! Code for get extended memory size
+	clc			! Carry will stay clear if call exists
+	int	0x15		! Returns size (in K) in ax for AT's
+	jc	no_ext
+	test	ax, ax		! An AT with no extended memory?
+	jz	no_ext
+	xor	bx, bx		! bx = mem above 16M per 64K = 0
+got_ext:
+	mov	cx, ax		! cx = copy of ext mem at 1M
+	mov	10(di), #0x0010	! mem[1].base = 0x00100000 (1M)
+	mul	c1024
+	mov	12(di), ax	! mem[1].size = "ext mem at 1M" * 1024
+	mov	14(di), dx
+	test	bx, bx
+	jz	no_ext		! No more ext mem above 16M?
+	cmp	cx, #15*1024	! Chunks adjacent? (precisely 15M at 1M?)
+	je	adj_ext
+	mov	18(di), #0x0100	! mem[2].base = 0x01000000 (16M)
+	mov	22(di), bx	! mem[2].size = "ext mem at 16M" * 64K
+	jmp	no_ext
+adj_ext:
+	add	14(di), bx	! Add ext mem above 16M to mem below 16M
+no_ext:
 
 ! Time to switch to a higher level language (not much higher)
 	call	_boot
 
+! void ..exit(int status)
+!	Exit the monitor by rebooting the system.
 .define	_exit, __exit, ___exit		! Make various compilers happy
 _exit:
 __exit:
@@ -149,7 +192,8 @@ ___exit:
 quit:	mov	ax, #any_key
 	push	ax
 	call	_printk
-	call	_getchar
+	xorb	ah, ah			! Read character from keyboard
+	int	0x16
 reboot:	call	restore_video
 	int	0x19			! Reboot the system
 .data
@@ -157,8 +201,6 @@ any_key:
 	.ascii	"\nHit any key to reboot\n\0"
 .text
 
-! Alas we need some low level support
-!
 ! u32_t mon2abs(void *ptr)
 !	Address in monitor data to absolute address.
 .define _mon2abs
@@ -369,64 +411,107 @@ memwarn:.ascii	"\nLow on"
 chmem:	.ascii	" memory, use chmem to increase the heap\n\0"
 .text
 
-! int dev_geometry(void);
-!	Given the device "_device" and floppy disk parameters "_dskpars",
-!	set the number of heads and sectors.  It returns true iff the device
-!	exists.
-.define	_dev_geometry
-_dev_geometry:
+! int dev_open(void);
+!	Given the device "_device" figure out if it exists and what its number
+!	of heads and sectors may be.  Return the BIOS error code on error,
+!	otherwise 0.
+.define	_dev_open
+_dev_open:
 	push	es
 	push	di		! Save registers used by BIOS calls
 	movb	dl, _device	! The default device
 	cmpb	dl, #0x80	! Floppy < 0x80, winchester >= 0x80
 	jae	winchester
 floppy:
-	int	0x11		! Get equipment configuration
-	testb	al, #0x01	! Bit 0 set if floppies available
-	jz	geoerr		! No floppy drives on this box
-	shl	ax, #1		! Highest floppy drive # in bits 6-7
-	shl	ax, #1		! Now in bits 0-1 of ah
-	andb	ah, #0x03	! Extract bits
-	cmpb	dl, ah		! Must be dl <= ah for drive to exist
-	ja	geoerr		! Alas no drive dl.
-	movb	dh, #2		! Floppies have two sides
-	mov	bx, #_dskpars	! bx = disk parameters
-	movb	cl, SECTORS(bx)
+	mov	di, #3		! Three tries to init drive by reading sector 0
+finit0:	xor	ax, ax
+	mov	es, ax
+	mov	bx, #BUFFER	! es:bx = scratch buffer
+	mov	ax, #0x0201	! Read sector, #sectors = 1
+	mov	cx, #0x0001	! Track 0, first sector
+	xorb	dh, dh		! Drive dl, head 0
+	int	0x13
+	jnc	finit0ok	! Sector 0 read ok?
+	cmpb	ah, #0x80	! Disk timed out?  (Floppy drive empty)
+	je	geoerr
+	dec	di
+	jz	geoerr
+	xorb	ah, ah		! Reset drive
+	int	0x13
+	jc	geoerr
+	jmp	finit0		! Retry once more, it may need to spin up
+finit0ok:
+	mov	di, #seclist	! List of per floppy type sectors/track
+flast:	movb	cl, (di)	! Sectors per track to test
+	cmpb	cl, #9		! No need to do the last 720K/360K test
+	je	ftestok
 	xor	ax, ax
-	mov	es, ax		! es = 0 = vector segment
-	eseg
-	mov	DSKBASE+0, bx
-	eseg
-	mov	DSKBASE+2, ds	! DSKBASE+2:DSKBASE+0 = ds:bx = floppy parms
+	mov	es, ax
+	mov	bx, #BUFFER	! es:bx = scratch buffer
+	mov	ax, #0x0201	! Read sector, #sectors = 1
+	xorb	ch, ch		! Track 0, last sector
+	xorb	dh, dh		! Drive dl, head 0
+	int	0x13
+	jnc	ftestok		! Sector cl read ok?
+	xorb	ah, ah		! Reset drive
+	int	0x13
+	jc	geoerr
+	inc	di		! Try next sec/track number
+	jmp	flast
+ftestok:
+	movb	dh, #2		! Floppies have two sides
 	jmp	geoboth
 winchester:
 	movb	ah, #0x08	! Code for drive parameters
 	int	0x13		! dl still contains drive
-	jb	geoerr		! No such drive?
+	jc	geoerr		! No such drive?
 	andb	cl, #0x3F	! cl = max sector number (1-origin)
 	incb	dh		! dh = 1 + max head number (0-origin)
 geoboth:
-	movb	_heads, dh	! Number of heads for this device
-	movb	_sectors, cl	! Sectors per track
+	movb	sectors, cl	! Sectors per track
 	movb	al, cl		! al = sectors per track
 	mulb	dh		! ax = heads * sectors
 	mov	secspcyl, ax	! Sectors per cylinder = heads * sectors
-	mov	ax, #1		! Code for success
+	xor	ax, ax		! Code for success
 geodone:
 	pop	di
 	pop	es		! Restore di and es registers
 	ret
-geoerr:	xor	ax, ax		! Code for failure
+geoerr:	movb	al, ah		! ax = BIOS error code
+	xorb	ah, ah
 	jmp	geodone
-.bss
-secspcyl:	.space 1*2
+.data
+seclist:
+	.data1	18, 15, 9	! 1.44M, 1.2M, and 360K/720K floppy sec/track
 .text
+
+! int dev_close(void);
+!	Close the current device.  Under the BIOS this does nothing.
+.define	_dev_close
+_dev_close:
+	xor	ax, ax
+	ret
+
+! int dev_boundary(u32_t sector);
+!	True if a sector is on a boundary, i.e. sector % sectors == 0.
+.define	_dev_boundary
+_dev_boundary:
+	mov	bx, sp
+	xor	dx, dx
+	mov	ax, 4(bx)	! divide high half of sector number
+	div	sectors
+	mov	ax, 2(bx)	! divide low half of sector number
+	div	sectors		! dx = sector % sectors
+	sub	dx, #1		! CF = dx == 0
+	sbb	ax, ax		! ax = -CF
+	neg	ax		! ax = (sector % sectors) == 0
+	ret
 
 ! int readsectors(u32_t bufaddr, u32_t sector, u8_t count)
 ! int writesectors(u32_t bufaddr, u32_t sector, u8_t count)
 !	Read/write several sectors from/to disk or floppy.  The buffer must
 !	be between 64K boundaries!  Count must fit in a byte.  The external
-!	variables _device, _sectors and _heads describe the disk and its
+!	variables _device, sectors and secspcyl describe the disk and its
 !	geometry.  Returns 0 for success, otherwise the BIOS error code.
 !
 .define _readsectors, _writesectors
@@ -457,7 +542,7 @@ more:	mov	ax, 8(bp)
 	div	secspcyl	! ax = cylinder, dx = sector within cylinder
 	xchg	ax, dx		! ax = sector within cylinder, dx = cylinder
 	movb	ch, dl		! ch = low 8 bits of cylinder
-	divb	_sectors	! al = head, ah = sector (0-origin)
+	divb	sectors		! al = head, ah = sector (0-origin)
 	xorb	dl, dl		! About to shift bits 8-9 of cylinder into dl
 	shr	dx, #1
 	shr	dx, #1		! dl[6..7] = high cylinder
@@ -466,7 +551,7 @@ more:	mov	ax, 8(bp)
 	incb	cl		! cl[0..5] = sector (1-origin)
 	movb	dh, al		! dh = head
 	movb	dl, _device	! dl = device to use
-	movb	al, _sectors	! Sectors per track - Sector number (0-origin)
+	movb	al, sectors	! Sectors per track - Sector number (0-origin)
 	subb	al, ah		! = Sectors left on this track
 	cmpb	al, 12(bp)	! Compare with # sectors to transfer
 	jbe	doit		! Can't go past the end of a cylinder?
@@ -475,7 +560,7 @@ doit:	movb	ah, 13(bp)	! Code for disk read (2) or write (3)
 	push	ax		! Save al = sectors to read
 	int	0x13		! call the BIOS to do the transfer
 	pop	cx		! Restore al in cl
-	jb	ioerr		! I/O error
+	jc	ioerr		! I/O error
 	movb	al, cl		! Restore al = sectors read
 	addb	bh, al		! bx += 2 * al * 256 (add bytes transferred)
 	addb	bh, al		! es:bx = where next sector is located
@@ -493,7 +578,7 @@ ioerr:	cmpb	ah, #0x80	! Disk timed out?  (Floppy drive empty)
 	jl	finish		! No, report the error
 	xorb	ah, ah		! Code for a reset (0)
 	int	0x13
-	jnb	more		! Succesful reset, try request again
+	jnc	more		! Succesful reset, try request again
 finish:	movb	al, ah
 	xorb	ah, ah		! ax = error number
 	pop	es
@@ -501,33 +586,54 @@ finish:	movb	al, ah
 	pop	bp
 	ret
 
-! int getchar(void), peekchar(void);
-!	Read a character from the keyboard, or just look if there is one.
+! int getch(void);
+!	Read a character from the keyboard, and check for an expired timer.
 !	A carriage return is changed into a linefeed for UNIX compatibility.
-.define _getchar, _peekchar
-_peekchar:
+.define _getch
+_getch:
 	movb	ah, #0x01	! Keyboard status
 	int	0x16
-	jnz	getc		! Keypress?
-	mov	ax, #-1		! No key
+	jnz	press
+	call	_expired	! Timer expired?
+	test	ax, ax
+	jz	_getch
+	mov	ax, #ESC	! Return ESC
 	ret
-_getchar:
+press:
 	xorb	ah, ah		! Read character from keyboard
 	int	0x16
-getc:	cmpb	al, #0x0D	! Carriage return?
+	cmpb	al, #0x0D	! Carriage return?
 	jnz	nocr
 	movb	al, #0x0A	! Change to linefeed
-nocr:	xorb	ah, ah		! ax = al
+nocr:	cmpb	al, #ESC	! Escape typed?
+	jne	noesc
+	inc	escape		! Set flag
+noesc:	xorb	ah, ah		! ax = al
 	ret
 
-! int putchar(int c);
-!	Write a character in teletype mode.  The putc and putk synonyms
-!	are for the kernel printk function that uses one of them.
+! int escape(void);
+!	True if ESC has been typed.
+.define _escape
+_escape:
+	movb	ah, #0x01	! Keyboard status
+	int	0x16
+	jz	escflg		! Keypress?
+	cmpb	al, #ESC	! Escape typed?
+	jne	escflg
+	xorb	ah, ah		! Discard the escape
+	int	0x16
+	inc	escape		! Set flag
+escflg:	xor	ax, ax
+	xchg	ax, escape	! Escape typed flag
+	ret
+
+! int putch(int c);
+!	Write a character in teletype mode.  The putk synonym is
+!	for the kernel printk function that uses it.
 !	Newlines are automatically preceded by a carriage return.
 !
-.define _putchar, _putc, _putk
-_putchar:
-_putc:
+.define _putch, _putk
+_putch:
 _putk:	mov	bx, sp
 	movb	al, 2(bx)	! al = character to be printed
 	testb	al, al		! 1.6.* printk adds a trailing null
@@ -542,34 +648,42 @@ putc:	movb	ah, #0x0E	! Print character in teletype mode
 	int	0x10		! Call BIOS VIDEO_IO
 nulch:	ret
 
-! void reset_video(unsigned mode);
-!	Reset and clear the screen.
-.define _reset_video
-_reset_video:
+! void set_mode(unsigned mode);
+! void clear_screen(void);
+!	Set video mode / clear the screen.
+.define _set_mode, _clear_screen
+_set_mode:
 	mov	bx, sp
 	mov	ax, 2(bx)	! Video mode
+	cmp	ax, cur_vid_mode
+	je	modeok		! Mode already as requested?
 	mov	cur_vid_mode, ax
-	testb	ah, ah
+_clear_screen:
+	mov	ax, cur_vid_mode
+	andb	ah, #0x7F	! Test bits 8-14, clear bit 15 (8x8 flag)
 	jnz	xvesa		! VESA extended mode?
 	int	0x10		! Reset video (ah = 0)
-	jmp	setcur
+	jmp	mdset
 xvesa:	mov	bx, ax		! bx = extended mode
 	mov	ax, #0x4F02	! Reset video
+	int	0x10
+mdset:	testb	cur_vid_mode+1, #0x80
+	jz	setcur		! 8x8 font requested?
+	mov	ax, #0x1112	! Load ROM 8 by 8 double-dot patterns
+	xorb	bl, bl		! Load block 0
 	int	0x10
 setcur:	xor	dx, dx		! dl = column = 0, dh = row = 0
 	xorb	bh, bh		! Page 0
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
-	ret
+modeok:	ret
 
 restore_video:			! To restore the video mode on exit
 	mov	ax, old_vid_mode
-	cmp	ax, cur_vid_mode
-	je	vidok
 	push	ax
-	call	_reset_video
+	call	_set_mode
 	pop	ax
-vidok:	ret
+	ret
 
 ! u32_t get_tick(void);
 !	Return the current value of the clock tick counter.  This counter
@@ -584,17 +698,14 @@ _get_tick:
 	ret
 
 
-! Functions used to obtain info about the hardware, like the type of video
-! and amount of memory.  Boot uses this information itself, but will also
-! pass them on to a pure 386 kernel, because one can't make BIOS calls from
-! protected mode.  The video type could probably be determined by the kernel
-! too by looking at the hardware, but there is a small chance on errors that
-! the monitor allows you to correct by setting variables.
+! Functions used to obtain info about the hardware.  Boot uses this information
+! itself, but will also pass them on to a pure 386 kernel, because one can't
+! make BIOS calls from protected mode.  The video type could probably be
+! determined by the kernel too by looking at the hardware, but there is a small
+! chance on errors that the monitor allows you to correct by setting variables.
 
 .define _get_bus		! returns type of system bus
 .define _get_video		! returns type of display
-.define _get_memsize		! returns amount of low memory in K
-.define _get_ext_memsize	! returns amount of extended memory in K
 
 ! u16_t get_bus(void)
 !	Return type of system bus, in order: XT, AT, MCA.
@@ -622,12 +733,12 @@ got_bus:
 	push	ds
 	pop	es		! Restore es
 	mov	ax, dx		! Return bus code
+	mov	bus, ax		! Keep bus code, A20 handler likes to know
 	ret
 
 ! u16_t get_video(void)
 !	Return type of display, in order: MDA, CGA, mono EGA, color EGA,
 !	mono VGA, color VGA.
-
 _get_video:
 	mov	ax, #0x1A00	! Function 1A returns display code
 	int	0x10		! al = 1A if supported
@@ -668,28 +779,6 @@ no_ega:	int	0x11		! Get bit pattern for equipment
 got_video:
 	ret
 
-! u16_t get_memsize(void);
-!	Ask the BIOS how much normal memory there is.
-
-_get_memsize:
-	int	0x12		! Returns the size (in K) in ax
-	ret
-
-! u32_t get_ext_memsize(void);
-!	Ask the BIOS how much extended memory there is.
-
-_get_ext_memsize:
-	call	_getprocessor
-	cmp	ax, #286	! Only 286s and above have extended memory
-	jb	no_ext
-	movb	ah, #0x88	! Code for get extended memory size
-	clc			! Carry will stay clear if call exists
-	int	0x15		! Returns size (in K) in ax for AT's
-	jnc	got_ext
-no_ext:	xor	ax, ax		! Error, no extended memory
-got_ext:
-	xor	dx, dx
-	ret
 
 ! Functions to leave the boot monitor.
 .define _bootstrap		! Call another bootstrap
@@ -718,7 +807,7 @@ _bootstrap:
 	jmpf	BOOTOFF, 0	! Back to where the BIOS loads the boot code
 
 ! u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
-!					char *bootparams, size_t paramsize);
+!				char *bootparams, size_t paramsize, u32_t aout);
 !	Call Minix.
 _minix:
 	push	bp
@@ -728,9 +817,9 @@ _minix:
 	movb	al, #0x0C	! Bits 4-7 for floppy 0-3 are off
 	outb	dx		! Kill the motors
 	push	ds
-	mov	ax, #0x0040	! BIOS data segment
+	xor	ax, ax		! Vector & BIOS data segments
 	mov	ds, ax
-	andb	0x003F, #0xF0	! Clear diskette motor status bits of BIOS
+	andb	0x043F, #0xF0	! Clear diskette motor status bits of BIOS
 	pop	ds
 	cli			! No more interruptions
 
@@ -739,14 +828,24 @@ _minix:
 
 ! Call Minix in real mode.
 minix86:
+	test	_k_flags, #K_MEML ! New memory arrangements?
+	jz	0f
+	push	22(bp)		! Address of a.out headers
+	push	20(bp)
+0:
 	push	18(bp)		! # bytes of boot parameters
-	push	16(bp)		! address of boot parameters
+	push	16(bp)		! Address of boot parameters
 
 	test	_k_flags, #K_RET ! Can the kernel return?
 	jz	noret86
-	push	cs
+	mov	dx, cs		! Monitor far return address
 	mov	ax, #ret86
-	push	ax		! Monitor far return address
+	cmp	_mem+14, #0	! Any extended memory?  (mem[1].size > 0 ?)
+	jnz	0f
+	xor	dx, dx		! If no ext mem then monitor not preserved
+	xor	ax, ax
+0:	push	dx		! Push monitor far return address or zero
+	push	ax
 noret86:
 
 	mov	ax, 8(bp)
@@ -765,6 +864,10 @@ noret86:
 minix386:
   cseg	mov	cs_real-2, cs	! Patch CS and DS into the instructions that
   cseg	mov	ds_real-2, ds	! reload them when switching back to real mode
+	.data1	0x0F,0x20,0xC0	! mov	eax, cr0
+	orb	al, #0x01	! Set PE (protection enable) bit
+	.data1	o32
+	mov	msw, ax		! Save as protected mode machine status word
 
 	mov	dx, ds		! Monitor ds
 	mov	ax, #p_gdt	! dx:ax = Global descriptor table
@@ -795,8 +898,17 @@ minix386:
 	movb	p_mcs_desc+4, dl
 
 	push	#MCS_SELECTOR
-	push	#bios13		! Far address to BIOS int 13 support
-
+	test	_k_flags, #K_INT86 ! Generic INT86 support?
+	jz	0f
+	push	#int86		! Far address to INT86 support
+	jmp	1f
+0:	push	#bios13		! Far address to BIOS int 13 support
+1:
+	test	_k_flags, #K_MEML ! New memory arrangements?
+	jz	0f
+	.data1	o32
+	push	20(bp)		! Address of a.out headers
+0:
 	push	#0
 	push	18(bp)		! 32 bit size of parameters on stack
 	push	#0
@@ -836,47 +948,178 @@ ret386:
 return:
 	mov	sp, bp		! Pop parameters
 	sti			! Can take interrupts again
+
 	call	_get_video	! MDA, CGA, EGA, ...
 	movb	dh, #24		! dh = row 24
 	cmp	ax, #2		! At least EGA?
 	jb	is25		! Otherwise 25 rows
 	push	ds
-	mov	ax, #0x0040	! BIOS data segment
+	xor	ax, ax		! Vector & BIOS data segments
 	mov	ds, ax
-	movb	dh, 0x0084	! Number of rows on display minus one
+	movb	dh, 0x0484	! Number of rows on display minus one
 	pop	ds
 is25:
 	xorb	dl, dl		! dl = column 0
 	xorb	bh, bh		! Page 0
 	movb	ah, #0x02	! Set cursor position
 	int	0x10
-	mov	cur_vid_mode, #-1  ! Minix may have messed things up
+
+	xorb	ah, ah		! Whack the disk system, Minix may have messed
+	movb	dl, #0x80	! it up
+	int	0x13
+
+	call	_getprocessor
+	cmp	ax, #286
+	jb	noclock
+	xorb	al, al
+tryclk:	decb	al
+	jz	noclock
+	movb	ah, #0x02	! Get real-time clock time (from CMOS clock)
+	int	0x1A
+	jc	tryclk		! Carry set, not running or being updated
+	movb	al, ch		! ch = hour in BCD
+	call	bcd		! al = (al >> 4) * 10 + (al & 0x0F)
+	mulb	c60		! 60 minutes in an hour
+	mov	bx, ax		! bx = hour * 60
+	movb	al, cl		! cl = minutes in BCD
+	call	bcd
+	add	bx, ax		! bx = hour * 60 + minutes
+	movb	al, dh		! dh = seconds in BCD
+	call	bcd
+	xchg	ax, bx		! ax = hour * 60 + minutes, bx = seconds
+	mul	c60		! dx-ax = (hour * 60 + minutes) * 60
+	add	bx, ax
+	adc	dx, #0		! dx-bx = seconds since midnight
+	mov	ax, dx
+	mul	c19663
+	xchg	ax, bx
+	mul	c19663
+	add	dx, bx		! dx-ax = dx-bx * (0x1800B0 / (2*2*2*2*5))
+	mov	cx, ax		! (0x1800B0 = ticks per day of BIOS clock)
+	mov	ax, dx
+	xor	dx, dx
+	div	c1080
+	xchg	ax, cx
+	div	c1080		! cx-ax = dx-ax / (24*60*60 / (2*2*2*2*5))
+	mov	dx, ax		! cx-dx = ticks since midnight
+	movb	ah, #0x01	! Set system time
+	int	0x1A
+noclock:
 
 	mov	ax, 8(bp)
 	mov	dx, 10(bp)	! dx-ax = return value from the kernel
 	pop	bp
-	ret			! Continue as if nothing happened
+	ret			! Return to monitor as if nothing much happened
+
+! Transform BCD number in al to a regular value in ax.
+bcd:	movb	ah, al
+	shrb	ah, #4
+	andb	al, #0x0F
+	.data1 0xD5,10 ! aad	! ax = (al >> 4) * 10 + (al & 0x0F)
+	ret			! (BUG: assembler messes up aad & aam!)
 
 ! Support function for Minix-386 to make a BIOS int 13 call (disk I/O).
-.define bios13
 bios13:
 	mov	bp, sp
 	call	prot2real
+	sti			! Enable interrupts
 
 	mov	ax, 8(bp)	! Load parameters
 	mov	bx, 10(bp)
 	mov	cx, 12(bp)
 	mov	dx, 14(bp)
 	mov	es, 16(bp)
-	sti			! Enable interrupts
 	int	0x13		! Make the BIOS call
-	cli			! Disable interrupts
 	mov	8(bp), ax	! Save results
 	mov	10(bp), bx
 	mov	12(bp), cx
 	mov	14(bp), dx
 	mov	16(bp), es
 
+	cli			! Disable interrupts
+	call	real2prot
+	mov	ax, #DS_SELECTOR ! Kernel data
+	mov	ds, ax
+	.data1	o32
+	retf			! Return to the kernel
+
+! Support function for Minix-386 to make an 8086 interrupt call.
+int86:
+	mov	bp, sp
+	call	prot2real
+
+	.data1	o32
+	xor	ax, ax
+	mov	es, ax		! Vector & BIOS data segments
+	.data1	o32
+   eseg	mov	0x046C, ax	! Clear BIOS clock tick counter
+
+	sti			! Enable interrupts
+
+	movb	al, #0xCD	! INT instruction
+	movb	ah, 8(bp)	! Interrupt number?
+	testb	ah, ah
+	jnz	0f		! Nonzero if INT, otherwise far call
+	push	cs
+	push	#intret+2	! Far return address
+	.data1	o32
+	push	12(bp)		! Far driver address
+	mov	ax, #0x90CB	! RETF; NOP
+0: cseg	mov	intret, ax	! Patch `INT n' or `RETF; NOP' into code
+	jmp	.+2		! Clear instruction queue
+
+	mov	ds, 16(bp)	! Load parameters
+	mov	es, 18(bp)
+	.data1	o32
+	mov	ax, 20(bp)
+	.data1	o32
+	mov	bx, 24(bp)
+	.data1	o32
+	mov	cx, 28(bp)
+	.data1	o32
+	mov	dx, 32(bp)
+	.data1	o32
+	mov	si, 36(bp)
+	.data1	o32
+	mov	di, 40(bp)
+	.data1	o32
+	mov	bp, 44(bp)
+
+intret:	int	0xFF		! Do the interrupt or far call
+
+	.data1	o32		! Save results
+	push	bp
+	.data1	o32
+	pushf
+	mov	bp, sp
+	.data1	o32
+	pop	8+8(bp)		! eflags
+	mov	8+16(bp), ds
+	mov	8+18(bp), es
+	.data1	o32
+	mov	8+20(bp), ax
+	.data1	o32
+	mov	8+24(bp), bx
+	.data1	o32
+	mov	8+28(bp), cx
+	.data1	o32
+	mov	8+32(bp), dx
+	.data1	o32
+	mov	8+36(bp), si
+	.data1	o32
+	mov	8+40(bp), di
+	.data1	o32
+	pop	8+44(bp)	! ebp
+
+	cli			! Disable interrupts
+
+	xor	ax, ax
+	mov	ds, ax		! Vector & BIOS data segments
+	.data1	o32
+	mov	cx, 0x046C	! Collect lost clock ticks in ecx
+
+	mov	ax, ss
+	mov	ds, ax		! Restore monitor ds
 	call	real2prot
 	mov	ax, #DS_SELECTOR ! Kernel data
 	mov	ds, ax
@@ -885,11 +1128,16 @@ bios13:
 
 ! Switch from real to protected mode.
 real2prot:
+	movb	ah, #0x02	! Code for A20 enable
+	call	gate_A20
+
 	lgdt	p_gdt_desc	! Global descriptor table
+	.data1	o32
+	mov	ax, pdbr	! Load page directory base register
+	.data1	0x0F,0x22,0xD8	! mov	cr3, eax
 	.data1	0x0F,0x20,0xC0	! mov	eax, cr0
 	.data1	o32
-	mov	msw, ax		! Save cr0
-	orb	al, #0x01	! Set PE (protection enable) bit
+	xchg	ax, msw		! Exchange real mode msw for protected mode msw
 	.data1	0x0F,0x22,0xC0	! mov	cr0, eax
 	jmpf	cs_prot, MCS_SELECTOR ! Set code segment selector
 cs_prot:
@@ -897,15 +1145,17 @@ cs_prot:
 	mov	ds, ax
 	mov	es, ax
 	mov	ss, ax
-
-	movb	ah, #0xDF	! Code for A20 enable
-	jmp	gate_A20
+	ret
 
 ! Switch from protected to real mode.
 prot2real:
 	lidt	p_idt_desc	! Real mode interrupt vectors
+	.data1	0x0F,0x20,0xD8	! mov	eax, cr3
 	.data1	o32
-	mov	ax, msw		! Saved cr0
+	mov	pdbr, ax	! Save page directory base register
+	.data1	0x0F,0x20,0xC0	! mov	eax, cr0
+	.data1	o32
+	xchg	ax, msw		! Exchange protected mode msw for real mode msw
 	.data1	0x0F,0x22,0xC0	! mov	cr0, eax
 	jmpf	cs_real, 0xDEAD	! Reload cs register
 cs_real:
@@ -915,22 +1165,24 @@ ds_real:
 	mov	es, ax
 	mov	ss, ax
 
-	movb	ah, #0xDD	! Code for A20 disable
+	xorb	ah, ah		! Code for A20 disable
 	!jmp	gate_A20
 
-! Enable (ah = 0xDF) or disable (ah = 0xDD) the A20 address line.
+! Enable (ah = 0x02) or disable (ah = 0x00) the A20 address line.
 gate_A20:
+	cmp	bus, #2		! PS/2 bus?
+	je	gate_PS_A20
 	call	kb_wait
 	movb	al, #0xD1	! Tell keyboard that a command is coming
 	outb	0x64
 	call	kb_wait
-	movb	al, ah		! Enable or disable code
+	movb	al, #0xDD	! 0xDD = A20 disable code if ah = 0x00
+	orb	al, ah		! 0xDF = A20 enable code if ah = 0x02
 	outb	0x60
 	call	kb_wait
-	mov	ax, #25		! 25 microsec delay for slow keyboard chip
-0:	out	0xED		! Write to an unused port (1us)
-	dec	ax
-	jne	0b
+	movb	al, #0xFF	! Pulse output port
+	outb	0x64
+	call	kb_wait		! Wait for the A20 line to settle down
 	ret
 kb_wait:
 	inb	0x64
@@ -938,8 +1190,24 @@ kb_wait:
 	jnz	kb_wait		! If so, wait
 	ret
 
+gate_PS_A20:		! The PS/2 can twiddle A20 using port A
+	inb	0x92		! Read port A
+	andb	al, #0xFD
+	orb	al, ah		! Set A20 bit to the required state
+	outb	0x92		! Write port A
+	jmp	.+2		! Small delay
+A20ok:	inb	0x92		! Check port A
+	andb	al, #0x02
+	cmpb	al, ah		! A20 line settled down to the new state?
+	jne	A20ok		! If not then wait
+	ret
+
 .data
 	.align	2
+c60:	.data2	60		! Constants for MUL and DIV
+c1024:	.data2	1024
+c1080:	.data2	1080
+c19663:	.data2	19663
 
 ! Global descriptor tables.
 	UNSET	= 0		! Must be computed
@@ -1007,6 +1275,11 @@ p_mcs_desc:
 	.data1	UNSET, 0x9A, 0x00, 0x00
 
 .bss
-	.comm	old_vid_mode, 2		! Video mode at startup
-	.comm	cur_vid_mode, 2		! Current video mode
-	.comm	msw, 4			! Saved machine status word (cr0)
+	.comm	old_vid_mode, 2	! Video mode at startup
+	.comm	cur_vid_mode, 2	! Current video mode
+	.comm	sectors, 2	! # sectors of current device
+	.comm	secspcyl, 2	! (Sectors * heads) of current device
+	.comm	msw, 4		! Saved machine status word (cr0)
+	.comm	pdbr, 4		! Saved page directory base register (cr3)
+	.comm	escape, 2	! Escape typed?
+	.comm	bus, 2		! Saved return value of _get_bus

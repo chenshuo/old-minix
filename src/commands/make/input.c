@@ -346,6 +346,35 @@ FILE *fd;
 	expand(&str1s);
 	p = str1;
 
+	while (isspace(*p))  p++;
+
+	/* include? */
+	if (strncmp(p, "include", 7) == 0 && isspace(p[7])) {
+		char *old_makefile = makefile;
+		int old_lineno = lineno;
+		FILE *ifd;
+
+		if ((q = malloc(strlen(p+8)+1)) == (char *)0)
+			fatal("No memory for include",(char *)0,0);
+
+		strcpy(q, p+8);
+		p = q;
+		while ((makefile = gettok(&q)) != (char *)0) {
+			if ((ifd = fopen(makefile, "r")) == (FILE *)0)
+				fatal("Can't open %s: %s", makefile, errno);
+			lineno = 0;
+			input(ifd);
+			fclose(ifd);
+		}
+		free(p);
+		makefile = old_makefile;
+		lineno = old_lineno;
+
+		if (getline(&str1s, fd))
+			return;
+		continue;
+	}
+
 	while (((q = strchr(p, ':')) != (char *)0) &&
 	    (p != q) && (q[-1] == '\\'))	/*  Find dependents  */
 	{

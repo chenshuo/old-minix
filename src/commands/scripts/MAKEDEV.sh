@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# MAKEDEV 2.18 - Make special devices.			Author: Kees J. Bot
+# MAKEDEV 2.20 - Make special devices.			Author: Kees J. Bot
 
 case $1 in
 -n)	e=echo; shift ;;	# Just echo when -n is given.
@@ -11,6 +11,7 @@ case $#:$1 in
 1:std)		# Standard devices.
 	set -$- mem fd0 fd1 fd0a fd1a \
 		hd0 hd1a hd5 hd6a cd0 cd1a sd0 sd1a sd5 sd6a st4 \
+		dosd0 dosd5 \
 		tty ttyc1 tty00 tty01 ttyp0 ttyp1 ttyp2 ttyp3 eth
 	;;
 0:|1:-\?)
@@ -25,11 +26,12 @@ Where key is one of the following:
 	sd0 sd5 sd1a ...	# Make SCSI disks
 	st0 st1 ...		# Make SCSI tapes rst0, nrst0, rst1 ...
 	cd0 cd1a		# Make CD-ROM devices (non SCSI)
+	dosd0 dosd5		# Make virtual disks on a dos file
 	console lp tty log	# One of these makes all four
 	ttyc1 ... ttyc7		# Virtual consoles
 	tty00 ... tty03		# Make serial lines
 	ttyp0 ... ttyq0 ...	# Make tty, pty pairs
-	eth ip tcp udp		# One of these makes TCP/IP devices
+	eth psip ip tcp udp	# One of these makes lots of TCP/IP devices
 	audio mixer		# Make audio devices
 	std			# All standard devices
 EOF
@@ -84,7 +86,7 @@ do
 		done
 		$e chmod 666 $alldev
 		;;
-	[hs]d[0-9]|[hs]d[123][0-9]|cd[0-4])
+	[hs]d[0-9]|[hs]d[123][0-9]|dosd[0-9]|cd[0-4])
 		# Hard disk drive & partitions.
 		#
 		case $dev in
@@ -93,6 +95,8 @@ do
 		c*)	name=cd maj=8		# CD-ROM.
 			;;
 		s*)	name=sd maj=10		# SCSI.
+			;;
+		d*)	name=dosd maj=12	# Virtual dos disk.
 		esac
 		n=`expr $dev : '[^0-9]*\\(.*\\)'`  # Minor device number.
 		n=`expr $n / 5 '*' 5`		# Down to a multiple of 5.
@@ -191,15 +195,31 @@ do
 		$e chgrp tty tty$dev pty$dev
 		$e chmod 666 tty$dev pty$dev
 		;;
-	eth|ip|tcp|udp)
+	eth|psip|ip|tcp|udp|eth[01]|psip[23]|ip[0-3]|tcp[0-3]|udp[0-3])
 		# TCP/IP devices.
 		#
-		$e mknod eth c 7 1
-		$e mknod ip c 7 2
-		$e mknod tcp c 7 3
-		$e mknod udp c 7 4
-		$e chmod 600 eth ip
-		$e chmod 666 tcp udp
+		$e mknod eth0 c 7 1		# Network 0 (Ethernet)
+		$e mknod ip0 c 7 2
+		$e mknod tcp0 c 7 3
+		$e mknod udp0 c 7 4
+		$e mknod eth1 c 7 17		# Network 1 (Ethernet)
+		$e mknod ip1 c 7 18
+		$e mknod tcp1 c 7 19
+		$e mknod udp1 c 7 20
+		$e mknod psip2 c 7 33		# Network 2 (Pseudo IP)
+		$e mknod ip2 c 7 34
+		$e mknod tcp2 c 7 35
+		$e mknod udp2 c 7 36
+		$e mknod psip3 c 7 49		# Network 3 (Pseudo IP)
+		$e mknod ip3 c 7 50
+		$e mknod tcp3 c 7 51
+		$e mknod udp3 c 7 52
+		$e chmod 600 eth[01] psip[23] ip[0-3]
+		$e chmod 666 tcp[0-3] udp[0-3]
+		$e ln -f eth0 eth		# Default interface
+		$e ln -f ip0 ip
+		$e ln -f tcp0 tcp
+		$e ln -f udp0 udp
 		;;
 	audio|mixer)
 		# Audio devices.

@@ -9,15 +9,19 @@ struct proc;
 struct tty;
 
 /* at_wini.c, bios_wini.c, esdi_wini.c, ps_wini.c, xt_wini.c, wini.c */
-_PROTOTYPE( void winchester_task, (void)				);
 _PROTOTYPE( void at_winchester_task, (void)				);
 _PROTOTYPE( void bios_winchester_task, (void)				);
 _PROTOTYPE( void esdi_winchester_task, (void)				);
 _PROTOTYPE( void ps_winchester_task, (void)				);
 _PROTOTYPE( void xt_winchester_task, (void)				);
 
-/* aha_scsi.c */
-_PROTOTYPE( void aha_scsi_task, (void)					);
+/* aha1540.c */
+_PROTOTYPE( void aha1540_scsi_task, (void)				);
+
+/* dosfat.c, dosfile.c */
+_PROTOTYPE( void dosfat_task, (void)					);
+_PROTOTYPE( void dosfile_task, (void)					);
+_PROTOTYPE( void dosfile_stop, (void)					);
 
 /* clock.c */
 _PROTOTYPE( void clock_task, (void)					);
@@ -85,6 +89,9 @@ _PROTOTYPE( void sys_task, (void)					);
 _PROTOTYPE( phys_bytes umap, (struct proc *rp, int seg, vir_bytes vir_addr,
 		vir_bytes bytes)					);
 
+/* table.c */
+_PROTOTYPE( void mapdrivers, (void)					);
+
 /* tty.c */
 _PROTOTYPE( void handle_events, (struct tty *tp)			);
 _PROTOTYPE( void sigchar, (struct tty *tp, int sig)			);
@@ -102,6 +109,9 @@ _PROTOTYPE( void *memcpy, (void *_s1, const void *_s2, size_t _n)	);
 
 #if (CHIP == INTEL)
 
+/* 3c503.c */
+_PROTOTYPE( int el2_probe, (struct dpeth *dep)				);
+
 /* clock.c */
 _PROTOTYPE( void milli_start, (struct milli_state *msp)			);
 _PROTOTYPE( unsigned milli_elapsed, (struct milli_state *msp)		);
@@ -116,7 +126,7 @@ _PROTOTYPE( int con_loadfont, (phys_bytes user_phys)			);
 _PROTOTYPE( void select_console, (int cons_line)			);
 
 /* cstart.c */
-_PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mcs, U16_t mds,
+_PROTOTYPE( void cstart, (U16_t cs, U16_t ds, U16_t mds,
 				U16_t parmoff, U16_t parmsize)		);
 _PROTOTYPE( char *k_getenv, (char *name)				);
 
@@ -134,8 +144,7 @@ _PROTOTYPE( int kbd_loadmap, (phys_bytes user_phys)			);
 _PROTOTYPE( void wreboot, (int how)					);
 
 /* klib*.s */
-_PROTOTYPE( void bios13, (void)						);
-_PROTOTYPE( phys_bytes check_mem, (phys_bytes base, phys_bytes size)	);
+_PROTOTYPE( void int86, (void)						);
 _PROTOTYPE( void cp_mess, (int src,phys_clicks src_clicks,vir_bytes src_offset,
 		phys_clicks dst_clicks, vir_bytes dst_offset)		);
 _PROTOTYPE( int in_byte, (port_t port)					);

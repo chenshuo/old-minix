@@ -276,9 +276,11 @@ char *argv[];
 	opt = argv[i];
 	if (opt[0] == '-') opt++;
 	while (*opt != 0) switch (*opt++) {
-		case 'a':	opt_all = TRUE;		break;
-		case 'l':	opt_long = TRUE;	break;
-		case 'x':	opt_notty = TRUE;	break;
+		case 'a':	opt_all = TRUE;			break;
+		case 'e':	opt_all = opt_notty = TRUE;	break;
+		case 'f':
+		case 'l':	opt_long = TRUE;		break;
+		case 'x':	opt_notty = TRUE;		break;
 		default:	usage(argv[0]);
 	}
   }

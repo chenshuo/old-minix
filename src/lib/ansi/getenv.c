@@ -6,12 +6,12 @@
 
 #include	<stdlib.h>
 
-extern const char **_penvp;
+extern const char ***_penviron;
 
 char *
 getenv(const char *name)
 {
-	register const char **v = _penvp;
+	register const char **v = *_penviron;
 	register const char *p, *q;
 
 	if (v == NULL || name == NULL)

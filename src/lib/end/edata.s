@@ -2,8 +2,6 @@
 .sect .text
 .sect .rom
 .sect .data
-.sect .bss
+.align _EM_WSIZE
 .define _edata
-.sect .data
-	.align _EM_WSIZE
 _edata:

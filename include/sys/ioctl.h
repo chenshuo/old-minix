@@ -64,9 +64,13 @@
 #define NWIOSIPOPT	_IOW('n', 34, struct nwio_ipopt)
 #define NWIOGIPOPT	_IOR('n', 35, struct nwio_ipopt)
 
-#define NWIOIPGROUTE	_IORW('n', 40, struct nwio_route)
-#define NWIOIPSROUTE	_IOW ('n', 41, struct nwio_route)
+#define NWIOGIPOROUTE	_IORW('n', 40, struct nwio_route)
+#define NWIOSIPOROUTE	_IOW ('n', 41, struct nwio_route)
 #define NWIOIPDROUTE	_IOW ('n', 42, struct nwio_route)
+
+#define NWIOGIPIROUTE	_IORW('n', 43, struct nwio_route)
+#define NWIOSIPIROUTE	_IOW ('n', 44, struct nwio_route)
+#define NWIODIPIROUTE	_IOW ('n', 45, struct nwio_route)
 
 #define NWIOSTCPCONF	_IOW('n', 48, struct nwio_tcpconf)
 #define NWIOGTCPCONF	_IOR('n', 49, struct nwio_tcpconf)
@@ -79,6 +83,9 @@
 
 #define NWIOSUDPOPT	_IOW('n', 64, struct nwio_udpopt)
 #define NWIOGUDPOPT	_IOR('n', 65, struct nwio_udpopt)
+
+#define NWIOSPSIPOPT	_IOW('n', 80, struct nwio_psipopt)
+#define NWIOGPSIPOPT	_IOR('n', 81, struct nwio_psipopt)
 
 /* Disk ioctls. */
 #define DIOCEJECT	_IO ('d', 5)

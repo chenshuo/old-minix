@@ -44,7 +44,6 @@
 
 static char version[]= "2.0";
 
-static char *makefile;      /*  The make file  */
 static FILE *ifd;           /*  Input file desciptor  */
 static char *ptrmakeflags;
 
@@ -141,13 +140,13 @@ char **argv;
   else if (!makefile) {    /*  If no file, then use default */
 	if ((ifd = fopen(DEFN1, "r")) == (FILE *)0) {
 		if (errno != MNOENT || !DEFN2)
-			fatal("Can't open %s; error %02x", DEFN1, errno);
+			fatal("Can't open %s: %s", DEFN1, errno);
 		else if ((ifd = fopen(DEFN2, "r")) == (FILE *)0)
-			fatal("Can't open %s; error %02x", DEFN2, errno);
+			fatal("Can't open %s: %s", DEFN2, errno);
 	}
   }
   else if ((ifd = fopen(makefile, "r")) == (FILE *)0)
-	fatal("Can't open %s; error %2x", makefile, errno);
+	fatal("Can't open %s: %s", makefile, errno);
 
   init();
 
@@ -283,7 +282,7 @@ char *a1;
 int   a2;
 {
   fprintf(stderr, "%s: ", myname);
-  fprintf(stderr, msg, a1, a2);
+  fprintf(stderr, msg, a1, strerror(a2));
   fputc('\n', stderr);
   exit(1);
 }

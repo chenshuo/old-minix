@@ -1,24 +1,31 @@
 /*
 assert.h
+
+Copyright 1995 Philip Homburg
 */
 #ifndef INET_ASSERT_H
 #define INET_ASSERT_H
 
-#include "const.h"
+#if !NDEBUG
 
-#ifndef assert 
-#if NDEBUG
-#define assert(x) 0
-#define assertN(n,x)	0
-#define compare(a,t,b)	0
-#else
-#define assert(x) (!(x) ? (ip_panic (( "assertion failed" )) \
-		,0) : 0)
-#define assertN(n,x) (!(x) ? (ip_panic (( "assertion %d failed", n )),0) : 0)
-#define compare(a,t,b) (!((a) t (b)) ? (ip_panic(( "compare failed (%d, %d)", \
-	a, b )),0) : 0)
-#endif
-#endif
+void bad_assertion(char *file, int line, char *what);
+void bad_compare(char *file, int line, int lhs, char *what, int rhs);
+
+#define assert(x)	(!(x) ? bad_assertion(this_file, __LINE__, #x) \
+								: (void) 0)
+#define compare(a,t,b)	(!((a) t (b)) ? bad_compare(this_file, __LINE__, \
+				(a), #a " " #t " " #b, (b)) : (void) 0)
+
+#else /* NDEBUG */
+
+#define assert(x)		0
+#define compare(a,t,b)		0
+
+#endif /* NDEBUG */
 
 #endif /* INET_ASSERT_H */
 
+
+/*
+ * $PchId: assert.h,v 1.4 1995/11/21 06:45:27 philip Exp $
+ */

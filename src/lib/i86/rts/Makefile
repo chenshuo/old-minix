@@ -7,17 +7,26 @@ LIBRARY	= ../../libc.a
 
 all:	\
 	../../ncrtso.o \
+	../../nm2rtso.o \
+	../../nprtso.o \
 	$(LIBRARY)
 
 ../../ncrtso.o:	ncrtso.s
 	$(CC1) -c ncrtso.s
 	mv ncrtso.o $@
 
+../../nm2rtso.o:	nm2rtso.s
+	$(CC1) -c nm2rtso.s
+	mv nm2rtso.o $@
+
+../../nprtso.o:	nprtso.s
+	$(CC1) -c nprtso.s
+	mv nprtso.o $@
+
 OBJECTS	= \
 	$(LIBRARY)(__sigreturn.o) \
 	$(LIBRARY)(_sendrec.o) \
 	$(LIBRARY)(brksize.o) \
-	$(LIBRARY)(setjmp.o) \
 
 $(LIBRARY):	$(OBJECTS)
 	aal cr $@ *.o
@@ -31,6 +40,3 @@ $(LIBRARY)(_sendrec.o):	_sendrec.s
 
 $(LIBRARY)(brksize.o):	brksize.s
 	$(CC1) brksize.s
-
-$(LIBRARY)(setjmp.o):	setjmp.s
-	$(CC1) setjmp.s

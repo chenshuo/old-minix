@@ -38,7 +38,7 @@ PRIVATE void flush()
 
   if (buf_count == 0) return;
   putch_msg.m_type = DEV_WRITE;
-  putch_msg.PROC_NR  = THIS_PROC;
+  putch_msg.PROC_NR  = this_proc;
   putch_msg.TTY_LINE = 0;
   putch_msg.ADDRESS  = print_buf;
   putch_msg.COUNT = buf_count;

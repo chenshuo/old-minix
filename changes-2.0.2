@@ -1,0 +1,307 @@
+Short list of differences between 2.0.0 and 2.0.2:
+
+  - The ability to run Minix under DOS.
+
+  - New and improved network task.  More stable then the old inet, and
+    allows for user-space serial IP (PPP).  (No PPP supplied, hoping
+    others will.  Please disregard halfbaked manual pages on this subject.)
+
+  - Console driver lines/columns is no longer fixed at 80x25.  (See boot
+    monitor's 'console' variable.)
+
+  - Network configuration needs a netmask setting, see boot(8).
+
+Short list of changes in commands:
+
+  - pc, m2: Pascal and Modula-2 compilers.
+
+  - readclock -w: Write the current time into the CMOS clock.
+    readclock -2: Add 20 years to compensate for a clock with a Y2K bug.
+
+  - netdefault: Set default network device.
+
+  - Several old, useless or minix-only commands removed.
+
+Short list of changes in manual pages:
+
+  - New:	pc(1), m2(1), env(1), uptime(1), xargs(1), dosd(4), ACK(7),
+		config(8), dosminix(8), serial-ip(8), slip(8).
+
+  - Changed:	cc(1), monitor(8).
+
+Contributions:
+
+  - G. Falzoni <falzoni@marina.scn.de>
+    3C503 ethernet driver.
+
+  - Al Woodhull, Will Rose and Philip Homburg for the usual support,
+    especially the first two for answering so many questions in
+    comp.os.minix, something I should do more myself.
+
+Long list of differences between 2.0.0 and 2.0.2:
+
+    (Warning: This list is riddled with lame jokes and other silly things that
+    happen to sneak in when doing something as boring as compiling this list.)
+
+    2.0.2/include/ibm/cmos.h
+    2.0.2/include/ibm/portio.h
+	Definitions for the CMOS clock and IBM port I/O routines.
+
+    2.0.2/include/minix/com.h
+	Appearance of the DOSDSK task.
+
+    2.0.2/include/minix/config.h
+	Cosmetic change of "ADAPTEC" in "AHA1540" in this and several other
+	files.
+	Added ENABLE_DOSFAT and ENABLE_DOSFILE for the two faces of the
+	DOSDSK driver.  (Analogous to the *_WINI switches.)
+	Added ENABLE_WDETH, ENABLE_NE2000, and ENABLE_3C503 for the three
+	subdrivers of the ethernet task.
+
+    2.0.2/include/minix/const.h
+	Copyright date changed from 1995 to 1998.  Not a very noteworthy
+	change, but I keep getting disturbing images of "Minix 95" and
+	"Minix 98" in my head.  (Minix 2.0 was released in 1996, by the way,
+	the copyright date in const.h was wrong...)
+
+    2.0.2/include/net/
+	Complete overhaul for the new network task.
+
+    2.0.2/include/sys/ioctl.h
+	Some new calls for the network task.
+
+    2.0.2/src/boot/
+	Edparams command merged into boot.c, block caching removed to reduce
+	complexity, simply "one command" functions don't need {}, 'memsize'
+	and 'emssize' removed in favour of 'memory', new 'leader' and 'trailer'
+	functions to print greeting messages.
+	A20 enable/disable code in boothead.s has special code for PS/2
+	machines.
+	Bootblock no longer fiddles with the floppy parameters.  Really old
+	crates that expect this no longer boot.  New systems that do not
+	expect this now work.  Code now really small...
+
+    2.0.2/src/commands/i386/asmconv/
+	GNU assembly parser added by R. Veldema, but still buggy.  Fixes
+	by Will Rose not yet incorporated.
+
+    2.0.2/src/commands/i86/cc.c
+	ASCII EM parser added to translation tables.  "What's that?", you
+	say?  ACK translates from high level to an abstract machine, named
+	EM, which in turn is translated to the target machine.  The ability
+	to compile ASCII EM code is nice for machine independent libary
+	files written in EM assembly.
+
+    2.0.2/src/commands/ibm/loadfont.c
+	Changed to be able to load the appropriate font from a combined font
+	file, a file that contains 8x8, 8x14, and 8x16 dot fonts.  Font
+	files in /usr/lib/fonts/ replaced by combined fonts.
+
+    2.0.2/src/commands/ibm/readclock.c
+	Revamped to properly set the clock (Philip read a data sheet), and
+	a Y2K kludge to add 20 years to a clock set 20 years back because it
+	can't run in 2000.  (Options -w and -2.)
+
+    2.0.2/src/commands/make/
+	An "include" command added to the syntax.  Timing problem on fast
+	machines fixed.
+
+    2.0.2/src/commands/scripts/DESCRIBE.sh
+    2.0.2/src/commands/scripts/MAKEDEV.sh
+	Code to describe/create new ethernet or dosdisk devices added.
+
+    2.0.2/src/commands/scripts/netdefault.sh
+	New command to select the default network interface.
+
+    2.0.2/src/commands/simple/env.c
+	New environment manipulation command.  Not very useful, but POSIX
+	mandates it.
+
+    2.0.2/src/commands/simple/fsck.c
+	"Huge directory" warnings removed.  Directories really can get big.
+
+    2.0.2/src/commands/simple/isoread.c
+	Fixed by Al Woodhull so that it now actually works.
+
+    2.0.2/src/commands/simple/last.c
+	Show time since boot if called as "uptime".
+
+    2.0.2/src/commands/simple/ls.c
+	The -T option shows time to the second.  -D (formerly -T) sorts by
+	file type.  This is a halfbaked ls, whole alfabet still far from
+	fully used as option letters.
+
+    2.0.2/src/commands/simple/rarpd.c
+	Changed to dynamically query the netmask.
+
+    2.0.2/src/commands/simple/slip.c
+	Implementation of the SLIP protocol, but no header compression.
+	Expected to be replaced by better code.  Anyone got a PPP program?
+
+    2.0.2/src/commands/simple/stty.c
+	Taught about pixel sizes, mostly useful to guess the console font
+	size.
+
+    2.0.2/src/commands/simple/xargs.c
+	New xargs command obtained from BSD.  Alas it still seemed to be
+	unhappy about the limitations of Minix, because a bug was observed,
+	but not repaired when this distribution was created.  (Very useful
+	command, if it works...)
+
+    2.0.2/src/etc/profile
+	Timezone now by default GMT instead of CET.  (I happen to be in
+	The Netherlands, i.e. the CET timezone.  My test system now runs
+	in GMT always to avoid making such a mistake again.)
+
+    2.0.2/src/etc/rc
+	Small changes in how readclock is called, and in the initialization
+	of the network and network services.
+
+    2.0.2/src/fs/device.c
+	Nonblocking I/O to the network task fixed.  If the network task
+	blocks a request then cancel it if nonblocking.
+
+    2.0.2/src/fs/open.c
+	Pipe administration moved to two different zone number slots in the
+	in-core inode.  Leave last zone number free.  (Used at the VU for
+	an "implement access control lists" assignment.)
+
+    2.0.2/src/fs/table.c
+	Dosdisk table entry added.
+
+    2.0.2/src/inet/
+	Replaced by a much newer version.  Stable, two ethernets and two
+	pseudo IP networks for serial IP for instance.
+
+    2.0.2/src/kernel/3c503.[ch]
+	Code and definitions for the 3C503 network adapter by G. Falzoni
+	<falzoni@marina.scn.de>
+
+    2.0.0/src/kernel/aha1540.c
+	The file aha_scsi.c is renamed to aha1540.c to better reflect the
+	type of card.  Useful if someone with lots of time writes a 2940
+	driver.
+
+    2.0.2/src/kernel/*_wini.c
+	Task number no longer hard coded.  It is now possible to say 'sd=at'
+	and 'hd=a1540' to confuse the hell out of everything.  Needless to
+	say you shouldn't do that.
+
+    2.0.2/src/kernel/bios_wini.c
+	Old bios13 calls removed in favour of the newer, more generic,
+	int86 call.  (Drivers can now make any BIOS call they can think of.)
+
+    2.0.2/src/kernel/clock.c
+	Old timer value returned by alarm(2) rounded up to the nearest second.
+	Alarm should never return 0 if the timer is still running.
+
+    2.0.2/src/kernel/console.c
+	Screen dimensions (rows/columns) now variable and obtained from the
+	BIOS tables.  This makes it possible to run the console in 132x43 if
+	the video card permits.  Reverse video bug fixed.  Report screen
+	pixel sizes in termios struct.
+
+    2.0.2/src/kernel/const.h
+	IRQ vectors renumbered to 0x50 (more or less free) and 0x70 (same
+	as BIOS).  This does not upset DOS.
+
+    2.0.2/src/kernel/dosfat.c
+    2.0.2/src/kernel/dosfile.c
+	New drivers to see a big DOS file as a Minix disk, either using
+	direct interpretation of FAT filesystem structures, or by using DOS
+	file I/O.
+
+    2.0.2/src/kernel/driver.c
+	Changes to allow one task to make I/O calls to another task, like
+	dosdisk to at_wini.
+
+    2.0.2/src/kernel/keymaps/italian.src
+	Replaced by keymap supplied by Ernesto Del Prete
+	<ernesto@cclix1.polito.it>.
+
+    2.0.2/src/kernel/klib386.s
+    2.0.2/src/kernel/klib88.s
+	BIOS disk I/O function bios13 replaced by more generic int86
+	interrupt call.  A20 enable/disable code in klib88 has special
+	code for PS/2 machines.
+
+    2.0.2/src/kernel/main.c
+	Kernel, MM, FS, etc. information now comes from an array of a.out
+	headers supplied by the boot monitor.  Available memory comes from
+	the new 'memory' boot variable.  This allows Minix to start in an
+	arbitrary location in memory, for instance in the memory that DOS
+	offers as "free".
+
+    2.0.2/src/kernel/memory.c
+	"RAM disk is too big" message changed into "Not enough memory for
+	RAM disk".  Let's see how much confusion that causes instead.
+
+    2.0.2/src/kernel/misc.c
+	Get free memory list from the 'memory' boot variable.
+
+    2.0.2/src/kernel/mpx386.s
+    2.0.2/src/kernel/mpx88.s
+	Sizes array removed, aout array introduced.
+
+    2.0.2/src/kernel/protect.c
+	Small interrupt vector / segment descriptor initialization changes.
+
+    2.0.2/src/kernel/start.c
+	Changes to allow for the variable placement of the kernel in memory.
+
+    2.0.2/src/kernel/table.c
+	Changes in the driver choice code, i.e. 'hd=bios'.  Mapdrivers()
+	function added to make those choices.
+
+    2.0.2/src/kernel/type.h
+	Interface declarations for the int86 routine using a big fat union
+	to be able to access 8086/386 registers in many different ways, i.e.
+	reg86.b.al, reg86.w.al, reg86.l.eax.
+
+    2.0.2/src/lib/ansi/malloc.c
+	Malloc changed so that it no longer sets errno to ENOMEM if it
+	succeeds.  Should be no problem, except that a common bug in the
+	use of perror() causes "Not enough core" errors to appear instead
+	of the proper error message.
+
+    2.0.2/src/lib/ansi/misc.c
+	Fixed list of (outdated) time zone information removed.  One should
+	use a proper TZ definition.
+
+    2.0.2/src/lib/i386/rts/crtso.s
+    2.0.2/src/lib/i86/rts/ncrtso.s
+	The variable '_penviron' is initialized to point to either 'environ'
+	or a hidden variable '_penvp'.  *_penviron is then used throughout
+	the library as the environment pointer.  Applications can now use
+	(and change) 'environ' as the environment pointer, or stupidly use
+	'environ' for other things without ill effect.
+
+    2.0.2/src/lib/i386/rts/m2rtso.s
+    2.0.2/src/lib/i386/rts/prtso.s
+    2.0.2/src/lib/i86/rts/nm2rtso.s
+    2.0.2/src/lib/i86/rts/nprtso.s
+	New Pascal and Modula-2 runtime startoffs.
+
+    2.0.2/src/lib/ip/
+	Several new and updated network libary routines.
+
+    2.0.2/src/lib/libm2
+    2.0.2/src/lib/libp
+	New Pascal and Modula-2 library.
+
+    2.0.2/src/lib/rts
+	New machine independent runtime system stuff, currently containing
+	only setjmp.e moved here from the i386 directory.  An old
+	i86/setjmp.s has been removed.  Hopefully this code will end the
+	spurious "longj err" seen on some old XTs.  Make sure you're seated
+	properly before attempting to read setjmp.e.
+
+    2.0.2/src/mm/main.c
+	Changes in the memory summary code to accomodate the no longer
+	fixed position of the Minix kernel in memory and the memory list.
+
+    2.0.2/src/tools/ps.c
+	Changed to allow 'ps -ef' to do the same as 'ps alx'.  (System V
+	vs. BSD syntax.)
+
+Kees J. Bot <kjb@cs.vu.nl>

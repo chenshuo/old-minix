@@ -9,6 +9,9 @@ asm86_t *ack_get_instruction(void);
 void ncc_parse_init(char *file);
 asm86_t *ncc_get_instruction(void);
 
+void gnu_parse_init(char *file);
+asm86_t *gnu_get_instruction(void);
+
 void bas_parse_init(char *file);
 asm86_t *bas_get_instruction(void);
 

@@ -1,45 +1,59 @@
 /*	this file contains the interface of the network software with the file
-	system.
-
-The valid messages and their parameters are:
-
- __________________________________________________________________
-|		|           |         |       |          |         |
-| m_type	|   DEVICE  | PROC_NR |	COUNT |	REQUEST  | ADDRESS |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_OPEN 	| minor dev | proc nr | mode  |          |         |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_CLOSE 	| minor dev | proc nr |       |          |         |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_IOCTL	| minor dev | proc nr |       |	NWIO..	 | address |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_READ	| minor dev | proc nr |	count |          | address |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_WRITE	| minor dev | proc nr |	count |          | address |
-|_______________|___________|_________|_______|__________|_________|
-|		|           |         |       |          |         |
-| NW_CANCEL	| minor dev | proc nr |       |          |         |
-|_______________|___________|_________|_______|__________|_________|
-
-*/
+ *	system.
+ *
+ * Copyright 1995 Philip Homburg
+ *
+ * The valid messages and their parameters are:
+ * 
+ * Requests:
+ *
+ *    m_type      NDEV_MINOR   NDEV_PROC    NDEV_REF   NDEV_MODE
+ * -------------------------------------------------------------
+ * | DEV_OPEN    |minor dev  | proc nr   |  fd       |   mode   |
+ * |-------------+-----------+-----------+-----------+----------+
+ * | DEV_CLOSE   |minor dev  | proc nr   |  fd       |          |
+ * |-------------+-----------+-----------+-----------+----------+
+ *
+ *    m_type      NDEV_MINOR   NDEV_PROC    NDEV_REF   NDEV_COUNT NDEV_BUFFER
+ * ---------------------------------------------------------------------------
+ * | DEV_READ    |minor dev  | proc nr   |  fd       |  count    | buf ptr   |
+ * |-------------+-----------+-----------+-----------+-----------+-----------|
+ * | DEV_WRITE   |minor dev  | proc nr   |  fd       |  count    | buf ptr   |
+ * |-------------+-----------+-----------+-----------+-----------+-----------|
+ *
+ *    m_type      NDEV_MINOR   NDEV_PROC    NDEV_REF   NDEV_IOCTL NDEV_BUFFER
+ * ---------------------------------------------------------------------------
+ * | DEV_IOCTL3  |minor dev  | proc nr   |  fd       |  command  | buf ptr   |
+ * |-------------+-----------+-----------+-----------+-----------+-----------|
+ *
+ *    m_type      NDEV_MINOR   NDEV_PROC    NDEV_REF   NDEV_OPERATION
+ * -------------------------------------------------------------------|
+ * | DEV_CANCEL  |minor dev  | proc nr   |  fd       | which operation|
+ * |-------------+-----------+-----------+-----------+----------------|
+ *
+ * Replies:
+ *
+ *    m_type        REP_PROC_NR   REP_STATUS   REP_REF    REP_OPERATION
+ * ----------------------------------------------------------------------|
+ * | DEVICE_REPLY |   proc nr   |  status    |  fd     | which operation |
+ * |--------------+-------------+------------+---------+-----------------|
+ */
 
 #include "inet.h"
+
 #include <minix/callnr.h>
+
 #include "mq.h"
 #include "proto.h"
+#include "generic/type.h"
+
 #include "generic/assert.h"
 #include "generic/buf.h"
 #include "generic/sr.h"
-#include "generic/type.h"
 
-INIT_PANIC();
+THIS_FILE
 
-#define FD_NR			32
+#define FD_NR			128
 
 typedef struct sr_fd
 {
@@ -75,16 +89,15 @@ FORWARD _PROTOTYPE ( int sr_open, (message *m) );
 FORWARD _PROTOTYPE ( void sr_close, (message *m) );
 FORWARD _PROTOTYPE ( int sr_rwio, (mq_t *m) );
 FORWARD _PROTOTYPE ( int sr_cancel, (message *m) );
-FORWARD _PROTOTYPE ( void sr_reply, (message *mes_ptr, int reply) );
-FORWARD _PROTOTYPE ( void sr_revive, (mq_t *mes_ptr, int reply) );
+FORWARD _PROTOTYPE ( void sr_reply, (mq_t *m, int reply, int can_enqueue) );
 FORWARD _PROTOTYPE ( sr_fd_t *sr_getchannel, (int minor));
 FORWARD _PROTOTYPE ( acc_t *sr_get_userdata, (int fd, vir_bytes offset,
 					vir_bytes count, int for_ioctl) );
 FORWARD _PROTOTYPE ( int sr_put_userdata, (int fd, vir_bytes offset,
 						acc_t *data, int for_ioctl) );
-FORWARD _PROTOTYPE ( int sr_repl_queue, (int proc) );
+FORWARD _PROTOTYPE ( int sr_repl_queue, (int proc, int ref, int operation) );
 FORWARD _PROTOTYPE ( int walk_queue, (sr_fd_t *sr_fd, mq_t *q_head, 
-				mq_t **q_tail_ptr, int type, int proc_n) );
+			mq_t **q_tail_ptr, int type, int proc_nr, int ref) );
 FORWARD _PROTOTYPE ( void process_req_q, (mq_t *mq, mq_t *tail, 
 							mq_t **tail_ptr) );
 FORWARD _PROTOTYPE ( int cp_u2b, (int proc, char *src, acc_t **var_acc_ptr,
@@ -97,17 +110,18 @@ PRIVATE cpvec_t cpvec[CPVEC_NR];
 
 PUBLIC void sr_init()
 {
+#if ZERO
 	int i;
 
 	for (i=0; i<FD_NR; i++)
 		sr_fd_table[i].srf_flags= SFF_FREE;
 	repl_queue= NULL;
+#endif
 }
 
 PUBLIC void sr_rec(m)
 mq_t *m;
 {
-	message mess, *mp;
 	int result;
 	int send_reply, free_mess;
 
@@ -115,65 +129,52 @@ mq_t *m;
 	{
 		if (m->mq_mess.m_type == NW_CANCEL)
 		{
-			result= sr_repl_queue(m->mq_mess.PROC_NR);
+			result= sr_repl_queue(m->mq_mess.PROC_NR, 0,  0);
 			if (result)
+			{
+				mq_free(m);
 				return;	/* canceled request in queue */
+			}
 		}
 		else
-			sr_repl_queue(ANY);
+			sr_repl_queue(ANY, 0, 0);
 	}
 
-#if DEBUG & 256
- { where(); printf("sr_rec: message from %d for %d type %d, minor %d\n",
-	m->mq_mess.m_source, m->mq_mess.PROC_NR, m->mq_mess.m_type, 
-	m->mq_mess.DEVICE); }
-#endif
 	switch (m->mq_mess.m_type)
 	{
-	case NW_OPEN:
+	case DEV_OPEN:
 		result= sr_open(&m->mq_mess);
 		send_reply= 1;
 		free_mess= 1;
 		break;
-	case NW_CLOSE:
+	case DEV_CLOSE:
 		sr_close(&m->mq_mess);
 		result= OK;
 		send_reply= 1;
 		free_mess= 1;
 		break;
-	case NW_READ:
-	case NW_WRITE:
-	case NW_IOCTL:
-#if DEBUG & 256
- { where(); printf("calling rwio\n"); }
-#endif
+	case DEV_READ:
+	case DEV_WRITE:
+	case DEV_IOCTL:
 		result= sr_rwio(m);
-#if DEBUG & 256
- { where(); printf("rwio()= %d\n", result); }
-#endif
-assert(result == OK || result == SUSPEND);
+		assert(result == OK || result == SUSPEND);
 		send_reply= (result == SUSPEND);
 		free_mess= 0;
 		break;
-	case NW_CANCEL:
+	case CANCEL:
 		result= sr_cancel(&m->mq_mess);
-assert(result == OK || result == EINTR);
+		assert(result == OK || result == EINTR);
 		send_reply= (result == EINTR);
 		free_mess= 1;
+		m->mq_mess.m_type= 0;
 		break;
 	default:
-		ip_panic(("unknown message, type= %d", m->mq_mess.m_type));
+		ip_panic(("unknown message, from %d, type %d",
+				m->mq_mess.m_source, m->mq_mess.m_type));
 	}
 	if (send_reply)
 	{
-		if (free_mess)
-			mp= &m->mq_mess;
-		else
-		{
-			mess= m->mq_mess;
-			mp= &mess;
-		}
-		sr_reply(mp, result);
+		sr_reply(m, result, FALSE);
 	}
 	if (free_mess)
 		mq_free(m);
@@ -221,25 +222,19 @@ message *m;
 
 	if (minor<0 || minor>FD_NR)
 	{
-#if DEBUG
- { where(); printf("replying EINVAL\n"); }
-#endif
+		DBLOCK(1, printf("replying EINVAL\n"));
 		return EINVAL;
 	}
 	if (!(sr_fd_table[minor].srf_flags & SFF_MINOR))
 	{
-#if DEBUG
- { where(); printf("replying ENXIO\n"); }
-#endif
+		DBLOCK(1, printf("replying ENXIO\n"));
 		return ENXIO;
 	}
 	for (i=0; i<FD_NR && (sr_fd_table[i].srf_flags & SFF_INUSE); i++);
 
 	if (i>=FD_NR)
 	{
-#if DEBUG
- { where(); printf("replying ENFILE\n"); }
-#endif
+		DBLOCK(1, printf("replying ENFILE\n"));
 		return ENFILE;
 	}
 
@@ -247,23 +242,14 @@ message *m;
 	*sr_fd= sr_fd_table[minor];
 	sr_fd->srf_flags= SFF_INUSE;
 	fd= (*sr_fd->srf_open)(sr_fd->srf_port, i, sr_get_userdata,
-		sr_put_userdata);
-#if DEBUG & 256
- { where(); printf("srf_open: 0x%x(%d, %d, .., ..)= %d\n", sr_fd->srf_open,
-	sr_fd->srf_port, i, fd); }
-#endif
+		sr_put_userdata, 0);
 	if (fd<0)
 	{
 		sr_fd->srf_flags= SFF_FREE;
-#if DEBUG
- { where(); printf("replying %d\n", fd); }
-#endif
+		DBLOCK(1, printf("replying %d\n", fd));
 		return fd;
 	}
 	sr_fd->srf_fd= fd;
-#if DEBUG & 256
- { where(); printf("replying %d\n", i); }
-#endif
 	return i;
 }
 
@@ -280,9 +266,6 @@ message *m;
 
 	assert (!(sr_fd->srf_flags & SFF_MINOR));
 	(*sr_fd->srf_close)(sr_fd->srf_fd);
-#if DEBUG & 256
- { where(); printf("srf_close: 0x%x(%d)\n", sr_fd->srf_close, sr_fd->srf_fd); }
-#endif
 	sr_fd->srf_flags= SFF_FREE;
 }
 
@@ -292,28 +275,28 @@ mq_t *m;
 	sr_fd_t *sr_fd;
 	mq_t **q_head_ptr, **q_tail_ptr;
 	int ip_flag, susp_flag;
-	int result;
-	unsigned long request;
+	int r;
+	ioreq_t request;
 	size_t size;
 
 	sr_fd= sr_getchannel(m->mq_mess.DEVICE);
-assert (sr_fd);
+	assert (sr_fd);
 
 	switch(m->mq_mess.m_type)
 	{
-	case NW_READ:
+	case DEV_READ:
 		q_head_ptr= &sr_fd->srf_read_q;
 		q_tail_ptr= &sr_fd->srf_read_q_tail;
 		ip_flag= SFF_READ_IP;
 		susp_flag= SFF_READ_SUSP;
 		break;
-	case NW_WRITE:
+	case DEV_WRITE:
 		q_head_ptr= &sr_fd->srf_write_q;
 		q_tail_ptr= &sr_fd->srf_write_q_tail;
 		ip_flag= SFF_WRITE_IP;
 		susp_flag= SFF_WRITE_SUSP;
 		break;
-	case NW_IOCTL:
+	case DEV_IOCTL:
 		q_head_ptr= &sr_fd->srf_ioctl_q;
 		q_tail_ptr= &sr_fd->srf_ioctl_q_tail;
 		ip_flag= SFF_IOCTL_IP;
@@ -325,66 +308,52 @@ assert (sr_fd);
 
 	if (sr_fd->srf_flags & ip_flag)
 	{
-assert(sr_fd->srf_flags & susp_flag);
-assert(*q_head_ptr);
+		assert(sr_fd->srf_flags & susp_flag);
+		assert(*q_head_ptr);
+
 		(*q_tail_ptr)->mq_next= m;
 		*q_tail_ptr= m;
 		return SUSPEND;
 	}
-assert(!*q_head_ptr);
+	assert(!*q_head_ptr);
 
 	*q_tail_ptr= *q_head_ptr= m;
 	sr_fd->srf_flags |= ip_flag;
 
 	switch(m->mq_mess.m_type)
 	{
-	case NW_READ:
-#if DEBUG&256
- { where(); printf("calling 0x%x(%d, %d)\n", sr_fd->srf_read, sr_fd->srf_fd,
-	m->mq_mess.COUNT); }
-#endif
-		result= (*sr_fd->srf_read)(sr_fd->srf_fd, m->mq_mess.COUNT);
+	case DEV_READ:
+		r= (*sr_fd->srf_read)(sr_fd->srf_fd, 
+			m->mq_mess.COUNT);
 		break;
-	case NW_WRITE:
-#if DEBUG&256
- { where(); printf("calling 0x%x(%d, %d)\n", sr_fd->srf_write, sr_fd->srf_fd,
-	m->mq_mess.COUNT); }
-#endif
-		result= (*sr_fd->srf_write)(sr_fd->srf_fd, m->mq_mess.COUNT);
+	case DEV_WRITE:
+		r= (*sr_fd->srf_write)(sr_fd->srf_fd, 
+			m->mq_mess.COUNT);
 		break;
-	case NW_IOCTL:
+	case DEV_IOCTL:
 		request= m->mq_mess.REQUEST;
-#ifdef IOCPARM_MASK
-		size= (request >> 16) & IOCPARM_MASK;
+#ifdef _IOCPARM_MASK
+		size= (request >> 16) & _IOCPARM_MASK;
 		if (size>MAX_IOCTL_S)
 		{
-#if DEBUG
- { where(); printf("replying EINVAL\n"); }
-#endif
-			result= sr_put_userdata(sr_fd-sr_fd_table, EINVAL, 
-								NULL, 1);
-assert(result == OK);
+			DBLOCK(1, printf("replying EINVAL\n"));
+			r= sr_put_userdata(sr_fd-sr_fd_table, EINVAL, 
+				NULL, 1);
+			assert(r == OK);
 			return OK;
 		}
-#endif /* IOCPARM_MASK */
-#if DEBUG
- { where(); printf("calling 0x%x(%d, 0x%lx)\n", sr_fd->srf_ioctl, sr_fd->srf_fd,
-	request); }
 #endif
-		result=(*sr_fd->srf_ioctl)(sr_fd->srf_fd, request);
+		r= (*sr_fd->srf_ioctl)(sr_fd->srf_fd, request);
 		break;
 	default:
 		ip_panic(("illegal case entry"));
 	}
 
-#if DEBUG
- if (result != OK && result != SUSPEND)
- { where(); printf("result= %d\n", result); }
-#endif
-assert(result == OK || result == SUSPEND);
-	if (result == SUSPEND)
+	assert(r == OK || r == SUSPEND || 
+		(printf("r= %d\n", r), 0));
+	if (r == SUSPEND)
 		sr_fd->srf_flags |= susp_flag;
-	return result;
+	return r;
 }
 
 PRIVATE int sr_cancel(m)
@@ -393,33 +362,48 @@ message *m;
 	sr_fd_t *sr_fd;
 	int i, result;
 	mq_t *q_ptr, *q_ptr_prv;
-	int proc_nr;
+	int proc_nr, ref, operation;
 
         result=EINTR;
 	proc_nr=  m->PROC_NR;
+	ref=  0;
+	operation= 0;
 	sr_fd= sr_getchannel(m->DEVICE);
-assert (sr_fd);
+	assert (sr_fd);
 
-	result= walk_queue(sr_fd, sr_fd->srf_ioctl_q, &sr_fd->srf_ioctl_q_tail, 
-		SR_CANCEL_IOCTL, proc_nr);
-	if (result != EAGAIN)
-		return result;
-	result= walk_queue(sr_fd, sr_fd->srf_read_q, &sr_fd->srf_read_q_tail, 
-		SR_CANCEL_READ, proc_nr);
-	if (result != EAGAIN)
-		return result;
-	result= walk_queue(sr_fd, sr_fd->srf_write_q, &sr_fd->srf_write_q_tail, 
-		SR_CANCEL_WRITE, proc_nr);
-	if (result != EAGAIN)
-		return result;
-	ip_panic(("request not found"));
+	{
+		result= walk_queue(sr_fd, sr_fd->srf_ioctl_q, 
+			&sr_fd->srf_ioctl_q_tail, SR_CANCEL_IOCTL,
+			proc_nr, ref);
+		if (result != EAGAIN)
+			return result;
+	}
+	{
+		result= walk_queue(sr_fd, sr_fd->srf_read_q, 
+			&sr_fd->srf_read_q_tail, SR_CANCEL_READ,
+			proc_nr, ref);
+		if (result != EAGAIN)
+			return result;
+	}
+	{
+		result= walk_queue(sr_fd, sr_fd->srf_write_q, 
+			&sr_fd->srf_write_q_tail, SR_CANCEL_WRITE,
+			proc_nr, ref);
+		if (result != EAGAIN)
+			return result;
+	}
+	ip_panic((
+"request not found: from %d, type %d, MINOR= %d, PROC= %d, REF= %d OPERATION= %d",
+		m->m_source, m->m_type, m->DEVICE,
+		m->PROC_NR, 0, 0));
 }
 
-PRIVATE int walk_queue(sr_fd, q_head, q_tail_ptr, type, proc_nr)
+PRIVATE int walk_queue(sr_fd, q_head, q_tail_ptr, type, proc_nr, ref)
 sr_fd_t *sr_fd;
 mq_t *q_head, **q_tail_ptr;
 int type;
 int proc_nr;
+int ref;
 {
 	mq_t *q_ptr_prv, *q_ptr;
 	int result;
@@ -431,13 +415,8 @@ int proc_nr;
 			continue;
 		if (!q_ptr_prv)
 		{
-#if DEBUG & 256
- { where(); printf("calling 0x%x(%d, %d)\n", sr_fd->srf_cancel, sr_fd->srf_fd,
-	type); }
-#endif
-
 			result= (*sr_fd->srf_cancel)(sr_fd->srf_fd, type);
-assert(result == OK);
+			assert(result == OK);
 			return OK;
 		}
 		q_ptr_prv->mq_next= q_ptr->mq_next;
@@ -454,42 +433,51 @@ int minor;
 {
 	sr_fd_t *loc_fd;
 
-compare(minor, >=, 0);
-compare(minor, <, FD_NR);
+	compare(minor, >=, 0);
+	compare(minor, <, FD_NR);
 
 	loc_fd= &sr_fd_table[minor];
 
-#if DEBUG
- if ((loc_fd->srf_flags & SFF_MINOR) || !(loc_fd->srf_flags & SFF_INUSE))
- { where(); printf("got req for ill minor (= %d)\n", minor); }
-#endif
-assert (!(loc_fd->srf_flags & SFF_MINOR) && (loc_fd->srf_flags & SFF_INUSE));
+	assert (!(loc_fd->srf_flags & SFF_MINOR) &&
+		(loc_fd->srf_flags & SFF_INUSE));
 
 	return loc_fd;
 }
 
-PRIVATE void sr_reply (mess_ptr, status)
-message *mess_ptr;
+PRIVATE void sr_reply (mq, status, can_enqueue)
+mq_t *mq;
 int status;
+int can_enqueue;
 {
-	static message reply;
-	int result;
+	int result, proc, ref,operation;
+	message reply, *mp;
 
-#if DEBUG & 256
- { where(); printf("replying %d to %d for proc %d\n", status, 
-	mess_ptr->m_source, mess_ptr->PROC_NR); }
-#endif
-	reply.m_type= REVIVE;	/* There no use for TASK_REPLY */
-	reply.REP_PROC_NR= mess_ptr->PROC_NR;
-	reply.REP_STATUS= status;
-#if DEBUG & 256
- { where(); printf("sending %d to %d for %d\n", reply.m_type,
-	mess_ptr->m_source, reply.REP_PROC_NR); }
-#endif
-assert(mess_ptr->m_source != MM_PROC_NR);
-	result= send (mess_ptr->m_source, &reply);
+	proc= mq->mq_mess.PROC_NR;
+	ref= 0;
+	operation= mq->mq_mess.m_type;
+
+	if (can_enqueue)
+		mp= &mq->mq_mess;
+	else
+		mp= &reply;
+
+	mp->m_type= REVIVE;
+	mp->REP_PROC_NR= proc;
+	mp->REP_STATUS= status;
+	result= send(mq->mq_mess.m_source, mp);
+	if (result == ELOCKED && can_enqueue)
+	{
+		if (repl_queue)
+			repl_queue_tail->mq_next= mq;
+		else
+			repl_queue= mq;
+		repl_queue_tail= mq;
+		return;
+	}
 	if (result != OK)
 		ip_panic(("unable to send"));
+	if (can_enqueue)
+		mq_free(mq);
 }
 
 PRIVATE acc_t *sr_get_userdata (fd, offset, count, for_ioctl)
@@ -506,10 +494,6 @@ int for_ioctl;
 	char *src;
 	acc_t *acc;
 
-#if DEBUG & 256
- { where(); printf("sr_get_userdata(%d, %u, %u, %d)\n",
-	fd, offset, count, for_ioctl); }
-#endif
 	loc_fd= &sr_fd_table[fd];
 
 	if (for_ioctl)
@@ -537,7 +521,7 @@ assert (loc_fd->srf_flags & ip_flag);
 assert(m);
 		mq= m->mq_next;
 		result= (int)offset;
-		sr_revive (m, result);
+		sr_reply (m, result, 1);
 		suspended= (loc_fd->srf_flags & susp_flag);
 		loc_fd->srf_flags &= ~(ip_flag|susp_flag);
 		if (suspended)
@@ -570,11 +554,6 @@ int for_ioctl;
 	int suspended;
 	char *dst;
 
-#if DEBUG & 256
- { where(); printf("sr_put_userdata(%d, %u, 0x%x, %d)\n",
-	fd, offset, data, for_ioctl); }
-#endif
-
 	loc_fd= &sr_fd_table[fd];
 
 	if (for_ioctl)
@@ -592,17 +571,18 @@ int for_ioctl;
 		susp_flag= SFF_READ_SUSP;
 	}
 		
-assert (loc_fd->srf_flags & ip_flag);
+	assert (loc_fd->srf_flags & ip_flag);
 
 	if (!data)
 	{
 		m= *head_ptr;
+		assert(m);
+
 		*head_ptr= NULL;
 		tail= *tail_ptr;
-assert(m);
 		mq= m->mq_next;
 		result= (int)offset;
-		sr_revive (m, result);
+		sr_reply (m, result, 1);
 		suspended= (loc_fd->srf_flags & susp_flag);
 		loc_fd->srf_flags &= ~(ip_flag|susp_flag);
 		if (suspended)
@@ -611,55 +591,13 @@ assert(m);
 		}
 		else
 		{
-assert(!mq);
+			assert(!mq);
 		}
 		return OK;
 	}
 
 	dst= (*head_ptr)->mq_mess.ADDRESS + offset;
 	return cp_b2u (data, (*head_ptr)->mq_mess.PROC_NR, dst);
-}
-
-PRIVATE void sr_revive (m, status)
-mq_t *m;
-int status;
-{
-	static message reply;
-	int result;
-
-#if DEBUG & 256
- { where(); printf("sr_revive: replying %d to %d for proc %d\n", status,
-	m->mq_mess.m_source, m->mq_mess.PROC_NR); }
-#endif
-	reply.m_type= REVIVE;
-	reply.REP_PROC_NR= m->mq_mess.PROC_NR;
-	reply.REP_STATUS= status;
-#if DEBUG & 256
- { where(); printf("sending %d to %d for %d\n", reply.m_type,
-   m->mq_mess.m_source, reply.REP_PROC_NR); }
-#endif
-assert(m->mq_mess.m_source != MM_PROC_NR);
-	result= send (m->mq_mess.m_source, &reply);
-	if (result<0)
-	{
-		if (result == ELOCKED)
-		{
-#if DEBUG
- { where(); printf("send locked\n"); }
-#endif
-			reply.m_source= m->mq_mess.m_source;
-			m->mq_mess= reply;
-			if (repl_queue)
-				repl_queue_tail->mq_next= m;
-			else
-				repl_queue= m;
-			repl_queue_tail= m;
-			return;
-		}
-	else
-		ip_panic(("unable to send"));
-	}
-	mq_free(m);
 }
 
 PRIVATE void process_req_q(mq, tail, tail_ptr)
@@ -673,9 +611,8 @@ mq_t *mq, *tail, **tail_ptr;
 		m= mq;
 		mq= mq->mq_next;
 
-#if DEBUG
- { where(); printf("calling rwio\n"); }
-#endif
+		DBLOCK(1, printf("calling rwio\n"));
+
 		result= sr_rwio(m);
 		if (result == SUSPEND)
 		{
@@ -701,6 +638,7 @@ int size;
 	int i;
 
 	acc= bf_memreq(size);
+
 	*var_acc_ptr= acc;
 	i=0;
 
@@ -716,11 +654,11 @@ int size;
 		acc= acc->acc_next;
 		i++;
 
-		if (i == CPVEC_NR)
+		if (i == CPVEC_NR || acc == NULL)
 		{
 			mess.m_type= SYS_VCOPY;
 			mess.m1_i1= proc;
-			mess.m1_i2= THIS_PROC;
+			mess.m1_i2= this_proc;
 			mess.m1_i3= i;
 			mess.m1_p1= (char *)cpvec;
 			if (sendrec(SYSTASK, &mess) <0)
@@ -732,22 +670,6 @@ int size;
 				return mess.m_type;
 			}
 			i= 0;
-		}
-	}
-	if (i)
-	{
-		mess.m_type= SYS_VCOPY;
-		mess.m1_i1= proc;
-		mess.m1_i2= THIS_PROC;
-		mess.m1_i3= i;
-		mess.m1_p1= (char *)cpvec;
-		if (sendrec(SYSTASK, &mess) <0)
-			ip_panic(("unable to sendrec"));
-		if (mess.m_type <0)
-		{
-			bf_afree(*var_acc_ptr);
-			*var_acc_ptr= 0;
-			return mess.m_type;
 		}
 	}
 	return OK;
@@ -780,10 +702,10 @@ char *dest;
 		dest += size;
 		acc= acc->acc_next;
 
-		if (i == CPVEC_NR)
+		if (i == CPVEC_NR || acc == NULL)
 		{
 			mess.m_type= SYS_VCOPY;
-			mess.m1_i1= THIS_PROC;
+			mess.m1_i1= this_proc;
 			mess.m1_i2= proc;
 			mess.m1_i3= i;
 			mess.m1_p1= (char *)cpvec;
@@ -797,29 +719,16 @@ char *dest;
 			i= 0;
 		}
 	}
-	if (i)
-	{
-		mess.m_type= SYS_VCOPY;
-		mess.m1_i1= THIS_PROC;
-		mess.m1_i2= proc;
-		mess.m1_i3= i;
-		mess.m1_p1= (char *)cpvec;
-		if (sendrec(SYSTASK, &mess) <0)
-			ip_panic(("unable to sendrec"));
-		if (mess.m_type <0)
-		{
-			bf_afree(acc_ptr);
-			return mess.m_type;
-		}
-	}
 	bf_afree(acc_ptr);
 	return OK;
 }
 
-PRIVATE int sr_repl_queue(proc)
+PRIVATE int sr_repl_queue(proc, ref, operation)
 int proc;
+int ref;
+int operation;
 {
-	mq_t *m, *m_cancel, *tmp;
+	mq_t *m, *m_cancel, *m_tmp;
 	int result;
 
 	m_cancel= NULL;
@@ -834,17 +743,19 @@ assert(!m_cancel);
 			continue;
 		}
 assert(m->mq_mess.m_source != MM_PROC_NR);
+assert(m->mq_mess.m_type == REVIVE);
 		result= send(m->mq_mess.m_source, &m->mq_mess);
 		if (result != OK)
 			ip_panic(("unable to send: %d", result));
-		tmp= m;
+		m_tmp= m;
 		m= m->mq_next;
-		mq_free(tmp);
+		mq_free(m_tmp);
 	}
 	repl_queue= NULL;
 	if (m_cancel)
 	{
 assert(m_cancel->mq_mess.m_source != MM_PROC_NR);
+assert(m_cancel->mq_mess.m_type == REVIVE);
 		result= send(m_cancel->mq_mess.m_source, &m_cancel->mq_mess);
 		if (result != OK)
 			ip_panic(("unable to send: %d", result));
@@ -853,3 +764,7 @@ assert(m_cancel->mq_mess.m_source != MM_PROC_NR);
 	}
 	return 0;
 }
+
+/*
+ * $PchId: sr.c,v 1.9 1996/05/07 21:11:14 philip Exp $
+ */

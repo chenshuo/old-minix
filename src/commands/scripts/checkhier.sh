@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	checkhier 2.4 - check the directory hierarchy	Author: Kees J. Bot
+#	checkhier 2.5 - check the directory hierarchy	Author: Kees J. Bot
 #								7 May 1995
 
 case "`id`" in
@@ -44,13 +44,11 @@ drwxr-xr-x	root	operator	/usr/adm
 -rw-r--r--	root	operator	/usr/adm/wtmp
 drwxr-xr-x	ast	other		/usr/ast
 drwxr-xr-x	bin	operator	/usr/bin
-drwxr-xr-x	bin	operator	/usr/doc
 drwxr-xr-x	bin	operator	/usr/etc
 drwxr-xr-x	bin	operator	/usr/include
 drwxr-xr-x	bin	operator	/usr/lib
 drwxrwxr-x	root	operator	/usr/local
 drwxrwxr-x	bin	operator	/usr/local/bin
-drwxrwxr-x	bin	operator	/usr/local/doc
 drwxrwxr-x	bin	operator	/usr/local/include
 drwxrwxr-x	bin	operator	/usr/local/lib
 drwxrwxr-x	bin	operator	/usr/local/man

@@ -718,9 +718,9 @@ pr_rr(cp, msg, file, filter)
 	case T_MX:
 		if (doprint)
 		  if (verbose)
-		    fprintf(file,"\t%ld ",_getshort(cp));
+		    fprintf(file,"\t%d ",_getshort(cp));
 		  else
-		    fprintf(file," ");
+		    fprintf(file," (pri=%d) by ",_getshort(cp));
 		cp += sizeof(u_short);
 		cp = pr_cdname(cp, msg, name, sizeof(name));
 		if (doprint)
@@ -837,7 +837,7 @@ pr_type(type)
 	case T_MG:		/* mail group member */
 		return("MG");
 	case T_MX:		/* mail routing info */
-		return(verbose? "MX" : "mail is handled by");
+		return(verbose? "MX" : "mail is handled");
 	/* Roy start */
 	case T_TXT:		/* TXT - descriptive info */
 		return(verbose? "TXT" : "descriptive text");

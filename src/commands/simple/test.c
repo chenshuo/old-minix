@@ -45,10 +45,15 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef S_ISLNK
+#define lstat		stat
+#define S_ISLNK(mode)	(0)
+#endif
+
 #define EOI	0
 #define FILRD	1
 #define FILWR	2
-#define FILND	3
+#define FILIF	3
 #define FILID	4
 #define FILGZ	5
 #define FILTT	6
@@ -70,6 +75,10 @@
 #define OPERAND	22
 #define FILXQ	23
 #define FILNW	24
+#define FILIC	25
+#define FILIB	26
+#define FILIP	27
+#define FILIL	28
 
 #define UNOP	1
 #define BINOP	2
@@ -81,79 +90,35 @@ struct op {
   char *op_text;
   short op_num, op_type;
 } ops[] = {
-
-  {
-	"-r", FILRD, UNOP
-  },
-  {
-	"-w", FILWR, UNOP
-  },
-  {
-	"-f", FILND, UNOP
-  },
-  {
-	"-d", FILID, UNOP
-  },
-  {
-	"-s", FILGZ, UNOP
-  },
-  {
-	"-t", FILTT, UNOP
-  },
-  {
-	"-z", STZER, UNOP
-  },
-  {
-	"-n", STNZE, UNOP
-  },
-  {
-	"=", STEQL, BINOP
-  },
-  {
-	"!=", STNEQ, BINOP
-  },
-  {
-	"-eq", INTEQ, BINOP
-  },
-  {
-	"-ne", INTNE, BINOP
-  },
-  {
-	"-ge", INTGE, BINOP
-  },
-  {
-	"-gt", INTGT, BINOP
-  },
-  {
-	"-le", INTLE, BINOP
-  },
-  {
-	"-lt", INTLT, BINOP
-  },
-  {
-	"!", UNEGN, BUNOP
-  },
-  {
-	"-a", BAND, BBINOP
-  },
-  {
-	"-o", BOR, BBINOP
-  },
-  {
-	"(", LPAREN, PAREN
-  },
-  {
-	")", RPAREN, PAREN
-  },
-  {
-	"-x", FILXQ, UNOP
-  },
-  {
-	"-newer", FILNW, BINOP
-  },
-  {
-	0, 0, 0
-  }
+  {	"-r",	FILRD,	UNOP	},
+  {	"-w",	FILWR,	UNOP	},
+  {	"-f",	FILIF,	UNOP	},
+  {	"-d",	FILID,	UNOP	},
+  {	"-s",	FILGZ,	UNOP	},
+  {	"-t",	FILTT,	UNOP	},
+  {	"-z",	STZER,	UNOP	},
+  {	"-n",	STNZE,	UNOP	},
+  {	"=",	STEQL,	BINOP	},
+  {	"!=",	STNEQ,	BINOP	},
+  {	"-eq",	INTEQ,	BINOP	},
+  {	"-ne",	INTNE,	BINOP	},
+  {	"-ge",	INTGE,	BINOP	},
+  {	"-gt",	INTGT,	BINOP	},
+  {	"-le",	INTLE,	BINOP	},
+  {	"-lt",	INTLT,	BINOP	},
+  {	"!",	UNEGN,	BUNOP	},
+  {	"-a",	BAND,	BBINOP	},
+  {	"-o",	BOR,	BBINOP	},
+  {	"(",	LPAREN,	PAREN	},
+  {	")",	RPAREN,	PAREN	},
+  {	"-x",	FILXQ,	UNOP	},
+  {	"-newer",FILNW,	BINOP	},
+  {	"-c",	FILIC,	UNOP	},
+  {	"-b",	FILIB,	UNOP	},
+  {	"-p",	FILIP,	UNOP	},
+  {	"-h",	FILIL,	UNOP	},
+  {	"-L",	FILIL,	UNOP	},
+  {	0,	0,	0	}
 };
 
 
@@ -209,16 +174,24 @@ int mode;
 	return(access(nm, 4) == 0);
       case FILWR:
 	return(access(nm, 2) == 0);
-      case FILND:
-	return(stat(nm, &s) == 0 && ((s.st_mode & S_IFMT) != S_IFDIR));
+      case FILIF:
+	return(stat(nm, &s) == 0 && S_ISREG(s.st_mode));
       case FILID:
-	return(stat(nm, &s) == 0 && ((s.st_mode & S_IFMT) == S_IFDIR));
+	return(stat(nm, &s) == 0 && S_ISDIR(s.st_mode));
       case FILGZ:
 	return(stat(nm, &s) == 0 && (s.st_size > 0L));
       case FILTT:
 	return(isatty((int) num(nm)));
       case FILXQ:
 	return(access(nm, 1) == 0);
+      case FILIC:
+	return(stat(nm, &s) == 0 && S_ISCHR(s.st_mode));
+      case FILIB:
+	return(stat(nm, &s) == 0 && S_ISBLK(s.st_mode));
+      case FILIP:
+	return(stat(nm, &s) == 0 && S_ISFIFO(s.st_mode));
+      case FILIL:
+	return(lstat(nm, &s) == 0 && S_ISLNK(s.st_mode));
   }
   return(0);
 }

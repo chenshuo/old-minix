@@ -58,8 +58,17 @@ char *buff;			/* virtual address of the buffer */
 
   /* Task has completed.  See if call completed. */
   if (dev_mess.REP_STATUS == SUSPEND) {
-	if (op == DEV_OPEN) task = XPOPEN;
-	suspend(task);		/* suspend user */
+	if (nonblock) {
+		/* Not supposed to block. */
+		dev_mess.m_type = CANCEL;
+		dev_mess.PROC_NR = proc;
+		dev_mess.DEVICE = (dev >> MINOR) & BYTE;
+		(*dmap[major].dmap_rw)(task, &dev_mess);
+		if (dev_mess.REP_STATUS == EINTR) dev_mess.REP_STATUS = EAGAIN;
+	} else {
+		if (op == DEV_OPEN) task = XPOPEN;
+		suspend(task);		/* suspend user */
+	}
   }
 
   return(dev_mess.REP_STATUS);

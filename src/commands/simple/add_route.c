@@ -34,30 +34,49 @@ void main(argc, argv)
 int argc;
 char *argv[];
 {
-	int c;
-	char *i_arg, *d_arg, *g_arg, *n_arg;
 	struct hostent *hostent;
+	struct netent *netent;
 	ipaddr_t gateway, destination, netmask;
 	u8_t high_byte;
 	nwio_route_t route;
-	int ip_fd;
-	int result;
+	int ip_fd, itab;
+	int r;
+	int metric;
+	char *check;
+	char *ip_device;
+	char *netmask_str, *metric_str, *destination_str, *gateway_str;
+	int c;
+	char *d_arg, *g_arg, *m_arg, *n_arg, *I_arg;
+	int i_flag, o_flag, v_flag;
 
 	prog_name= argv[0];
 
-	i_arg= NULL;
-	d_arg= NULL;
+	i_flag= 0;
+	o_flag= 0;
+	v_flag= 0;
 	g_arg= NULL;
+	d_arg= NULL;
+	m_arg= NULL;
 	n_arg= NULL;
-
-	while ((c= getopt(argc, argv, "?i:g:d:n:")) != -1)
+	I_arg= NULL;
+	while ((c= getopt(argc, argv, "iovg:d:m:n:I:?")) != -1)
 	{
 		switch(c)
 		{
 		case 'i':
-			if (i_arg)
+			if (i_flag)
 				usage();
-			i_arg= optarg;
+			i_flag= 1;
+			break;
+		case 'o':
+			if (o_flag)
+				usage();
+			o_flag= 1;
+			break;
+		case 'v':
+			if (v_flag)
+				usage();
+			v_flag= 1;
 			break;
 		case 'g':
 			if (g_arg)
@@ -69,10 +88,20 @@ char *argv[];
 				usage();
 			d_arg= optarg;
 			break;
+		case 'm':
+			if (m_arg)
+				usage();
+			m_arg= optarg;
+			break;
 		case 'n':
 			if (n_arg)
 				usage();
 			n_arg= optarg;
+			break;
+		case 'I':
+			if (I_arg)
+				usage();
+			I_arg= optarg;
 			break;
 		case '?':
 			usage();
@@ -81,13 +110,37 @@ char *argv[];
 			exit(1);
 		}
 	}
-	if (optind != argc || !g_arg || (n_arg && !d_arg))
+	if (optind != argc)
 		usage();
-	
-	hostent= gethostbyname(g_arg);
+	if (i_flag && o_flag)
+		usage();
+	itab= i_flag;
+
+	if (i_flag)
+	{
+		if (g_arg == NULL || d_arg == NULL || m_arg == NULL)
+			usage();
+	}
+	else
+	{
+		if (g_arg == NULL || (d_arg == NULL && n_arg != NULL) ||
+			m_arg != NULL)
+		{
+			usage();
+		}
+	}
+		
+	gateway_str= g_arg;
+	destination_str= d_arg;
+	metric_str= m_arg;
+	netmask_str= n_arg;
+	ip_device= I_arg;
+
+	hostent= gethostbyname(gateway_str);
 	if (!hostent)
 	{
-		fprintf(stderr, "%s: unknown host '%s'\n", prog_name, g_arg);
+		fprintf(stderr, "%s: unknown host '%s'\n", prog_name,
+								gateway_str);
 		exit(1);
 	}
 	gateway= *(ipaddr_t *)(hostent->h_addr);
@@ -95,15 +148,18 @@ char *argv[];
 	destination= 0;
 	netmask= 0;
 
-	if (d_arg)
+	if (destination_str)
 	{
-		hostent= gethostbyname(d_arg);
-		if (!hostent)
+		if ((netent= getnetbyname(destination_str)) != NULL)
+			destination= netent->n_net;
+		else if ((hostent= gethostbyname(destination_str)) != NULL)
+			destination= *(ipaddr_t *)(hostent->h_addr);
+		else
 		{
-			fprintf(stderr, "%s: unknown host '%s'\n", d_arg);
+			fprintf(stderr, "%s: unknown network/host '%s'\n",
+				prog_name, destination_str);
 			exit(1);
 		}
-		destination= *(ipaddr_t *)(hostent->h_addr);
 		high_byte= *(u8_t *)&destination;
 		if (!(high_byte & 0x80))	/* class A or 0 */
 		{
@@ -120,50 +176,76 @@ char *argv[];
 		}
 		else				/* class D is multicast ... */
 		{
-			fprintf(stderr, "%s: warning marsian address '%s'\n",
-				inet_ntoa(destination));
+			fprintf(stderr, "%s: warning martian address '%s'\n",
+				prog_name, inet_ntoa(destination));
+			netmask= HTONL(0xffffffff);
+		}
+		if (destination & ~netmask)
+		{
+			/* host route */
 			netmask= HTONL(0xffffffff);
 		}
 	}
 
-	if (n_arg)
+	if (netmask_str)
 	{
-		hostent= gethostbyname(n_arg);
-		if (!hostent)
+		if (inet_aton(netmask_str, &netmask) == 0)
 		{
-			fprintf(stderr, "%s: unknown host '%s'\n", n_arg);
+			fprintf(stderr, "%s: illegal netmask'%s'\n", prog_name,
+				netmask_str);
 			exit(1);
 		}
-		netmask= *(ipaddr_t *)(hostent->h_addr);
 	}
-		
-	if (!i_arg)
-		i_arg= getenv("IP_DEVICE");
-	if (!i_arg)
-		i_arg= IP_DEVICE;
 
-	ip_fd= open(i_arg, O_RDWR);
+	if (metric_str)
+	{
+		metric= strtol(metric_str, &check, 0);
+		if (check[0] != '\0' || metric < 1)
+		{
+			fprintf(stderr, "%s: illegal metric %s\n",
+				prog_name, metric_str);
+		}
+	}
+	else
+		metric= 1;
+		
+	if (!ip_device)
+		ip_device= getenv("IP_DEVICE");
+	if (!ip_device)
+		ip_device= IP_DEVICE;
+
+	ip_fd= open(ip_device, O_RDWR);
 	if (ip_fd == -1)
 	{
 		fprintf(stderr, "%s: unable to open('%s'): %s\n",
-			prog_name, i_arg, strerror(errno));
+			prog_name, ip_device, strerror(errno));
 		exit(1);
 	}
 
-	printf("adding route to %s ", inet_ntoa(destination));
-	printf("with netmask %s ", inet_ntoa(netmask));
-	printf("using gateway %s\n", inet_ntoa(gateway));
+	if (v_flag)
+	{
+		printf("adding %s route to %s ", itab ? "input" : "output",
+			inet_ntoa(destination));
+		printf("with netmask %s ", inet_ntoa(netmask));
+		printf("using gateway %s", inet_ntoa(gateway));
+		if (itab)
+			printf(" at distance %d", metric);
+		printf("\n");
+	}
 
 	route.nwr_dest= destination;
 	route.nwr_netmask= netmask;
 	route.nwr_gateway= gateway;
-	route.nwr_dist= 1;
-	route.nwr_flags= NWRF_FIXED;
+	route.nwr_dist= metric;
+	route.nwr_flags= NWRF_STATIC;
 
-	result= ioctl(ip_fd, NWIOIPSROUTE, &route);
-	if (result == -1)
+	if (itab)
+		r= ioctl(ip_fd, NWIOSIPIROUTE, &route);
+	else
+		r= ioctl(ip_fd, NWIOSIPOROUTE, &route);
+	if (r == -1)
 	{
-		fprintf(stderr, "%s: NWIOIPSROUTE: %s\n",
+		fprintf(stderr, "%s: NWIOSIPxROUTE: %s\n",
 			prog_name, strerror(errno));
 		exit(1);
 	}
@@ -172,10 +254,10 @@ char *argv[];
 
 void usage()
 {
+	fprintf(stderr, "Usage: %s\n", prog_name);
 	fprintf(stderr,
-		"USAGE: %s -g <gateway> [-d <destination> [-n <netmask> ]]\n", 
-			prog_name);
-	fprintf(stderr, "\t\t\t\t[-i <ip device>]\n");
+"\t[-o] -g <gw> [-d <dst> [-n <netmask> ]] [-m metric] [-I <ipdev>] [-v]\n");
+	fprintf(stderr,
+"\t-i -g <gw> -d <dst> -m metric [-n <netmask>] [-I <ipdev>] [-v]\n");
 	exit(1);
 }
-

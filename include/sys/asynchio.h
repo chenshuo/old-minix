@@ -15,6 +15,7 @@ typedef int asynchio_t;
 struct timeval { long tv_sec, tv_usec; };
 
 #define EINPROGRESS	EINTR
+#define ASYN_INPROGRESS	EINPROGRESS
 
 void asyn_init(asynchio_t *_asyn);
 ssize_t asyn_read(asynchio_t *_asyn, int _fd, void *_buf, size_t _len);

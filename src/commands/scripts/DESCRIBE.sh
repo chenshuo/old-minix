@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# DESCRIBE 1.17 - Describe the given devices.		Author: Kees J. Bot
+# DESCRIBE 1.19 - Describe the given devices.		Author: Kees J. Bot
 #
 # BUGS
 # - Arguments may not contain shell metacharacters.
@@ -112,13 +112,53 @@ do
 		;;
 	6,0)	des="line printer, parallel port" dev=lp
 		;;
-	7,1)	des="raw ethernet" dev=eth
+	7,1)	des="raw ethernet #0"
+		if [ $name = eth ]; then dev=eth; else dev=eth0; fi
 		;;
-	7,2)	des="raw IP" dev=ip
+	7,2)	des="raw IP #0"
+		if [ $name = ip ]; then dev=ip; else dev=ip0; fi
 		;;
-	7,3)	des="TCP/IP" dev=tcp
+	7,3)	des="TCP/IP #0"
+		if [ $name = tcp ]; then dev=tcp; else dev=tcp0; fi
 		;;
-	7,4)	des="UDP" dev=udp
+	7,4)	des="UDP #0"
+		if [ $name = udp ]; then dev=udp; else dev=udp0; fi
+		;;
+	7,17)	des="raw ethernet #1"
+		if [ $name = eth ]; then dev=eth; else dev=eth1; fi
+		;;
+	7,18)	des="raw IP #1"
+		if [ $name = ip ]; then dev=ip; else dev=ip1; fi
+		;;
+	7,19)	des="TCP/IP #1"
+		if [ $name = tcp ]; then dev=tcp; else dev=tcp1; fi
+		;;
+	7,20)	des="UDP #1"
+		if [ $name = udp ]; then dev=udp; else dev=udp1; fi
+		;;
+	7,33)	des="pseudo IP #2"
+		if [ $name = ip ]; then dev=ip; else dev=psip2; fi
+		;;
+	7,34)	des="raw IP #2"
+		if [ $name = ip ]; then dev=ip; else dev=ip2; fi
+		;;
+	7,35)	des="TCP/IP #2"
+		if [ $name = tcp ]; then dev=tcp; else dev=tcp2; fi
+		;;
+	7,36)	des="UDP #2"
+		if [ $name = udp ]; then dev=udp; else dev=udp2; fi
+		;;
+	7,49)	des="pseudo IP #3"
+		if [ $name = ip ]; then dev=ip; else dev=psip3; fi
+		;;
+	7,50)	des="raw IP #3"
+		if [ $name = ip ]; then dev=ip; else dev=ip3; fi
+		;;
+	7,51)	des="TCP/IP #3"
+		if [ $name = tcp ]; then dev=tcp; else dev=tcp3; fi
+		;;
+	7,52)	des="UDP #3"
+		if [ $name = udp ]; then dev=udp; else dev=udp3; fi
 		;;
 	8,0)	des="CD-ROM" dev=cd0
 		;;
@@ -167,6 +207,15 @@ do
 		*[13579])
 			des="scsi tape $tape (rewinding)" dev=rst$tape
 		esac
+		;;
+	12,[05]|12,[123][05])
+		drive=`expr $minor / 5`
+		des="DOS virtual disk $drive" dev=dosd$minor
+		;;
+	12,?|12,[123]?)
+		drive=`expr $minor / 5`
+		par=`expr $minor % 5`
+		des="DOS virtual disk $drive, partition $par" dev=dosd$minor
 		;;
 	13,0)
 		des="audio" dev=audio

@@ -143,7 +143,7 @@ PUBLIC void tty_task()
   for (tp = FIRST_TTY; tp < END_TTY; tp++) tty_init(tp);
 
   /* Display the Minix startup banner. */
-  printf("Minix %s.%s  Copyright 1997 Prentice-Hall, Inc.\n\n",
+  printf("Minix %s.%s  Copyright 1998 Prentice-Hall, Inc.\n\n",
 						OS_RELEASE, OS_VERSION);
 
 #if (CHIP == INTEL)

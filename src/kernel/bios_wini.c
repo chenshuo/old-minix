@@ -70,7 +70,6 @@ PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
 PRIVATE int w_opcode;			/* DEV_READ or DEV_WRITE */
 PRIVATE int w_drive;			/* selected drive */
 PRIVATE struct device *w_dv;		/* device's base and size */
-extern unsigned Ax, Bx, Cx, Dx, Es;	/* to hold registers for BIOS calls */
 
 FORWARD _PROTOTYPE( struct device *w_prepare, (int device) );
 FORWARD _PROTOTYPE( char *w_name, (void) );
@@ -79,7 +78,6 @@ FORWARD _PROTOTYPE( int w_finish, (void) );
 FORWARD _PROTOTYPE( int w_do_open, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( int w_do_close, (struct driver *dp, message *m_ptr) );
 FORWARD _PROTOTYPE( void w_init, (void) );
-FORWARD _PROTOTYPE( void enable_vectors, (void) );
 FORWARD _PROTOTYPE( void w_geometry, (struct partition *entry));
 
 
@@ -270,7 +268,7 @@ PRIVATE int w_finish()
 /* Carry out the I/O requests gathered in wtrans[]. */
 
   struct trans *tp = wtrans, *tp2;
-  unsigned count, cylinder, sector, head, hicyl, locyl;
+  unsigned count, cylinder, sector, head;
   unsigned secspcyl = w_wn->heads * w_wn->sectors;
   int many = USE_BUF;
 
@@ -297,16 +295,18 @@ PRIVATE int w_finish()
 	sector = (tp->block % w_wn->sectors) + 1;
 	head = (tp->block % secspcyl) / w_wn->sectors;
 
-	Ax = w_opcode == DEV_WRITE ? BIOS_WRITE : BIOS_READ;
-	Ax = (Ax << 8) | (count >> SECTOR_SHIFT);	/* opcode & count */
-	Bx = (unsigned) tp->dma % HCLICK_SIZE;		/* low order 4 bits */
-	Es = physb_to_hclick(tp->dma);		/* high order 16 bits */
-	hicyl = (cylinder & 0x300) >> 8;	/* two high-order bits */
-	locyl = (cylinder & 0xFF);		/* 8 low-order bits */
-	Cx = sector | (hicyl << 6) | (locyl << 8);
-	Dx = (HD_CODE + w_drive) | (head << 8);
-	level0(bios13);
-	if ((Ax & 0xFF00) != 0) {
+	/* Set up and execute a read or write BIOS call. */
+	reg86.b.intno = 0x13;
+	reg86.b.ah = w_opcode == DEV_WRITE ? BIOS_WRITE : BIOS_READ;
+	reg86.b.al = count >> SECTOR_SHIFT;
+	reg86.w.bx = tp->dma % HCLICK_SIZE;
+	reg86.w.es = tp->dma / HCLICK_SIZE;
+	reg86.b.ch = cylinder & 0xFF;
+	reg86.b.cl = sector | ((cylinder & 0x300) >> 2);
+	reg86.b.dh = head;
+	reg86.b.dl = HD_CODE + w_drive;
+	level0(int86);
+	if (reg86.w.f & 0x0001) {
 		/* An error occurred, try again block by block unless */
 		if (!many) return(tp->iop->io_nbytes = EIO);
 		many = 0;
@@ -380,23 +380,21 @@ PRIVATE void w_init()
   int drive;
   struct wini *wn;
 
-  /* Enable real mode BIOS vectors. */
-  enable_vectors();
-
   /* Set the geometry of the drives */
   for (drive = 0; drive < nr_drives; drive++) {
 	(void) w_prepare(drive * DEV_PER_DRIVE);
 	wn = w_wn;
-	Dx = drive + HD_CODE;
-	Ax = (BIOS_ASK << 8);
-	level0(bios13);
-	nr_drives = (Ax & 0xFF00) == 0 ? (Dx & 0xFF) : drive;
+	reg86.b.intno = 0x13;
+	reg86.b.ah = BIOS_ASK;
+	reg86.b.dl = HD_CODE + drive;
+	level0(int86);
+	nr_drives = !(reg86.w.f & 0x0001) ? reg86.b.dl : drive;
 	if (nr_drives > MAX_DRIVES) nr_drives = MAX_DRIVES;
 	if (drive >= nr_drives) break;
 
-	wn->heads = (Dx >> 8) + 1;
-	wn->sectors = (Cx & 0x3F);
-	wn->cylinders = ((Cx << 2) & 0x0300) + ((Cx >> 8) & 0x00FF) + 1;
+	wn->heads = reg86.b.dh + 1;
+	wn->sectors = reg86.b.cl & 0x3F;
+	wn->cylinders = (reg86.b.ch | ((reg86.b.cl & 0xC0) << 2)) + 1;
 
 	wn->part[0].dv_size = ((unsigned long) wn->cylinders
 			* wn->heads * wn->sectors) << SECTOR_SHIFT;
@@ -404,55 +402,6 @@ PRIVATE void w_init()
 	printf("%s: %d cylinders, %d heads, %d sectors per track\n",
 		w_name(), wn->cylinders, wn->heads, wn->sectors);
   }
-}
-
-
-/*===========================================================================*
- *				enable_vectors				     *
- *===========================================================================*/
-PRIVATE void enable_vectors()
-{
-/* Protected mode Minix has reprogrammed the interrupt controllers to
- * use different vectors from the BIOS.  This means that the BIOS vectors
- * must be copied to the Minix locations for use in real mode.  The bios13()
- * function enables all interrupts that Minix doesn't use, and masks all
- * interrupts that Minix does use when it makes the "INT 13" call.  Alas
- * more than one clock tick may occur while the disk is active, so we need
- * a special real mode clock interrupt handle to gather lost ticks.
- */
-
-  int vec, irq;
-  static u8_t clock_handler[] = {
-	0x50, 0xB0, 0x20, 0xE6, 0x20, 0xEB, 0x06, 0xE4,
-	0x61, 0x0C, 0x80, 0xE6, 0x61, 0x58, 0x53, 0x1E,
-	0xE8, 0x00, 0x00, 0x5B, 0x2E, 0xC5, 0x5F, 0x0A,
-	0xFF, 0x07, 0x1F, 0x5B, 0xCF,
-	0x00, 0x00, 0x00, 0x00,
-  };
-  u16_t vector[2];
-
-  if (!protected_mode) return;
-
-  for (irq = 0; irq < NR_IRQ_VECTORS; irq++) {
-	phys_copy(BIOS_VECTOR(irq)*4L, VECTOR(irq)*4L, 4L);
-  }
-
-  /* Install a clock interrupt handler to collect clock ticks when the
-   * BIOS disk driver is active.  The handler is a simple bit of 8086 code
-   * that increments "lost_ticks".
-   */
-
-  /* Let the clock interrupt point to the handler. */
-  vector[0] = vir2phys(clock_handler) % HCLICK_SIZE;
-  vector[1] = vir2phys(clock_handler) / HCLICK_SIZE;
-  phys_copy(vir2phys(vector), VECTOR(CLOCK_IRQ)*4L, 4L);
-
-  /* Store the address of lost_ticks in the handler. */
-  vector[0] = vir2phys(&lost_ticks) % HCLICK_SIZE;
-  vector[1] = vir2phys(&lost_ticks) / HCLICK_SIZE;
-  memcpy(clock_handler + 0x1D, vector, 4);
-
-  if (ps_mca) clock_handler[6]= 0;	/* (PS/2 port B clock ack) */
 }
 
 

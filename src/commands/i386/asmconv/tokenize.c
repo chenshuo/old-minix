@@ -4,6 +4,7 @@
 #define nil 0
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <string.h>
 #include <assert.h>
 #include "asmconv.h"
@@ -12,6 +13,7 @@
 static FILE *tf;
 static char *tfile;
 static char *orig_tfile;
+static int tcomment;
 static int tc;
 static long tline;
 static token_t *tq;
@@ -55,7 +57,7 @@ void parse_err(int err, token_t *t, const char *fmt, ...)
 	if (err) set_error();
 }
 
-void tok_init(char *file)
+void tok_init(char *file, int comment)
 /* Open the file to tokenize and initialize the tokenizer. */
 {
 	if (file == nil) {
@@ -67,6 +69,7 @@ void tok_init(char *file)
 	orig_tfile= file;
 	set_file(file, 1);
 	readtc();
+	tcomment= comment;
 }
 
 static int isspace(int c)
@@ -74,7 +77,7 @@ static int isspace(int c)
 	return between('\0', c, ' ') && c != '\n';
 }
 
-#define iscomment(c)	((c) == '!')
+#define iscomment(c)	((c) == tcomment)
 
 static int isidentchar(int c)
 {

@@ -13,11 +13,7 @@ Created:	March 15, 1994 by Philip Homburg <philip@cs.vu.nl>
 #include "dp8390.h"
 #include "ne2000.h"
 
-#if ENABLE_NETWORKING
-
-#if !__minix_vmd
-#define debug		0
-#endif
+#if (ENABLE_NETWORKING && ENABLE_NE2000) || __minix_vmd
 
 #define N 100
 
@@ -146,7 +142,11 @@ u8_t *pat;
 	}
 	if (i == N)
 	{
-		printf("ne2000, test_8: remote dma failed to complete\n");
+		if (debug)
+		{
+			printf("%s: NE1000 remote DMA test failed\n",
+				dep->de_name);
+		}
 		return 0;
 	}
 
@@ -197,7 +197,11 @@ u8_t *pat;
 	}
 	if (i == N)
 	{
-		printf("ne2000, test_16: remote dma failed to complete\n");
+		if (debug)
+		{
+			printf("%s: NE2000 remote DMA test failed\n",
+				dep->de_name);
+		}
 		return 0;
 	}
 
@@ -281,15 +285,15 @@ dpeth_t *dep;
 
 	if (!debug)
 	{
-		printf("ne2000: NE%d000 at %X:%d\n",
-			dep->de_16bit ? 2 : 1,
+		printf("%s: NE%d000 at %X:%d\n",
+			dep->de_name, dep->de_16bit ? 2 : 1,
 			dep->de_base_port, dep->de_irq);
 	}
 	else
 	{
-		printf("ne2000: Novell %s ethernet card ", 
-			dep->de_16bit ? "16-bit (ne2000)" : "8-bit (ne1000)");
-		printf("at I/O address 0x%X, memory size 0x%X, irq %d\n",
+		printf("%s: Novell NE%d000 ethernet card at I/O address "
+			"0x%X, memory size 0x%X, irq %d\n",
+			dep->de_name, dep->de_16bit ? 2 : 1,
 			dep->de_base_port, dep->de_ramsize, dep->de_irq);
 	}
 }
@@ -309,8 +313,8 @@ dpeth_t *dep;
 	outb_ne(dep, NE_RESET, byte);
 }
 
-#endif /* ENABLE_NETWORKING */
+#endif /* ENABLE_NETWORKING && ENABLE_NE2000 */
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/ne2000.c,v 1.2 1995/01/12 21:48:53 philip Exp $
+ * $PchId: ne2000.c,v 1.4 1996/01/19 23:30:34 philip Exp $
  */

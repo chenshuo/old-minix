@@ -13,7 +13,6 @@
 
 _PROTOTYPE(int main, (void));
 _PROTOTYPE(void file_error, (char *));
-_PROTOTYPE(void wheel, (void));
 _PROTOTYPE(void encode, (unsigned char *));
 
 int main()
@@ -44,8 +43,6 @@ int main()
 	cnt = -1;
 	llen = 0L;
 	sprintf(filename, "advent%d.txt", i);
-	printf("Processing file %s  ", filename);
-	fflush(stdout);
 	src = fopen(filename, "r");
 	if (!src)
 	    file_error(filename);
@@ -55,7 +52,6 @@ int main()
 	    file_error(filename);
 	fprintf(isam, "long\t%s = {\n\t", headername[i - 1]);
 	while (fgets(itxt, 255, src)) {
-	    wheel();
 	    encode((unsigned char *) itxt);
 	    if (fprintf(dest, "%s\n", itxt) == EOF)
 		file_error(filename);
@@ -75,7 +71,6 @@ int main()
 	fclose(src);
 	if (fclose(dest) == EOF)
 	    file_error(filename);
-	printf("\b completed\n");
     }
 
     if (fclose(isam) == EOF)
@@ -100,17 +95,5 @@ unsigned char *msg;
     for (i = 1; msg[i]; i++)
 	msg[i] ^= key[i & 3];
     msg[--i] = '\0';
-    return;
-}
-
-void wheel()
-{
-    static int wheel_idx = 0, wheel_wait = 0;
-
-    if (wheel_wait++ & 15)
-	return;
-    putchar('\b');
-    putchar("|/-\\"[wheel_idx++ & 3]);
-    fflush(stdout);
     return;
 }

@@ -1,25 +1,21 @@
 #
 .sect .text
-.sect .rom
-.sect .data
-.sect .bss
-.define endtext,enddata,endbss,__end
-.sect .text
-	.align _EM_WSIZE
-.sect .rom
-	.align _EM_WSIZE
-.sect .data
-	.align _EM_WSIZE
-.sect .bss
-	.align _EM_WSIZE
-.sect .end ! only for declaration of _end, __end and endbss.
-
-	.sect .text
+.align _EM_WSIZE
+.define __etext, endtext
+__etext:
 endtext:
-	.sect .rom
+.sect .rom
+.align _EM_WSIZE
+.define endrom
 endrom:
-	.sect .data
+.sect .data
+.align _EM_WSIZE
+.define __edata, enddata
+__edata:
 enddata:
-	.sect .end
+.sect .bss
+.align _EM_WSIZE
+.sect .end	! only for declaration of _end, __end or endbss.
+.define __end, endbss
 __end:
 endbss:

@@ -19,12 +19,10 @@
 
 /* AT keyboard. */
 #define KB_COMMAND	0x64	/* I/O port for commands on AT */
-#define KB_GATE_A20	0x02	/* bit in output port to enable A20 line */
-#define KB_PULSE_OUTPUT	0xF0	/* base for commands to pulse output port */
-#define KB_RESET	0x01	/* bit in output port to reset CPU */
 #define KB_STATUS	0x64	/* I/O port for status on AT */
 #define KB_ACK		0xFA	/* keyboard ack response */
-#define KB_BUSY		0x02	/* status bit set when KEYBD port ready */
+#define KB_OUT_FULL	0x01	/* status bit set when keypress char pending */
+#define KB_IN_FULL	0x02	/* status bit set when not ready to receive */
 #define LED_CODE	0xED	/* command to keyboard to set LEDs */
 #define MAX_KB_ACK_RETRIES 0x1000	/* max #times to wait for kb ack */
 #define MAX_KB_BUSY_RETRIES 0x1000	/* max #times to loop while kb busy */
@@ -329,11 +327,13 @@ PRIVATE int kb_wait()
 {
 /* Wait until the controller is ready; return zero if this times out. */
 
-  int retries;
+  int retries, status;
 
-  retries = MAX_KB_BUSY_RETRIES + 1;
-  while (--retries != 0 && in_byte(KB_STATUS) & KB_BUSY)
-	;			/* wait until not busy */
+  retries = MAX_KB_BUSY_RETRIES + 1;	/* wait until not busy */
+  while (--retries != 0
+		&& (status = in_byte(KB_STATUS)) & (KB_IN_FULL|KB_OUT_FULL)) {
+	if (status & KB_OUT_FULL) (void) in_byte(KEYBD);	/* discard */
+  }
   return(retries);		/* nonzero if ready */
 }
 
@@ -470,6 +470,9 @@ int how;		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
 #endif
   floppy_stop();
   clock_stop();
+#if ENABLE_DOSFILE
+  dosfile_stop();
+#endif
 
   if (how == RBT_HALT) {
 	printf("System Halted\n");
@@ -517,26 +520,8 @@ int how;		/* 0 = halt, 1 = reboot, 2 = panic!, ... */
   phys_copy(vir2phys(&magic), (phys_bytes) MEMCHECK_ADR,
 						(phys_bytes) sizeof(magic));
 
-  if (protected_mode) {
-	/* Use the AT keyboard controller to reset the processor.
-	 * The A20 line is kept enabled in case this code is ever
-	 * run from extended memory, and because some machines
-	 * appear to drive the fake A20 high instead of low just
-	 * after reset, leading to an illegal opode trap.  This bug
-	 * is more of a problem if the fake A20 is in use, as it
-	 * would be if the keyboard reset were used for real mode.
-	 */
-	kb_wait();
-	out_byte(KB_COMMAND,
-		 KB_PULSE_OUTPUT | (0x0F & ~(KB_GATE_A20 | KB_RESET)));
-	milli_delay(10);
-
-	/* If the nice method fails then do a reset.  In protected
-	 * mode this means a processor shutdown.
-	 */
-	printf("Hard reset...\n");
-	milli_delay(250);
-  }
-  /* In real mode, jumping to the reset address is good enough. */
+  /* Reset the system by jumping to the reset address (real mode), or by
+   * forcing a processor shutdown (protected mode).
+   */
   level0(reset);
 }

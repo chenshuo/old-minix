@@ -47,7 +47,7 @@ char PATH_UTMP[] = "/etc/utmp";		/* current logins */
 char PATH_WTMP[] = "/usr/adm/wtmp";	/* login/logout history */
 
 char *prog_name;
-char *hostname;
+char hostname[256+1];
 char line[1024];
 int authenticated= 0;
 char lusername[NMAX+1], rusername[NMAX+1];
@@ -103,7 +103,8 @@ int main(argc, argv)
 			inet_ntoa(tcpconf.nwtc_remaddr));
 		exit(1);
 	}
-	hostname= hostent->h_name;
+	strncpy(hostname, hostent->h_name, sizeof(hostname)-1);
+	hostname[sizeof(hostname)-1]= '\0';
 	if (do_rlogin() == 0)
 		authenticated= 1;
 	write(1, "", 1);	/* Send the '\0' */

@@ -183,9 +183,9 @@ mode_t omode;
 					/* Nobody else found.  Restore filp. */
 					fil_ptr->filp_count = 1;
 					if (b == R_BIT)
-					     pos = rip->i_zone[V2_NR_DZONES+1];
+					     pos = rip->i_zone[V2_NR_DZONES+0];
 					else
-					     pos = rip->i_zone[V2_NR_DZONES+2];
+					     pos = rip->i_zone[V2_NR_DZONES+1];
 					fil_ptr->filp_pos = pos;
 				}
 			}
@@ -437,9 +437,9 @@ PUBLIC int do_close()
 		 * last 3 zones in the i-node are not used for (named) pipes.
 		 */
 		if (rfilp->filp_mode == R_BIT)
-			rip->i_zone[V2_NR_DZONES+1] = (zone_t) rfilp->filp_pos;
+			rip->i_zone[V2_NR_DZONES+0] = (zone_t) rfilp->filp_pos;
 		else
-			rip->i_zone[V2_NR_DZONES+2] = (zone_t) rfilp->filp_pos;
+			rip->i_zone[V2_NR_DZONES+1] = (zone_t) rfilp->filp_pos;
 	}
 	put_inode(rip);
   }

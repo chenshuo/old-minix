@@ -16,18 +16,6 @@
 .de IX
 ..
 .\"-----------------
-.de DS
-.RS
-.nf
-.sp
-..
-.\"-----------------
-.de DE
-.fi
-.RE
-.sp
-..
-.\"-----------------
 .de NB
 .ds nb "\\$1
 .lF
@@ -169,6 +157,12 @@
 .de RE
 .in -5n
 ..
+.de DS
+.br
+..
+.de DE
+.br
+..
 .\"-----------------
 .de PD
 .ie \\n(.$=0 .nr PD 0.3v
@@ -178,8 +172,8 @@
 .\" misc. initialization
 .nr tp 5n
 .PD
-.ds lq """
-.ds rq """
+.ds lq \&"
+.ds rq \&"
 .ds R \(rg
 .ds S "
 .ds Tm (TM)

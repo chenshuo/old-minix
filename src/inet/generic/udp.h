@@ -1,5 +1,7 @@
 /*
 udp.h
+
+Copyright 1995 Philip Homburg
 */
 
 #ifndef UDP_H
@@ -18,11 +20,9 @@ struct acc;
 
 void udp_init ARGS(( void ));
 int udp_open ARGS(( int port, int srfd,
-	struct acc *(*get_userdata) (int fd, size_t offset, size_t count, 
-		int for_ioctl),
-	int (*put_userdata) (int fd, size_t offset, struct acc *data,
-		int for_ioctl) ));
-int udp_ioctl ARGS(( int fd, int req ));
+	get_userdata_t get_userdata, put_userdata_t put_userdata, 
+	put_pkt_t put_pkt ));
+int udp_ioctl ARGS(( int fd, ioreq_t req ));
 int udp_read ARGS(( int fd, size_t count ));
 int udp_write ARGS(( int fd, size_t count ));
 void udp_close ARGS(( int fd ));
@@ -30,3 +30,7 @@ int udp_cancel ARGS(( int fd, int which_operation ));
 
 #endif /* UDP_H */
 
+
+/*
+ * $PchId: udp.h,v 1.6 1996/05/07 20:53:31 philip Exp $
+ */

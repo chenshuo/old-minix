@@ -2,6 +2,6 @@
 .sect .rom
 .sect .data
 .sect .bss
+.sect .end	! only for declaration of _end, __end or endbss.
 .define _end
-.sect .end ! only for declaration of _end, __end and endbss.
 _end:

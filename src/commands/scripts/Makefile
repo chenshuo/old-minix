@@ -18,6 +18,7 @@ usr:	\
 	/usr/bin/checkhier \
 	/usr/bin/makewhatis \
 	/usr/bin/mkdist \
+	/usr/bin/netdefault \
 	/usr/bin/setup \
 	/usr/bin/spell \
 	/usr/bin/srccrc \
@@ -59,6 +60,9 @@ clean:
 	install -c -o bin $? $@
 
 /usr/bin/mkdist:	mkdist.sh
+	install -c -o bin $? $@
+
+/usr/bin/netdefault:	netdefault.sh
 	install -c -o bin $? $@
 
 /usr/bin/setup:	setup.sh

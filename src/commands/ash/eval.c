@@ -272,7 +272,7 @@ evaltree(n, flags)
 out:
 	if (pendingsigs)
 		dotrap();
-	if ((flags & EV_EXIT) || (eflag && exitstatus && !(flags & EV_TESTED)))
+	if ((flags & EV_EXIT) || (eflag == 1 && exitstatus && !(flags & EV_TESTED)))
 		exitshell(exitstatus);
 }
 
@@ -618,7 +618,7 @@ evalcommand(cmd, flags, backcmd)
 	argv -= argc;
 
 	/* Print the command if xflag is set. */
-	if (xflag) {
+	if (xflag == 1) {
 		outc('+', &errout);
 		for (sp = varlist.list ; sp ; sp = sp->next) {
 			outc(' ', &errout);

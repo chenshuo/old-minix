@@ -1,4 +1,4 @@
-/*	man 2.0 - display online manual pages		Author: Kees J. Bot
+/*	man 2.2 - display online manual pages		Author: Kees J. Bot
  *								17 Mar 1993
  */
 #define nil NULL
@@ -18,6 +18,9 @@
 /* Defaults: */
 char MANPATH[]=	"/usr/local/man:/usr/man";
 char PAGER[]=	"more";
+
+/* Comment at the start to let tbl(1) be run before n/troff. */
+char TBL_MAGIC[] = ".\\\"t\n";
 
 #define arraysize(a)	(sizeof(a) / sizeof((a)[0]))
 #define arraylimit(a)	((a) + arraysize(a))
@@ -108,25 +111,22 @@ int searchwindex(FILE *wf, char *title, char **ppage, char **psection)
 		high= ftell(wf);
 	}
 
-	/* Search the file for a line with the title. */
-	do {
+	/* Binary search for the title. */
+	while (low <= high) {
 		pt= (unsigned char *) title;
 
-		if (low <= high) {
-			/* Still in binary search mode. */
-			mid0= mid1= (low + high) >> 1;
-			if (mid0 == 0) {
-				if (fseek(wf, (off_t) 0, SEEK_SET) != 0)
-					return -1;
-			} else {
-				if (fseek(wf, (off_t) mid0 - 1, SEEK_SET) != 0)
-					return -1;
+		mid0= mid1= (low + high) >> 1;
+		if (mid0 == 0) {
+			if (fseek(wf, (off_t) 0, SEEK_SET) != 0)
+				return -1;
+		} else {
+			if (fseek(wf, (off_t) mid0 - 1, SEEK_SET) != 0)
+				return -1;
 
-				/* Find the start of a line. */
-				while ((c= getc(wf)) != EOF && c != '\n')
-					mid1++;
-				if (ferror(wf)) return -1;
-			}
+			/* Find the start of a line. */
+			while ((c= getc(wf)) != EOF && c != '\n')
+				mid1++;
+			if (ferror(wf)) return -1;
 		}
 
 		/* See if the line has the title we seek. */
@@ -136,19 +136,39 @@ int searchwindex(FILE *wf, char *title, char **ppage, char **psection)
 			pt++;
 		}
 
-		if (low <= high) {
-			/* Binary search; halve the search range. */
-			if (c == EOF || *pt <= c) {
-				high= mid0 - 1;
-			} else {
-				low= mid1 + 1;
-			}
+		/* Halve the search range. */
+		if (c == EOF || *pt <= c) {
+			high= mid0 - 1;
+		} else {
+			low= mid1 + 1;
 		}
-	} while (low <= high);
+	}
 
-	/* Out of binary search mode, did the title match? */
+	/* Look for the title from 'low' onwards. */
+	if (fseek(wf, (off_t) low, SEEK_SET) != 0)
+		return -1;
 
-	if (*pt != 0 || c != 0) return 0;	/* No. */
+	do {
+		if (low != 0) {
+			/* Find the start of a line. */
+			while ((c= getc(wf)) != EOF && c != '\n')
+				low++;
+			if (ferror(wf)) return -1;
+		}
+
+		/* See if the line has the title we seek. */
+		pt= (unsigned char *) title;
+
+		for (;;) {
+			if ((c= getc(wf)) == EOF) return 0;
+			low++;
+			if (c == ' ' || c == '\t') c= 0;
+			if (c == 0 || c != *pt) break;
+			pt++;
+		}
+	} while (c < *pt);
+
+	if (*pt != c) return 0;		/* Not found. */
 
 	/* Get page and section. */
 	while ((c= fgetc(wf)) == ' ' || c == '\t') {}
@@ -186,6 +206,7 @@ char ALL[]=	"";	/* Magic sequence of all sections. */
 int all= 0;		/* Show all pages with a given title. */
 int whatis= 0;		/* man -f word == whatis word. */
 int apropos= 0;		/* man -k word == apropos word. */
+int quiet= 0;		/* man -q == quietly check. */
 enum ROFF { NROFF, TROFF } rofftype= NROFF;
 char *roff[] = { "nroff", "troff" };
 
@@ -354,8 +375,38 @@ int showpage(char *page, enum pagetype ptype, char *macros)
 	if (!S_ISREG(st.st_mode)) return 0;
 	if ((st.st_mode & 0111) && page[0] != '/') return 0;
 
+	/* Do we only care if it exists? */
+	if (quiet) { shown= 1; return 1; }
+
 	if (ptype == CATZ || ptype == MANZ) {
 		putinline("zcat", (char *) nil);
+	}
+
+	if (ptype == MAN) {
+		/* Do we need tbl? */
+		FILE *fp;
+		int c;
+		char *tp = TBL_MAGIC;
+
+		if ((fp = fopen(page, "r")) == nil) {
+			fprintf(stderr, "man: %s: %s\n", page, strerror(errno));
+			exit(1);
+		}
+		c= fgetc(fp);
+		for (;;) {
+			if (c == *tp || (c == '\'' && *tp == '.')) {
+				if (*++tp == 0) {
+					/* A match, add tbl. */
+					putinline("tbl", (char *) nil);
+					break;
+				}
+			} else {
+				/* No match. */
+				break;
+			}
+			while ((c = fgetc(fp)) == ' ' || c == '\t') {}
+		}
+		fclose(fp);
 	}
 
 	if (ptype == MAN || ptype == MANZ) {
@@ -532,7 +583,7 @@ void searchmanpath(char *title, char *section)
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: man -[antfk] [-M path] [-s section] title ...\n");
+		"Usage: man -[antfkq] [-M path] [-s section] title ...\n");
 	exit(1);
 }
 
@@ -565,6 +616,9 @@ int main(int argc, char **argv)
 					break;
 				case 'k':
 					apropos= 1;
+					break;
+				case 'q':
+					quiet= 1;
 					break;
 				case 'n':
 					rofftype= NROFF;
@@ -617,8 +671,11 @@ int main(int argc, char **argv)
 			if (!shown) (void) showpage(title, MAN, "-man");
 
 			if (!shown) {
-				fprintf(stderr, "man: no manual on %s\n",
+				if (!quiet) {
+					fprintf(stderr,
+						"man: no manual on %s\n",
 						title);
+				}
 				exit(1);
 			}
 		}

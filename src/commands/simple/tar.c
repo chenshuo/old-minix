@@ -48,6 +48,7 @@
  *  added 'p' flag to ignore umask for normal user		KJB 6/10/92
  *  mknod4(2) out						KJB 30/10/94
  *  added 'D' flag to not recurse into directories		KJB 19/12/94
+ *  status output to stdout unless 'tar cvf -'			KJB 3/5/97
  *
  * Bugs:
  *  verbose mode is not reporting consistent
@@ -1019,21 +1020,21 @@ char *address;
 }
 
 char output[TBLOCK_SIZE];
-void print(str)			/* changed to use stderr rather than stdout
-			 * -Dal */
+void print(str)
 register char *str;
 {
+  int fd = (tar_fd == 1 ? 2 : 1);
   static int indx = 0;
 
   if (str == NIL_PTR) {
-	write(2, output, indx);
+	write(fd, output, indx);
 	indx = 0;
 	return;
   }
   while (*str) {
 	output[indx++] = *str++;
 	if (indx == TBLOCK_SIZE) {
-		write(2, output, TBLOCK_SIZE);
+		write(fd, output, TBLOCK_SIZE);
 		indx = 0;
 	}
   }

@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <stdio.h>
 
 extern int optind, opterr;
@@ -49,6 +50,11 @@ mode_t oldmode;
 {
   mode_t who, mask, newmode, tmpmask;
   char action;
+  char *end;
+  unsigned long octalmode;
+
+  octalmode = strtoul(symbolic, &end, 010);
+  if (octalmode < ALL_MODES && *end == 0 && end != symbolic) return octalmode;
 
   newmode = oldmode & ALL_MODES;
   while (*symbolic) {

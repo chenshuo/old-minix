@@ -22,29 +22,26 @@ FORWARD _PROTOTYPE( int k_atoi, (char *s) );
 /*==========================================================================*
  *				cstart					    *
  *==========================================================================*/
-PUBLIC void cstart(cs, ds, mcs, mds, parmoff, parmsize)
+PUBLIC void cstart(cs, ds, mds, parmoff, parmsize)
 U16_t cs, ds;			/* Kernel code and data segment */
-U16_t mcs, mds;			/* Monitor code and data segment */
+U16_t mds;			/* Monitor data segment */
 U16_t parmoff, parmsize;	/* boot parameters offset and length */
 {
 /* Perform system initializations prior to calling main(). */
 
   register char *envp;
-  phys_bytes mcode_base, mdata_base;
   unsigned mon_start;
 
   /* Record where the kernel and the monitor are. */
   code_base = seg2phys(cs);
   data_base = seg2phys(ds);
-  mcode_base = seg2phys(mcs);
-  mdata_base = seg2phys(mds);
 
   /* Initialize protected mode descriptors. */
   prot_init();
 
   /* Copy the boot parameters to kernel memory. */
   if (parmsize > sizeof k_environ - 2) parmsize = sizeof k_environ - 2;
-  phys_copy(mdata_base + parmoff, vir2phys(k_environ), (phys_bytes) parmsize);
+  phys_copy(seg2phys(mds)+parmoff, vir2phys(k_environ), (phys_bytes) parmsize);
 
   /* Convert important boot environment variables. */
   boot_parameters.bp_rootdev = k_atoi(k_getenv("rootdev"));
@@ -56,10 +53,6 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
   envp = k_getenv("video");
   if (strcmp(envp, "ega") == 0) ega = TRUE;
   if (strcmp(envp, "vga") == 0) vga = ega = TRUE;
-
-  /* Memory sizes: */
-  low_memsize = k_atoi(k_getenv("memsize"));
-  ext_memsize = k_atoi(k_getenv("emssize"));
 
   /* Processor? */
   processor = boot_parameters.bp_processor;	/* 86, 186, 286, 386, ... */
@@ -76,12 +69,8 @@ U16_t parmoff, parmsize;	/* boot parameters offset and length */
   /* Decide if mode is protected. */
 #if _WORD_SIZE == 2
   protected_mode = processor >= 286;
-#endif
-
-  /* Is there a monitor to return to?  If so then keep it safe. */
   if (!protected_mode) mon_return = 0;
-  mon_start = mcode_base / 1024;
-  if (mon_return && low_memsize > mon_start) low_memsize = mon_start;
+#endif
 
   /* Return to assembler code to switch to protected mode (if 286), reload
    * selectors and call main().

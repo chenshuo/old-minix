@@ -127,11 +127,11 @@ begbss:
 
 .define	begbss
 .define	begdata
-.define	_sizes
 
 ! Imported variables.
 
 .extern	_gdt
+.extern	_aout
 .extern	_code_base
 .extern	_data_base
 .extern	_held_head
@@ -153,9 +153,10 @@ MINIX:				! this is the entry point for the MINIX kernel
 	jmp	over_flags	! skip over the next few bytes
 	.data2	CLICK_SHIFT	! for the monitor: memory granularity
 flags:
-	.data2	0x002D		! boot monitor flags:
-				!	call in 386 mode, make stack,
-				!	load high, will return
+	.data2	0x00FD		! boot monitor flags:
+				!	call in 386 mode, make bss, make stack,
+				!	load high, don`t patch, will return,
+				!	uses generic INT, memory vector
 	nop			! extra byte to sync up disassembler
 over_flags:
 
@@ -166,8 +167,8 @@ over_flags:
 	mov	ebp, esp
 	push	esi
 	push	edi
-	cmp	4(ebp), 0	! nonzero if return possible
-	jz	noret
+	cmp	4(ebp), 0	! monitor return vector is
+	jz	noret		! nonzero if return possible
 	inc	(_mon_return)
 noret:	mov	(_mon_sp), esp	! save stack pointer for later return
 
@@ -193,6 +194,8 @@ copygdt:
 ! Locate boot parameters, set up kernel segment registers and stack.
 	mov	ebx, 8(ebp)	! boot parameters offset
 	mov	edx, 12(ebp)	! boot parameters length
+	mov	eax, 16(ebp)	! address of a.out headers
+	mov	(_aout), eax
 	mov	ax, ds		! kernel data
 	mov	es, ax
 	mov	fs, ax
@@ -204,11 +207,10 @@ copygdt:
 	push	edx
 	push	ebx
 	push	SS_SELECTOR
-	push	MON_CS_SELECTOR
 	push	DS_SELECTOR
 	push	CS_SELECTOR
-	call	_cstart		! cstart(cs, ds, mcs, mds, parmoff, parmlen)
-	add	esp, 6*4
+	call	_cstart		! cstart(cs, ds, mds, parmoff, parmlen)
+	add	esp, 5*4
 
 ! Reload gdtr, idtr and the segment registers to global descriptor table set
 ! up by prot_init().
@@ -569,18 +571,10 @@ _idle_task:			! executed when there is no work
 !*===========================================================================*
 !*				data					     *
 !*===========================================================================*
-! These declarations assure that storage will be allocated at the very 
-! beginning of the kernel data section, so the boot monitor can be easily 
-! told how to patch these locations. Note that the magic number is put
-! here by the compiler, but will be read by, and then overwritten by,
-! the boot monitor. When the kernel starts the sizes array will be
-! found here, as if it had been initialized by the compiler.
 
 .sect .rom	! Before the string table please
-_sizes:				! sizes of kernel, mm, fs filled in by boot
 	.data2	0x526F		! this must be the first data entry (magic #)
-	.space	16*2*2-2	! monitor uses previous word and this space
-				! extra space allows for additional servers
+
 .sect .bss
 k_stack:
 	.space	K_STACK_BYTES	! kernel stack

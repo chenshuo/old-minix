@@ -43,7 +43,24 @@ typedef struct nwio_tcpatt
 
 typedef struct nwio_tcpopt
 {
-	long nwto_flags;
+	u32_t nwto_flags;
 } nwio_tcpopt_t;
 
+#define NWTO_NOFLAG		0x0000L
+#define NWTO_SND_URG_MASK	0x0001L
+#	define NWTO_SND_URG	0x00000001L
+#	define NWTO_SND_NOTURG	0x00010000L
+#define NWTO_RCV_URG_MASK	0x0002L
+#	define NWTO_RCV_URG	0x00000002L
+#	define NWTO_RCV_NOTURG	0x00020000L
+#define NWTO_BSD_URG_MASK	0x0004L
+#	define NWTO_BSD_URG	0x00000004L
+#	define NWTO_NOTBSD_URG	0x00040000L
+#define NWTO_DEL_RST_MASK	0x0008L
+#	define NWTO_DEL_RST	0x00000008L
+
 #endif /* __SERVER__IP__GEN__TCP_IO_H__ */
+
+/*
+ * $PchId: tcp_io.h,v 1.4 1995/11/17 22:17:47 philip Exp $
+ */

@@ -466,7 +466,7 @@ static void ack_put_expression(asm86_t *a, expression_t *e, int deref)
 		fprintf(stderr,
 		"asmconv: internal error, unknown expression operator '%d'\n",
 			e->operator);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 }
 
@@ -583,7 +583,7 @@ void ack_emit_instruction(asm86_t *a)
 		fprintf(stderr,
 			"asmconv: internal error, unknown opcode '%d'\n",
 			a->opcode);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 }
 

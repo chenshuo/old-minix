@@ -16,13 +16,13 @@ boot.o bootimage.o: boot.h
 rawfs.o rawfs86.o installboot.o boot.o bootimage.o: rawfs.h
 
 bootblock:	bootblock.s
-	$(LD86) bootblock.s -o bootblock
+	$(LD86) -o $@ bootblock.s
 
 masterboot:	masterboot.s
-	$(LD86) masterboot.s -o masterboot
+	$(LD86) -o $@ masterboot.s
 
 extboot:	extboot.s
-	$(LD86) extboot.s -o extboot
+	$(LD86) -o $@ extboot.s
 
 boot.o:	boot.c
 	$(CC86) $(CFLAGS) -c boot.c
@@ -37,16 +37,22 @@ rawfs86.o:	rawfs.c rawfs.o
 	-cmp -s rawfs.o rawfs86.o && ln -f rawfs.o rawfs86.o
 
 boot:	boothead.s boot.o bootimage.o rawfs86.o
-	$(LD86) boothead.s -i boot.o bootimage.o rawfs86.o -o boot
+	$(LD86) -i -o $@ \
+		boothead.s boot.o bootimage.o rawfs86.o
 	install -S 12kb boot
+
+edparams.o:	boot.c
+	ln -f boot.c edparams.c
+	$(CC) $(CFLAGS) -DUNIX -c edparams.c
+	rm edparams.c
+
+edparams:	edparams.o rawfs.o
+	$(CC) $(CFLAGS) $(STRIP) -i -o $@ edparams.o rawfs.o
+	install -S 16kw edparams
 
 installboot:	installboot.o rawfs.o
 	$(CC) $(STRIP) -i -o installboot installboot.o rawfs.o
 	install -S 6kw installboot
-
-edparams:	edparams.c
-	$(CC) $(CFLAGS) $(STRIP) -i -o edparams edparams.c
-	install -S 16kw edparams
 
 install:	$(MDEC)/bootblock $(MDEC)/boot $(MDEC)/masterboot \
 		$(MDEC)/extboot $(BIN)/installboot $(BIN)/edparams

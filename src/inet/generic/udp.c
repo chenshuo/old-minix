@@ -1,22 +1,25 @@
 /*
 udp.c
+
+Copyright 1995 Philip Homburg
 */
 
 #include "inet.h"
+#include "type.h"
 
 #include "assert.h"
 #include "buf.h"
 #include "clock.h"
+#include "icmp_lib.h"
 #include "io.h"
 #include "ip.h"
 #include "sr.h"
-#include "type.h"
 #include "udp.h"
 
-INIT_PANIC();
+THIS_FILE
 
-#define UDP_PORT_NR	1
-#define UDP_FD_NR	32
+#define UDP_FD_NR		32
+#define UDP_PORT_HASH_NR	16		/* Must be a power of 2 */
 
 typedef struct udp_port
 {
@@ -29,6 +32,8 @@ typedef struct udp_port
 	ipaddr_t up_ipaddr;
 	struct udp_fd *up_next_fd;
 	struct udp_fd *up_write_fd;
+	struct udp_fd *up_port_any;
+	struct udp_fd *up_port_hash[UDP_PORT_HASH_NR];
 } udp_port_t;
 
 #define UPF_EMPTY	0x0
@@ -49,16 +54,17 @@ typedef struct udp_fd
 {
 	int uf_flags;
 	udp_port_t *uf_port;
-	int uf_ioreq;
+	ioreq_t uf_ioreq;
 	int uf_srfd;
 	nwio_udpopt_t uf_udpopt;
 	get_userdata_t uf_get_userdata;
 	put_userdata_t uf_put_userdata;
-	acc_t *uf_pack;
-	acc_t *uf_rd_buf;
+	acc_t *uf_rdbuf_head;
+	acc_t *uf_rdbuf_tail;
 	size_t uf_rd_count;
 	size_t uf_wr_count;
 	time_t uf_exp_tim;
+	struct udp_fd *uf_port_next;
 } udp_fd_t;
 
 #define UFF_EMPTY	0x0
@@ -69,15 +75,18 @@ typedef struct udp_fd
 #define UFF_OPTSET	0x10
 
 FORWARD void read_ip_packets ARGS(( udp_port_t *udp_port ));
-FORWARD void udp_buffree ARGS(( int priority, size_t reqsize ));
+FORWARD void udp_buffree ARGS(( int priority ));
+#ifdef BUF_CONSISTENCY_CHECK
+FORWARD void udp_bufcheck ARGS(( void ));
+#endif
 FORWARD void udp_main ARGS(( udp_port_t *udp_port ));
 FORWARD acc_t *udp_get_data ARGS(( int fd, size_t offset, size_t count, 
 	int for_ioctl ));
 FORWARD int udp_put_data ARGS(( int fd, size_t offset, acc_t *data, 	
 	int for_ioctl ));
 FORWARD void udp_restart_write_port ARGS(( udp_port_t *udp_port ));
-FORWARD void process_inc_fragm ARGS(( udp_port_t *udp_port, acc_t *data ));
-FORWARD int reply_thr_put ARGS(( udp_fd_t *ucp_fd, int reply,
+FORWARD void udp_ip_arrived ARGS(( int port, acc_t *pack, size_t pack_size ));
+FORWARD void reply_thr_put ARGS(( udp_fd_t *udp_fd, int reply,
 	int for_ioctl ));
 FORWARD void reply_thr_get ARGS(( udp_fd_t *udp_fd, int reply,
 	int for_ioctl ));
@@ -87,6 +96,10 @@ FORWARD int is_unused_port ARGS(( Udpport_t port ));
 FORWARD int udp_packet2user ARGS(( udp_fd_t *udp_fd ));
 FORWARD void restart_write_fd ARGS(( udp_fd_t *udp_fd ));
 FORWARD u16_t pack_oneCsum ARGS(( acc_t *pack ));
+FORWARD void udp_rd_enqueue ARGS(( udp_fd_t *udp_fd, acc_t *pack,
+							time_t exp_tim ));
+FORWARD void hash_fd ARGS(( udp_fd_t *udp_fd ));
+FORWARD void unhash_fd ARGS(( udp_fd_t *udp_fd ));
 
 PRIVATE udp_port_t udp_port_table[UDP_PORT_NR];
 PRIVATE udp_fd_t udp_fd_table[UDP_FD_NR];
@@ -95,7 +108,7 @@ PUBLIC void udp_init()
 {
 	udp_fd_t *udp_fd;
 	udp_port_t *udp_port;
-	int i, result;
+	int i, j, result;
 
 	assert (BUF_S >= sizeof(struct nwio_ipopt));
 	assert (BUF_S >= sizeof(struct nwio_ipconf));
@@ -104,22 +117,36 @@ PUBLIC void udp_init()
 	assert (UDP_HDR_SIZE == sizeof(udp_hdr_t));
 	assert (UDP_IO_HDR_SIZE == sizeof(udp_io_hdr_t));
 
-	udp_port_table[0].up_minor= UDP_DEV0;
-	udp_port_table[0].up_ipdev= IP0;
-
+#if ZERO
 	for (i= 0, udp_fd= udp_fd_table; i<UDP_FD_NR; i++, udp_fd++)
 	{
 		udp_fd->uf_flags= UFF_EMPTY;
+		udp_fd->uf_rdbuf_head= NULL;
 	}
+#endif
 
+#ifndef BUF_CONSISTENCY_CHECK
 	bf_logon(udp_buffree);
+#else
+	bf_logon(udp_buffree, udp_bufcheck);
+#endif
 
 	for (i= 0, udp_port= udp_port_table; i<UDP_PORT_NR; i++, udp_port++)
 	{
+		udp_port->up_minor= udp_conf[i].uc_minor;
+		udp_port->up_ipdev= udp_conf[i].uc_port;
+
+#if ZERO
 		udp_port->up_flags= UPF_EMPTY;
 		udp_port->up_state= UPS_EMPTY;
+#endif
 		udp_port->up_next_fd= udp_fd_table;
+#if ZERO
 		udp_port->up_write_fd= NULL;
+		udp_port->up_port_any= NULL;
+		for (j= 0; j<UDP_PORT_HASH_NR; j++)
+			udp_port->up_port_hash[j]= NULL;
+#endif
 
 		result= sr_add_minor (udp_port->up_minor,
 			udp_port-udp_port_table, udp_open, udp_close, udp_read,
@@ -142,12 +169,13 @@ udp_port_t *udp_port;
 		udp_port->up_state= UPS_SETPROTO;
 
 		udp_port->up_ipfd= ip_open(udp_port->up_ipdev, 
-			udp_port-udp_port_table, udp_get_data, udp_put_data);
+			udp_port-udp_port_table, udp_get_data, udp_put_data,
+			udp_ip_arrived);
 		if (udp_port->up_ipfd < 0)
 		{
 			udp_port->up_state= UPS_ERROR;
-			printf("%s, %d: unable to open ip port\n", __FILE__,
-				__LINE__);
+			DBLOCK(1, printf("%s, %d: unable to open ip port\n",
+				__FILE__, __LINE__));
 			return;
 		}
 
@@ -189,20 +217,19 @@ udp_port_t *udp_port;
 		read_ip_packets(udp_port);
 		return;
 	default:
-#if DEBUG
- { where(); printf("udp_port_table[%d].up_state= %d\n", udp_port-udp_port_table,
-	udp_port->up_state); }
-#endif
+		DBLOCK(1, printf("udp_port_table[%d].up_state= %d\n",
+			udp_port-udp_port_table, udp_port->up_state));
 		ip_panic(( "unknown state" ));
 		break;
 	}
 }
 
-int udp_open (port, srfd, get_userdata, put_userdata)
+int udp_open (port, srfd, get_userdata, put_userdata, put_pkt)
 int port;
 int srfd;
 get_userdata_t get_userdata;
 put_userdata_t put_userdata;
+put_pkt_t put_pkt;
 {
 	int i;
 	udp_fd_t *udp_fd;
@@ -212,9 +239,7 @@ put_userdata_t put_userdata;
 
 	if (i>= UDP_FD_NR)
 	{
-#if DEBUG
- { where(); printf("out of fds\n"); }
-#endif
+		DBLOCK(1, printf("out of fds\n"));
 		return EOUTOFBUFS;
 	}
 
@@ -226,7 +251,8 @@ put_userdata_t put_userdata;
 	udp_fd->uf_udpopt.nwuo_flags= UDP_DEF_OPT;
 	udp_fd->uf_get_userdata= get_userdata;
 	udp_fd->uf_put_userdata= put_userdata;
-	udp_fd->uf_pack= 0;
+	assert(udp_fd->uf_rdbuf_head == NULL);
+	udp_fd->uf_port_next= NULL;
 
 	return i;
 
@@ -283,9 +309,6 @@ assert (udp_port->up_flags & UPF_WRITE_IP);
 		if (!count)
 		{
 			result= (int)offset;
-#if DEBUG & 256
- { where(); printf("result of ip_write is %d\n", result); }
-#endif
 assert (udp_port->up_wr_pack);
 			bf_afree(udp_port->up_wr_pack);
 			udp_port->up_wr_pack= 0;
@@ -314,8 +337,10 @@ assert (udp_port->up_wr_pack);
 		}
 		break;
 	default:
+#if !CRAMPED
 		printf("udp_get_data(%d, 0x%x, 0x%x) called but up_state= 0x%x\n",
 			port, offset, count, udp_port->up_state);
+#endif
 		break;
 	}
 	return NULL;
@@ -359,11 +384,13 @@ assert (ipconf->nwic_flags & NWIC_IPADDR_SET);
 		}
 		break;
 	case UPS_MAIN:
-assert (udp_port->up_flags & UPF_READ_IP);
+		assert(0);
+
+		assert (udp_port->up_flags & UPF_READ_IP);
 		if (!data)
 		{
 			result= (int)offset;
-compare (result, >=, 0);
+			compare (result, >=, 0);
 			if (udp_port->up_flags & UPF_READ_SP)
 			{
 				udp_port->up_flags &= ~(UPF_READ_SP|
@@ -377,7 +404,7 @@ compare (result, >=, 0);
 		{
 assert (!offset);	/* This isn't a valid assertion but ip sends only
 			 * whole datagrams up */
-			process_inc_fragm(udp_port, data);
+			udp_ip_arrived(fd, data, bf_bufsize(data));
 		}
 		break;
 	default:
@@ -390,17 +417,15 @@ assert (!offset);	/* This isn't a valid assertion but ip sends only
 
 int udp_ioctl (fd, req)
 int fd;
-int req;
+ioreq_t req;
 {
 	udp_fd_t *udp_fd;
 	udp_port_t *udp_port;
 	nwio_udpopt_t *udp_opt;
 	acc_t *opt_acc;
-	int type;
 	int result;
 
 	udp_fd= &udp_fd_table[fd];
-	type= req & IOCTYPE_MASK;
 
 assert (udp_fd->uf_flags & UFF_INUSE);
 
@@ -411,24 +436,12 @@ assert (udp_fd->uf_flags & UFF_INUSE);
 	if (udp_port->up_state != UPS_MAIN)
 		return NW_SUSPEND;
 
-	switch(type)
+	switch(req)
 	{
-	case NWIOSUDPOPT & IOCTYPE_MASK:
-		if (req != NWIOSUDPOPT)
-		{
-			reply_thr_get (udp_fd, EBADIOCTL, TRUE);
-			result= NW_OK;
-			break;
-		}
+	case NWIOSUDPOPT:
 		result= udp_setopt(udp_fd);
 		break;
-	case NWIOGUDPOPT & IOCTYPE_MASK:
-		if (req != NWIOGUDPOPT)
-		{
-			reply_thr_put(udp_fd, EBADIOCTL, TRUE);
-			result= NW_OK;
-			break;
-		}
+	case NWIOGUDPOPT:
 		opt_acc= bf_memreq(sizeof(*udp_opt));
 assert (opt_acc->acc_length == sizeof(*udp_opt));
 		udp_opt= (nwio_udpopt_t *)ptr2acc_data(opt_acc);
@@ -463,9 +476,6 @@ udp_fd_t *udp_fd;
 	unsigned long new_flags;
 	int i;
 
-#if DEBUG & 256
- { where(); printf("in udp_setopt\n"); }
-#endif
 	data= (*udp_fd->uf_get_userdata)(udp_fd->uf_srfd, 0, 
 		sizeof(nwio_udpopt_t), TRUE);
 
@@ -478,11 +488,6 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 	newopt= *(nwio_udpopt_t *)ptr2acc_data(data);
 	bf_afree(data);
 	oldopt= udp_fd->uf_udpopt;
-#if DEBUG & 256
- { where(); printf("newopt.nwuo_flags= 0x%x, newopt.nwuo_locport= %d, newopt.nwuo_remport= %d\n",
-	newopt.nwuo_flags, ntohs(newopt.nwuo_locport),
-	ntohs(newopt.nwuo_remport)); }
-#endif
 
 	old_en_flags= oldopt.nwuo_flags & 0xffff;
 	old_di_flags= (oldopt.nwuo_flags >> 16) & 0xffff;
@@ -492,9 +497,8 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 
 	if (new_en_flags & new_di_flags)
 	{
-#if DEBUG
- { where(); printf("returning EBADMODE\n"); }
-#endif
+		DBLOCK(1, printf("returning EBADMODE\n"));
+
 		reply_thr_get(udp_fd, EBADMODE, TRUE);
 		return NW_OK;
 	}
@@ -502,9 +506,8 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 	/* NWUO_ACC_MASK */
 	if (new_di_flags & NWUO_ACC_MASK)
 	{
-#if DEBUG
- { where(); printf("returning EBADMODE\n"); }
-#endif
+		DBLOCK(1, printf("returning EBADMODE\n"));
+
 		reply_thr_get(udp_fd, EBADMODE, TRUE);
 		return NW_OK;
 		/* access modes can't be disabled */
@@ -516,9 +519,8 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 	/* NWUO_LOCPORT_MASK */
 	if (new_di_flags & NWUO_LOCPORT_MASK)
 	{
-#if DEBUG
- { where(); printf("returning EBADMODE\n"); }
-#endif
+		DBLOCK(1, printf("returning EBADMODE\n"));
+
 		reply_thr_get(udp_fd, EBADMODE, TRUE);
 		return NW_OK;
 		/* the loc ports can't be disabled */
@@ -536,9 +538,8 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 	{
 		if (!newopt.nwuo_locport)
 		{
-#if DEBUG
- { where(); printf("returning EBADMODE\n"); }
-#endif
+			DBLOCK(1, printf("returning EBADMODE\n"));
+
 			reply_thr_get(udp_fd, EBADMODE, TRUE);
 			return NW_OK;
 		}
@@ -565,9 +566,6 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 		new_di_flags |= (old_di_flags & NWUO_REMPORT_MASK);
 		newopt.nwuo_remport= oldopt.nwuo_remport;
 	}
-#if DEBUG & 256
- { where(); printf("newopt.nwuo_remport= %d\n", ntohs(newopt.nwuo_remport)); }
-#endif
 	
 	/* NWUO_REMADDR_MASK */
 	if (!((new_en_flags | new_di_flags) & NWUO_REMADDR_MASK))
@@ -596,14 +594,13 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 		((new_flags & NWUO_LOCPORT_MASK) == NWUO_LP_ANY || 
 		(new_flags & (NWUO_RP_ANY|NWUO_RA_ANY|NWUO_EN_IPOPT))))
 	{
-#if DEBUG
- { where(); printf("returning EBADMODE\n"); }
-#endif
+		DBLOCK(1, printf("returning EBADMODE\n"));
+
 		reply_thr_get(udp_fd, EBADMODE, TRUE);
 		return NW_OK;
 	}
 
-	/* Let's check the access modes */
+	/* Check the access modes */
 	if ((new_flags & NWUO_LOCPORT_MASK) == NWUO_LP_SEL ||
 		(new_flags & NWUO_LOCPORT_MASK) == NWUO_LP_SET)
 	{
@@ -613,41 +610,39 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 				continue;
 			if (!(fd_ptr->uf_flags & UFF_INUSE))
 				continue;
+			if (fd_ptr->uf_port != udp_fd->uf_port)
+				continue;
 			flags= fd_ptr->uf_udpopt.nwuo_flags;
 			if ((flags & NWUO_LOCPORT_MASK) != NWUO_LP_SEL &&
 				(flags & NWUO_LOCPORT_MASK) != NWUO_LP_SET)
 				continue;
 			if (fd_ptr->uf_udpopt.nwuo_locport !=
 				newopt.nwuo_locport)
+			{
 				continue;
+			}
 			if ((flags & NWUO_ACC_MASK) != 
 				(new_flags & NWUO_ACC_MASK))
 			{
-#if DEBUG
- { where(); printf("address inuse: new fd= %d, old_fd= %d, port= %u\n",
-	udp_fd-udp_fd_table, fd_ptr-udp_fd_table, newopt.nwuo_locport); }
-#endif
+				DBLOCK(1, printf(
+			"address inuse: new fd= %d, old_fd= %d, port= %u\n",
+					udp_fd-udp_fd_table,
+					fd_ptr-udp_fd_table,
+					newopt.nwuo_locport));
+
 				reply_thr_get(udp_fd, EADDRINUSE, TRUE);
 				return NW_OK;
 			}
 		}
 	}
 
+	if (udp_fd->uf_flags & UFF_OPTSET)
+		unhash_fd(udp_fd);
+
 	newopt.nwuo_flags= new_flags;
 	udp_fd->uf_udpopt= newopt;
 
 	all_flags= new_en_flags | new_di_flags;
-#if DEBUG & 256
- { where();
-	printf("NWUO_ACC_MASK: %s set\n", all_flags & NWUO_ACC_MASK ? "" : "not"); 
-	printf("NWUO_LOCADDR_MASK: %s set\n", all_flags & NWUO_LOCADDR_MASK ? "" : "not"); 
-	printf("NWUO_BROAD_MASK: %s set\n", all_flags & NWUO_BROAD_MASK ? "" : "not"); 
-	printf("NWUO_REMPORT_MASK: %s set\n", all_flags & NWUO_REMPORT_MASK ? "" : "not"); 
-	printf("NWUO_REMADDR_MASK: %s set\n", all_flags & NWUO_REMADDR_MASK ? "" : "not"); 
-	printf("NWUO_RW_MASK: %s set\n", all_flags & NWUO_RW_MASK ? "" : "not"); 
-	printf("NWUO_IPOPT_MASK: %s set\n", all_flags & NWUO_IPOPT_MASK ? "" : "not"); 
- }
-#endif
 	if ((all_flags & NWUO_ACC_MASK) && (all_flags & NWUO_LOCPORT_MASK) &&
 		(all_flags & NWUO_LOCADDR_MASK) &&
 		(all_flags & NWUO_BROAD_MASK) &&
@@ -660,6 +655,9 @@ assert (data->acc_length == sizeof(nwio_udpopt_t));
 	{
 		udp_fd->uf_flags &= ~UFF_OPTSET;
 	}
+
+	if (udp_fd->uf_flags & UFF_OPTSET)
+		hash_fd(udp_fd);
 
 	reply_thr_get(udp_fd, NW_OK, TRUE);
 	return NW_OK;
@@ -690,21 +688,16 @@ int fd;
 reply_thr_put
 */
 
-PRIVATE int reply_thr_put(udp_fd, reply, for_ioctl)
+PRIVATE void reply_thr_put(udp_fd, reply, for_ioctl)
 udp_fd_t *udp_fd;
 int reply;
 int for_ioctl;
 {
-#if DEBUG
- { where(); printf("reply_thr_put(&udp_fd_table[%d], %d, %d) called\n",
-	udp_fd-udp_fd_table, reply, for_ioctl); }
-#endif
-#if DEBUG & 2
- { where(); printf("calling 0x%x\n", udp_fd->uf_put_userdata); }
-#endif
-assert (udp_fd);
-	return (*udp_fd->uf_put_userdata)(udp_fd->uf_srfd, reply,
+	int result;
+
+	result= (*udp_fd->uf_put_userdata)(udp_fd->uf_srfd, reply,
 		(acc_t *)0, for_ioctl);
+	assert(result == NW_OK);
 }
 
 /*
@@ -717,10 +710,6 @@ int reply;
 int for_ioctl;
 {
 	acc_t *result;
-#if DEBUG & 256
- { where(); printf("reply_thr_get(&udp_fd_table[%d], %d, %d) called\n",
-	udp_fd-udp_fd_table, reply, for_ioctl); }
-#endif
 	result= (*udp_fd->uf_get_userdata)(udp_fd->uf_srfd, reply,
 		(size_t)0, for_ioctl);
 	assert (!result);
@@ -751,9 +740,6 @@ udp_port_t *udp_port;
 	do
 	{
 		udp_port->up_flags |= UPF_READ_IP;
-#if DEBUG & 256
- { where(); printf("doing ip_read\n"); }
-#endif
 		result= ip_read(udp_port->up_ipfd, UDP_MAX_DATAGRAM);
 		if (result == NW_SUSPEND)
 		{
@@ -771,25 +757,31 @@ int fd;
 size_t count;
 {
 	udp_fd_t *udp_fd;
+	acc_t *tmp_acc, *next_acc;
 
 	udp_fd= &udp_fd_table[fd];
 	if (!(udp_fd->uf_flags & UFF_OPTSET))
-		return reply_thr_put(udp_fd, EBADMODE, FALSE);
+	{
+		reply_thr_put(udp_fd, EBADMODE, FALSE);
+		return NW_OK;
+	}
 
 	udp_fd->uf_rd_count= count;
 
-	if (udp_fd->uf_rd_buf)
+	if (udp_fd->uf_rdbuf_head)
 	{
 		if (get_time() <= udp_fd->uf_exp_tim)
 			return udp_packet2user (udp_fd);
-		bf_afree(udp_fd->uf_rd_buf);
-		udp_fd->uf_rd_buf= 0;
+		tmp_acc= udp_fd->uf_rdbuf_head;
+		while (tmp_acc)
+		{
+			next_acc= tmp_acc->acc_ext_link;
+			bf_afree(tmp_acc);
+			tmp_acc= next_acc;
+		}
+		udp_fd->uf_rdbuf_head= NULL;
 	}
 	udp_fd->uf_flags |= UFF_READ_IP;
-#if DEBUG & 256
- { where(); printf("udp_fd_table[%d].uf_flags= 0x%x\n",
-	udp_fd-udp_fd_table, udp_fd->uf_flags); }
-#endif
 	return NW_SUSPEND;
 }
 
@@ -801,8 +793,8 @@ udp_fd_t *udp_fd;
 	int result, hdr_len;
 	size_t size, transf_size;
 
-	pack= udp_fd->uf_rd_buf;
-	udp_fd->uf_rd_buf= 0;
+	pack= udp_fd->uf_rdbuf_head;
+	udp_fd->uf_rdbuf_head= pack->acc_ext_link;
 
 	size= bf_bufsize (pack);
 
@@ -810,12 +802,16 @@ udp_fd_t *udp_fd;
 	{
 
 		pack= bf_packIffLess (pack, UDP_IO_HDR_SIZE);
-assert (pack->acc_length >= UDP_IO_HDR_SIZE);
+		assert (pack->acc_length >= UDP_IO_HDR_SIZE);
 
 		hdr= (udp_io_hdr_t *)ptr2acc_data(pack);
+#if CONF_UDP_IO_NW_BYTE_ORDER
+		hdr_len= UDP_IO_HDR_SIZE+NTOHS(hdr->uih_ip_opt_len);
+#else
 		hdr_len= UDP_IO_HDR_SIZE+hdr->uih_ip_opt_len;
+#endif
 
-assert (size>= hdr_len);
+		assert (size>= hdr_len);
 		size -= hdr_len;
 		tmp_pack= bf_cut(pack, hdr_len, size);
 		bf_afree(pack);
@@ -849,64 +845,68 @@ assert (result == 0);
 	return result;
 }
 
-PRIVATE void process_inc_fragm(udp_port, pack)
-udp_port_t *udp_port;
+PRIVATE void udp_ip_arrived(port, pack, pack_size)
+int port;
 acc_t *pack;
+size_t pack_size;
 {
+	udp_port_t *udp_port;
 	udp_fd_t *udp_fd, *share_fd;
-	acc_t *ip_acc, *udp_acc, *ipopt_pack, *no_ipopt_pack, *tmp_acc;
+	acc_t *ip_hdr_acc, *udp_acc, *ipopt_pack, *no_ipopt_pack, *tmp_acc;
 	ip_hdr_t *ip_hdr;
 	udp_hdr_t *udp_hdr;
 	udp_io_hdr_t *udp_io_hdr;
-	size_t pack_size, ip_hdr_size;
-	size_t udp_size;
+	size_t ip_hdr_size, udp_size, data_size, opt_size;
 	ipaddr_t src_addr, dst_addr;
+	udpport_t src_port, dst_port;
 	u8_t u16[2];
 	u16_t chksum;
 	unsigned long dst_type, flags;
 	time_t  exp_tim;
-	udpport_t src_port, dst_port;
-	int i;
+	int i, delivered, hash;
 
-#if DEBUG & 256
- { where(); printf("in process_inc_fragm\n"); }
-#endif
-	pack_size= bf_bufsize(pack);
+	udp_port= &udp_port_table[port];
 
-	pack= bf_packIffLess(pack, IP_MIN_HDR_SIZE);
-assert (pack->acc_length >= IP_MIN_HDR_SIZE);
-	ip_hdr= (ip_hdr_t *)ptr2acc_data(pack);
+	ip_hdr_acc= bf_cut(pack, 0, IP_MIN_HDR_SIZE);
+	ip_hdr_acc= bf_packIffLess(ip_hdr_acc, IP_MIN_HDR_SIZE);
+	ip_hdr= (ip_hdr_t *)ptr2acc_data(ip_hdr_acc);
 	ip_hdr_size= (ip_hdr->ih_vers_ihl & IH_IHL_MASK) << 2;
-	ip_acc= bf_cut(pack, (size_t)0, ip_hdr_size);
+	if (ip_hdr_size != IP_MIN_HDR_SIZE)
+	{
+		bf_afree(ip_hdr_acc);
+		ip_hdr_acc= bf_cut(pack, 0, ip_hdr_size);
+		ip_hdr_acc= bf_packIffLess(ip_hdr_acc, ip_hdr_size);
+		ip_hdr= (ip_hdr_t *)ptr2acc_data(ip_hdr_acc);
+	}
+
+	udp_acc= bf_delhead(pack, ip_hdr_size);
+	pack= NULL;
+
+	pack_size -= ip_hdr_size;
+	if (pack_size < UDP_HDR_SIZE)
+	{
+		DBLOCK(1, printf("packet too small\n"));
+
+		bf_afree(ip_hdr_acc);
+		bf_afree(udp_acc);
+		return;
+	}
+
+	udp_acc= bf_packIffLess(udp_acc, UDP_HDR_SIZE);
+	udp_hdr= (udp_hdr_t *)ptr2acc_data(udp_acc);
+	udp_size= ntohs(udp_hdr->uh_length);
+	if (udp_size > pack_size)
+	{
+		DBLOCK(1, printf("packet too large\n"));
+
+		bf_afree(ip_hdr_acc);
+		bf_afree(udp_acc);
+		return;
+	}
 
 	src_addr= ip_hdr->ih_src;
 	dst_addr= ip_hdr->ih_dst;
 
-	udp_acc= bf_cut(pack, ip_hdr_size, pack_size-ip_hdr_size);
-	bf_afree(pack);
-	pack_size -= ip_hdr_size;
-	if (pack_size < UDP_HDR_SIZE)
-	{
-#if DEBUG
- { where(); printf("packet too small\n"); }
-#endif
-		bf_afree(ip_acc);
-		bf_afree(udp_acc);
-		return;
-	}
-	udp_acc= bf_packIffLess(udp_acc, UDP_HDR_SIZE);
-	udp_hdr= (udp_hdr_t *)ptr2acc_data(udp_acc);
-
-	udp_size= ntohs(udp_hdr->uh_length);
-	if (udp_size > pack_size)
-	{
-#if DEBUG
- { where(); printf("packet too large\n"); }
-#endif
-		bf_afree(ip_acc);
-		bf_afree(udp_acc);
-		return;
-	}
 	if (udp_hdr->uh_chksum)
 	{
 		u16[0]= 0;
@@ -919,202 +919,188 @@ assert (pack->acc_length >= IP_MIN_HDR_SIZE);
 			sizeof(udp_hdr->uh_length));
 		if (~chksum & 0xffff)
 		{
-#if DEBUG 
- { where(); printf("udp chksum error\n"); }
-#endif
-			bf_afree(ip_acc);
+			DBLOCK(1, printf("checksum error in udp packet\n");
+				printf("src ip_addr= ");
+				writeIpAddr(src_addr);
+				printf(" dst ip_addr= ");
+				writeIpAddr(dst_addr);
+				printf("\n");
+				printf("packet chksum= 0x%x, sum= 0x%x\n",
+					udp_hdr->uh_chksum, chksum));
+
+			bf_afree(ip_hdr_acc);
 			bf_afree(udp_acc);
 			return;
 		}
 	}
+
 	exp_tim= get_time() + UDP_READ_EXP_TIME;
 	src_port= udp_hdr->uh_src_port;
 	dst_port= udp_hdr->uh_dst_port;
 
+	/* Send an ICMP port unreachable if the packet could not be
+	 * delivered.
+	 */
+	delivered= 0;
+
 	if (dst_addr == udp_port->up_ipaddr)
 		dst_type= NWUO_EN_LOC;
 	else
+	{
 		dst_type= NWUO_EN_BROAD;
 
-	share_fd= 0;
-	ipopt_pack= 0;
-	no_ipopt_pack= 0;
+		/* Don't send ICMP error packets for broadcast packets */
+		delivered= 1;
+	}
 
-	for (i=0, udp_fd=udp_fd_table; i<UDP_FD_NR; i++, udp_fd++)
+	DBLOCK(0x20, printf("udp: got packet from ");
+		writeIpAddr(src_addr);
+		printf(".%u to ", ntohs(src_port));
+		writeIpAddr(dst_addr);
+		printf(".%u\n", ntohs(dst_port)));
+
+	no_ipopt_pack= bf_memreq(UDP_IO_HDR_SIZE);
+	udp_io_hdr= (udp_io_hdr_t *)ptr2acc_data(no_ipopt_pack);
+	udp_io_hdr->uih_src_addr= src_addr;
+	udp_io_hdr->uih_dst_addr= dst_addr;
+	udp_io_hdr->uih_src_port= src_port;
+	udp_io_hdr->uih_dst_port= dst_port;
+	data_size = udp_size-UDP_HDR_SIZE;
+#if CONF_UDP_IO_NW_BYTE_ORDER
+	udp_io_hdr->uih_ip_opt_len= HTONS(0);
+	udp_io_hdr->uih_data_len= htons(data_size);
+#else
+	udp_io_hdr->uih_ip_opt_len= 0;
+	udp_io_hdr->uih_data_len= data_size;
+#endif
+	no_ipopt_pack->acc_next= bf_cut(udp_acc, UDP_HDR_SIZE, data_size);
+
+	if (ip_hdr_size == IP_MIN_HDR_SIZE)
 	{
-		if (!(udp_fd->uf_flags & UFF_INUSE))
-		{
-#if DEBUG & 256
- { where(); printf("%d: not inuse\n", i); }
+		ipopt_pack= no_ipopt_pack;
+		ipopt_pack->acc_linkC++;
+	}
+	else
+	{
+		ipopt_pack= bf_memreq(UDP_IO_HDR_SIZE);
+		*(udp_io_hdr_t *)ptr2acc_data(ipopt_pack)= *udp_io_hdr;
+		udp_io_hdr= (udp_io_hdr_t *)ptr2acc_data(ipopt_pack);
+		opt_size = ip_hdr_size-IP_MIN_HDR_SIZE;
+#if CONF_UDP_IO_NW_BYTE_ORDER
+		udp_io_hdr->uih_ip_opt_len= htons(opt_size);
+#else
+		udp_io_hdr->uih_ip_opt_len= opt_size;
 #endif
-			continue;
-		}
-		if (!(udp_fd->uf_flags & UFF_OPTSET))
-		{
-#if DEBUG
- { where(); printf("%d: options not set\n", i); }
-#endif
-			continue;
-		}
-		flags= udp_fd->uf_udpopt.nwuo_flags;
-		if (!(flags & dst_type))
-		{
-#if DEBUG & 256
- { where(); printf("%d: wrong type\n", i); }
-#endif
-			continue;
-		}
-		if ((flags & (NWUO_LP_SEL|NWUO_LP_SET)) &&
-			udp_fd->uf_udpopt.nwuo_locport != dst_port)
-		{
-#if DEBUG & 256
- { where(); printf("%d: wrong loc port, got %d, expected %d\n", i,
-	dst_port, udp_fd->uf_udpopt.nwuo_locport); }
-#endif
-			continue;
-		}
-		if ((flags & NWUO_RP_SET) && 
-			udp_fd->uf_udpopt.nwuo_remport != src_port)
-		{
-#if DEBUG
- { where(); printf("%d: wrong rem port, I got %d, expected %d\n", i,
-	ntohs(src_port), ntohs(udp_fd->uf_udpopt.nwuo_remport)); }
-#endif
-			continue;
-		}
-		if ((flags & NWUO_RA_SET) && 
-			udp_fd->uf_udpopt.nwuo_remaddr != src_addr)
-		{
-#if DEBUG
- { where(); printf("%d: wrong rem addr\n", i); }
-#endif
-			continue;
-		}
+		tmp_acc= bf_cut(ip_hdr_acc, (size_t)IP_MIN_HDR_SIZE, opt_size);
+		assert(tmp_acc->acc_linkC == 1);
+		assert(tmp_acc->acc_next == NULL);
+		ipopt_pack->acc_next= tmp_acc;
 
-		if (!no_ipopt_pack)
-		{
-			no_ipopt_pack= bf_memreq(UDP_IO_HDR_SIZE);
-			udp_io_hdr= (udp_io_hdr_t *)ptr2acc_data(no_ipopt_pack);
-			udp_io_hdr->uih_src_addr= src_addr;
-			udp_io_hdr->uih_dst_addr= dst_addr;
-			udp_io_hdr->uih_src_port= src_port;
-			udp_io_hdr->uih_dst_port= dst_port;
-			udp_io_hdr->uih_ip_opt_len= 0;
-			udp_io_hdr->uih_data_len= udp_size-UDP_HDR_SIZE;
-			no_ipopt_pack->acc_next= bf_cut(udp_acc, 
-				UDP_HDR_SIZE, udp_io_hdr->uih_data_len);
-			if (ip_hdr_size == IP_MIN_HDR_SIZE)
-			{
-				ipopt_pack= no_ipopt_pack;
-				ipopt_pack->acc_linkC++;
-			}
-			else
-				ipopt_pack= 0;
-		}
-		if (flags & NWUO_EN_IPOPT)
-		{
-			if (!ipopt_pack)
-			{
-				ipopt_pack= bf_memreq(UDP_IO_HDR_SIZE);
-				*(udp_io_hdr_t *)ptr2acc_data(ipopt_pack)=
-					*udp_io_hdr;
-				udp_io_hdr= (udp_io_hdr_t *)
-					ptr2acc_data(ipopt_pack);
-				udp_io_hdr->uih_ip_opt_len= ip_hdr_size - 
-					IP_MIN_HDR_SIZE;
-				ipopt_pack->acc_next= bf_cut(ip_acc,
-					(size_t)IP_MIN_HDR_SIZE,
-					(size_t)udp_io_hdr->uih_ip_opt_len);
-				for (tmp_acc= ipopt_pack; tmp_acc->acc_next;
-					tmp_acc= tmp_acc->acc_next);
-assert (tmp_acc->acc_linkC == 1);
-				tmp_acc->acc_next= no_ipopt_pack->acc_next;
-				if (tmp_acc->acc_next)
-					tmp_acc->acc_next->acc_linkC++;
-			}
-			pack= ipopt_pack;
-		}
-		else
-			pack= no_ipopt_pack;
+		tmp_acc->acc_next= no_ipopt_pack->acc_next;
+		if (tmp_acc->acc_next)
+			tmp_acc->acc_next->acc_linkC++;
+	}
 
-		if (udp_fd->uf_rd_buf)
+	hash= dst_port;
+	hash ^= (hash >> 8);
+	hash &= (UDP_PORT_HASH_NR-1);
+
+	for (i= 0; i<2; i++)
+	{
+		share_fd= NULL;
+
+		udp_fd= (i == 0) ? udp_port->up_port_any :
+			udp_port->up_port_hash[hash];
+		for (; udp_fd; udp_fd= udp_fd->uf_port_next)
 		{
-			if ((flags & NWUO_ACC_MASK) == NWUO_SHARED)
+			if (i && udp_fd->uf_udpopt.nwuo_locport != dst_port)
+				continue;
+		
+			assert(udp_fd->uf_flags & UFF_INUSE);
+			assert(udp_fd->uf_flags & UFF_OPTSET);
+		
+			if (udp_fd->uf_port != udp_port)
+				continue;
+
+			flags= udp_fd->uf_udpopt.nwuo_flags;
+			if (!(flags & dst_type))
+				continue;
+
+			if ((flags & NWUO_RP_SET) && 
+				udp_fd->uf_udpopt.nwuo_remport != src_port)
+			{
+				continue;
+			}
+
+			if ((flags & NWUO_RA_SET) && 
+				udp_fd->uf_udpopt.nwuo_remaddr != src_addr)
+			{
+				continue;
+			}
+
+			if (i)
+			{
+				/* Packet is considdered to be delivered */
+				delivered= 1;
+			}
+
+			if ((flags & NWUO_ACC_MASK) == NWUO_SHARED &&
+				(!share_fd || !udp_fd->uf_rdbuf_head))
 			{
 				share_fd= udp_fd;
 				continue;
 			}
-#if DEBUG
- { where(); printf("throwing away packet\n"); }
-#endif
-			bf_afree(udp_fd->uf_rd_buf);
+
+			if (flags & NWUO_EN_IPOPT)
+				pack= ipopt_pack;
+			else
+				pack= no_ipopt_pack;
+
+			pack->acc_linkC++;
+			udp_rd_enqueue(udp_fd, pack, exp_tim);
+			if (udp_fd->uf_flags & UFF_READ_IP)
+				udp_packet2user(udp_fd);
 		}
 
-		udp_fd->uf_rd_buf= pack;
-		pack->acc_linkC++;
-		udp_fd->uf_exp_tim= exp_tim;
+		if (share_fd)
+		{
+			flags= share_fd->uf_udpopt.nwuo_flags;
+			if (flags & NWUO_EN_IPOPT)
+				pack= ipopt_pack;
+			else
+				pack= no_ipopt_pack;
 
-		if ((flags & NWUO_ACC_MASK) == NWUO_SHARED ||
-			(flags & NWUO_ACC_MASK) ==  NWUO_EXCL)
-		{
-			if (ipopt_pack)
-			{
-				bf_afree(ipopt_pack);
-				ipopt_pack= 0;
-			}
-assert(no_ipopt_pack);
-			bf_afree(no_ipopt_pack);
-			no_ipopt_pack= 0;
-		}
-
-		if (udp_fd->uf_flags & UFF_READ_IP)
-		{
-#if DEBUG & 256
- { where(); printf("%d calling packet2user\n", i); }
-#endif
-			udp_packet2user(udp_fd);
-		}
-		else
-		{
-#if DEBUG & 256
- { where(); printf("%d not READ_IP\n", i); }
-#endif
-		}
-		if ((flags & NWUO_ACC_MASK) == NWUO_SHARED ||
-			(flags & NWUO_ACC_MASK) ==  NWUO_EXCL)
-		{
-			break;
+			pack->acc_linkC++;
+			udp_rd_enqueue(share_fd, pack, exp_tim);
+			if (share_fd->uf_flags & UFF_READ_IP)
+				udp_packet2user(share_fd);
 		}
 	}
-	if (share_fd && no_ipopt_pack)
-	{
-		bf_afree(share_fd->uf_rd_buf);
-		if (share_fd->uf_udpopt.nwuo_flags & NWUO_EN_IPOPT)
-			pack= ipopt_pack;
-		else
-			pack= no_ipopt_pack;
-		pack->acc_linkC++;
-		share_fd->uf_rd_buf= pack;
-		share_fd->uf_exp_tim= exp_tim;
-		if (ipopt_pack)
-		{
-			bf_afree(ipopt_pack);
-			ipopt_pack= 0;
-		}
-assert (no_ipopt_pack);
+
+	if (ipopt_pack)
+		bf_afree(ipopt_pack);
+	if (no_ipopt_pack)
 		bf_afree(no_ipopt_pack);
-		no_ipopt_pack= 0;
-	}
-	else
+
+	if (!delivered)
 	{
-		if (ipopt_pack)
-			bf_afree(ipopt_pack);
-		if (no_ipopt_pack)
-			bf_afree(no_ipopt_pack);
+		DBLOCK(0x2, printf("udp: could not deliver packet from ");
+			writeIpAddr(src_addr);
+			printf(".%u to ", ntohs(src_port));
+			writeIpAddr(dst_addr);
+			printf(".%u\n", ntohs(dst_port)));
+
+		pack= bf_append(ip_hdr_acc, udp_acc);
+		ip_hdr_acc= NULL;
+		udp_acc= NULL;
+		icmp_snd_unreachable(udp_port->up_ipdev, pack,
+			ICMP_PORT_UNRCH);
+		return;
 	}
-assert (ip_acc);
-	bf_afree(ip_acc);
-assert (udp_acc);
+
+	assert (ip_hdr_acc);
+	bf_afree(ip_hdr_acc);
+	assert (udp_acc);
 	bf_afree(udp_acc);
 }
 
@@ -1122,20 +1108,24 @@ PUBLIC void udp_close(fd)
 int fd;
 {
 	udp_fd_t *udp_fd;
+	acc_t *tmp_acc, *next_acc;
 
-#if DEBUG
- { where(); printf("udp_close (%d)\n", fd); }
-#endif
 	udp_fd= &udp_fd_table[fd];
 
 	assert (udp_fd->uf_flags & UFF_INUSE);
 
+	if (udp_fd->uf_flags & UFF_OPTSET)
+		unhash_fd(udp_fd);
+
 	udp_fd->uf_flags= UFF_EMPTY;
-	if (udp_fd->uf_rd_buf)
+	tmp_acc= udp_fd->uf_rdbuf_head;
+	while (tmp_acc)
 	{
-		bf_afree(udp_fd->uf_rd_buf);
-		udp_fd->uf_rd_buf= 0;
+		next_acc= tmp_acc->acc_ext_link;
+		bf_afree(tmp_acc);
+		tmp_acc= next_acc;
 	}
+	udp_fd->uf_rdbuf_head= NULL;
 }
 
 PUBLIC int udp_write(fd, count)
@@ -1164,16 +1154,12 @@ assert (!(udp_fd->uf_flags & UFF_WRITE_IP));
 
 	if (udp_fd->uf_flags & UFF_WRITE_IP)
 	{
-#if DEBUG 
- { where(); printf("replying NW_SUSPEND\n"); }
-#endif
+		DBLOCK(1, printf("replying NW_SUSPEND\n"));
+
 		return NW_SUSPEND;
 	}
 	else
 	{
-#if DEBUG & 256
- { where(); printf("replying NW_OK\n"); }
-#endif
 		return NW_OK;
 	}
 }
@@ -1197,9 +1183,6 @@ udp_fd_t *udp_fd;
 	if (udp_port->up_flags & UPF_WRITE_IP)
 	{
 		udp_port->up_flags |= UPF_MORE2WRITE;
-#if DEBUG
- { where(); printf("\n"); }
-#endif
 		return;
 	}
 
@@ -1214,9 +1197,6 @@ assert (!udp_port->up_wr_pack);
 	{
 		udp_fd->uf_flags &= ~UFF_WRITE_IP;
 		reply_thr_get (udp_fd, EFAULT, FALSE);
-#if DEBUG
- { where(); printf("\n"); }
-#endif
 		return;
 	}
 
@@ -1232,17 +1212,17 @@ assert (!udp_port->up_wr_pack);
 	{
 		pack= bf_packIffLess(pack, UDP_IO_HDR_SIZE);
 		udp_io_hdr= (udp_io_hdr_t *)ptr2acc_data(pack);
+#if CONF_UDP_IO_NW_BYTE_ORDER
+		ip_opt_size= ntohs(udp_io_hdr->uih_ip_opt_len);
+#else
 		ip_opt_size= udp_io_hdr->uih_ip_opt_len;
-		user_data_size= udp_io_hdr->uih_data_len;
+#endif
 		if (UDP_IO_HDR_SIZE+ip_opt_size>udp_fd->uf_wr_count)
 		{
 			bf_afree(ip_hdr_pack);
 			bf_afree(udp_hdr_pack);
 			bf_afree(pack);
 			reply_thr_get (udp_fd, EINVAL, FALSE);
-#if DEBUG
- { where(); printf("\n"); }
-#endif
 			return;
 		}
 		if (ip_opt_size & 3)
@@ -1251,9 +1231,6 @@ assert (!udp_port->up_wr_pack);
 			bf_afree(udp_hdr_pack);
 			bf_afree(pack);
 			reply_thr_get (udp_fd, EFAULT, FALSE);
-#if DEBUG
- { where(); printf("\n"); }
-#endif
 			return;
 		}
 		if (ip_opt_size)
@@ -1282,9 +1259,8 @@ assert (!udp_port->up_wr_pack);
 	ip_hdr->ih_proto= IPPROTO_UDP;
 	if (flags & NWUO_RA_SET)
 	{
-#if DEBUG
- { where(); printf("NWUO_RA_SET\n"); }
-#endif
+		DBLOCK(1, printf("NWUO_RA_SET\n"));
+
 		ip_hdr->ih_dst= udp_fd->uf_udpopt.nwuo_remaddr;
 	}
 	else
@@ -1292,9 +1268,6 @@ assert (!udp_port->up_wr_pack);
 assert (udp_io_hdr);
 		ip_hdr->ih_dst= udp_io_hdr->uih_dst_addr;
 	}
-#if DEBUG & 256
- { where(); printf("ih_dst= "); writeIpAddr(ip_hdr->ih_dst); printf("\n"); }
-#endif
 
 	if ((flags & NWUO_LOCPORT_MASK) != NWUO_LP_ANY)
 		udp_hdr->uh_src_port= udp_fd->uf_udpopt.nwuo_locport;
@@ -1341,14 +1314,7 @@ assert (!(udp_port->up_flags & UPF_WRITE_IP));
 
 	udp_port->up_wr_pack= ip_hdr_pack;
 	udp_port->up_flags |= UPF_WRITE_IP;
-#if DEBUG & 256
- { where(); printf("calling ip_write(%d, %d)\n", udp_port->up_ipfd,
-	bf_bufsize(ip_hdr_pack)); }
-#endif
 	result= ip_write(udp_port->up_ipfd, bf_bufsize(ip_hdr_pack));
-#if DEBUG & 256
- { where(); printf("ip_write done\n"); }
-#endif
 	if (result == NW_SUSPEND)
 	{
 		udp_port->up_flags |= UPF_WRITE_SP;
@@ -1359,9 +1325,6 @@ assert (!(udp_port->up_flags & UPF_WRITE_IP));
 		reply_thr_get(udp_fd, result, FALSE);
 	else
 		reply_thr_get (udp_fd, udp_fd->uf_wr_count, FALSE);
-#if DEBUG & 256
- { where(); printf("\n"); }
-#endif
 }
 
 PRIVATE u16_t pack_oneCsum(pack)
@@ -1405,7 +1368,10 @@ acc_t *pack;
 		prev= oneC_sum (prev, (u16_t *)data_ptr, length);
 	}
 	if (odd_byte)
+	{
+		byte_buf[1]= 0;
 		prev= oneC_sum (prev, (u16_t *)byte_buf, 1);
+	}
 	return prev;
 }
 
@@ -1451,9 +1417,8 @@ int which_operation;
 {
 	udp_fd_t *udp_fd;
 
-#if DEBUG
- { where(); printf("udp_cancel(%d, %d)\n", fd, which_operation); }
-#endif
+	DBLOCK(0x10, printf("udp_cancel(%d, %d)\n", fd, which_operation));
+
 	udp_fd= &udp_fd_table[fd];
 
 	switch (which_operation)
@@ -1481,45 +1446,149 @@ assert (udp_fd->uf_flags & UFF_IOCTL_IP);
 	return NW_OK;
 }
 
-PRIVATE void udp_buffree (priority, reqsize)
+PRIVATE void udp_buffree (priority)
 int priority;
-size_t reqsize;
 {
 	int i;
 	time_t curr_tim;
+	udp_fd_t *udp_fd;
+	acc_t *tmp_acc, *next_acc;
 
-
-	if (priority <UDP_PRI_EXP_FDBUFS)
-		return;
-
-	curr_tim= get_time();
-	for (i=0; i<UDP_FD_NR; i++)
+	if (priority ==  UDP_PRI_FDBUFS_EXTRA)
 	{
-		if (!(udp_fd_table[i].uf_flags & UFF_INUSE) )
-			continue;
-		if (udp_fd_table[i].uf_rd_buf &&
-			udp_fd_table[i].uf_exp_tim < curr_tim)
+		for (i=0, udp_fd= udp_fd_table; i<UDP_FD_NR; i++, udp_fd++)
 		{
-			bf_afree(udp_fd_table[i].uf_rd_buf);
-			udp_fd_table[i].uf_rd_buf= 0;
-			if (bf_free_buffsize >= reqsize)
-				return;
+			while (udp_fd->uf_rdbuf_head &&
+				udp_fd->uf_rdbuf_head->acc_ext_link)
+			{
+				tmp_acc= udp_fd->uf_rdbuf_head;
+				udp_fd->uf_rdbuf_head= tmp_acc->acc_ext_link;
+				bf_afree(tmp_acc);
+			}
 		}
 	}
 
-	if (priority <UDP_PRI_FDBUFS)
-		return;
-
-	for (i=0; i<UDP_FD_NR; i++)
+	if (priority  == UDP_PRI_FDBUFS)
 	{
-		if (!(udp_fd_table[i].uf_flags & UFF_INUSE))
-			continue;
-		if (udp_fd_table[i].uf_rd_buf)
+		for (i=0, udp_fd= udp_fd_table; i<UDP_FD_NR; i++, udp_fd++)
 		{
-			bf_afree(udp_fd_table[i].uf_rd_buf);
-			udp_fd_table[i].uf_rd_buf= 0;
-			if (bf_free_buffsize >= reqsize)
-				return;
+			while (udp_fd->uf_rdbuf_head)
+			{
+				tmp_acc= udp_fd->uf_rdbuf_head;
+				udp_fd->uf_rdbuf_head= tmp_acc->acc_ext_link;
+				bf_afree(tmp_acc);
+			}
 		}
 	}
 }
+
+PRIVATE void udp_rd_enqueue(udp_fd, pack, exp_tim)
+udp_fd_t *udp_fd;
+acc_t *pack;
+time_t exp_tim;
+{
+	acc_t *tmp_acc;
+
+	if (pack->acc_linkC != 1)
+	{
+		tmp_acc= bf_dupacc(pack);
+		bf_afree(pack);
+		pack= tmp_acc;
+	}
+	pack->acc_ext_link= NULL;
+	if (udp_fd->uf_rdbuf_head == NULL)
+	{
+		udp_fd->uf_exp_tim= exp_tim;
+		udp_fd->uf_rdbuf_head= pack;
+	}
+	else
+		udp_fd->uf_rdbuf_tail->acc_ext_link= pack;
+	udp_fd->uf_rdbuf_tail= pack;
+}
+
+PRIVATE void hash_fd(udp_fd)
+udp_fd_t *udp_fd;
+{
+	udp_port_t *udp_port;
+	int hash;
+
+	udp_port= udp_fd->uf_port;
+	if ((udp_fd->uf_udpopt.nwuo_flags & NWUO_LOCPORT_MASK) ==
+		NWUO_LP_ANY)
+	{
+		udp_fd->uf_port_next= udp_port->up_port_any;
+		udp_port->up_port_any= udp_fd;
+	}
+	else
+	{
+		hash= udp_fd->uf_udpopt.nwuo_locport;
+		hash ^= (hash >> 8);
+		hash &= (UDP_PORT_HASH_NR-1);
+
+		udp_fd->uf_port_next= udp_port->up_port_hash[hash];
+		udp_port->up_port_hash[hash]= udp_fd;
+	}
+}
+
+PRIVATE void unhash_fd(udp_fd)
+udp_fd_t *udp_fd;
+{
+	udp_port_t *udp_port;
+	udp_fd_t *prev, *curr, **udp_fd_p;
+	int hash;
+
+	udp_port= udp_fd->uf_port;
+	if ((udp_fd->uf_udpopt.nwuo_flags & NWUO_LOCPORT_MASK) ==
+		NWUO_LP_ANY)
+	{
+		udp_fd_p= &udp_port->up_port_any;
+	}
+	else
+	{
+		hash= udp_fd->uf_udpopt.nwuo_locport;
+		hash ^= (hash >> 8);
+		hash &= (UDP_PORT_HASH_NR-1);
+
+		udp_fd_p= &udp_port->up_port_hash[hash];
+	}
+	for (prev= NULL, curr= *udp_fd_p; curr;
+		prev= curr, curr= curr->uf_port_next)
+	{
+		if (curr == udp_fd)
+			break;
+	}
+	assert(curr);
+	if (prev)
+		prev->uf_port_next= curr->uf_port_next;
+	else
+		*udp_fd_p= curr->uf_port_next;
+}
+
+#ifdef BUF_CONSISTENCY_CHECK
+PRIVATE void udp_bufcheck()
+{
+	int i;
+	udp_port_t *udp_port;
+	udp_fd_t *udp_fd;
+	acc_t *tmp_acc;
+
+	for (i= 0, udp_port= udp_port_table; i<UDP_PORT_NR; i++, udp_port++)
+	{
+		if (udp_port->up_wr_pack)
+			bf_check_acc(udp_port->up_wr_pack);
+	}
+
+	for (i= 0, udp_fd= udp_fd_table; i<UDP_FD_NR; i++, udp_fd++)
+	{
+		for (tmp_acc= udp_fd->uf_rdbuf_head; tmp_acc; 
+			tmp_acc= tmp_acc->acc_ext_link)
+		{
+			bf_check_acc(tmp_acc);
+		}
+	}
+}
+#endif
+
+/*
+ * $PchId: udp.c,v 1.10 1996/08/06 06:48:05 philip Exp $
+ */

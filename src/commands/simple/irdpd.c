@@ -1,4 +1,4 @@
-/*	irdpd 1.8 - Internet router discovery protocol daemon.
+/*	irdpd 1.9 - Internet router discovery protocol daemon.
  *							Author: Kees J. Bot
  *								28 May 1994
  * Activily solicitate or passively look for routers.
@@ -34,27 +34,21 @@
 #include <net/gen/udp_hdr.h>
 #include <net/gen/udp_io.h>
 
-#define MAX_RETRIES		    5	/* # router solicitations. */
-#define TIMEOUT			    4	/* Secs between solicitate retries. */
+#define MAX_SOLICITATIONS	    3	/* # router solicitations. */
+#define SOLICITATION_INTERVAL	    3	/* Secs between solicitate retries. */
 #define DEST_TO 	      (10*60)	/* 10 minutes */
 #define NEW_ROUTE	       (5*60)	/* 5 minutes */
 #define DANGER		       (2*60)	/* Nearing a advert timeout? */
 #define DEAD_TO		    (24L*60*60)	/* 24 hours */
-#define DEAD_PREF	    0x80000000L	/* from RFC 1236 */
-#define MaxAdvertisementInterval  450	/* 7.5 minutes */
-#define LifeTime		(4 * MaxAdvertisementInterval)
+#define DEAD_PREF	    0x80000000L	/* From RFC 1256 */
+#define MaxAdvertisementInterval (DEST_TO/2)	/* Chosen to jive with RIP */
+#define AdvertisementLifetime	 DEST_TO
 #define PRIO_OFF_DEF		-1024
-#define RIP_VERSION		    1
 #define RIP_REPLY		    2
 
 /* It's now or never. */
 #define IMMEDIATELY	((time_t) ((time_t) -1 < 0 ? LONG_MIN : 0))
 #define NEVER		((time_t) ((time_t) -1 < 0 ? LONG_MAX : ULONG_MAX))
-
-#if !DEBUG
-/* Unless doing serious debugging. */
-#define gethostbyaddr(addr, len, type)	((struct hostent *) nil)
-#endif
 
 #if !__minix_vmd
 /* Standard Minix needs to choose between router discovery and RIP info. */
@@ -107,7 +101,7 @@ size_t table_size;
 
 ipaddr_t my_ip_addr;		/* IP address of the local host. */
 
-int sol_retries= MAX_RETRIES;
+int sol_retries= MAX_SOLICITATIONS;
 time_t next_sol= IMMEDIATELY;
 time_t next_advert= NEVER;
 time_t router_advert_valid= IMMEDIATELY;
@@ -126,18 +120,18 @@ void fatal(const char *label)
 	exit(1);
 }
 
+#if DEBUG
 char *addr2name(ipaddr_t host)
 /* Translate an IP address to a printable name. */
 {
-#if DEBUG
 	struct hostent *hostent;
 
 	hostent= gethostbyaddr((char *) &host, sizeof(host), AF_INET);
 	return hostent == nil ? inet_ntoa(host) : hostent->h_name;
-#else
-	return inet_ntoa(host);
-#endif
 }
+#else
+#define addr2name(host)	inet_ntoa(host)
+#endif
 
 void print_table(void)
 /* Show the collected routing table. */
@@ -180,7 +174,7 @@ void advertize(ipaddr_t host)
 	icmp_hdr->ih_code= 0;
 	icmp_hdr->ih_hun.ihh_ram.iram_na= 0;
 	icmp_hdr->ih_hun.ihh_ram.iram_aes= 2;
-	icmp_hdr->ih_hun.ihh_ram.iram_lt= htons(LifeTime);
+	icmp_hdr->ih_hun.ihh_ram.iram_lt= htons(AdvertisementLifetime);
 	data= (char *) icmp_hdr->ih_dun.uhd_data;
 
 	/* Collect gateway entries from the table. */
@@ -221,7 +215,7 @@ void time_functions(void)
 		icmp_hdr_t *icmp_hdr;
 
 		if (sol_retries == 0) {
-			/* Stop solicitating. */
+			/* Stop soliciting. */
 			next_sol= NEVER;
 #if !__minix_vmd
 			/* Switch to RIP if no router responded. */
@@ -252,7 +246,7 @@ void time_functions(void)
 			fatal("sending router solicitation failed");
 
 		/* Schedule the next packet. */
-		next_sol= now + TIMEOUT;
+		next_sol= now + SOLICITATION_INTERVAL;
 
 		sol_retries--;
 	}
@@ -333,11 +327,10 @@ void rip_incoming(ssize_t n)
 	routeinfo= (routeinfo_t *) (rip_buf + sizeof(*udp_io_hdr)
 			+ udp_io_hdr->uih_ip_opt_len);
 
-	if (routeinfo->version != RIP_VERSION
-				|| routeinfo->command != RIP_REPLY) {
+	if (routeinfo->command != RIP_REPLY) {
 		if (debug) {
-			printf("Route packet command %d, version %d ignored\n",
-				routeinfo->command, routeinfo->version);
+			printf("RIP-%d packet command %d ignored\n",
+				routeinfo->version, routeinfo->command);
 		}
 		return;
 	}
@@ -360,7 +353,8 @@ void rip_incoming(ssize_t n)
 	add_gateway(udp_io_hdr->uih_src_addr, pref);
 
 	if (debug) {
-		printf("Routing table after RIP packet from %s:\n",
+		printf("Routing table after RIP-%d packet from %s:\n",
+			routeinfo->version,
 			addr2name(udp_io_hdr->uih_src_addr));
 		print_table();
 	}
@@ -401,7 +395,7 @@ void irdp_incoming(ssize_t n)
 	if (icmp_hdr->ih_type == ICMP_TYPE_ROUTE_SOL) {
 		/* Some other host is looking for a router.  Send a table
 		 * if there is no smart router around, we are not still
-		 * solicitating ourselves, and we are not told to be silent.
+		 * soliciting ourselves, and we are not told to be silent.
 		 */
 		if (sol_retries == 0 && table_size > 0
 				&& now > router_advert_valid && !silent) {
@@ -589,7 +583,7 @@ int main(int argc, char **argv)
 			| NWIO_REMANY | NWIO_PROTOSPEC
 			| NWIO_HDR_O_SPEC | NWIO_RWDATALL;
 	ipopt.nwio_tos= 0;
-	ipopt.nwio_ttl= 255;
+	ipopt.nwio_ttl= 1;
 	ipopt.nwio_df= 0;
 	ipopt.nwio_hdropt.iho_opt_siz= 0;
 	ipopt.nwio_rem= HTONL(0xFFFFFFFFL);

@@ -212,7 +212,7 @@ int n;
 		tty.c_iflag = n==3 ? (IGNBRK|IXOFF) : IGNBRK;
 
 		 /* No echo, crlf mapping, INTR, QUIT, delays, no erase/kill */
-		tty.c_lflag &= ~(ECHO | ICANON | ISIG);
+		tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
 
 		tty.c_oflag = 0;	/* Transparent output */
 

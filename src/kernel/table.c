@@ -65,6 +65,7 @@
 #endif
 
 #define CDROM_STACK	(4 * SMALL_STACK * ENABLE_CDROM)
+#define DOSDSK_STACK	(3 * SMALL_STACK * ENABLE_DOSDSK)
 #define AUDIO_STACK	(4 * SMALL_STACK * ENABLE_AUDIO)
 #define MIXER_STACK	(4 * SMALL_STACK * ENABLE_AUDIO)
 
@@ -78,13 +79,33 @@
 #define	TOT_STACK_SPACE		(TTY_STACK + DP8390_STACK + SCSI_STACK + \
 	SYN_ALRM_STACK + IDLE_STACK + HARDWARE_STACK + PRINTER_STACK + \
 	WINCH_STACK + FLOP_STACK + MEM_STACK + CLOCK_STACK + SYS_STACK + \
-	CDROM_STACK + AUDIO_STACK + MIXER_STACK)
+	CDROM_STACK + DOSDSK_STACK + AUDIO_STACK + MIXER_STACK)
 
 
-/* SCSI, CDROM and AUDIO may in the future have different choices like
+/* Default choices for tasks with more than one driver. */
+#if ENABLE_AT_WINI
+#define winchester_task	at_winchester_task
+#elif ENABLE_BIOS_WINI
+#define winchester_task	bios_winchester_task
+#elif ENABLE_ESDI_WINI
+#define winchester_task	esdi_winchester_task
+#elif ENABLE_XT_WINI
+#define winchester_task	xt_winchester_task
+#endif
+
+#if ENABLE_AHA1540_SCSI
+#define scsi_task	aha1540_scsi_task
+#endif
+
+#if ENABLE_DOSFILE
+#define dosdsk_task	dosfile_task
+#elif ENABLE_DOSFAT
+#define dosdsk_task	dosfat_task
+#endif
+
+/* CDROM and AUDIO may in the future have different choices like
  * WINCHESTER, but for now the choice is fixed.
  */
-#define scsi_task	aha_scsi_task
 #define cdrom_task	mcd_task
 #define audio_task	dsp_task
 
@@ -101,6 +122,9 @@ PUBLIC struct tasktab tasktab[] = {
 	{ tty_task,		TTY_STACK,	"TTY"		},
 #if ENABLE_NETWORKING
 	{ dp8390_task,		DP8390_STACK,	"DP8390"	},
+#endif
+#if ENABLE_DOSDSK
+	{ dosdsk_task,		DOSDSK_STACK,	"DOSDSK"	},
 #endif
 #if ENABLE_CDROM
 	{ cdrom_task,		CDROM_STACK,	"CDROM"		},
@@ -130,6 +154,83 @@ PUBLIC struct tasktab tasktab[] = {
 #endif
 	{ 0,			0,		"INIT"		},
 };
+
+/* Mapping from driver names to driver functions, e.g. "bios" -> bios_wini. */
+PRIVATE struct drivertab {
+	char drivername[6];
+	task_t *driver;
+} drivertab[] = {
+
+#if ENABLE_AT_WINI
+	{ "at",		at_winchester_task	},
+#endif
+
+#if ENABLE_BIOS_WINI
+	{ "bios",	bios_winchester_task	},
+#endif
+
+#if ENABLE_ESDI_WINI
+	{ "esdi",	esdi_winchester_task	},
+#endif
+
+#if ENABLE_XT_WINI
+	{ "xt",		xt_winchester_task	},
+#endif
+
+#if ENABLE_AHA1540_SCSI
+	{ "a1540",	aha1540_scsi_task	},
+#endif
+
+#if ENABLE_DOSFILE
+	{ "file",	dosfile_task		},
+#endif
+
+#if ENABLE_DOSFAT
+	{ "fat",	dosfat_task		},
+#endif
+
+};
+
+/* Mapping from environment variables to tasks, e.g. "hd" -> WINCHESTER. */
+PRIVATE struct envtab {
+	char env[5];
+	char taskno;
+} envtab[] = {
+
+#if ENABLE_WINI
+	{ "hd",		WINCHESTER	},
+#endif
+
+#if ENABLE_SCSI
+	{ "sd",		SCSI		},
+#endif
+
+#if ENABLE_DOSDSK
+	{ "dosd",	DOSDSK		},
+#endif
+
+};
+
+/*===========================================================================*
+ *				mapdrivers				     *
+ *===========================================================================*/
+PUBLIC void mapdrivers()
+{
+  /* Select drivers and update the task table to that selection. */
+  struct envtab *ep;
+  struct drivertab *dp;
+  char *drivername;
+
+  for (ep = envtab; ep < envtab + sizeof(envtab)/sizeof(envtab[0]); ep++) {
+	if ((drivername = k_getenv(ep->env)) == NULL) continue;
+	for (dp = drivertab;
+	     dp < drivertab + sizeof(drivertab)/sizeof(drivertab[0]); dp++) {
+		if (strcmp(drivername, dp->drivername) == 0) {
+			tasktab[ep->taskno + NR_TASKS].initial_pc = dp->driver;
+		}
+	}
+  }
+}
 
 /* Stack space for all the task stacks.  (Declared as (char *) to align it.) */
 PUBLIC char *t_stack[TOT_STACK_SPACE / sizeof(char *)];

@@ -11,7 +11,6 @@ all:	$(LIBRARY)
 
 OBJECTS	= \
 	$(LIBRARY)(_brk.o) \
-	$(LIBRARY)(_longjerr.o) \
 	$(LIBRARY)(_reboot.o) \
 	$(LIBRARY)(_seekdir.o) \
 	$(LIBRARY)(asynchio.o) \
@@ -63,9 +62,6 @@ $(LIBRARY):	$(OBJECTS)
 
 $(LIBRARY)(_brk.o):	_brk.c
 	$(CC1) _brk.c
-
-$(LIBRARY)(_longjerr.o):	_longjerr.c
-	$(CC1) _longjerr.c
 
 $(LIBRARY)(_reboot.o):	_reboot.c
 	$(CC1) _reboot.c

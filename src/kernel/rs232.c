@@ -553,7 +553,7 @@ tty_t *tp;			/* which TTY */
 #if ENABLE_NETWORKING
   /* The ethernet driver may steal the IRQ of an RS232 line. */
   v = ETHER_IRQ;
-  switch (env_parse("DPETH0", "x:d:x", 1, &v, 0L, (long) NR_IRQ_VECTORS-1)) {
+  switch (env_parse("DPETH0", "x:d:x:x", 1, &v, 0L, (long) NR_IRQ_VECTORS-1)) {
   case EP_ON:
   case EP_SET:
 	if (v == irq) return;		/* IRQ in use, don't configure line */

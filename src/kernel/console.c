@@ -35,7 +35,7 @@
 #define SCROLL_DOWN        1	/* scroll backward */
 #define BLANK_MEM ((u16_t *) 0)	/* tells mem_vid_copy() to blank the screen */
 #define CONS_RAM_WORDS    80	/* video ram buffer size */
-#define MAX_ESC_PARMS      2	/* number of escape sequence params allowed */
+#define MAX_ESC_PARMS      4	/* number of escape sequence params allowed */
 
 /* Constants relating to the controller chips. */
 #define M_6845         0x3B4	/* port for 6845 mono */
@@ -68,11 +68,11 @@ PUBLIC unsigned blank_color = BLANK_COLOR; /* display code for blank */
 PRIVATE int vid_port;		/* I/O port for accessing 6845 */
 PRIVATE int wrap;		/* hardware can wrap? */
 PRIVATE int softscroll;		/* 1 = software scrolling, 0 = hardware */
-PRIVATE unsigned vid_base;	/* base of video ram (0xB000 or 0xB800) */
 PRIVATE int beeping;		/* speaker is beeping? */
-#define scr_width	80	/* # characters on a line */
-#define scr_lines	25	/* # lines on the screen */
-#define scr_size	(80*25)	/* # characters on the screen */
+PRIVATE unsigned font_lines;	/* font lines per character */
+PRIVATE unsigned scr_width;	/* # characters on a line */
+PRIVATE unsigned scr_lines;	/* # lines on the screen */
+PRIVATE unsigned scr_size;	/* # characters on the screen */
 
 /* Per console data. */
 typedef struct console {
@@ -86,6 +86,7 @@ typedef struct console {
   unsigned c_cur;		/* current position of cursor in video RAM */
   unsigned c_attr;		/* character attribute */
   unsigned c_blank;		/* blank attribute */
+  char c_reverse;		/* reverse video */
   char c_esc_state;		/* 0=normal, 1=ESC, 2=ESC[ */
   char c_esc_intro;		/* Distinguishing character following ESC */
   int *c_esc_parmp;		/* pointer to current escape parameter */
@@ -121,7 +122,8 @@ FORWARD _PROTOTYPE( void scroll_screen, (console_t *cons, int dir)	);
 FORWARD _PROTOTYPE( void set_6845, (int reg, unsigned val)		);
 FORWARD _PROTOTYPE( void stop_beep, (void)				);
 FORWARD _PROTOTYPE( void cons_org0, (void)				);
-FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq) );
+FORWARD _PROTOTYPE( void ga_program, (struct sequence *seq)		);
+FORWARD _PROTOTYPE( void cons_ioctl, (tty_t *tp)			);
 
 
 /*===========================================================================*
@@ -408,8 +410,10 @@ char c;				/* next character in escape sequence */
   switch (cons->c_esc_state) {
     case 1:			/* ESC seen */
 	cons->c_esc_intro = '\0';
-	cons->c_esc_parmp = cons->c_esc_parmv;
-	cons->c_esc_parmv[0] = cons->c_esc_parmv[1] = 0;
+	cons->c_esc_parmp = bufend(cons->c_esc_parmv);
+	do {
+		*--cons->c_esc_parmp = 0;
+	} while (cons->c_esc_parmp > cons->c_esc_parmv);
 	switch (c) {
 	    case '[':	/* Control Sequence Introducer */
 		cons->c_esc_intro = c;
@@ -429,8 +433,8 @@ char c;				/* next character in escape sequence */
 			*cons->c_esc_parmp = *cons->c_esc_parmp * 10 + (c-'0');
 	} else
 	if (c == ';') {
-		if (++cons->c_esc_parmp < bufend(cons->c_esc_parmv))
-			*cons->c_esc_parmp = 0;
+		if (cons->c_esc_parmp < bufend(cons->c_esc_parmv))
+			cons->c_esc_parmp++;
 	} else {
 		do_escape(cons, c);
 	}
@@ -448,6 +452,7 @@ char c;				/* next character in escape sequence */
 {
   int value, n;
   unsigned src, dst, count;
+  int *parmp;
 
   /* Some of these things hack on screen RAM, so it had better be up to date */
   flush(cons);
@@ -602,70 +607,77 @@ char c;				/* next character in escape sequence */
 		break;
 
 	    case 'm':		/* ESC [nm enables rendition n */
-		switch (value) {
-		    case 1:	/* BOLD  */
-			if (color) {
-				/* Can't do bold, so use yellow */
-				cons->c_attr = (cons->c_attr & 0xf0ff) | 0x0E00;
-			} else {
+		for (parmp = cons->c_esc_parmv; parmp <= cons->c_esc_parmp
+				&& parmp < bufend(cons->c_esc_parmv); parmp++) {
+			if (cons->c_reverse) {
+				/* Unswap fg and bg colors */
+				cons->c_attr =	((cons->c_attr & 0x7000) >> 4) |
+						((cons->c_attr & 0x0700) << 4) |
+						((cons->c_attr & 0x8800));
+			}
+			switch (n = *parmp) {
+			    case 0:	/* NORMAL */
+				cons->c_attr = cons->c_blank = BLANK_COLOR;
+				cons->c_reverse = FALSE;
+				break;
+
+			    case 1:	/* BOLD  */
 				/* Set intensity bit */
 				cons->c_attr |= 0x0800;
-			}
-			break;
+				break;
 
-		    case 4:	/* UNDERLINE */
-			if (color) {
-				/* Use light green */
-				cons->c_attr = (cons->c_attr & 0xf0ff) | 0x0A00;
-			} else {
-				cons->c_attr = (cons->c_attr & 0x8900);
-			}
-			break;
+			    case 4:	/* UNDERLINE */
+				if (color) {
+					/* Change white to cyan, i.e. lose red
+					 */
+					cons->c_attr = (cons->c_attr & 0xBBFF);
+				} else {
+					/* Set underline attribute */
+					cons->c_attr = (cons->c_attr & 0x99FF);
+				}
+				break;
 
-		    case 5:	/* BLINKING */
-			if (color) {
-				/* Use magenta */
-				cons->c_attr = (cons->c_attr & 0xf0ff) | 0x0500;
-			} else {
+			    case 5:	/* BLINKING */
 				/* Set the blink bit */
 				cons->c_attr |= 0x8000;
-			}
-			break;
+				break;
 
-		    case 7:	/* REVERSE */
-			if (color) {
+			    case 7:	/* REVERSE */
+				cons->c_reverse = TRUE;
+				break;
+
+			    default:	/* COLOR */
+				if (n == 39) n = 37;	/* set default color */
+				if (n == 49) n = 40;
+
+				if (!color) {
+					/* Don't mess up a monochrome screen */
+				} else
+				if (30 <= n && n <= 37) {
+					/* Foreground color */
+					cons->c_attr =
+						(cons->c_attr & 0xF8FF) |
+						(ansi_colors[(n - 30)] << 8);
+					cons->c_blank =
+						(cons->c_blank & 0xF8FF) |
+						(ansi_colors[(n - 30)] << 8);
+				} else
+				if (40 <= n && n <= 47) {
+					/* Background color */
+					cons->c_attr =
+						(cons->c_attr & 0x8FFF) |
+						(ansi_colors[(n - 40)] << 12);
+					cons->c_blank =
+						(cons->c_blank & 0x8FFF) |
+						(ansi_colors[(n - 40)] << 12);
+				}
+			}
+			if (cons->c_reverse) {
 				/* Swap fg and bg colors */
-				cons->c_attr =
-					((cons->c_attr & 0xf000) >> 4) |
-					((cons->c_attr & 0x0f00) << 4);
-			} else
-			if ((cons->c_attr & 0x7000) == 0) {
-				cons->c_attr = (cons->c_attr & 0x8800) | 0x7000;
-			} else {
-				cons->c_attr = (cons->c_attr & 0x8800) | 0x0700;
+				cons->c_attr =	((cons->c_attr & 0x7000) >> 4) |
+						((cons->c_attr & 0x0700) << 4) |
+						((cons->c_attr & 0x8800));
 			}
-			break;
-
-		    default:	/* COLOR */
-		        if (30 <= value && value <= 37) {
-				cons->c_attr =
-					(cons->c_attr & 0xf0ff) |
-					(ansi_colors[(value - 30)] << 8);
-				cons->c_blank =
-					(cons->c_blank & 0xf0ff) |
-					(ansi_colors[(value - 30)] << 8);
-			} else
-			if (40 <= value && value <= 47) {
-				cons->c_attr =
-					(cons->c_attr & 0x0fff) |
-					(ansi_colors[(value - 40)] << 12);
-				cons->c_blank =
-					(cons->c_blank & 0x0fff) |
-					(ansi_colors[(value - 40)] << 12);
-			} else {
-				cons->c_attr = cons->c_blank;
-			}
-			break;
 		}
 		break;
 	}
@@ -746,7 +758,8 @@ tty_t *tp;
 /* Initialize the screen driver. */
   console_t *cons;
   phys_bytes vid_base;
-  u16_t bios_crtbase;
+  u16_t bios_columns, bios_crtbase, bios_fontlines;
+  u8_t bios_rows;
   int line;
   unsigned page_size;
 
@@ -760,14 +773,21 @@ tty_t *tp;
   /* Initialize the keyboard driver. */
   kb_init(tp);
 
-  /* Output functions. */
+  /* Fill in TTY function hooks. */
   tp->tty_devwrite = cons_write;
   tp->tty_echo = cons_echo;
+  tp->tty_ioctl = cons_ioctl;
 
-  /* Get the BIOS parameters that tells the VDU I/O base register. */
+  /* Get the BIOS parameters that describe the VDU. */
+  phys_copy(0x44AL, vir2phys(&bios_columns), 2L);
   phys_copy(0x463L, vir2phys(&bios_crtbase), 2L);
+  phys_copy(0x484L, vir2phys(&bios_rows), 1L);
+  phys_copy(0x485L, vir2phys(&bios_fontlines), 2L);
 
   vid_port = bios_crtbase;
+  scr_width = bios_columns;
+  font_lines = bios_fontlines;
+  scr_lines = ega ? bios_rows+1 : 25;
 
   if (color) {
 	vid_base = COLOR_BASE;
@@ -785,6 +805,9 @@ tty_t *tp;
   vid_size >>= 1;		/* word count */
   vid_mask = vid_size - 1;
 
+  /* Size of the screen (number of displayed characters.) */
+  scr_size = scr_lines * scr_width;
+
   /* There can be as many consoles as video memory allows. */
   nr_cons = vid_size / scr_size;
   if (nr_cons > NR_CONS) nr_cons = NR_CONS;
@@ -799,6 +822,7 @@ tty_t *tp;
   blank_color = BLANK_COLOR;
   mem_vid_copy(BLANK_MEM, cons->c_start, scr_size);
   select_console(0);
+  cons_ioctl(tp);
 }
 
 
@@ -892,7 +916,6 @@ PUBLIC void select_console(int cons_line)
 /*===========================================================================*
  *				con_loadfont				     *
  *===========================================================================*/
-
 PUBLIC int con_loadfont(user_phys)
 phys_bytes user_phys;
 {
@@ -935,7 +958,6 @@ phys_bytes user_phys;
 /*===========================================================================*
  *				ga_program				     *
  *===========================================================================*/
-
 PRIVATE void ga_program(seq)
 struct sequence *seq;
 {
@@ -945,4 +967,19 @@ struct sequence *seq;
 	out_byte(seq->index+1, seq->value);
 	seq++;
   } while (--len > 0);
+}
+
+
+/*===========================================================================*
+ *				cons_ioctl				     *
+ *===========================================================================*/
+PRIVATE void cons_ioctl(tp)
+tty_t *tp;
+{
+/* Set the screen dimensions. */
+
+  tp->tty_winsize.ws_row= scr_lines;
+  tp->tty_winsize.ws_col= scr_width;
+  tp->tty_winsize.ws_xpixel= scr_width * 8;
+  tp->tty_winsize.ws_ypixel= scr_lines * font_lines;
 }

@@ -49,8 +49,8 @@
  */
 #define BIOS_IRQ0_VEC   0x08	/* base of IRQ0-7 vectors used by BIOS */
 #define BIOS_IRQ8_VEC   0x70	/* base of IRQ8-15 vectors used by BIOS */
-#define IRQ0_VECTOR     0x28	/* more or less arbitrary, but > SYS_VECTOR */
-#define IRQ8_VECTOR     0x30 	/* together for simplicity */
+#define IRQ0_VECTOR     0x50	/* nice vectors to relocate IRQ0-7 to */
+#define IRQ8_VECTOR     0x70	/* no need to move IRQ8-15 */
 
 /* Hardware interrupt numbers. */
 #define NR_IRQ_VECTORS    16
@@ -85,7 +85,7 @@
 #define ENABLE          0x20	/* code used to re-enable after an interrupt */
 
 /* Sizes of memory tables. */
-#define NR_MEMS            3	/* number of chunks of memory */
+#define NR_MEMS            8	/* number of chunks of memory */
 
 /* Miscellaneous ports. */
 #define PCR		0x65	/* Planar Control Register */

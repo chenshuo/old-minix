@@ -8,6 +8,9 @@ Changed:	May 13, 1995 by Kees J. Bot
 
 Changed:	Jul 18, 1995 by Kees J. Bot
 		Do RARP requests (formerly inet's job)
+
+Changed:	Dec 14, 1996 by Kees J. Bot
+		Query the netmask
 */
 
 #include <sys/types.h>
@@ -31,6 +34,8 @@ Changed:	Jul 18, 1995 by Kees J. Bot
 #include <net/gen/eth_io.h>
 #include <net/gen/if_ether.h>
 #include <net/gen/ip_io.h>
+#include <net/gen/nameser.h>
+#include <net/gen/resolv.h>
 
 #define MAX_RARP_RETRIES	5
 #define RARP_TIMEOUT		5
@@ -76,9 +81,14 @@ typedef struct rarp46
 ether_addr_t BCAST_ETH_ADDR =	{ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 ether_addr_t NULL_ETH_ADDR /* =	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } */;
 
+/* Default address and netmask for the default network. */
+#define DEF_IPADDR	HTONL(0x0A000001)	/* 10.0.0.1 */
+#define DEF_NETMASK	HTONL(0xFF000000)	/* 255.0.0.0 */
+char DEF_IPDEV[]=	"/dev/ip";
+
 #if __minix_vmd
 
-/* VMD Minix has two ethernets. */
+/* We can serve both Minix-vmd's ethernets. */
 #define N_ETHS		2
 char an_ethdev[]=	"/dev/eth0";
 char an_ipdev[]=	"/dev/ip0";
@@ -87,7 +97,7 @@ char an_ipdev[]=	"/dev/ip0";
 
 #else /* !__minix_vmd */
 
-/* Standard Minix has only one ethernet. */
+/* For standard Minix we can only do the default ethernet. */
 #define N_ETHS		1
 char an_ethdev[]=	"/dev/eth";
 char an_ipdev[]=	"/dev/ip";
@@ -99,11 +109,11 @@ char an_ipdev[]=	"/dev/ip";
 /* Network state: Sink mode or not there, unknown IP address, known IP address
  * but not set, network fully configured.
  */
-typedef enum state { SINK, UNKNOWN, KNOWN, CONFIGURED } state_t;
+typedef enum netstate { SINK, UNKNOWN, KNOWN, CONFIGURED } netstate_t;
 
 typedef struct ethernet {
 	int		n;		/* Network number. */
-	state_t		state;		/* Any good? */
+	netstate_t	state;		/* Any good? */
 	int		eth_fd;		/* Open low level ethernet device. */
 	ether_addr_t	eth_addr;	/* Ethernet address of this net. */
 	char		packet[ETH_MAX_PACK_SIZE];	/* Incoming packet. */
@@ -122,7 +132,6 @@ struct hostent *_gethostbyname(char *);
 void onsig(int sig)
 {
 	switch (sig) {
-	case SIGALRM:	alarm(1);	break;
 	case SIGUSR1:	debug++;	break;
 	case SIGUSR2:	debug= 0;	break;
 	}
@@ -176,7 +185,56 @@ void rarp_reply(ethernet_t *ep, char *hostname, ipaddr_t ip_addr,
 	(void) write(ep->eth_fd, &rarp46, sizeof(rarp46));
 }
 
-int main(int argc, char *argv[])
+typedef enum { IPGET, IPSET } getset_t;
+
+int getset_ipconf(char *ip_device, getset_t getset, nwio_ipconf_t *ipconf)
+{
+	int ip_fd;
+	int r;
+
+	/* Get or set an IP device configuration.  Return -1 if the operation
+	 * would block on an unconfigured network.
+	 */
+	if ((ip_fd= open(ip_device, O_RDWR|O_NONBLOCK)) < 0) {
+		fprintf(stderr, "%s: %s: %s\n",
+			prog_name, ip_device, strerror(errno));
+		exit(1);
+	}
+	r= ioctl(ip_fd, getset == 0 ? NWIOGIPCONF : NWIOSIPCONF, ipconf);
+	if (r < 0) {
+		if (errno != EAGAIN) {
+			fprintf(stderr,
+			"%s: %s: can't %cet IP configuration: %s\n",
+				prog_name, ip_device, "gs"[getset],
+				strerror(errno));
+			exit(1);
+		}
+	}
+	close(ip_fd);
+	return r;
+}
+
+struct hostent *getaddrbyaddr(ipaddr_t addr)
+/* Construct a name in the IN-ADDR.ARPA domain from an IP address and do
+ * a lookup on it.  First look in /etc/hosts, then use the DNS to allow one
+ * to fix a half-baked DNS setup by adding entries to /etc/hosts.
+ */
+{
+	char name[sizeof("255.255.255.255.IN-ADDR.ARPA")];
+	struct hostent *hostent;
+
+	addr= ntohl(addr);
+	sprintf(name, "%d.%d.%d.%d.IN-ADDR.ARPA",
+		(int) ((addr >>  0) & 0xFF),
+		(int) ((addr >>  8) & 0xFF),
+		(int) ((addr >> 16) & 0xFF),
+		(int) ((addr >> 24) & 0xFF));
+
+	if ((hostent= _gethostbyname(name)) != NULL) return hostent;
+	return gethostbyname(name);
+}
+
+int main(int argc, char **argv)
 {
 	int i;
 	ethernet_t *ep;
@@ -185,7 +243,6 @@ int main(int argc, char *argv[])
 	char hostname[1024];
 	struct hostent *hostent;
 	struct sigaction sa;
-	int ip_fd;
 	nwio_ipconf_t ipconf;
 	asynchio_t asyn;
 	ssize_t n;
@@ -206,6 +263,12 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 	}
+
+	sa.sa_handler= onsig;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags= 0;
+	sigaction(SIGUSR1, &sa, NULL);
+	sigaction(SIGUSR2, &sa, NULL);
 
 	for (i= 0; i < N_ETHS; i++) {
 		ep= &ethernets[i];
@@ -256,21 +319,7 @@ int main(int argc, char *argv[])
 		ep->state= UNKNOWN;
 
 		/* Already configured by ifconfig? */
-		if ((ip_fd= open(ipdev(i), O_RDWR|O_NONBLOCK)) < 0) {
-			fprintf(stderr, "%s: %s: %s\n",
-				prog_name, ipdev(i), strerror(errno));
-			exit(1);
-		}
-		if (ioctl(ip_fd, NWIOGIPCONF, &ipconf) < 0) {
-			if (errno != EAGAIN) {
-				fprintf(stderr,
-				"%s: %s: can't get IP address: %s\n",
-					prog_name, ipdev(i),
-					strerror(errno));
-				exit(1);
-			}
-		} else {
-			/* Address is already set. */
+		if (getset_ipconf(ipdev(i), IPGET, &ipconf) == 0) {
 			ep->ip_addr= ipconf.nwic_ipaddr;
 			ep->state= CONFIGURED;
 			if (debug) {
@@ -279,7 +328,6 @@ int main(int argc, char *argv[])
 					inet_ntoa(ep->ip_addr));
 			}
 		}
-		close(ip_fd);
 
 		/* Try to find the ethernet address in the ethers file. */
 		if (ep->state == UNKNOWN
@@ -353,23 +401,9 @@ int main(int argc, char *argv[])
 			ep= &ethernets[i];
 			if (ep->state != KNOWN) continue;
 
-			if ((ip_fd= open(ipdev(i), O_RDWR)) < 0) {
-				fprintf(stderr, "%s: %s: %s\n",
-					prog_name, ipdev(i), strerror(errno));
-				exit(1);
-			}
 			ipconf.nwic_flags= NWIC_IPADDR_SET;
 			ipconf.nwic_ipaddr= ep->ip_addr;
-			if (ioctl(ip_fd, NWIOSIPCONF, &ipconf) < 0) {
-				if (errno != EINTR) {
-					fprintf(stderr,
-					"%s: %s: can't set IP address: %s\n",
-						prog_name, ipdev(i),
-						strerror(errno));
-					exit(1);
-				}
-			}
-			close(ip_fd);
+			(void) getset_ipconf(ipdev(i), IPSET, &ipconf);
 			ep->state= CONFIGURED;
 		}
 
@@ -400,59 +434,100 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	sa.sa_handler= onsig;
-	sigemptyset(&sa.sa_mask);
-	sa.sa_flags= 0;
-	sigaction(SIGALRM, &sa, NULL);
-	sigaction(SIGUSR1, &sa, NULL);
-	sigaction(SIGUSR2, &sa, NULL);
-
-	/* Get the IP addresses and netmasks of all configured networks.  The
-	 * addresses may be different then we have set them to!
+	/* Temporarily add the broadcast address to the list of nameservers.
+	 * The local nameserver may not be able to reach the outside world,
+	 * because the netmask hasn't been set yet.  Just when we're about
+	 * to figure out what the netmask is...
 	 */
+	res_init();
+	if (_res.nscount < MAXNS) {
+		int n= _res.nscount++;
+#if __minix_vmd
+		_res.nsaddr_list[n].sin_family= AF_INET;
+		_res.nsaddr_list[n].sin_addr.s_addr= HTONL(0xFFFFFFFF);
+		_res.nsaddr_list[n].sin_port= HTONS(NAMESERVER_PORT);
+#else
+		_res.nsaddr_list[n]= HTONL(0xFFFFFFFF);
+		_res.nsport_list[n]= HTONS(NAMESERVER_PORT);
+#endif
+	}
+
+	/* Get the IP addresses and netmasks of all configured networks. */
 	for (i= 0; i < N_ETHS; i++) {
 		ep= &ethernets[i];
 		if (ep->state == SINK) continue;
 
-		if ((ip_fd= open(ipdev(i), O_RDWR)) < 0) {
-			fprintf(stderr, "%s: %s: %s\n",
-				prog_name, ipdev(i), strerror(errno));
-			exit(1);
-		}
-		alarm(1);
-		if (ioctl(ip_fd, NWIOGIPCONF, &ipconf) < 0) {
-			if (errno != EINTR) {
-				fprintf(stderr,
-				"%s: %s: can't get IP configuration: %s\n",
-					prog_name, ipdev(i), strerror(errno));
-				exit(1);
-			}
+		if (getset_ipconf(ipdev(i), IPGET, &ipconf) < 0) {
 			/* Forget this net. */
 			if (debug) {
 				printf("%s: %s: not configured\n",
 					prog_name, ipdev(i));
 			}
+			asyn_close(&asyn, ep->eth_fd);
 			close(ep->eth_fd);
 			ep->eth_fd= -1;
-			ep->state= SINK;
-		} else {
-			/* Remember IP address and netmask. */
-			ep->ip_addr= ipconf.nwic_ipaddr;
-			ep->ip_mask= ipconf.nwic_netmask;
-			ep->state= CONFIGURED;
+			ep->state= UNKNOWN;
+			continue;
+		}
+
+		if (!(ipconf.nwic_flags & NWIC_NETMASK_SET)) {
+			/* Netmask has not been configured.  Determine it by
+			 * doing address queries in the IN-ADDR.ARPA domain.
+			 */
+			ipaddr_t mask;
+
+			do {
+				mask= ipconf.nwic_netmask;
+
+				/* Look up addr&mask giving new mask. */
+				if ((hostent= getaddrbyaddr(ipconf.nwic_ipaddr
+								& mask)) != NULL
+					&& hostent->h_addrtype == AF_INET
+				) {
+					memcpy(&ipconf.nwic_netmask,
+						hostent->h_addr,
+						sizeof(ipaddr_t));
+				}
+			} while (ipconf.nwic_netmask > mask);
+
+			/* Set the netmask. */
+			ipconf.nwic_flags|= NWIC_NETMASK_SET;
+			(void) getset_ipconf(ipdev(i), IPSET, &ipconf);
+		}
+
+		/* Remember IP address and netmask. */
+		ep->ip_addr= ipconf.nwic_ipaddr;
+		ep->ip_mask= ipconf.nwic_netmask;
+		ep->state= CONFIGURED;
+		if (debug) {
+			printf("%s: %s: address %s, ",
+				prog_name, ipdev(i),
+				inet_ntoa(ep->ip_addr));
+			printf("netmask %s\n",
+				inet_ntoa(ep->ip_mask));
+		}
+	}
+
+	/* If the ethernets are all in sink mode and the default network is not
+	 * configured then give it the default IP address.
+	 */
+	for (i= 0; i < N_ETHS && ethernets[i].state == SINK; i++) {}
+	if (i == N_ETHS) {
+		if (getset_ipconf(DEF_IPDEV, IPGET, &ipconf) < 0) {
+			ipconf.nwic_flags= NWIC_IPADDR_SET|NWIC_NETMASK_SET;
+			ipconf.nwic_ipaddr= DEF_IPADDR;
+			ipconf.nwic_netmask= DEF_NETMASK;
+			(void) getset_ipconf(DEF_IPDEV, IPSET, &ipconf);
 			if (debug) {
-				printf("%s: %s: address %s, ",
-					prog_name, ipdev(i),
-					inet_ntoa(ep->ip_addr));
-				printf("netmask %s\n",
-					inet_ntoa(ep->ip_mask));
+				printf(
+			"%s: %s: address %s (default for default net)\n",
+					prog_name, DEF_IPDEV,
+					inet_ntoa(DEF_IPADDR));
 			}
 		}
-		close(ip_fd);
 	}
-	alarm(0);
 
-	/* There must be something to do. */
+	/* There must be something left to do. */
 	for (i= 0; i < N_ETHS && ethernets[i].state != CONFIGURED; i++) {}
 	if (i == N_ETHS) {
 		if (debug) printf("%s: no active ethernets\n", prog_name);
@@ -486,6 +561,9 @@ int main(int argc, char *argv[])
 				exit(1);
 			}
 		}
+
+		/* Reinitialize DNS resolver. */
+		res_init();
 
 		/* RARP request? */
 		if (i < N_ETHS

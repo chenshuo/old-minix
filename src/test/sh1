@@ -199,15 +199,6 @@ cp $f x
 mv x MVDIR/y
 if cmp -s $f MVDIR/y; then : ; else echo Error on mv test 2; fi
 
-#Test rev
-rev <f1 | head -1 >ahpla
-echo "zyxwvutsrqponmlkjihgfedcba" >x
-if cmp -s x ahpla; then : ; else echo Error on rev test 1; fi
-rev <$f >x
-rev <x >y
-if cmp -s $f x; then echo Error on rev test 2; fi
-if cmp -s $f y; then : ; else echo error on rev test 3; fi
-
 #Test shar
 cp $f w
 cp alpha x

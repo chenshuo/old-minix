@@ -84,96 +84,6 @@ const int _ytab[2][12] = {
 		{ 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
 	};
 
-#if	!defined(_POSIX_SOURCE) && !defined(__USG)
-#define	USE_TABLE	1
-#endif
-
-#if	USE_TABLE
-static int usetable = 1;
-
-typedef struct table {
-	const char *tz_name;
-	const int daylight;
-	const long zoneoffset;
-} TABLE;
-
-#define HOUR(x)	((x) * 60*60)
-
-static TABLE TimezoneTable[] = {
-	{"GMT", 0,	HOUR(0) },	/* Greenwich Mean */
-	{"BST", 60*60,	HOUR(0) },	/* British Summer */
-	{"WAT", 0,	HOUR(1) },	/* West Africa */
-	{"AT", 0,	HOUR(2) },	/* Azores */
-	{"BST", 0,	HOUR(3) },	/* Brazil Standard */
-	{"NFT", 0,	HOUR(3.5) },	/* Newfoundland */
-	{"NDT", 60*60,	HOUR(3.5) },	/* Newfoundland Daylight */
-	{"AST", 0,	HOUR(4) },	/* Atlantic Standard */
-	{"ADT", 60*60,	HOUR(4) },	/* Atlantic Daylight */
-	{"EST", 0,	HOUR(5) },	/* Eastern Standard */
-	{"EDT", 60*60,	HOUR(5) },	/* Eastern Daylight */
-	{"CST", 0,	HOUR(6) },	/* Central Standard */
-	{"CDT", 60*60,	HOUR(6) },	/* Central Daylight */
-	{"MST", 0,	HOUR(7) },	/* Mountain Standard */
-	{"MDT", 60*60,	HOUR(7) },	/* Mountain Daylight */
-	{"PST", 0,	HOUR(8) },	/* Pacific Standard */
-	{"PDT", 60*60,	HOUR(8) },	/* Pacific Daylight */
-	{"YST", 0,	HOUR(9) },	/* Yukon Standard */
-	{"YDT", 60*60,	HOUR(9) },	/* Yukon Daylight */
-	{"HST", 0,	HOUR(10) },	/* Hawaii Standard */
-	{"HDT", 60*60,	HOUR(10) },	/* Hawaii Daylight */
-	{"NT", 0,	HOUR(11) },	/* Nome */
-	{"IDLW", 0,	HOUR(12) },	/* International Date Line West */
-	{"MET", 0,	-HOUR(1) },	/* Middle European */
-	{"MDT", 60*60,	-HOUR(1) },	/* Middle European Summer */
-	{"EET", 0,	-HOUR(2) },	/* Eastern Europe, USSR Zone 1 */
-	{"BT", 0,	-HOUR(3) },	/* Baghdad, USSR Zone 2 */
-	{"IT", 0,	-HOUR(3.5) },	/* Iran */
-	{"ZP4", 0,	-HOUR(4) },	/* USSR Zone 3 */
-	{"ZP5", 0,	-HOUR(5) },	/* USSR Zone 4 */
-	{"IST", 0,	-HOUR(5.5) },	/* Indian Standard */
-	{"ZP6", 0,	-HOUR(6) },	/* USSR Zone 5 */
-	{"NST", 0,	-HOUR(6.5) },	/* North Sumatra */
-	{"SST", 0,	-HOUR(7) },	/* South Sumatra, USSR Zone 6 */
-	{"WAST", 0,	-HOUR(7) },	/* West Australian Standard */
-	{"WADT", 60*60,	-HOUR(7) },	/* West Australian Daylight */
-	{"JT", 0,	-HOUR(7.5) },	/* Java (3pm in Cronusland!) */
-	{"CCT", 0,	-HOUR(8) },	/* China Coast, USSR Zone 7 */
-	{"JST", 0,	-HOUR(9) },	/* Japan Standard, USSR Zone 8 */
-	{"CAST", 0,	-HOUR(9.5) },	/* Central Australian Standard */
-	{"CADT", 60*60,	-HOUR(9.5) },	/* Central Australian Daylight */
-	{"EAST", 0,	-HOUR(10) },	/* Eastern Australian Standard */
-	{"EADT", 60*60,	-HOUR(10) },	/* Eastern Australian Daylight */
-	{"NZT", 0,	-HOUR(12) },	/* New Zealand */
-	{"NZDT", 60*60,	-HOUR(12) },	/* New Zealand Daylight */
-	{  NULL, 0, 0  }
-};
-
-/*
- * The function ZoneFromTable() searches the table for the current
- * timezone.  It saves the last one found in ntstr or dststr, depending on
- * wheter the name is for daylight-saving-time or not.
- * Both ntstr and dststr are TZ_LEN + 1 chars.
- */
-static void
-ZoneFromTable(long timezone)
-{
-	register TABLE *tptr = TimezoneTable;
-
-	while (tptr->tz_name != NULL) {
-		if (tptr->zoneoffset == timezone) {
-			if (tptr->daylight == 0) {
-				strncpy(ntstr,tptr->tz_name, TZ_LEN);
-				ntstr[TZ_LEN] = '\0';
-			} else {
-				strncpy(dststr,tptr->tz_name, TZ_LEN);
-				dststr[TZ_LEN] = '\0';
-			}
-		}
-		tptr++;
-	}
-}
-#endif	/* USE_TABLE */
-
 static const char *
 parseZoneName(register char *buf, register const char *p)
 {
@@ -322,9 +232,6 @@ parseTZ(const char *p)
 
 	if (!p) return;
 
-#if	USE_TABLE
-	usetable = 0;
-#endif
 	if (*p == ':') {
 		/*
 		 * According to POSIX, this is implementation defined.
@@ -497,9 +404,6 @@ _dstget(register struct tm *timep)
 		    || (timep->tm_yday == enddst && cursec < dsttranssec))
 			do_dst = 1;
 	}
-#if USE_TABLE
-	if (usetable) ZoneFromTable(_timezone);
-#endif
 	if (do_dst) return _dst_off;
 	timep->tm_isdst = 0;
 	return 0;

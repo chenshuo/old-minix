@@ -1,4 +1,4 @@
-/*	installboot 1.23 - Make a device bootable	Author: Kees J. Bot
+/*	installboot 2.0 - Make a device bootable	Author: Kees J. Bot
  *								21 Dec 1991
  *
  * Either make a device bootable or make an image from kernel, mm, fs, etc.
@@ -627,7 +627,8 @@ void make_bootable(enum howto how, char *device, char *bootblock,
 
 	if (how == BOOT) {
 		/* A boot only disk needs to have floppies swapped. */
-		strcpy(parmp, "delay=swap\n");
+		strcpy(parmp,
+	"trailer()echo \\nInsert the root diskette then hit RETURN\\n\\w\\c\n");
 		parmp+= strlen(parmp);
 	}
 
@@ -772,15 +773,11 @@ void install_master(char *device, char *masterboot, char *fix)
 void usage(void)
 {
 	fprintf(stderr,
-		"Usage: installboot -i(mage) image kernel mm fs ... init\n");
-	fprintf(stderr,
-		"       installboot -(e)x(tract) image\n");
-	fprintf(stderr,
-		"       installboot -d(evice) device bootblock boot\n");
-	fprintf(stderr,
-		"       installboot -b(oot) device bootblock boot image ...\n");
-	fprintf(stderr,
-		"       installboot -m(aster) [fix] device masterboot\n");
+	  "Usage: installboot -i(mage) image kernel mm fs ... init\n"
+	  "       installboot -(e)x(tract) image\n"
+	  "       installboot -d(evice) device bootblock boot [image ...]\n"
+	  "       installboot -b(oot) device bootblock boot image ...\n"
+	  "       installboot -m(aster) [fix] device masterboot\n");
 	exit(1);
 }
 

@@ -274,7 +274,7 @@ if (iamremote)
 		for (i = 0; i < argc - 1; i++) {
 			src = colon(argv[i]);
 			if (src == 0) {		/* local to local */
-				(void) sprintf(buf, "/bin/cp%s%s %s %s",
+				(void) sprintf(buf, "cp%s%s %s %s",
 				    iamrecursive ? " -r" : "",
 				    pflag ? " -p" : "",
 				    argv[i], argv[argc - 1]);
@@ -323,8 +323,10 @@ if (iamremote)
 #ifdef NOT_DEF
 				seteuid(myuid);
 #endif
-				if (rem < 0)
+				if (rem < 0) {
+					errs++;
 					continue;
+				}
 				sink(1, argv+argc-1);
 				(void) close(rem);
 				rem = -1;

@@ -78,6 +78,7 @@ res_init()
 	_res.retry = 4;			/* number of times to retransmit */
 	_res.options = RES_DEFAULT;	/* options flags */
 	_res.nscount = 0;		/* number of name servers */
+	_res.defdname[0] = 0;		/* domain */
 
 	servent= getservbyname("domain", NULL);
 	if (!servent)

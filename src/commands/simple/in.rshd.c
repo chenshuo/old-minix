@@ -135,11 +135,20 @@ char *argv[];
 	alarm(0);
 	if (err_port != 0)
 	{
-		int lport;
+		int n, pid, lport;
 
-		for (lport= TCPPORT_RESERVED -1; lport >= TCPPORT_RESERVED/2;
-			lport--)
+		pid= getpid();
+		lport= 1;
+		do {
+			lport= (lport << 1) | (pid & 1);
+			pid >>= 1;
+		} while (lport < TCPPORT_RESERVED/2);
+
+		n= TCPPORT_RESERVED/2;
+		do
 		{
+			if (--lport < TCPPORT_RESERVED/2)
+				lport= TCPPORT_RESERVED-1;
 			err_fd= open ("/dev/tcp", O_RDWR);
 			if (err_fd<0)
 			{
@@ -158,60 +167,59 @@ char *argv[];
  { where(); fprintf(stderr, "\n"); }
 #endif
 			result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
-			if (result<0)
-			{
-				if (errno == EADDRINUSE)
-					continue;
-				fprintf(stderr, 
-					"%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
-					prog_name, errno, strerror(errno));
-				exit(1);
-			}
-			err_tcpconf.nwtc_flags= NWTC_SHARED;
-#if DEBUG
- { where(); fprintf(stderr, "\n"); }
-#endif
-			result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
-			if (result<0)
+			if (result == 0) break;
+			if (errno != EADDRINUSE)
 			{
 				fprintf(stderr, 
 					"%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
 					prog_name, errno, strerror(errno));
 				exit(1);
 			}
-#if DEBUG
- { where(); fprintf(stderr, "\n"); }
-#endif
-			tcpconnopt.nwtcl_flags= 0;
-
-			do
-			{
-#if DEBUG
- { where(); fprintf(stderr, "\n"); }
-#endif
-				result= ioctl (err_fd, NWIOTCPCONN,
-					&tcpconnopt);
-				if (result<0 && errno == EAGAIN)
-				{
-					sleep(2);
-				}
-#if DEBUG
- { where(); fprintf(stderr, "\n"); }
-#endif
-			} while (result <0 && errno == EAGAIN);
-			if (result <0  && errno != EADDRINUSE)
-			{
-				fprintf(stderr, "%s: ioctl(NWIOTCPCONN)= %d : %s\n",
-					prog_name, errno, strerror(errno));
-				exit(1);
-			}
-			if (result>=0)
-				break;
-		}
-		if (lport<TCPPORT_RESERVED/2)
+			close(err_fd);
+		} while (--n > 0);
+		if (n == 0)
 		{
 			printf("\1can't get stderr port\n");
 			exit(1);
+		}
+
+		err_tcpconf.nwtc_flags= NWTC_SHARED;
+#if DEBUG
+{ where(); fprintf(stderr, "\n"); }
+#endif
+		result= ioctl (err_fd, NWIOSTCPCONF, &err_tcpconf);
+		if (result<0)
+		{
+			fprintf(stderr, 
+				"%s: ioctl(NWIOSTCPCONF)= %d : %s\n",
+				prog_name, errno, strerror(errno));
+			exit(1);
+		}
+#if DEBUG
+{ where(); fprintf(stderr, "\n"); }
+#endif
+		tcpconnopt.nwtcl_flags= 0;
+
+		n= 20;
+		for (;;)
+		{
+#if DEBUG
+{ where(); fprintf(stderr, "\n"); }
+#endif
+			result= ioctl (err_fd, NWIOTCPCONN, &tcpconnopt);
+			if (result == 0) break;
+			if (errno != EAGAIN && errno != ECONNREFUSED)
+			{
+				fprintf(stderr,
+					"%s: ioctl(NWIOTCPCONN)= %d : %s\n",
+					prog_name, errno, strerror(errno));
+				exit(1);
+			}
+			if (--n == 0) break;
+			sleep(1);
+#if DEBUG
+{ where(); fprintf(stderr, "\n"); }
+#endif
 		}
 #if USEATTACH
 		err2_fd= open ("/dev/tcp", O_RDWR);

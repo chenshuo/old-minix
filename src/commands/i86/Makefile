@@ -8,7 +8,7 @@ all:	cc
 
 cc:	cc.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
+	install -S 6kb $@
 
 install:	/usr/bin/cc /usr/bin/m2 /usr/bin/pc
 

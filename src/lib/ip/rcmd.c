@@ -84,7 +84,8 @@ int *fd2p;
 {
 	int fd, fd2, result;
 	struct hostent *hp;
-	tcpport_t lport;
+	int n;
+	static tcpport_t lport;
 	nwio_tcpconf_t tcpconf;
 	nwio_tcpcl_t tcpconnopt;
 	pid_t pid;
@@ -94,6 +95,16 @@ int *fd2p;
 
 	fd= -1;
 	fd2= -1;
+
+	if (lport == 0) {
+		pid = getpid();
+		lport = 1;
+		do {
+			lport = (lport << 1) | (pid & 1);
+
+			pid >>= 1;
+		} while (lport < TCPPORT_RESERVED/2);
+	}
 
 	tcp_device= getenv("TCP_DEVICE");
 	if (tcp_device == NULL)
@@ -105,8 +116,11 @@ int *fd2p;
 		return -1;
 	}
 	*ahost= hp->h_name;
-	for (lport= TCPPORT_RESERVED-1; lport >= TCPPORT_RESERVED/2; lport--)
+	n = TCPPORT_RESERVED/2;
+	do
 	{
+		if (--lport < TCPPORT_RESERVED/2)
+			lport = TCPPORT_RESERVED-1;
 		fd= open (tcp_device, O_RDWR);
 		if (fd<0)
 		{
@@ -159,8 +173,8 @@ int *fd2p;
 		}
 		if (result>=0)
 			break;
-	}
-	if (lport<TCPPORT_RESERVED/2)
+	} while (--n > 0);
+	if (n == 0)
 	{
 		fprintf(stderr, "can't get port\n");
 		return -1;

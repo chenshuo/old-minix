@@ -290,7 +290,7 @@ message *m_ptr;			/* pointer to request message */
   proc_nr = m_ptr->CLOCK_PROC_NR;	/* process to interrupt later */
   delta_ticks = m_ptr->DELTA_TICKS;	/* how many ticks to wait */
   rp = proc_addr(proc_nr);
-  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm - realtime)/HZ );
+  mc.SECONDS_LEFT = (rp->p_alarm == 0 ? 0 : (rp->p_alarm-realtime+HZ-1)/HZ);
   common_setalarm(proc_nr, delta_ticks, cause_alarm);
 }
 

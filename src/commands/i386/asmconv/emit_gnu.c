@@ -36,7 +36,7 @@ static mnemonic_t mnemtab[] = {
 	{ BTS,		"bts%"		},
 	{ CALL,		"call"		},
 	{ CALLF,	"lcall"		},
-	{ CBW,		"cbw"		},
+	{ CBW,		"cbtw"		},
 	{ CLC,		"clc"		},
 	{ CLD,		"cld"		},
 	{ CLI,		"cli"		},
@@ -45,7 +45,7 @@ static mnemonic_t mnemtab[] = {
 	{ CMP,		"cmp%"		},
 	{ CMPS,		"cmps%"		},
 	{ CMPXCHG,	"cmpxchg"	},
-	{ CWD,		"cwd"		},
+	{ CWD,		"cwtd"		},
 	{ DAA,		"daa"		},
 	{ DAS,		"das"		},
 	{ DEC,		"dec%"		},
@@ -465,7 +465,7 @@ static void gnu_put_expression(asm86_t *a, expression_t *e, int deref)
 		fprintf(stderr,
 		"asmconv: internal error, unknown expression operator '%d'\n",
 			e->operator);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 }
 
@@ -484,7 +484,7 @@ void gnu_emit_instruction(asm86_t *a)
 	if (use16()) {
 		fprintf(stderr,
 		"asmconv: the GNU assembler can't translate 8086 code\n");
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	/* Make sure the line number of the line to be emitted is ok. */
@@ -548,11 +548,11 @@ void gnu_emit_instruction(asm86_t *a)
 
 		/* Exceptions, exceptions... */
 		if (a->opcode == CBW) {
-			if (!(a->oaz & OPZ)) p= "cwde";
+			if (!(a->oaz & OPZ)) p= "cwtl";
 			a->oaz&= ~OPZ;
 		}
 		if (a->opcode == CWD) {
-			if (!(a->oaz & OPZ)) p= "cdq";
+			if (!(a->oaz & OPZ)) p= "cltd";
 			a->oaz&= ~OPZ;
 		}
 
@@ -669,6 +669,6 @@ void gnu_emit_instruction(asm86_t *a)
 		fprintf(stderr,
 			"asmconv: internal error, unknown opcode '%d'\n",
 			a->opcode);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 }

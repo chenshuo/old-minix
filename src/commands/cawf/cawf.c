@@ -225,13 +225,14 @@ main(argc, argv)
 	if (mac == 0) {
 
 	    /*
-	     * No macroes - enable Bold, Italic and Roman fonts.
+	     * No macroes - enable Bold, Italic, Roman and Courier fonts.
 	     */
 		for (i = 0; Fcode[i].nm; i++) {
 			switch (Fcode[i].nm) {
 			case 'B':
 			case 'I':
 			case 'R':
+			case 'C':
 				Fcode[i].status = '1';
 			}
 		}

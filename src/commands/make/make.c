@@ -24,6 +24,9 @@
 
 #include "h.h"
 
+/* Files made with a make rule newer than the youngest file. */
+#define NEWER	((time_t) -1 < 0 ? (time_t) LONG_MAX : (time_t) -1)
+
 static bool  execflag;
 
 /*
@@ -68,7 +71,7 @@ char *shell;
 #ifdef unix
 /*
  *    Make a file look very outdated after an error trying to make it.
- *    This keeps hard links intact.  (kjb)
+ *    Don't remove, this keeps hard links intact.  (kjb)
  */
 int makeold(name) char *name;
 {
@@ -390,7 +393,7 @@ struct name *np;
   }
   if (r < 0) {
 	if (errno != ENOENT)
-		fatal("Can't open %s; error %d", np->n_name, errno);
+		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
   } else {
@@ -418,12 +421,12 @@ struct name *np;
 
   if ((fd = open(np->n_name, 0)) < 0) {
 	if (errno != ER_NOTF)
-		fatal("Can't open %s; error %02x", np->n_name, errno);
+		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
   }
   else if (getstat(fd, &info) < 0)
-	fatal("Can't getstat %s; error %02x", np->n_name, errno);
+	fatal("Can't getstat %s: %s", np->n_name, errno);
   else {
 	np->n_time = info.st_mod;
 	np->n_flag |= N_EXISTS;
@@ -437,12 +440,12 @@ struct name *np;
 
   if ((fd = open(np->n_name, 0)) < 0) {
   if (errno != E_PNNF)
-		fatal("Can't open %s; error %02x", np->n_name, errno);
+		fatal("Can't open %s: %s", np->n_name, errno);
 
 	np->n_time = 0L;
   }
   else if (getmdate(fd, &info) < 0)
-	fatal("Can't getstat %s; error %02x", np->n_name, errno);
+	fatal("Can't getstat %s: %s", np->n_name, errno);
   else {
 	np->n_time = cnvtime(&info);
 	np->n_flag |= N_EXISTS;
@@ -584,18 +587,18 @@ int          level;
      time_t t;
 
      t = np->n_time;
-     time(&np->n_time);
+     np->n_time = NEWER;
      return (t < dtime);
   }
   else if ((np->n_time < dtime || !( np->n_flag & N_EXISTS))
                && !(np->n_flag & N_DOUBLE)) {
      execflag = FALSE;
      make1(np, (struct line *)0, qdp, basename, inputname); /* free()'s qdp */
-     time(&np->n_time);
+     np->n_time = NEWER;
      if ( execflag) np->n_flag |= N_EXEC;
   }
   else if ( np->n_flag & N_EXEC ) {
-     time(&np->n_time);
+     np->n_time = NEWER;
   }
 
   if (dbginfo) {

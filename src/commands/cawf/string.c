@@ -280,6 +280,7 @@ Str2word(s, len)
 	for (; len > 0; len--, s++) {
 		switch (Font[0]) {
 		case 'B':
+		case 'C':
 			if (Fontctl == 0) {
 				if ((Wordx + 5) >= MAXLINE) {
 word_too_long:
@@ -294,7 +295,7 @@ word_too_long:
 				Word[Wordx++] = Trtbl[(int)*s];
 				break;
 			}
-			if (Fontstat != 'B') {
+			if (Fontstat != Font[0]) {
 				if (Fontstat != 'R')
 					Setroman();
 				if ((Wordx + Fstr.bl) >= MAXLINE)
@@ -304,7 +305,7 @@ word_too_long:
 						Word[Wordx++] = Fstr.b[i];
 					}
 				}
-				Fontstat = 'B';
+				Fontstat = Font[0];
 			}
 			if ((Wordx + 1) >= MAXLINE)
 				goto word_too_long;

@@ -40,14 +40,12 @@ MAKE	= exec make -$(MAKEFLAGS) install
 
 all:	bin \
 	bin/add_route \
-	bin/ascii \
 	bin/at \
 	bin/atrun \
 	bin/backup \
 	bin/badblocks \
 	bin/banner \
 	bin/basename \
-	bin/btoa \
 	bin/cal \
 	bin/calendar \
 	bin/cat \
@@ -74,13 +72,11 @@ all:	bin \
 	bin/dhrystone \
 	bin/diff \
 	bin/dirname \
-	bin/diskcheck \
-	bin/diskusage \
 	bin/du \
-	bin/dw \
 	bin/echo \
 	bin/ed \
 	bin/eject \
+	bin/env \
 	bin/expand \
 	bin/expr \
 	bin/factor \
@@ -88,11 +84,11 @@ all:	bin \
 	bin/file \
 	bin/find \
 	bin/finger \
+	bin/fix \
 	bin/fold \
 	bin/fortune \
 	bin/fsck \
 	bin/fsck1 \
-	bin/gather \
 	bin/getty \
 	bin/gomoku \
 	bin/grep \
@@ -105,7 +101,6 @@ all:	bin \
 	bin/in.fingerd \
 	bin/in.rld \
 	bin/in.rshd \
-	bin/inodes \
 	bin/install \
 	bin/irdpd \
 	bin/isoread \
@@ -121,7 +116,6 @@ all:	bin \
 	bin/ls \
 	bin/mail \
 	bin/man \
-	bin/men \
 	bin/mesg \
 	bin/mkdir \
 	bin/mkfifo \
@@ -130,21 +124,16 @@ all:	bin \
 	bin/mkproto \
 	bin/modem \
 	bin/mount \
-	bin/mref \
 	bin/mt \
-	bin/ncheck \
 	bin/nm \
 	bin/nonamed \
 	bin/od \
 	bin/passwd \
 	bin/paste \
-	bin/pathchk \
 	bin/ping \
 	bin/pr \
 	bin/pr_routes \
 	bin/prep \
-	bin/pretty \
-	bin/printenv \
 	bin/printroot \
 	bin/proto \
 	bin/pwd \
@@ -153,17 +142,15 @@ all:	bin \
 	bin/rcp \
 	bin/readall \
 	bin/readfs \
-	bin/recover \
 	bin/remsync \
-	bin/rev \
 	bin/rlogin \
 	bin/rmdir \
-	bin/roff \
 	bin/rsh \
 	bin/sed \
 	bin/shar \
 	bin/size \
 	bin/sleep \
+	bin/slip \
 	bin/sort \
 	bin/split \
 	bin/strings \
@@ -185,8 +172,6 @@ all:	bin \
 	bin/time \
 	bin/touch \
 	bin/tr \
-	bin/traverse \
-	bin/treecmp \
 	bin/tsort \
 	bin/ttt \
 	bin/tty \
@@ -194,17 +179,14 @@ all:	bin \
 	bin/uname \
 	bin/unexpand \
 	bin/uniq \
-	bin/unshar \
 	bin/update \
 	bin/uud \
 	bin/uue \
 	bin/vol \
 	bin/wc \
-	bin/whatsnew \
 	bin/which \
 	bin/who \
 	bin/whoami \
-	bin/width \
 	bin/write \
 	bin/xargs \
 	bin/yes \
@@ -214,10 +196,6 @@ bin:
 
 bin/add_route:	add_route.c
 	$(CCLD) -o $@ add_route.c
-	install -S 4kw $@
-
-bin/ascii:	ascii.c
-	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
 bin/at:	at.c
@@ -241,10 +219,6 @@ bin/banner:	banner.c
 	install -S 4kw $@
 
 bin/basename:	basename.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/btoa:	btoa.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -352,21 +326,9 @@ bin/dirname:	dirname.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/diskcheck:	diskcheck.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/diskusage:	diskusage.c
-	$(CCLD) -o $@ $?
-	install -S 25kw $@
-
 bin/du:	du.c
 	$(CCLD) -o $@ $?
 	install -S 16kw $@
-
-bin/dw:	dw.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/echo:	echo.c
 	$(CCLD) -o $@ $?
@@ -377,6 +339,10 @@ bin/ed:	ed.c
 	install -S 32kw $@
 
 bin/eject:	eject.c
+	$(CCLD) -o $@ $?
+	install -S 4kw $@
+
+bin/env:	env.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -408,6 +374,10 @@ bin/finger:	finger.c
 	$(CCLD) -m -o $@ finger.c
 	install -S 8kw $@
 
+bin/fix:	fix.c
+	$(CCLD) -m -o $@ fix.c
+	install -S 32kw $@
+
 bin/fold:	fold.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -423,10 +393,6 @@ bin/fsck:	fsck.c
 bin/fsck1:	fsck1.c
 	$(CCLD) -m -o $@ $?
 	install -S 32kw $@
-
-bin/gather:	gather.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/getty:	getty.c /usr/include/minix/config.h
 	$(CCLD) -o $@ getty.c
@@ -474,10 +440,6 @@ bin/in.rld:	in.rld.c
 
 bin/in.rshd:	in.rshd.c
 	$(CCLD) -o $@ in.rshd.c
-	install -S 4kw $@
-
-bin/inodes:	inodes.c
-	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
 bin/install:	install.c
@@ -540,10 +502,6 @@ bin/man:	man.c
 	$(CCLD) -o $@ $?
 	install -S 10kw $@
 
-bin/men:	men.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/mesg:	mesg.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -576,17 +534,9 @@ bin/mount:	mount.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/mref:	mref.c
-	$(CCLD) -o $@ $?
-	install -S 8kw $@
-
 bin/mt:	mt.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
-
-bin/ncheck:	ncheck.c
-	$(CCLD) -o $@ $?
-	install -S 20kw $@
 
 bin/nm:	nm.c
 	$(CCLD) -o $@ $?
@@ -608,10 +558,6 @@ bin/paste:	paste.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/pathchk:	pathchk.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/ping:	ping.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -625,14 +571,6 @@ bin/pr_routes:	pr_routes.c
 	install -S 4kw $@
 
 bin/prep:	prep.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/pretty:	pretty.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/printenv:	printenv.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
@@ -668,17 +606,9 @@ bin/readfs:	readfs.c
 	$(CCLD) -o $@ $?
 	install -S 25kw $@
 
-bin/recover:	recover.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/remsync:	remsync.c
 	$(CCLD) -o $@ $?
 	install -S 256k $@
-
-bin/rev:	rev.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
 
 bin/rlogin:	rlogin.c
 	$(CCLD) -o $@ -m $?
@@ -687,10 +617,6 @@ bin/rlogin:	rlogin.c
 bin/rmdir:	rmdir.c
 	$(CCLD) -o $@ $?
 	install -S 15kw $@
-
-bin/roff:	roff.c
-	$(CCLD) -m -o $@ $?
-	install -S 8kw $@
 
 bin/rsh:	rsh.c
 	$(CCLD) -o $@ rsh.c
@@ -711,6 +637,10 @@ bin/size:	size.c
 bin/sleep:	sleep.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
+
+bin/slip:	slip.c
+	$(CCLD) -o $@ $?
+	install -S 20k $@
 
 bin/sort:	sort.c
 	$(CCLD) -o $@ $?
@@ -796,14 +726,6 @@ bin/tr:	tr.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/traverse:	traverse.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
-bin/treecmp:	treecmp.c
-	$(CCLD) -o $@ $?
-	install -S 30kw $@
-
 bin/tsort:	tsort.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -832,10 +754,6 @@ bin/uniq:	uniq.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/unshar:	unshar.c
-	$(CCLD) -o $@ $?
-	install -S 10kw $@
-
 bin/update:	update.c
 	$(CCLD) -o $@ $?
 	install -S 1kw $@
@@ -856,10 +774,6 @@ bin/wc:	wc.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/whatsnew:	whatsnew.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/which:	which.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
@@ -872,16 +786,12 @@ bin/whoami:	whoami.c
 	$(CCLD) -o $@ $?
 	install -S 4kw $@
 
-bin/width:	width.c
-	$(CCLD) -o $@ $?
-	install -S 4kw $@
-
 bin/write:	write.c
 	$(CCLD) -o $@ $?
 
 bin/xargs:	xargs.c
 	$(CCLD) -o $@ $?
-	install -S 4kw $@
+	install -S 16kw $@
 
 bin/yes:	yes.c
 	$(CCLD) -o $@ $?
@@ -889,7 +799,6 @@ bin/yes:	yes.c
 
 install:	bin \
 	/usr/bin/add_route \
-	/usr/bin/ascii \
 	/usr/bin/at \
 	/usr/bin/atrun \
 	/usr/bin/backup \
@@ -897,7 +806,6 @@ install:	bin \
 	/usr/bin/badblocks \
 	/usr/bin/banner \
 	/usr/bin/basename \
-	/usr/bin/btoa \
 	/usr/bin/cal \
 	/usr/bin/calendar \
 	/usr/bin/cat \
@@ -932,13 +840,11 @@ install:	bin \
 	/usr/bin/dhrystone \
 	/usr/bin/diff \
 	/usr/bin/dirname \
-	/usr/bin/diskcheck \
-	/usr/bin/diskusage \
 	/usr/bin/du \
-	/usr/bin/dw \
 	/usr/bin/echo \
 	/usr/bin/ed \
 	/usr/bin/eject \
+	/usr/bin/env \
 	/usr/bin/expand \
 	/usr/bin/expr \
 	/usr/bin/factor \
@@ -946,11 +852,11 @@ install:	bin \
 	/usr/bin/file \
 	/usr/bin/find \
 	/usr/bin/finger \
+	/usr/bin/fix \
 	/usr/bin/fold \
 	/usr/bin/fortune \
 	/usr/bin/fsck \
 	/usr/bin/fsck1 \
-	/usr/bin/gather \
 	/usr/bin/getty \
 	/usr/bin/gomoku \
 	/usr/bin/grep \
@@ -963,7 +869,6 @@ install:	bin \
 	/usr/bin/in.fingerd \
 	/usr/bin/in.rld \
 	/usr/bin/in.rshd \
-	/usr/bin/inodes \
 	/usr/bin/install \
 	/usr/bin/irdpd \
 	/usr/bin/isoread \
@@ -972,6 +877,7 @@ install:	bin \
 	/usr/bin/join \
 	/usr/bin/kill \
 	/usr/bin/last \
+		/usr/bin/uptime \
 	/usr/bin/leave \
 	/usr/bin/life \
 	/usr/bin/login \
@@ -981,7 +887,6 @@ install:	bin \
 	/usr/bin/ls \
 	/usr/bin/mail \
 	/usr/bin/man \
-	/usr/bin/men \
 	/usr/bin/mesg \
 	/usr/bin/mkdir \
 	/usr/bin/mkfifo \
@@ -990,9 +895,7 @@ install:	bin \
 	/usr/bin/mkproto \
 	/usr/bin/modem \
 	/usr/bin/mount \
-	/usr/bin/mref \
 	/usr/bin/mt \
-	/usr/bin/ncheck \
 	/usr/bin/nm \
 	/usr/bin/nonamed \
 	/usr/bin/od \
@@ -1000,13 +903,10 @@ install:	bin \
 		/usr/bin/chfn \
 		/usr/bin/chsh \
 	/usr/bin/paste \
-	/usr/bin/pathchk \
 	/usr/bin/ping \
 	/usr/bin/pr \
 	/usr/bin/pr_routes \
 	/usr/bin/prep \
-	/usr/bin/pretty \
-	/usr/bin/printenv \
 	/usr/bin/printroot \
 	/usr/bin/proto \
 	/usr/bin/pwd \
@@ -1015,17 +915,15 @@ install:	bin \
 	/usr/bin/rcp \
 	/usr/bin/readall \
 	/usr/bin/readfs \
-	/usr/bin/recover \
 	/usr/bin/remsync \
-	/usr/bin/rev \
 	/usr/bin/rlogin \
 	/usr/bin/rmdir \
-	/usr/bin/roff \
 	/usr/bin/rsh \
 	/usr/bin/sed \
 	/usr/bin/shar \
 	/usr/bin/size \
 	/usr/bin/sleep \
+	/usr/bin/slip \
 	/usr/bin/sort \
 	/usr/bin/split \
 	/usr/bin/strings \
@@ -1048,8 +946,6 @@ install:	bin \
 	/usr/bin/time \
 	/usr/bin/touch \
 	/usr/bin/tr \
-	/usr/bin/traverse \
-	/usr/bin/treecmp \
 	/usr/bin/tsort \
 	/usr/bin/ttt \
 	/usr/bin/tty \
@@ -1058,7 +954,6 @@ install:	bin \
 		/usr/bin/arch \
 	/usr/bin/unexpand \
 	/usr/bin/uniq \
-	/usr/bin/unshar \
 	/usr/bin/update \
 	/usr/bin/uud \
 		/usr/bin/uudecode \
@@ -1066,11 +961,9 @@ install:	bin \
 		/usr/bin/uuencode \
 	/usr/bin/vol \
 	/usr/bin/wc \
-	/usr/bin/whatsnew \
 	/usr/bin/which \
 	/usr/bin/who \
 	/usr/bin/whoami \
-	/usr/bin/width \
 	/usr/bin/write \
 	/usr/bin/xargs \
 	/usr/bin/yes \
@@ -1088,9 +981,6 @@ install:	bin \
 	/bin/umount \
 
 /usr/bin/add_route:	bin/add_route
-	install -cs -o bin $? $@
-
-/usr/bin/ascii:	bin/ascii
 	install -cs -o bin $? $@
 
 /usr/bin/at:	bin/at
@@ -1112,9 +1002,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/basename:	bin/basename
-	install -cs -o bin $? $@
-
-/usr/bin/btoa:	bin/btoa
 	install -cs -o bin $? $@
 
 /usr/bin/cal:	bin/cal
@@ -1205,16 +1092,7 @@ install:	bin \
 /usr/bin/dirname:	bin/dirname
 	install -cs -o bin $? $@
 
-/usr/bin/diskcheck:	bin/diskcheck
-	install -cs -o bin $? $@
-
-/usr/bin/diskusage:	bin/diskusage
-	install -cs -o bin $? $@
-
 /usr/bin/du:	bin/du
-	install -cs -o bin $? $@
-
-/usr/bin/dw:	bin/dw
 	install -cs -o bin $? $@
 
 /usr/bin/echo:	bin/echo
@@ -1224,6 +1102,9 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/eject:	bin/eject
+	install -cs -o bin $? $@
+
+/usr/bin/env:	bin/env
 	install -cs -o bin $? $@
 
 /usr/bin/expand:	bin/expand
@@ -1247,6 +1128,9 @@ install:	bin \
 /usr/bin/finger:	bin/finger
 	install -cs -o bin $? $@
 
+/usr/bin/fix:	bin/fix
+	install -cs -o bin $? $@
+
 /usr/bin/fold:	bin/fold
 	install -cs -o bin $? $@
 
@@ -1257,9 +1141,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/fsck1:	bin/fsck1
-	install -cs -o bin $? $@
-
-/usr/bin/gather:	bin/gather
 	install -cs -o bin $? $@
 
 /usr/bin/getty:	bin/getty
@@ -1298,9 +1179,6 @@ install:	bin \
 /usr/bin/in.rshd:	bin/in.rshd
 	install -cs -o bin $? $@
 
-/usr/bin/inodes:	bin/inodes
-	install -cs -o bin $? $@
-
 /usr/bin/install:	bin/install
 	install -cs -o root -m 4755 $? $@
 
@@ -1321,6 +1199,9 @@ install:	bin \
 
 /usr/bin/last:	bin/last
 	install -cs -o bin $? $@
+
+/usr/bin/uptime:	/usr/bin/last
+	install -l $? $@
 
 /usr/bin/leave:	bin/leave
 	install -cs -o bin $? $@
@@ -1349,9 +1230,6 @@ install:	bin \
 /usr/bin/man:	bin/man
 	install -cs -o bin $? $@
 
-/usr/bin/men:	bin/men
-	install -cs -o bin $? $@
-
 /usr/bin/mesg:	bin/mesg
 	install -cs -o bin $? $@
 
@@ -1376,13 +1254,7 @@ install:	bin \
 /usr/bin/mount:	bin/mount
 	install -cs -o root -m 4755 $? $@
 
-/usr/bin/mref:	bin/mref
-	install -cs -o bin $? $@
-
 /usr/bin/mt:	bin/mt
-	install -cs -o bin $? $@
-
-/usr/bin/ncheck:	bin/ncheck
 	install -cs -o bin $? $@
 
 /usr/bin/nm:	bin/nm
@@ -1403,9 +1275,6 @@ install:	bin \
 /usr/bin/paste:	bin/paste
 	install -cs -o bin $? $@
 
-/usr/bin/pathchk:	bin/pathchk
-	install -cs -o bin $? $@
-
 /usr/bin/ping:	bin/ping
 	install -cs -o root -m 4755 $? $@
 
@@ -1416,12 +1285,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/prep:	bin/prep
-	install -cs -o bin $? $@
-
-/usr/bin/pretty:	bin/pretty
-	install -cs -o bin $? $@
-
-/usr/bin/printenv:	bin/printenv
 	install -cs -o bin $? $@
 
 /usr/bin/printroot:	bin/printroot
@@ -1448,22 +1311,13 @@ install:	bin \
 /usr/bin/readfs:	bin/readfs
 	install -cs -o bin $? $@
 
-/usr/bin/recover:	bin/recover
-	install -cs -o root -m 4755 $? $@
-
 /usr/bin/remsync:	bin/remsync
-	install -cs -o bin $? $@
-
-/usr/bin/rev:	bin/rev
 	install -cs -o bin $? $@
 
 /usr/bin/rlogin:	bin/rlogin
 	install -cs -o bin $? $@
 
 /usr/bin/rmdir:	bin/rmdir
-	install -cs -o bin $? $@
-
-/usr/bin/roff:	bin/roff
 	install -cs -o bin $? $@
 
 /usr/bin/rsh:	bin/rsh
@@ -1479,6 +1333,9 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/sleep:	bin/sleep
+	install -cs -o bin $? $@
+
+/usr/bin/slip:	bin/slip
 	install -cs -o bin $? $@
 
 /usr/bin/sort:	bin/sort
@@ -1547,12 +1404,6 @@ install:	bin \
 /usr/bin/tr:	bin/tr
 	install -cs -o bin $? $@
 
-/usr/bin/traverse:	bin/traverse
-	install -cs -o bin $? $@
-
-/usr/bin/treecmp:	bin/treecmp
-	install -cs -o bin $? $@
-
 /usr/bin/tsort:	bin/tsort
 	install -cs -o bin $? $@
 
@@ -1577,9 +1428,6 @@ install:	bin \
 /usr/bin/uniq:	bin/uniq
 	install -cs -o bin $? $@
 
-/usr/bin/unshar:	bin/unshar
-	install -cs -o bin $? $@
-
 /usr/bin/update:	bin/update
 	install -cs -o bin $? $@
 
@@ -1601,9 +1449,6 @@ install:	bin \
 /usr/bin/wc:	bin/wc
 	install -cs -o bin $? $@
 
-/usr/bin/whatsnew:	bin/whatsnew
-	install -cs -o bin $? $@
-
 /usr/bin/which:	bin/which
 	install -cs -o bin $? $@
 
@@ -1611,9 +1456,6 @@ install:	bin \
 	install -cs -o bin $? $@
 
 /usr/bin/whoami:	bin/whoami
-	install -cs -o bin $? $@
-
-/usr/bin/width:	bin/width
 	install -cs -o bin $? $@
 
 /usr/bin/write:	bin/write

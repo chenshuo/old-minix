@@ -311,7 +311,8 @@ int main(argc, argv)
 		exit(1);
 	}
 
-	(void)strcpy(term, (p = getenv("TERM")) ? p : "network");
+	(void)strncpy(term, (p = getenv("TERM")) ? p : "network", sizeof(term));
+	term[sizeof(term)-1]= 0;
 
 	if (tcgetattr(0, &ttyb) == 0) {
 		(void)strcat(term, "/");

@@ -87,8 +87,9 @@ PUBLIC void prot_init()
  * All GDT slots are allocated at compile time.
  */
 
-  phys_bytes code_bytes;
-  phys_bytes data_bytes;
+  extern int etext, end;
+#define code_bytes ((phys_bytes) &etext)	/* Size of code segment. */
+#define data_bytes ((phys_bytes) &end)		/* Size of data segment. */
   struct gate_table_s *gtp;
   struct desctableptr_s *dtp;
   unsigned ldt_selector;
@@ -134,14 +135,13 @@ PUBLIC void prot_init()
 	{ hwint13, VECTOR(13), INTR_PRIVILEGE },
 	{ hwint14, VECTOR(14), INTR_PRIVILEGE },
 	{ hwint15, VECTOR(15), INTR_PRIVILEGE },
+#if _WORD_SIZE == 2
+	{ p_s_call, SYS_VECTOR, USER_PRIVILEGE },	/* 286 system call */
+#else
+	{ s_call, SYS386_VECTOR, USER_PRIVILEGE },	/* 386 system call */
+#endif
+	{ level0_call, LEVEL0_VECTOR, TASK_PRIVILEGE },
   };
-
-  /* This is called early and can't use tables set up by main(). */
-  data_bytes = (phys_bytes) sizes[1] << CLICK_SHIFT;
-  if (sizes[0] == 0)
-	code_bytes = data_bytes;	/* common I&D */
-  else
-	code_bytes = (phys_bytes) sizes[0] << CLICK_SHIFT;
 
   /* Build gdt and idt pointers in GDT where the BIOS expects them. */
   dtp= (struct desctableptr_s *) &gdt[GDT_INDEX];
@@ -193,18 +193,10 @@ PUBLIC void prot_init()
 	int_gate(gtp->vec_nr, (phys_bytes) (vir_bytes) gtp->gate,
 		 PRESENT | INT_GATE_TYPE | (gtp->privilege << DPL_SHIFT));
   }
-  int_gate(SYS_VECTOR, (phys_bytes) (vir_bytes) p_s_call,
-	   PRESENT | (USER_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
-  int_gate(LEVEL0_VECTOR, (phys_bytes) (vir_bytes) level0_call,
-  	   PRESENT | (TASK_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
 
 #if _WORD_SIZE == 4
   /* Complete building of main TSS. */
   tss.iobase = sizeof tss;	/* empty i/o permissions map */
-
-  /* Complete building of interrupt gates. */
-  int_gate(SYS386_VECTOR, (phys_bytes) (vir_bytes) s_call,
-	   PRESENT | (USER_PRIVILEGE << DPL_SHIFT) | INT_GATE_TYPE);
 #endif
 }
 

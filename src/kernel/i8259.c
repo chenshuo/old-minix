@@ -64,6 +64,16 @@ int mine;
 	out_byte(INT2_CTLMASK, CASCADE_IRQ);		/* ICW3 is slave nr */
 	out_byte(INT2_CTLMASK, ICW4_AT);
 	out_byte(INT2_CTLMASK, ~0);			/* IRQ 8-15 mask */
+
+	/* Copy the BIOS vectors from the BIOS to the Minix location, so we
+	 * can still make BIOS calls without reprogramming the i8259s.
+	 */
+#if IRQ0_VECTOR != BIOS_IRQ0_VEC
+	phys_copy(BIOS_VECTOR(0) * 4L, VECTOR(0) * 4L, 8 * 4L);
+#endif
+#if IRQ8_VECTOR != BIOS_IRQ8_VEC
+	phys_copy(BIOS_VECTOR(8) * 4L, VECTOR(8) * 4L, 8 * 4L);
+#endif
   } else {
 	/* Use the BIOS interrupt vectors in real mode.  We only reprogram the
 	 * exceptions here, the interrupt vectors are reprogrammed on demand.

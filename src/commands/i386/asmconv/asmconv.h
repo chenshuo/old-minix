@@ -21,4 +21,4 @@ extern int asm_mode32;	/* In 32 bit mode if true. */
 #define set_use32()	((void) (asm_mode32= 1))
 
 extern int err_code;	/* Exit code. */
-#define set_error()	((void) (err_code= 1))
+#define set_error()	((void) (err_code= EXIT_FAILURE))

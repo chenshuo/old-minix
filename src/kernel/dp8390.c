@@ -39,8 +39,11 @@
  *
  * Created:	before Dec 28, 1992 by Philip Homburg <philip@cs.vu.nl>
  *
- *		Modified to become a generic dp8390 driver.
- * 			March 10, 1994, Philip Homburg
+ * Modified Mar 10 1994 by Philip Homburg
+ *	Become a generic dp8390 driver.
+ *
+ * Modified Dec 20 1996 by G. Falzoni <falzoni@marina.scn.de>
+ *	Added support for 3c503 boards.
  */
 
 #include "kernel.h"
@@ -51,16 +54,18 @@
 #include <net/gen/eth_io.h>
 #include "assert.h"
 INIT_ASSERT
+#if __minix_vmd
+#include "i386/protect.h"
+#else
 #include "protect.h"
+#endif
 #include "dp8390.h"
 #include "proc.h"
-
-#if ENABLE_NETWORKING
-
-#if !__minix_vmd
-#define printW()	(void) 0
-#define debug		0
+#if __minix_vmd
+#include "config.h"
 #endif
+
+#if ENABLE_NETWORKING || __minix_vmd
 
 #define DE_PORT_NR	2
 
@@ -90,6 +95,18 @@ dp_conf_t dp_conf[]=	/* Card addresses */
  * the error: "array size is negative".
  */
 extern int ___dummy[DE_PORT_NR == sizeof(dp_conf)/sizeof(dp_conf[0]) ? 1 : -1];
+
+
+/* Card inits configured out? */
+#if !ENABLE_WDETH
+#define wdeth_probe(dep)	(0)
+#endif
+#if !ENABLE_NE2000
+#define ne_probe(dep)		(0)
+#endif
+#if !ENABLE_3C503
+#define el2_probe(dep)		(0)
+#endif
 
 
 _PROTOTYPE( static void do_vwrite, (message *mp, int from_int,
@@ -152,14 +169,24 @@ void dp8390_task()
 
 	dpeth_tasknr= proc_number(proc_ptr);
 
-	v= 0xFFFF;
+	v= 0;
 	(void) env_parse("ETH_IGN_PROTO", "x", 0, &v, 0x0000L, 0xFFFFL);
 	eth_ign_proto= htons((u16_t) v);
 
 	while (TRUE)
 	{
+#ifdef SHOW_EVENT
+		if (debug)
+			show_event(16, ' ');
+#endif
+
 		if ((r= receive(ANY, &m)) != OK)
 			panic("dp8390: receive failed", r);
+
+#ifdef SHOW_EVENT
+		if (debug)
+			show_event(16, 'E');
+#endif
 
 		switch (m.m_type)
 		{
@@ -453,6 +480,8 @@ message *mp;
 		return;
 	}
 	dep= &de_table[port];
+	strcpy(dep->de_name, "dp8390#0");
+	dep->de_name[7] += port;
 	if (dep->de_mode == DEM_DISABLED)
 	{
 		/* This is the default, try to (re)locate the device. */
@@ -595,6 +624,14 @@ dpeth_t *dep;
 	(*dep->de_initf)(dep);
 
 	dp_confaddr(dep);
+
+	if (debug)
+	{
+		printf("%s: Ethernet address ", dep->de_name);
+		for (i= 0; i < 6; i++)
+			printf("%x%c", dep->de_address.ea_addr[i],
+							i < 5 ? ':' : '\n');
+	}
 
 	/* Initialization of the dp8390 */
 	outb_reg0(dep, DP_CR, CR_PS_P0 | CR_STP | CR_DM_ABORT);
@@ -789,7 +826,7 @@ dpeth_t *dep;
 			if (isr & ISR_TXE)
 			{
 #if DEBUG
- { printf("dp8390: got send Error\n"); }
+ { printf("%s: got send Error\n", dep->de_name); }
 #endif
 				dep->de_stat.ets_sendErr++;
 			}
@@ -805,13 +842,14 @@ dpeth_t *dep;
 				if (tsr & TSR_FU
 					&& ++dep->de_stat.ets_fifoUnder <= 10)
 				{
-					printf("dp8390: fifo underrun\n");
+					printf("%s: fifo underrun\n",
+						dep->de_name);
 				}
 				if (tsr & TSR_CDH
 					&& ++dep->de_stat.ets_CDheartbeat <= 10)
 				{
-					printf(
-					"dp8390: CD heart beat failure\n");
+					printf("%s: CD heart beat failure\n",
+						dep->de_name);
 				}
 				if (tsr & TSR_OWC) dep->de_stat.ets_OWC++;
 			}
@@ -824,7 +862,8 @@ dpeth_t *dep;
 
 				/* Or hardware bug? */
 				printf(
-			"dp8390: transmit interrupt, but not sending\n");
+				"%s: transmit interrupt, but not sending\n",
+					dep->de_name);
 				continue;
 			}
 			dep->de_sendq[sendq_tail].sq_filled= 0;
@@ -857,7 +896,7 @@ dpeth_t *dep;
 		if (isr & ISR_OVW)
 		{
 #if DEBUG
- { printW(); printf("dp8390: got overwrite warning\n"); }
+ { printW(); printf("%s: got overwrite warning\n", dep->de_name); }
 #endif
 		}
 		if (isr & ISR_RDC)
@@ -872,7 +911,7 @@ dpeth_t *dep;
 			 * receive buffer is empty, we reset the dp8390.
 			 */
 #if DEBUG
- { printW(); printf("dp8390: NIC stopped\n"); }
+ { printW(); printf("%s: NIC stopped\n", dep->de_name); }
 #endif
 			dep->de_flags |= DEF_STOPPED;
 			break;
@@ -923,19 +962,18 @@ dpeth_t *dep;
 		next = header.dr_next;
 		if (length < 60 || length > 1514)
 		{
-			printf(
-			"dp8390: packet with strange length arrived: %d\n",
-				length);
+			printf("%s: packet with strange length arrived: %d\n",
+				dep->de_name, (int) length);
 			next= curr;
 		}
 		else if (next < dep->de_startpage || next >= dep->de_stoppage)
 		{
-			printf("dp8390: strange next page\n");
+			printf("%s: strange next page\n", dep->de_name);
 			next= curr;
 		}
 		else if (eth_type == eth_ign_proto)
 		{
-			/* hack: ignore packets of a given protocol, useful
+			/* Hack: ignore packets of a given protocol, useful
 			 * if you share a net with 80 computers sending
 			 * Amoeba FLIP broadcasts.  (Protocol 0x8146.)
 			 */
@@ -943,8 +981,8 @@ dpeth_t *dep;
 			if (first)
 			{
 				first= 0;
-				printW();
-				printf("dropping proto %04x packet\n",
+				printf("%s: dropping proto 0x%04x packets\n",
+					dep->de_name,
 					ntohs(eth_ign_proto));
 			}
 			dep->de_stat.ets_packetR++;
@@ -954,8 +992,8 @@ dpeth_t *dep;
 		{
 			/* This is very serious, so we issue a warning and
 			 * reset the buffers */
-			printf(
-			"dp8390: fifo overrun, resetting receive buffer\n");
+			printf("%s: fifo overrun, resetting receive buffer\n",
+				dep->de_name);
 			dep->de_stat.ets_fifoOver++;
 			next = curr;
 		}
@@ -1543,9 +1581,20 @@ int irq;
 {
 /* DP8390 interrupt, send message and reenable interrupts. */
 
+#ifdef SHOW_EVENT
+	if (debug)
+		show_event(irq, 'E');
+#endif
+
 	assert(irq >= 0 && irq < NR_IRQ_VECTORS);
 	int_pending[irq]= 1;
 	interrupt(dpeth_tasknr);
+
+#ifdef SHOW_EVENT
+	if (debug)
+		show_event(irq, ' ');
+#endif
+
 	return 1;
 }
 
@@ -1567,10 +1616,10 @@ dpeth_t *dep;
 	update_conf(dep, dcp);
 	if (dep->de_mode != DEM_ENABLED)
 			return;
-	if (!wdeth_probe(dep) && !ne_probe(dep))
+	if (!wdeth_probe(dep) && !ne_probe(dep) && !el2_probe(dep))
 	{
-		printf("dp8390: warning no ethernet card found at 0x%x\n", 
-			dep->de_base_port);
+		printf("%s: No ethernet card found at 0x%x\n", 
+			dep->de_name, dep->de_base_port);
 		dep->de_mode= DEM_DISABLED;
 		return;
 	}
@@ -1608,12 +1657,12 @@ dpeth_t *dep;
 dp_conf_t *dcp;
 {
 	long v;
-	static char dpc_fmt[] = "x:d:x";
+	static char dpc_fmt[] = "x:d:x:x";
 
 	/* Get the default settings and modify them from the environment. */
 	dep->de_mode= DEM_SINK;
 	v= dcp->dpc_port;
-	switch (env_parse(dcp->dpc_envvar, dpc_fmt, 0, &v, 0x000L, 0x3FFL)) {
+	switch (env_parse(dcp->dpc_envvar, dpc_fmt, 0, &v, 0x0000L, 0x3FFL)) {
 	case EP_OFF:
 		dep->de_mode= DEM_DISABLED;
 		break;
@@ -1631,8 +1680,12 @@ dp_conf_t *dcp;
 	dep->de_irq= v;
 
 	v= dcp->dpc_mem;
-	(void) env_parse(dcp->dpc_envvar, dpc_fmt, 2, &v, 0L, LONG_MAX);
+	(void) env_parse(dcp->dpc_envvar, dpc_fmt, 2, &v, 0L, 0xFFFFFL);
 	dep->de_linmem= v;
+
+	v= 0;
+	(void) env_parse(dcp->dpc_envvar, dpc_fmt, 3, &v, 0x2000L, 0x8000L);
+	dep->de_ramsize= v;
 }
 
 
@@ -1755,5 +1808,5 @@ void *loc_addr;
 #endif /* ENABLE_NETWORKING */
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/dp8390.c,v 1.4 1995/06/13 08:10:42 philip Exp $
+ * $PchId: dp8390.c,v 1.5 1996/01/19 22:56:35 philip Exp $
  */

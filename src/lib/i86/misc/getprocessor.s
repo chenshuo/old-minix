@@ -28,9 +28,9 @@ new_processor:			! see if high bits are set in saved GDT
 	sub	sp, #6		! space for GDT ptr
 	.data1	0x0F		! Prefix for 286 instruction: sgdt -6(bp)
 	add	-6(bp), ax	! save 3 word GDT ptr (This is NOT an add!)
-	cmpb	-1(bp), #0	! top byte of GDT ptr is zero only for 386
+	cmpb	-1(bp), #0xFF	! top byte of GDT ptr is always FF on 286
 	mov	ax, #286
-	jnz	got_processor
+	je	got_processor
 
 ! 386, 486, 586
 	and	sp, #0xFFFC	! Align stack to avoid AC fault (needed?)

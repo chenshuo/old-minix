@@ -88,7 +88,7 @@ bin/screendump:	screendump.c
 	install -S 8kw $@
 
 bin/sdump:	sdump.c
-	$(CCLD) -o $@ $?
+	$(CCLD) -m -o $@ $?
 	install -S 4kw $@
 
 install:	bin \

@@ -9,7 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 
-extern char **environ;
+extern char ***_penviron;
 
 #define	PTRSIZE	(sizeof(char *))
 
@@ -28,7 +28,7 @@ char *name;
   /* The following cast of argp is not portable.  Doing it right by copying
    * the args to a true array will cost as much as ARG_MAX bytes of space.
    */
-  result = execve(name, (char **) argp, environ);
+  result = execve(name, (char **) argp, *_penviron);
   va_end(argp);
   return(result);
 }
@@ -61,7 +61,7 @@ PUBLIC int execv(name, argv)
 _CONST char *name;
 char * _CONST argv[];
 {
-  return(execve(name, argv, environ));
+  return(execve(name, argv, *_penviron));
 }
 
 

@@ -28,6 +28,7 @@
 #include <time.h>
 #include <utime.h>
 #include <stdio.h>
+#include <limits.h>
 #endif
 
 #ifdef eon
@@ -221,7 +222,7 @@ EXTERN bool  dotouch  INIT(FALSE); /*  Touch files instead of making  */
 EXTERN bool  quest    INIT(FALSE); /*  Question up-to-dateness of file  */
 EXTERN bool  useenv   INIT(FALSE); /*  Env. macro def. overwrite makefile def.*/
 EXTERN bool  dbginfo  INIT(FALSE); /*  Print lot of debugging information */
-EXTERN bool  ambigmac INIT(FALSE); /*  guess undef. ambiguous macros (*,<) */
+EXTERN bool  ambigmac INIT(TRUE);  /*  guess undef. ambiguous macros (*,<) */
 EXTERN struct name  *firstname;
 EXTERN char         *str1;
 EXTERN char         *str2;
@@ -232,6 +233,7 @@ EXTERN int           sizesuffarray INIT(20); /* size of suffarray */
 EXTERN int           maxsuffarray INIT(0);   /* last used entry in suffarray */
 EXTERN struct macro *macrohead;
 EXTERN bool          expmake; /* TRUE if $(MAKE) has been expanded */
+EXTERN char	    *makefile;     /*  The make file  */
 EXTERN int           lineno;
 
 #ifdef tos

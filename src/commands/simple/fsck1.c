@@ -61,7 +61,6 @@
 #define BITSHIFT	  4	/* = log2(#bits(int)) */
 
 #define MAXPRINT	  8	/* max. number of error lines in chkmap */
-#define MAXDIRSIZE     5000	/* max. size of a reasonable directory */
 #define CINDIR		128	/* number of indirect zno's read at a time */
 #define CDIRECT		 16	/* number of dir entries read at a time */
 #define BITMASK		((1 << BITSHIFT) - 1)
@@ -1195,10 +1194,6 @@ d_inode *ip;
   register ok;
 
   setbit(dirmap, (bit_nr) ino);
-  if (ip->i_size > MAXDIRSIZE) {
-	printf("warning: huge directory: ");
-	printpath(2, 1);
-  }
   ok = chkfile(ino, ip);
   if (!(ftop->st_presence & DOT)) {
 	printf(". missing in ");

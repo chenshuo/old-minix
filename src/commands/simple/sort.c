@@ -42,7 +42,12 @@
 #include <limits.h>
 
 #define OPEN_FILES	(OPEN_MAX-4)	/* Nr of open files per process */
-#define MEMORY_SIZE	(20 * 1024)	/* Total mem_size */
+#if __minix_vmd
+#define MEMORY_SIZE	(1024 * 1024)
+#else
+#define MEMORY_SIZE	((10 * sizeof(int)) * 1024)
+#endif
+					/* Total mem_size */
 #define LINE_SIZE	(1024 >> 1)	/* Max length of a line */
 #define IO_SIZE		(2 * 1024)	/* Size of buffered output */
 #define STD_OUT		 1	/* Fd of terminal */
@@ -294,7 +299,7 @@ BOOL beg_fl;			/* Assign beg or end of field */
   }
   if (beg_fl) {			/* Check for end pos */
 	ptr = argptr[*offset];
-	if (ptr && *ptr == '-' && table[*(ptr + 1)] & DIGIT) {
+	if (ptr && *ptr == '-' && ((table[*(ptr + 1)] & DIGIT) || *(ptr + 1) == '.')) {
 		new_field(field, offset, FALSE);
 		if (field->beg_field > field->end_field)
 			error(TRUE, "End field is before start field!", NIL_PTR);
@@ -718,11 +723,11 @@ int nf;
 {
   while (nf-- > 0) {
 	if (separator == '\0') {/* Means ' ' or '\t' */
-		while (table[*str] & BLANK) str++;
 		while (*str != ' ' && *str != '\t' && *str != '\n') str++;
+		while (table[*str] & BLANK) str++;
 	} else {
-		while (*str == separator) str++;
 		while (*str != separator && *str != '\n') str++;
+		if (*str == separator) str++;
 	}
   }
   return str;			/* Return pointer to indicated field */
@@ -1173,7 +1178,7 @@ register int size;
 void mbrk(address)
 char *address;
 {
-  if (brk(address) < 0) error(TRUE, "Cannot reset memory", NIL_PTR);
+  if (brk(address) == -1) error(TRUE, "Cannot reset memory", NIL_PTR);
 }
 
 void catch(dummy)

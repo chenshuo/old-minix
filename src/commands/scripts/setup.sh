@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	setup 3.5 - install a Minix distribution	Author: Kees J. Bot
+#	setup 3.6 - install a Minix distribution	Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra actions.  It needs to use a sed script to change
@@ -235,9 +235,9 @@ mount /dev/$root /mnt || exit
 if [ $thisroot = /dev/ram ]
 then
 	# Running from the RAM disk, root image is on a floppy.
-	mount /dev/fd0 /fd0 || exit
-	cpdir -v /fd0 /mnt || exit
-	umount /dev/fd0 || exit
+	mount $fdroot /root || exit
+	cpdir -v /root /mnt || exit
+	umount $fdroot || exit
 	cpdir -f /dev /mnt/dev		# Copy any extra MAKEDEV'd devices
 else
 	# Running from the floppy itself.

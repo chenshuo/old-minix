@@ -22,7 +22,7 @@ char *ckzv = "Unix file support, 4E(037) 27 Jan 88";
 #ifdef MINIX
 #include <limits.h>
 #endif
-#include <sys/dir.h>			/* Directory structure */
+#include <dirent.h>			/* Directory structure */
 #include <pwd.h>			/* Password file for shell name */
 
 #ifdef CIE
@@ -949,19 +949,8 @@ traverse(pl,sofar,endcur)
 struct path *pl;
 char *sofar,*endcur;
 {
-#ifdef BSD42
  DIR *fd, *opendir();
- struct direct *dirbuf;
-#else
-#ifdef BSD29
- DIR *fd, *opendir();
- struct direct *dirbuf;
-#else
- int fd;
- struct direct dir_entry;
- struct direct *dirbuf = &dir_entry;
-#endif
-#endif
+ struct dirent *dirbuf;
  struct stat statbuf;
  if (pl == NULL)
  {
@@ -990,19 +979,8 @@ char *sofar,*endcur;
  *endcur = '\0';                        	/* end current string */
  if (stat(sofar,&statbuf) == -1) return;   	/* doesn't exist, forget it */
  if ((statbuf.st_mode & S_IFDIR) == 0) return;  /* not a directory, skip */
-#ifdef BSD42			/* ==BSD4 */
  if ((fd = opendir(sofar)) == NULL) return;  	/* can't open, forget it */
  while (dirbuf = readdir(fd))
-#else
-#ifdef BSD29			/* ==BSD29 */
- if ((fd = opendir(sofar)) == NULL) return;  	/* can't open, forget it */
- while (dirbuf = readdir(fd))
-#else
-
- if ((fd = open(sofar,O_RDONLY)) < 0) return;  	/* can't open, forget it */
- while ( read(fd,dirbuf,sizeof dir_entry) )
-#endif
-#endif
 {
   strncpy(nambuf,dirbuf->d_name,MAXNAMLEN); /* Get a null terminated copy!!! */
   nambuf[MAXNAMLEN] = '\0';
@@ -1014,15 +992,7 @@ char *sofar,*endcur;
     traverse(pl -> fwd,sofar,eos+1);
   }
 }
-#ifdef BSD42			/* ==BSD4 */
  closedir(fd);
-#else
-#ifdef BSD29
- closedir(fd);
-#else
- close(fd);
-#endif
-#endif
 }
 
 /*

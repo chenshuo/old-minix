@@ -1,3 +1,3 @@
-# Set timezone for Middle European Time.
+# Set timezone.
 
-TZ='MET-1MET DST,M3.5.0/2,M9.5.0/3'	export TZ
+TZ='GMT0'	export TZ

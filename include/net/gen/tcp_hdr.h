@@ -34,4 +34,12 @@ typedef struct tcp_hdropt
 	u8_t tho_data[TCP_MAX_HDR_SIZE-TCP_MIN_HDR_SIZE];
 } tcp_hdropt_t;
 
+#define TCP_OPT_EOL	0
+#define TCP_OPT_NOP	1
+#define TCP_OPT_MSS	2
+
 #endif /* __SERVER__IP__GEN__TCP_HDR_H__ */
+
+/*
+ * $PchId: tcp_hdr.h,v 1.3 1995/11/17 22:18:13 philip Exp $
+ */

@@ -361,7 +361,7 @@ static mnemonic_t mnemtab[] = {			/* This array is sorted. */
 void bas_parse_init(char *file)
 /* Prepare parsing of an BAS assembly file. */
 {
-	tok_init(file);
+	tok_init(file, '!');
 }
 
 static void zap(void)
@@ -480,7 +480,7 @@ static optype_t optypes[2];
 static int op_idx;
 
 static expression_t *bas_get_operand(int *pn)
-/* get something like: [memory], offset[base+index*scale], or simpler. */
+/* Get something like: [memory], offset[base+index*scale], or simpler. */
 {
 	expression_t *e, *offset, *base, *index;
 	token_t *t;
@@ -751,7 +751,7 @@ static asm86_t *bas_get_statement(void)
 
 	/* Read a machine instruction or pseudo op. */
 	if ((m= search_mnem(t->name)) == nil) {
-		parse_err(1, t, "unknown instruction\n");
+		parse_err(1, t, "unknown instruction '%s'\n", t->name);
 		del_asm86(a);
 		return nil;
 	}

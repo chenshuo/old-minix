@@ -152,7 +152,7 @@ char *argv[];
 			exit(1);
 		}
 		signal(SIGALRM, dummy_handler);
-		alarm(10);
+		alarm(25);
 		result= ioctl(ip_fd, NWIOGIPCONF, &nwio_ipconf);
 		if (result == -1)
 		{

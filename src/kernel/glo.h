@@ -9,6 +9,7 @@
 /* Kernel memory. */
 EXTERN phys_bytes code_base;	/* base of kernel code */
 EXTERN phys_bytes data_base;	/* base of kernel data */
+EXTERN phys_bytes aout;		/* address of a.out headers */
 
 /* Low level interrupt communications. */
 EXTERN struct proc *held_head;	/* head of queue of held-up interrupts */
@@ -26,7 +27,6 @@ EXTERN struct memory mem[NR_MEMS];	/* base and size of chunks of memory */
 EXTERN phys_clicks tot_mem_size;	/* total system memory size */
 
 /* Miscellaneous. */
-extern u16_t sizes[];		/* table filled in by boot monitor */
 extern struct tasktab tasktab[];/* initialized in table.c, so extern here */
 extern char *t_stack[];		/* initialized in table.c, so extern here */
 EXTERN unsigned lost_ticks;	/* clock ticks counted outside the clock task */
@@ -49,16 +49,13 @@ EXTERN int protected_mode;	/* nonzero if running in Intel protected mode*/
 EXTERN int ega;			/* nonzero if console is EGA */
 EXTERN int vga;			/* nonzero if console is VGA */
 
-/* Memory sizes. */
-EXTERN unsigned ext_memsize;	/* initialized by assembler startup code */
-EXTERN unsigned low_memsize;
-
 /* Miscellaneous. */
 EXTERN irq_handler_t irq_table[NR_IRQ_VECTORS];
 EXTERN int irq_use;		/* bit map of all in-use irq's */
 EXTERN reg_t mon_ss, mon_sp;	/* monitor stack */
 EXTERN int mon_return;		/* true if return to the monitor possible */
 EXTERN phys_bytes reboot_code;	/* program for the boot monitor */
+EXTERN union reg86 reg86;	/* registers used in an 8086 interrupt */
 
 /* Variables that are initialized elsewhere are just extern here. */
 extern struct segdesc_s gdt[];	/* global descriptor table for protected mode*/

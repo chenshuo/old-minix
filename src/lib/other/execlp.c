@@ -49,7 +49,7 @@
 
 #define MAX_NUM_ARGS 512	/* maximum number of arguments to execvp */
 
-extern char **environ;		/* environment pointer */
+extern char ***_penviron;	/* environment pointer */
 
 #ifdef _ANSI
 int execlp(const char *file, const char *arg, ...)
@@ -158,12 +158,12 @@ char **argv;
 		arg2[i + 1] = NULL;	/* terminator */
 
 		/* Count the environment pointers. */
-		for (envtop = environ; *envtop != NULL; ) envtop++;
+		for (envtop = *_penviron; *envtop != NULL; ) envtop++;
 
 		/* Try only /bin/sh, like the Minix shell.  Lose if the user
 		 * has a different shell or the command has #!another/shell.
 		 */
-		__execve("/bin/sh", arg2, environ, i + 1, (int)(envtop - environ));
+		__execve("/bin/sh", arg2, *_penviron, i + 1, (int)(envtop - *_penviron));
 
 		/* Oops, no shell?   Give up. */
 		errno = ENOEXEC;

@@ -335,6 +335,13 @@ int flags;
 		output(line);
 	}
 
+	if (all || winsize.ws_ypixel != 0 || winsize.ws_xpixel != 0)
+	{
+		sprintf(line, "%d ypixels %d xpixels", winsize.ws_ypixel, 
+			winsize.ws_xpixel);
+		output(line);
+	}
+
 	if (all)
 	{
 		printf("\n");
@@ -868,15 +875,18 @@ char *opt, *next;
 
   if (match(opt, "sane"))
   {
-	/* Reset all terminal attributes to a sane state, except line speed
-	 * and parity, because it can't be known what their sane values are.
+	/* Reset all terminal attributes to a sane state, except things like
+	 * line speed and parity, because it can't be known what their sane
+	 * values are.
 	 */
 	termios.c_iflag= (TINPUT_DEF & ~(IGNPAR|ISTRIP|INPCK))
 		| (termios.c_iflag & (IGNPAR|ISTRIP|INPCK));
-	termios.c_oflag= TOUTPUT_DEF;
+	termios.c_oflag= (TOUTPUT_DEF & ~(XTABS))
+		| (termios.c_oflag & (XTABS));
 	termios.c_cflag= (TCTRL_DEF & ~(CLOCAL|CSIZE|CSTOPB|PARENB|PARODD))
 		| (termios.c_cflag & (CLOCAL|CSIZE|CSTOPB|PARENB|PARODD));
-	termios.c_lflag= TLOCAL_DEF;
+	termios.c_lflag= (TLOCAL_DEF & ~(ECHOE|ECHOK))
+		| (termios.c_lflag & (ECHOE|ECHOK));
 	if (termios.c_lflag & ICANON) {
 		termios.c_cc[VMIN]= TMIN_DEF;
 		termios.c_cc[VTIME]= TTIME_DEF;
@@ -926,6 +936,32 @@ char *opt, *next;
   		return 1;
   	}
   	winsize.ws_row= num;
+	return 1;
+  }
+
+  if (match(opt, "xpixels"))
+  {
+  	num= strtol(next, &check, 0);
+  	if (check[0] != '\0')
+  	{
+  		fprintf(stderr, "%s: illegal parameter to xpixels: '%s'\n", 
+  							prog_name, next);
+  		return 1;
+  	}
+  	winsize.ws_xpixel= num;
+	return 1;
+  }
+
+  if (match(opt, "ypixels"))
+  {
+  	num= strtol(next, &check, 0);
+  	if (check[0] != '\0')
+  	{
+  		fprintf(stderr, "%s: illegal parameter to ypixels: '%s'\n", 
+  							prog_name, next);
+  		return 1;
+  	}
+  	winsize.ws_ypixel= num;
 	return 1;
   }
 #endif /* __minix */

@@ -1,6 +1,7 @@
 /*	bootimage.c - Load an image and start it.	Author: Kees J. Bot
  *								19 Jan 1992
  */
+#define BIOS		1	/* Can only be used under the BIOS. */
 #define nil 0
 #define _POSIX_SOURCE	1
 #define _MINIX		1
@@ -22,9 +23,6 @@
 #include "image.h"
 #include "boot.h"
 
-void printk(char *fmt, ...);
-#define	printf	printk
-
 #define click_shift	clck_shft	/* 7 char clash with click_size. */
 
 /* Some kernels have extra features: */
@@ -34,6 +32,8 @@ void printk(char *fmt, ...);
 #define K_HIGH   0x0008	/* Load mm, fs, etc. in extended memory. */
 #define K_HDR	 0x0010	/* No need to patch sizes, kernel uses the headers. */
 #define K_RET	 0x0020	/* Returns to the monitor on reboot. */
+#define K_INT86	 0x0040	/* Requires generic INT support. */
+#define K_MEML	 0x0080	/* Pass a list of free memory. */
 
 
 /* Data about the different processes. */
@@ -42,8 +42,7 @@ void printk(char *fmt, ...);
 #define KERNEL		0	/* The first process is the kernel. */
 #define FS		2	/* The third must be fs. */
 
-struct process {
-	char	name[IM_NAME_MAX + 1]; /* Nice to have a name for the thing. */
+struct process {	/* Per-process memory adresses. */
 	u32_t	entry;		/* Entry point. */
 	u32_t	cs;		/* Code segment. */
 	u32_t	ds;		/* Data segment. */
@@ -86,8 +85,50 @@ void pretty_image(char *image)
 
 		if (between('A', c, 'Z')) up= 1;
 
-		putchar(c);
+		putch(c);
 	}
+}
+
+char *params2params(size_t *size)
+/* Repackage the environment settings for the kernel. */
+{
+	char *parms;
+	size_t i, z;
+	environment *e;
+
+	i= 0;
+	z= 64;
+	parms= malloc(z * sizeof(char *));
+
+	for (e= env; e != nil; e= e->next) {
+		char *name= e->name, *value= e->value;
+		size_t n;
+		dev_t dev;
+
+		if (!(e->flags & E_VAR)) continue;
+
+		if (e->flags & E_DEV) {
+			if ((dev= name2dev(value)) == -1) {
+				free(parms);
+				errno= 0;
+				return nil;
+			}
+			value= ul2a10((u16_t) dev);
+		}
+
+		n= i + strlen(name) + 1 + strlen(value) + 1;
+		if (n > z) {
+			z+= n;
+			parms= realloc(parms, z * sizeof(char));
+		}
+		strcpy(parms + i, name);
+		strcat(parms + i, "=");
+		strcat(parms + i, value);
+		i= n;
+	}
+	parms[i++]= 0;	/* End marked with empty string. */
+	*size= i;
+	return parms;
 }
 
 void raw_clear(u32_t addr, u32_t count)
@@ -146,7 +187,7 @@ void patch_sizes(void)
 		initp= procp;	/* The last process must be init. */
 	}
 
-	if (k_flags & K_HIGH) return;	/* Doesn't need FS patching. */
+	if (k_flags & (K_HIGH|K_MEML)) return;	/* Doesn't need FS patching. */
 
 	/* Patch cs and sizes of init into fs data. */
 	put_word(process[FS].data + P_INIT_OFF+0, initp->cs >> click_shift);
@@ -235,7 +276,7 @@ char *get_sector(u32_t vsec)
 	bufsec= sec;
 
 	/* Read a whole track if possible. */
-	while (++count < 32 && (bufsec + count) % sectors != 0) {
+	while (++count < 32 && !dev_boundary(bufsec + count)) {
 		vsec++;
 		if ((sec= (*vir2sec)(vsec)) == -1) break;
 
@@ -305,25 +346,36 @@ int get_segment(u32_t *vsec, long *size, u32_t *addr, u32_t limit)
 	return 1;
 }
 
-void exec_image(char *image, char *params, size_t paramsize)
+void exec_image(char *image)
 /* Get a Minix image into core, patch it up and execute. */
 {
 	int i;
 	struct image_header hdr;
 	char *buf;
-	u32_t vsec= 0;		/* Load this sector from image next. */
-	u32_t addr= MINIXPOS;	/* Put it at this address. */
-	u32_t limit= caddr;	/* But no further than this address. */
-	u32_t n;
-	struct process *procp;	/* Process under construction. */
+	u32_t vsec, addr, limit, aout, n;
+	struct process *procp;		/* Process under construction. */
 	long a_text, a_data, a_bss, a_stack;
-	char *msec, *console;
-	u16_t mode;
 	int banner= 0;
 	long processor= a2l(b_value("processor"));
+	char *params;
+	size_t paramsize;
+	u16_t mode;
+	char *console;
+
+	printf("\nLoading ");
+	pretty_image(image);
+	printf(".\n\n");
+
+	vsec= 0;			/* Load this sector from image next. */
+	addr= mem[0].base;		/* Into this memory block. */
+	limit= mem[0].base + mem[0].size;
+	if (limit > caddr) limit= caddr;
+
+	/* Allocate and clear the area where the headers will be placed. */
+	aout = (limit -= PROCESS_MAX * A_MINHDR);
 
 	/* Clear the area where the headers will be placed. */
-	raw_clear(HEADERPOS, PROCESS_MAX * A_MINHDR);
+	raw_clear(aout, PROCESS_MAX * A_MINHDR);
 
 	/* Read the many different processes: */
 	for (i= 0; vsec < image_size; i++) {
@@ -350,10 +402,6 @@ void exec_image(char *image, char *params, size_t paramsize)
 			vsec+= proc_size(&hdr);
 		}
 
-		/* Place a copy of the header where the kernel can get it. */
-		raw_copy(HEADERPOS + i * A_MINHDR, mon2abs(&hdr.process),
-								A_MINHDR);
-
 		/* Sanity check: an 8086 can't run a 386 kernel. */
 		if (hdr.process.a_cpu == A_I80386 && processor < 386) {
 			printf("You can't run a 386 kernel on this 80%ld\n",
@@ -368,10 +416,16 @@ void exec_image(char *image, char *params, size_t paramsize)
 			addr= align(addr, click_size);
 		}
 
+		/* Save a copy of the header for the kernel, with a_syms
+		 * misused as the address where the process is loaded at.
+		 */
+		hdr.process.a_syms= addr;
+		raw_copy(aout + i * A_MINHDR, mon2abs(&hdr.process), A_MINHDR);
+
 		if (!banner) {
 			printf("    cs      ds    text    data     bss");
-			if (k_flags & K_CHMEM) printf("   stack");
-			putchar('\n');
+			if (k_flags & K_CHMEM) printf("    stack");
+			putch('\n');
 			banner= 1;
 		}
 
@@ -387,7 +441,6 @@ void exec_image(char *image, char *params, size_t paramsize)
 		}
 
 		/* Collect info about the process to be. */
-		strcpy(procp->name, hdr.name);
 		procp->cs= addr;
 
 		/* Process may be page aligned so that the text segment contains
@@ -413,12 +466,12 @@ void exec_image(char *image, char *params, size_t paramsize)
 			a_data+= a_text;
 		}
 
-		printf("%06lx  %06lx%8ld%8ld%8ld",
+		printf("%06lx  %06lx %7ld %7ld %7ld",
 			procp->cs, procp->ds,
 			hdr.process.a_text, hdr.process.a_data,
 			hdr.process.a_bss
 		);
-		if (k_flags & K_CHMEM) printf("%8ld", a_stack);
+		if (k_flags & K_CHMEM) printf(" %8ld", a_stack);
 
 		printf("  %s\n", hdr.name);
 
@@ -455,8 +508,8 @@ void exec_image(char *image, char *params, size_t paramsize)
 
 		if (i == 0 && (k_flags & K_HIGH)) {
 			/* Load the rest in extended memory. */
-			addr= 0x100000L;
-			limit= 0x100000L + get_ext_memsize() * 1024L;
+			addr= mem[1].base;
+			limit= mem[1].base + mem[1].size;
 		}
 	}
 
@@ -468,7 +521,7 @@ void exec_image(char *image, char *params, size_t paramsize)
 
 	/* Check the kernel magic number. */
 	if (get_word(process[KERNEL].data + MAGIC_OFF) != KERNEL_D_MAGIC) {
-		printf("%s magic number is incorrect\n", process[KERNEL].name);
+		printf("Kernel magic number is incorrect\n");
 		errno= 0;
 		return;
 	}
@@ -476,67 +529,38 @@ void exec_image(char *image, char *params, size_t paramsize)
 	/* Patch sizes, etc. into kernel data. */
 	patch_sizes();
 
-	/* Wait a while if delay is set, bail out if ESC typed. */
-	msec= b_value("delay");
-	if (!delay(msec != nil ? msec : "0")) { errno= 0; return; }
+#if !DOS
+	if (!(k_flags & K_MEML)) {
+		/* Copy the a.out headers to the old place. */
+		raw_copy(HEADERPOS, aout, PROCESS_MAX * A_MINHDR);
+	}
+#endif
 
-	/* Reset the screen setting the proper video mode.  This is more
-	 * important than it seems, Minix depends on the mode set right.
-	 */
-	mode= strcmp(b_value("chrome"), "color") == 0 ? COLOR_MODE : MONO_MODE;
-	console= b_value("console");
-	if (console != nil && a2x(console) != 0) mode= a2x(console);
-	reset_video(mode);
+	/* Run the trailer function just before starting Minix. */
+	if (!run_trailer()) { errno= 0; return; }
+
+	/* Translate the boot parameters to what Minix likes best. */
+	if ((params= params2params(&paramsize)) == nil) return;
+
+	/* Set the video to the required mode. */
+	if ((console= b_value("console")) == nil || (mode= a2x(console)) == 0) {
+		mode= strcmp(b_value("chrome"), "color") == 0 ? COLOR_MODE :
+								MONO_MODE;
+	}
+	set_mode(mode);
+
+	/* Close the disk. */
+	(void) dev_close();
 
 	/* Minix. */
 	reboot_code= minix(process[KERNEL].entry, process[KERNEL].cs,
-				process[KERNEL].ds, params, paramsize);
+				process[KERNEL].ds, params, paramsize, aout);
+	free(params);
 
-	/* Boot file system still around? */
+	/* Return from Minix; boot file system still around? */
+	(void) dev_open();
 	fsok= r_super() != 0;
 	errno= 0;
-}
-
-char *params2params(size_t *size)
-/* Repackage the environment settings for the kernel. */
-{
-	char *parms;
-	size_t i, z;
-	environment *e;
-
-	i= 0;
-	z= 64;
-	parms= malloc(z * sizeof(char *));
-
-	for (e= env; e != nil; e= e->next) {
-		char *name= e->name, *value= e->value;
-		size_t n;
-		dev_t dev;
-
-		if (!(e->flags & E_VAR)) continue;
-
-		if (e->flags & E_DEV) {
-			if ((dev= name2dev(value)) == -1) {
-				free(parms);
-				errno= 0;
-				return nil;
-			}
-			value= u2a((u16_t) dev);
-		}
-
-		n= i + strlen(name) + 1 + strlen(value) + 1;
-		if (n > z) {
-			z+= n;
-			parms= realloc(parms, z * sizeof(char));
-		}
-		strcpy(parms + i, name);
-		strcat(parms + i, "=");
-		strcat(parms + i, value);
-		i= n;
-	}
-	parms[i++]= 0;	/* End marked with empty string. */
-	*size= i;
-	return parms;
 }
 
 ino_t latest_version(char *version, struct stat *stp)
@@ -608,7 +632,7 @@ char *select_image(char *image)
 		*version++= '/';
 		*version= 0;
 		if ((image_ino= latest_version(version, &st)) == 0) {
-			printf("There are no images in %s/\n", image);
+			printf("There are no images in %s\n", image);
 			goto bail_out;
 		}
 		r_stat(image_ino, &st);
@@ -627,22 +651,10 @@ void bootminix(void)
  */
 {
 	char *image;
-	char *minixparams;
-	size_t paramsize;
-
-	/* Translate the bootparameters to what Minix likes best. */
-	if ((minixparams= params2params(&paramsize)) == nil) return;
 
 	if ((image= select_image(b_value("image"))) == nil) return;
 
-	/* Things are getting serious, kill the cache! */
-	invalidate_cache();
-
-	printf("\nLoading ");
-	pretty_image(image);
-	printf(".\n\n");
-
-	exec_image(image, minixparams, paramsize);
+	exec_image(image);
 
 	switch (errno) {
 	case ENOEXEC:
@@ -656,9 +668,5 @@ void bootminix(void)
 	case 0:
 		/* No error or error already reported. */;
 	}
-	/* Put all that free memory to use again. */
-	init_cache();
-
-	free(minixparams);
 	free(image);
 }

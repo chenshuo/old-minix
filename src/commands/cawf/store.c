@@ -81,6 +81,7 @@ struct fcode Fcode[] = {		/* font codes */
 	{ 'B',  '\0'},			/* Bold */
 	{ 'I',  '\0'},			/* Italic */
 	{ 'R',  '\0'},			/* Roman */
+	{ 'C',  '\0'},			/* Courier */
 	{ '\0', '\0'}
 };
 int Fill = 0;				/* fill status */

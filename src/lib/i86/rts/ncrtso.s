@@ -6,39 +6,49 @@
 ! simplistic.  We simply check for some magic value, but there is no other
 ! way.
 
-.extern _main, _exit, crtso, __penvp
+.extern _main, _exit, crtso, __penviron, __penvp
 .extern begtext, begdata, begbss, endtext, enddata, endbss
 .text
 begtext:
-crtso:		mov	bx,sp
-		mov	cx,(bx)
-		add	bx,*2
-		mov	ax,cx
-		inc	ax
-		shl	ax,#1
-		add	ax,bx
-		mov	__penvp,ax	! save envp in __envp
+crtso:
+	xor	bp, bp			! clear for backtrace of core files
+	mov	bx, sp
+	mov	ax, (bx)		! argc
+	lea	dx, 2(bx)		! argv
+	lea	cx, 4(bx)
+	add	cx, ax
+	add	cx, ax			! envp
 
-		! Test whether address of environ < address of end.
-		! This is done for separate I&D systems.
-		mov	dx,#_environ
-		cmp	dx,#__end
-		jae	1f
-		cmp	_environ,#21331		! is it our _environ?
-		jne	1f
-		mov	_environ,ax
-1:
-		push	ax	! push environ
-		push	bx	! push argv
-		push	cx	! push argc
-		xor	bp,bp	! clear bp for traceback of core files
-		call	_main
-		add	sp,*6
-		push	ax	! push exit status
-		call	_exit
+	! Test if environ is in the initialized data area and is set to our
+	! magic number.  If so then it is not redefined by the user.
+	mov	bx, #_environ
+	cmp	bx, #__edata		! within initialized data?
+	jae	0f
+	testb	bl, #1			! aligned?
+	jnz	0f
+	cmp	(bx), #0x5353		! is it our _environ?
+	jne	0f
+	mov	__penviron, bx		! _penviron = &environ;
+0:	mov	bx, __penviron
+	mov	(bx), cx		! *_penviron = envp;
+
+	push	cx			! push envp
+	push	dx			! push argv
+	push	ax			! push argc
+
+	call	_main			! main(argc, argv, envp)
+
+	push	ax			! push exit status
+	call	_exit
+
+	hlt				! force a trap if exit fails
 
 .data
 begdata:
-__penvp:	.data2 0
+	.data2	0			! for sep I&D: *NULL == 0
+__penviron:
+	.data4	__penvp			! Pointer to environ, or hidden pointer
+
 .bss
 begbss:
+	.comm	__penvp, 2		! Hidden environment vector

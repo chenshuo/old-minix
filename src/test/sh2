@@ -173,12 +173,12 @@ END
 
 if cmp -s x answer; then : ; else echo Error in prep test 1; fi
 
-#Test printenv
-printenv >x
-if grep HOME  x >/dev/null; then : ; else echo Error in printenv test 1; fi
-if grep PATH  x >/dev/null; then : ; else echo Error in printenv test 2; fi
-if grep SHELL x >/dev/null; then : ; else echo Error in printenv test 3; fi
-if grep USER  x >/dev/null; then : ; else echo Error in printenv test 4; fi
+#Test env
+env >x
+if grep HOME  x >/dev/null; then : ; else echo Error in env test 1; fi
+if grep PATH  x >/dev/null; then : ; else echo Error in env test 2; fi
+if grep SHELL x >/dev/null; then : ; else echo Error in env test 3; fi
+if grep USER  x >/dev/null; then : ; else echo Error in env test 4; fi
 
 #Test pwd
 pwd >Pwd_file
@@ -246,8 +246,7 @@ cat >answer <<END
    2 white
 END
 
-prep x | sort | uniq -c >y1
-sort +1 <y1 >y
+prep x | sort | uniq -c >y
 if cmp -s y answer; then : ; else echo Error in pipeline test 1; fi
 
 cat $f $f $f | sort | uniq >x

@@ -48,7 +48,7 @@ all:		$(PROGRAM)
 
 $(PROGRAM):     $(OBJS) $(LIBS)
 		$(LINKER) $(LDFLAGS) -o $(PROGRAM) $(OBJS) $(LIBS)
-		install -S 32kw $(PROGRAM)
+		install -S 384k $(PROGRAM)
 
 install:	$(BINDIR)/yacc
 

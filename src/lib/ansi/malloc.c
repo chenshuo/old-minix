@@ -4,15 +4,14 @@
 #undef	 DEBUG		/* check assertions */
 #undef	 SLOWDEBUG	/* some extra test loops (requires DEBUG) */
 
+#ifndef DEBUG
+#define NDEBUG
+#endif
+
 #include	<stdlib.h>
 #include	<string.h>
 #include	<errno.h>
-
-#ifdef DEBUG
-#define	ASSERT(b)	if (!(b)) assert_failed();
-#else
-#define	ASSERT(b)	/* empty */
-#endif
+#include	<assert.h>
 
 #if _EM_WSIZE == _EM_PSIZE
 #define	ptrint		int
@@ -52,11 +51,13 @@ static int grow(size_t len)
 {
   register char *p;
 
-  ASSERT(NextSlot((char *)_top) == 0);
-  errno = ENOMEM;
+  assert(NextSlot((char *)_top) == 0);
   if ((char *) _top + len < (char *) _top
-      || (p = (char *)Align((ptrint)_top + len, BRKSIZE)) < (char *) _top 
-      || _brk(p) != 0)
+      || (p = (char *)Align((ptrint)_top + len, BRKSIZE)) < (char *) _top ) {
+	errno = ENOMEM;
+	return(0);
+  }
+  if (_brk(p) != 0)
 	return(0);
   NextSlot((char *)_top) = p;
   NextSlot(p) = 0;
@@ -71,11 +72,14 @@ malloc(size_t size)
   register char *prev, *p, *next, *new;
   register unsigned len, ntries;
 
-  if (size == 0) return NULL;
-  errno = ENOMEM;
+  if (size == 0)
+	return NULL;
+
   for (ntries = 0; ntries < 2; ntries++) {
-	if ((len = Align(size, PTRSIZE) + PTRSIZE) < 2 * PTRSIZE)
+	if ((len = Align(size, PTRSIZE) + PTRSIZE) < 2 * PTRSIZE) {
+		errno = ENOMEM;
 		return NULL;
+	}
 	if (_bottom == 0) {
 		if ((p = _sbrk(2 * PTRSIZE)) == (char *) -1)
 			return NULL;
@@ -86,8 +90,8 @@ malloc(size_t size)
 	}
 #ifdef SLOWDEBUG
 	for (p = _bottom; (next = NextSlot(p)) != 0; p = next)
-		ASSERT(next > p);
-	ASSERT(p == _top);
+		assert(next > p);
+	assert(p == _top);
 #endif
 	for (prev = 0, p = _empty; p != 0; prev = p, p = NextFree(p)) {
 		next = NextSlot(p);
@@ -110,7 +114,7 @@ malloc(size_t size)
 	if (grow(len) == 0)
 		break;
   }
-  ASSERT(ntries != 2);
+  assert(ntries != 2);
   return NULL;
 }
 
@@ -121,9 +125,10 @@ realloc(void *oldp, size_t size)
   char *old = oldp;
   register size_t len, n;
 
-  if (!old) return malloc(size);
-  else if (!size) {
-	free(oldp);
+  if (old == 0)
+	return malloc(size);
+  if (size == 0) {
+	free(old);
 	return NULL;
   }
   len = Align(size, PTRSIZE) + PTRSIZE;
@@ -171,9 +176,10 @@ free(void *ptr)
   register char *prev, *next;
   char *p = ptr;
 
-  if (!p) return;
+  if (p == 0)
+	return;
 
-  ASSERT(NextSlot(p) > p);
+  assert(NextSlot(p) > p);
   for (prev = 0, next = _empty; next != 0; prev = next, next = NextFree(next))
 	if (p < next)
 		break;
@@ -183,25 +189,17 @@ free(void *ptr)
   else
 	_empty = p;
   if (next) {
-	ASSERT(NextSlot(p) <= next);
+	assert(NextSlot(p) <= next);
 	if (NextSlot(p) == next) {		/* merge p and next */
 		NextSlot(p) = NextSlot(next);
 		NextFree(p) = NextFree(next);
 	}
   }
   if (prev) {
-	ASSERT(NextSlot(prev) <= p);
+	assert(NextSlot(prev) <= p);
 	if (NextSlot(prev) == p) {		/* merge prev and p */
 		NextSlot(prev) = NextSlot(p);
 		NextFree(prev) = NextFree(p);
 	}
   }
 }
-
-#ifdef DEBUG
-static assert_failed()
-{
-	write(2, "assert failed in lib/malloc.c\n", 30);
-	abort();
-}
-#endif

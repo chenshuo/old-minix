@@ -137,6 +137,7 @@ PRIVATE struct trans {
   phys_bytes phys;		/* user physical address */
 } wtrans[NR_IOREQS];
 
+PRIVATE int win_tasknr;			/* my task number */
 PRIVATE struct trans *w_tp;		/* to add transfer requests */
 PRIVATE unsigned w_count;		/* number of bytes to transfer */
 PRIVATE unsigned long w_nextblock;	/* next block on disk to transfer */
@@ -195,6 +196,8 @@ PRIVATE struct driver w_dtab = {
 PUBLIC void at_winchester_task()
 {
 /* Set special disk parameters then call the generic main loop. */
+
+  win_tasknr = proc_number(proc_ptr);
 
   init_params();
 
@@ -779,7 +782,7 @@ PRIVATE void w_timeout()
 	printf("%s: timeout on command %02x\n", w_name(), w_command);
 	w_need_reset();
 	w_status = 0;
-	interrupt(WINCHESTER);
+	interrupt(win_tasknr);
   }
 }
 
@@ -880,7 +883,7 @@ int irq;
 /* Disk interrupt, send message to winchester task and reenable interrupts. */
 
   w_status = in_byte(w_wn->base + REG_STATUS);	/* acknowledge interrupt */
-  interrupt(WINCHESTER);
+  interrupt(win_tasknr);
   return 1;
 }
 

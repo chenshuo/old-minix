@@ -48,6 +48,10 @@ int state = ST_IDLE;		/* the IDLE/SUSPEND/RUNNING state flag */
 char *tty_name;			/* name of the line */
 
 
+/* Crude indication of a tty being physically secure: */
+#define securetty(dev)		((unsigned) ((dev) - 0x0400) < (unsigned) 8)
+
+
 void sigcatch(int sig)
 {
 /* Catch the signals that want to catch. */
@@ -189,11 +193,18 @@ void do_getty(char *name, size_t len, char **args)
  */
 void do_login(char *name)
 { 
+  struct stat st;
+
   execl(LOGIN, LOGIN, name, (char *) NULL);
-  /* Failed to exec login.  Impossible, but true.  Try a shell.  (This is
-   * so unlikely that we forget about the security implications.)
+  /* Failed to exec login.  Impossible, but true.  Try a shell, but only if
+   * the terminal is more or less secure, because it will be a root shell.
    */
-  execl(SHELL, SHELL, (char *) NULL);
+  std_out("getty: can't exec ");
+  std_out(LOGIN);
+  std_out("\n");
+  if (fstat(0, &st) == 0 && S_ISCHR(st.st_mode) && securetty(st.st_rdev)) {
+	execl(SHELL, SHELL, (char *) NULL);
+  }
 }
 
 

@@ -26,8 +26,6 @@ all install clean:
 	cd ftp && $(MAKE) $@
 	cd ftpd && $(MAKE) $@
 	cd ibm && $(MAKE) $@
-	cd ic && $(MAKE) $@
-	cd indent && $(MAKE) $@
 	cd kermit && $(MAKE) $@
 	cd m4 && $(MAKE) $@
 	cd make && $(MAKE) $@

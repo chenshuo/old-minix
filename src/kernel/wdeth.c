@@ -12,11 +12,7 @@ INIT_ASSERT
 #include "dp8390.h"
 #include "wdeth.h"
 
-#if ENABLE_NETWORKING
-
-#if !__minix_vmd
-#define debug		0
-#endif
+#if (ENABLE_NETWORKING && ENABLE_WDETH) || __minix_vmd
 
 #define WET_ETHERNET	0x01		/* Ethernet transceiver */
 #define WET_STARLAN	0x02		/* Starlan transceiver */
@@ -110,7 +106,11 @@ dpeth_t *dep;
 	revision= tlb & E_TLB_REV;
 	rambit= tlb & E_TLB_RAM;
 
-	if (revision < 2)
+	if (dep->de_ramsize != 0)
+	{
+		/* size set from boot environment. */
+	}
+	else if (revision < 2)
 	{
 		dep->de_ramsize= 0x2000;			/* 8K */
 		if (we_type & WET_BRD_16BIT)
@@ -183,7 +183,7 @@ dpeth_t *dep;
 			((irr & (E_IRR_IR0|E_IRR_IR1)) >> 5);
 		int_nr= we_int_table[int_indx];
 #if DEBUG
- { printf("wdeth.c: encoded irq= %d\n", int_nr); }
+ { printf("%s: encoded irq= %d\n", dep->de_name, int_nr); }
 #endif
 		if (dep->de_irq & DEI_DEFAULT) dep->de_irq= int_nr;
 
@@ -202,7 +202,7 @@ dpeth_t *dep;
 			((gcr & (E_790_GCR_IR1|E_790_GCR_IR0)) >> 2);
 		int_nr= we_790int_table[int_indx];
 #if DEBUG
- { printf("wdeth.c: encoded irq= %d\n", int_nr); }
+ { printf("%s: encoded irq= %d\n", dep->de_name, int_nr); }
 #endif
 		if (dep->de_irq & DEI_DEFAULT) dep->de_irq= int_nr;
 
@@ -215,20 +215,21 @@ dpeth_t *dep;
 
 	if (!debug)
 	{
-		printf("wdeth: WD80%d3 at %X:%d:%lX\n",
-			we_type & WET_BRD_16BIT ? 1 : 0,
+		printf("%s: WD80%d3 at %X:%d:%lX\n",
+			dep->de_name, we_type & WET_BRD_16BIT ? 1 : 0,
 			dep->de_base_port, dep->de_irq, dep->de_linmem);
 	}
 	else
 	{
-		printf("wdeth: Western Digital %s%s card %s%s", 
+		printf("%s: Western Digital %s%s card %s%s at I/O "
+			"address 0x%X, memory address 0x%lX, "
+			"memory size 0x%X, irq %d\n",
+			dep->de_name,
 			we_type & WET_BRD_16BIT ? "16-bit " : "", 
 			we_type & WET_ETHERNET ? "Ethernet" : 
 			we_type & WET_STARLAN ? "Starlan" : "Network",
 			we_type & WET_INTERF_CHIP ? "with an interface chip " : "",
-			we_type & WET_SLT_16BIT ? "in a 16-bit slot " : "");
-		printf(
-	"at I/O address 0x%X, memory address 0x%lX, memory size 0x%X, irq %d\n",
+			we_type & WET_SLT_16BIT ? "in a 16-bit slot " : "",
 			dep->de_base_port, dep->de_linmem, dep->de_ramsize,
 			dep->de_irq);
 	}
@@ -324,7 +325,7 @@ dpeth_t *dep;
 	{
 		tlb= inb_we(dep, EPL_TLB);
 #if DEBUG
-		printf("wdeth: tlb= 0x%x\n", tlb);
+		printf("%s: tlb= 0x%x\n", dep->de_name, tlb);
 #endif
 		return tlb == E_TLB_EB || tlb == E_TLB_E ||
 			tlb == E_TLB_SMCE || tlb == E_TLB_SMC8216C;
@@ -358,8 +359,8 @@ dpeth_t *dep;
 	return tlb == E_TLB_SMC8216C;
 }
 
-#endif /* ENABLE_NETWORKING */
+#endif /* ENABLE_NETWORKING && ENABLE_WDETH */
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/wdeth.c,v 1.4 1995/01/12 22:03:57 philip Exp $
+ * $PchId: wdeth.c,v 1.6 1996/01/19 22:51:37 philip Exp $
  */

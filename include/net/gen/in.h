@@ -9,6 +9,7 @@ server/ip/gen/in.h
 #define IP_MAX_HDR_SIZE		60		/* 15 * 4 */
 #define IP_VERSION		4
 #define IP_MAX_TTL		255
+#define IP_DEF_MSS		576
 #define IP_MAX_PACKSIZE		40000		/* 8192 */
 	/* Note: this restriction is not part of the IP-protocol but
 	   introduced by this implementation. */
@@ -26,3 +27,7 @@ typedef struct ip_hdropt
 } ip_hdropt_t;
 
 #endif /* __SERVER__IP__GEN__IN_H__ */
+
+/*
+ * $PchId: in.h,v 1.3 1995/11/17 22:27:50 philip Exp $
+ */

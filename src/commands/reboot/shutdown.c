@@ -17,7 +17,7 @@
    -o: obsolete: not implemented
 
   New Minix options:
-   -C: crach check, i.e. is the last wtmp entry a shutdown entry?
+   -C: crash check, i.e. is the last wtmp entry a shutdown entry?
    -x: let the monitor execute the given code
    -R: reset the system
  */
@@ -230,10 +230,6 @@ char *argv[];
     write_pid();
   }
 
-  if (wait_time - 600 > 0) {
-    sleep (wait_time-600);
-    wait_time -= 600;
-  }
   for (;;) {
     if (wait_time <= 5 * 60 && !nologin && !now) {
       close(creat(NOLOGIN,00644));
@@ -413,7 +409,8 @@ int crash_check()
 
   crashed = (lseek(fd, - (off_t) sizeof(last), SEEK_END) == -1
     || read(fd, (void *) &last, sizeof(last)) != sizeof(last)
-    || last.ut_line[0] != '~');
+    || last.ut_line[0] != '~'
+    || strncmp(last.ut_user, "shutdown", sizeof(last.ut_user)));
   close(fd);
   return crashed;
 }

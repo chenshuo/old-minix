@@ -203,7 +203,7 @@ message *m_ptr;			/* pointer to read or write message */
 	/* Find a memory chunk big enough for the RAM disk. */
 	memp= &mem[NR_MEMS];
 	while ((--memp)->size < size) {
-		if (memp == mem) panic("RAM disk is too big", NO_NUM);
+		if (memp == mem) panic("Not enough memory for RAM disk",NO_NUM);
 	}
 	base = memp->base;
 	memp->base += size;

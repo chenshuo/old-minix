@@ -1,5 +1,7 @@
 /*
 eth.h
+
+Copyright 1995 Philip Homburg
 */
 
 #ifndef ETH_H
@@ -9,6 +11,7 @@ eth.h
 	NWEO_DI_PROMISC | NWEO_REMANY | NWEO_RWDATALL)
 
 #define ETH0	0	/* port number of ethernet port 0 */
+#define ETH1	1	/* port number of ethernet port 1 */
 
 #define eth_addrcmp(a,b) (memcmp((_VOIDSTAR)&a, (_VOIDSTAR)&b, \
 	sizeof(a)))
@@ -21,14 +24,17 @@ struct acc;
 
 void eth_init ARGS(( void ));
 int eth_open ARGS(( int port, int srfd,
-	struct acc *(*get_userdata)(int fd, size_t offset,size_t count, 
-		int for_ioctl),
-	int (*put_userdata)(int fd, size_t offset, struct acc *data, 
-		int for_ioctl) ));
-int eth_ioctl ARGS(( int fd, int req));
+	get_userdata_t get_userdata, put_userdata_t put_userdata,
+	put_pkt_t put_pkt ));
+int eth_ioctl ARGS(( int fd, ioreq_t req));
 int eth_read ARGS(( int port, size_t count ));
 int eth_write ARGS(( int port, size_t count ));
 int eth_cancel ARGS(( int fd, int which_operation ));
 void eth_close ARGS(( int fd ));
+int eth_send ARGS(( int port, struct acc *data, size_t data_len ));
 
 #endif /* ETH_H */
+
+/*
+ * $PchId: eth.h,v 1.6 1996/05/07 20:49:07 philip Exp $
+ */

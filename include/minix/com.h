@@ -30,7 +30,7 @@
 #	define OPTIONAL_IO 16	/* modifier to DEV_* codes within vector */
 #	define SUSPEND	 -998	/* used in interrupts when tty has no data */
 
-#define DL_ETH		(CDROM - ENABLE_NETWORKING)
+#define DL_ETH		(DOSDSK - ENABLE_NETWORKING)
 				/* networking task */
 
 /* Message type for data link layer reqests. */
@@ -71,6 +71,9 @@
 #	define NW_WRITE		DEV_WRITE
 #	define NW_IOCTL		DEV_IOCTL
 #	define NW_CANCEL	CANCEL
+
+#define DOSDSK		(CDROM - ENABLE_DOSDSK)
+				/* DOS virtual disk device task */
 
 #define CDROM		(AUDIO - ENABLE_CDROM)
 				/* cd-rom device task */

@@ -113,7 +113,7 @@ PRIVATE void mm_init()
   register int proc_nr;
   register struct mproc *rmp;
   register char *sig_ptr;
-  phys_clicks ram_clicks, total_clicks, minix_clicks, free_clicks, dummy;
+  phys_clicks ram_clicks, total_clicks, minix_clicks, free_clicks;
   message mess;
   struct mem_map kernel_map[NR_SEGS];
   int mem;
@@ -125,11 +125,10 @@ PRIVATE void mm_init()
   for (sig_ptr = core_sigs; *sig_ptr != 0; sig_ptr++)
 	sigaddset(&core_sset, *sig_ptr);
 
-  /* Get the memory map of the kernel to see how much memory it uses,
-   * including the gap between address 0 and the start of the kernel.
-   */
+  /* Get the memory map of the kernel to see how much memory it uses. */
   sys_getmap(SYSTASK, kernel_map);
-  minix_clicks = kernel_map[S].mem_phys + kernel_map[S].mem_len;
+  minix_clicks = (kernel_map[S].mem_phys + kernel_map[S].mem_len)
+				- kernel_map[T].mem_phys;
 
   /* Initialize MM's tables. */
   for (proc_nr = 0; proc_nr <= INIT_PROC_NR; proc_nr++) {
@@ -156,10 +155,10 @@ PRIVATE void mm_init()
   mem_init(&total_clicks, &free_clicks);
 
   /* Print memory information. */
-  printf("\nMemory size =%5dK   ", click_to_round_k(total_clicks));
-  printf("MINIX =%4dK   ", click_to_round_k(minix_clicks));
-  printf("RAM disk =%5dK   ", click_to_round_k(ram_clicks));
-  printf("Available =%5dK\n\n", click_to_round_k(free_clicks));
+  printf("\nMemory size = %dK   ", click_to_round_k(total_clicks));
+  printf("MINIX = %dK   ", click_to_round_k(minix_clicks));
+  printf("RAM disk = %dK   ", click_to_round_k(ram_clicks));
+  printf("Available = %dK\n\n", click_to_round_k(free_clicks));
 
   /* Tell FS to continue. */
   if (send(FS_PROC_NR, &mess) != OK)

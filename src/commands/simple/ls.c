@@ -1,4 +1,4 @@
-/*	ls 4.1 - List files.				Author: Kees J. Bot
+/*	ls 5.0 - List files.				Author: Kees J. Bot
  *								25 Apr 1989
  *
  * About the amount of bytes for heap + stack under Minix:
@@ -8,13 +8,13 @@
  * usually enough, 40000 is pessimistic.
  */
 
-/* The array _ifmt[] is used in an 'ls -l' to map the type of a file to a
+/* The array l_ifmt[] is used in an 'ls -l' to map the type of a file to a
  * letter.  This is done so that ls can list any future file or device type
  * other than symlinks, without recompilation.  (Yes it's dirty.)
  */
-char _ifmt[] = "0pcCd?bB-?l?s???";
+char l_ifmt[] = "0pcCd?bB-?l?s???";
 
-#define ifmt(mode)	_ifmt[((mode) >> 12) & 0xF]
+#define ifmt(mode)	l_ifmt[((mode) >> 12) & 0xF]
 
 #define nil 0
 #include <stdio.h>
@@ -30,6 +30,7 @@ char _ifmt[] = "0pcCd?bB-?l?s???";
 #include <grp.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <termios.h>
 #include <sys/ioctl.h>
 
@@ -64,13 +65,13 @@ int (*status)(const char *file, struct stat *stp);
 
 /* Some terminals ignore more than 80 characters on a line.  Dumb ones wrap
  * when the cursor hits the side.  Nice terminals don't wrap until they have
- * to print the 81st character.  Wether we like it or not, no column 80.
+ * to print the 81st character.  Whether we like it or not, no column 80.
  */
 int ncols= 79;
 
-#define NSEP	2	/* # spaces between columns. */
+#define NSEP	3	/* # spaces between columns. */
 
-#define MAXCOLS	150	/* Max # of files per line. */
+#define MAXCOLS	128	/* Max # of files per line. */
 
 char *arg0;	/* Last component of argv[0]. */
 int uid, gid;	/* callers id. */
@@ -94,18 +95,16 @@ void *allocate(size_t n)
 	return a;
 }
 
-#define reallocate	rllct	/* Same as realloc under some compilers. */
-
 void *reallocate(void *a, size_t n)
 {
 	if ((a= realloc(a, n)) == nil) heaperr();
 	return a;
 }
 
-char allowed[] = "acdfgilnqrstu1ACFLMRTX";
+char allowed[] = "acdfgilnqrstu1ACDFLMRTX";
 char flags[sizeof(allowed)];
 
-char arg0flag[] = "cfmrtx";	/* These in argv[0] go to upper case. */
+char arg0flag[] = "cdfmrtx";	/* These in argv[0] go to upper case. */
 
 void setflags(char *flgs)
 {
@@ -113,7 +112,7 @@ void setflags(char *flgs)
 
 	while ((c= *flgs++) != 0) {
 		if (strchr(allowed, c) == nil) {
-			fprintf(stderr, "Usage: %s -[%s] [file ...]\n",
+			fprintf(stderr, "Usage: %s [-%s] [file ...]\n",
 				arg0, allowed);
 			exit(1);
 		} else
@@ -231,18 +230,19 @@ void addpath(int *didx, char *name)
 int field = 0;	/* (used to be) Fields that must be printed. */
 		/* (now) Effects triggered by certain flags. */
 
-#define F_INODE		0x001	/* -i */
-#define F_BLOCKS	0x002	/* -s */
-#define F_EXTRA		0x004	/* -X */
-#define F_MODE		0x008	/* -lMX */
-#define F_LONG		0x010	/* -l */
-#define F_GROUP		0x020	/* -g */
-#define F_BYTIME	0x040	/* -tuc */
-#define F_ATIME		0x080	/* -u */
-#define F_CTIME		0x100	/* -c */
-#define F_MARK		0x200	/* -F */
-#define F_TYPE		0x400	/* -T */
-#define F_DIR		0x800	/* -d */
+#define L_INODE		0x0001	/* -i */
+#define L_BLOCKS	0x0002	/* -s */
+#define L_EXTRA		0x0004	/* -X */
+#define L_MODE		0x0008	/* -lMX */
+#define L_LONG		0x0010	/* -l */
+#define L_GROUP		0x0020	/* -g */
+#define L_BYTIME	0x0040	/* -tuc */
+#define L_ATIME		0x0080	/* -u */
+#define L_CTIME		0x0100	/* -c */
+#define L_MARK		0x0200	/* -F */
+#define L_TYPE		0x0400	/* -D */
+#define L_LONGTIME	0x0800	/* -T */
+#define L_DIR		0x1000	/* -d */
 
 struct file {		/* A file plus stat(2) information. */
 	struct file	*next;	/* Lists are made of them. */
@@ -281,7 +281,7 @@ void setstat(struct file *f, struct stat *stp)
 
 #define	PAST	(26*7*24*3600L)	/* Half a year ago. */
 /* Between PAST and FUTURE from now a time is printed, otherwise a year. */
-#define FUTURE	(15*60L)	/* Fifteen minutes. */
+#define FUTURE	( 1*7*24*3600L)	/* One week. */
 
 static char *timestamp(struct file *f)
 /* Transform the right time field into something readable. */
@@ -290,18 +290,25 @@ static char *timestamp(struct file *f)
 	time_t t;
 	static time_t now;
 	static int drift= 0;
-	static char date[] = "Jan 19  2038";
+	static char date[] = "Jan 19 03:14:07 2038";
 	static char month[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
 	t= f->mtime;
-	if (field & F_ATIME) t= f->atime;
-	if (field & F_CTIME) t= f->ctime;
+	if (field & L_ATIME) t= f->atime;
+	if (field & L_CTIME) t= f->ctime;
 
 	tm= localtime(&t);
 	if (--drift < 0) { time(&now); drift= 50; }	/* limit time() calls */
 
+	if (field & L_LONGTIME) {
+		sprintf(date, "%.3s %2d %02d:%02d:%02d %d",
+			month + 3*tm->tm_mon,
+			tm->tm_mday,
+			tm->tm_hour, tm->tm_min, tm->tm_sec,
+			1900 + tm->tm_year);
+	} else
 	if (t < now - PAST || t > now + FUTURE) {
-		sprintf(date, "%.3s %2d  %4d",
+		sprintf(date, "%.3s %2d  %d",
 			month + 3*tm->tm_mon,
 			tm->tm_mday,
 			1900 + tm->tm_year);
@@ -325,7 +332,7 @@ char *permissions(struct file *f)
 	 * "standardized" these numbers are.
 	 */
 
-	if (field & F_EXTRA) {		/* Short style */
+	if (field & L_EXTRA) {		/* Short style */
 		int mode = f->mode, ucase= 0;
 
 		if (uid == f->uid) {	/* What group of bits to use. */
@@ -507,7 +514,7 @@ static void sort(struct file **al)
 	if (!present('f') && *al != nil && (*al)->next != nil) {
 		CMP= namecmp;
 
-		if (!(field & F_BYTIME)) {
+		if (!(field & L_BYTIME)) {
 			/* Sort on name */
 
 			if (present('r')) { rCMP= CMP; CMP= revcmp; }
@@ -516,10 +523,10 @@ static void sort(struct file **al)
 			/* Sort on name first, then sort on time. */
 
 			mergesort(al);
-			if (field & F_CTIME) {
+			if (field & L_CTIME) {
 				CMP= ctimecmp;
 			} else
-			if (field & F_ATIME) {
+			if (field & L_ATIME) {
 				CMP= atimecmp;
 			} else {
 				CMP= mtimecmp;
@@ -530,7 +537,7 @@ static void sort(struct file **al)
 		}
 		/* Separate by file type if so desired. */
 
-		if (field & F_TYPE) {
+		if (field & L_TYPE) {
 			CMP= typecmp;
 			mergesort(al);
 		}
@@ -644,7 +651,7 @@ int mark(struct file *f, int doit)
 {
 	int c;
 
-	if (!(field & F_MARK)) return 0;
+	if (!(field & L_MARK)) return 0;
 
 	switch (f->mode & S_IFMT) {
 	case S_IFDIR:	c= '/'; break;
@@ -669,15 +676,27 @@ int mark(struct file *f, int doit)
 	return c;
 }
 
-int colwidth[MAXCOLS];	/* Need colwidth[i] spaces to print column i. */
-int sizwidth[MAXCOLS];	/* Spaces for the size field in a -X print. */
-int namwidth[MAXCOLS];	/* Name field. */
+/* Width of entire column, and of several fields. */
+enum { W_COL, W_INO, W_BLK, W_NLINK, W_UID, W_GID, W_SIZE, W_NAME, MAXFLDS };
 
-int maxise(int *aw, int w)
-/* Set *aw to the larger of it and w.  Then return it. */
+unsigned char fieldwidth[MAXCOLS][MAXFLDS];
+
+void maxise(unsigned char *aw, int w)
+/* Set *aw to the larger of it and w. */
 {
-	if (w > *aw) *aw= w;
-	return *aw;
+	if (w > *aw) {
+		if (w > UCHAR_MAX) w= UCHAR_MAX;
+		*aw= w;
+	}
+}
+
+int numwidth(unsigned long n)
+/* Compute width of 'n' when printed. */
+{
+	int width= 0;
+
+	do { width++; } while ((n /= 10) > 0);
+	return width;
 }
 
 static int nsp= 0;	/* This many spaces have not been printed yet. */
@@ -691,68 +710,111 @@ void print1(struct file *f, int col, int doit)
 {
 	int width= 0, n;
 	char *p;
+	unsigned char *f1width = fieldwidth[col];
 
 	while (nsp>0) { putchar(' '); nsp--; }/* Fill gap between two columns */
 
-	if (field & F_INODE) {
-		if (doit) printf("%5d ", f->ino); else width+= 6;
+	if (field & L_INODE) {
+		if (doit) {
+			printf("%*d ", f1width[W_INO], f->ino);
+		} else {
+			maxise(&f1width[W_INO], numwidth(f->ino));
+			width++;
+		}
 	}
-	if (field & F_BLOCKS) {
-		if (doit) printf("%4ld ", nblk2k(nblocks(f))); else width+= 5;
+	if (field & L_BLOCKS) {
+		unsigned long nb= nblk2k(nblocks(f));
+		if (doit) {
+			printf("%*lu ", f1width[W_BLK], nb);
+		} else {
+			maxise(&f1width[W_BLK], numwidth(nb));
+			width++;
+		}
 	}
-	if (field & F_MODE) {
+	if (field & L_MODE) {
 		if (doit) {
 			printf("%s ", permissions(f));
 		} else {
-			width+= (field & F_EXTRA) ? 5 : 11;
+			width+= (field & L_EXTRA) ? 5 : 11;
 		}
 	}
-	if (field & F_EXTRA) {
+	if (field & L_EXTRA) {
 		p= cxsize(f);
 		n= strlen(p)+1;
 
 		if (doit) {
-			n= sizwidth[col] - n;
+			n= f1width[W_SIZE] - n;
 			while (n > 0) { putchar(' '); --n; }
 			printf("%s ", p);
 		} else {
-			width+= maxise(&sizwidth[col], n);
+			maxise(&f1width[W_SIZE], n);
 		}
 	}
-	if (field & F_LONG) {
+	if (field & L_LONG) {
 		if (doit) {
-			printf("%2u ", (unsigned) f->nlink);
-			if (!(field & F_GROUP)) {
-				printf("%-8s ", uidname(f->uid));
+			printf("%*u ", f1width[W_NLINK], (unsigned) f->nlink);
+		} else {
+			maxise(&f1width[W_NLINK], numwidth(f->nlink));
+			width++;
+		}
+		if (!(field & L_GROUP)) {
+			if (doit) {
+				printf("%-*s  ", f1width[W_UID],
+							uidname(f->uid));
+			} else {
+				maxise(&f1width[W_UID],
+						strlen(uidname(f->uid)));
+				width+= 2;
 			}
-			printf("%-8s ", gidname(f->gid));
+		}
+		if (doit) {
+			printf("%-*s  ", f1width[W_GID], gidname(f->gid));
+		} else {
+			maxise(&f1width[W_GID], strlen(gidname(f->gid)));
+			width+= 2;
+		}
 
-			switch (f->mode & S_IFMT) {
-			case S_IFBLK:
-			case S_IFCHR:
+		switch (f->mode & S_IFMT) {
+		case S_IFBLK:
+		case S_IFCHR:
 #ifdef S_IFMPB
-			case S_IFMPB:
+		case S_IFMPB:
 #endif
 #ifdef S_IFMPC
-			case S_IFMPC:
+		case S_IFMPC:
 #endif
-				printf("%3d, %3d ",
+			if (doit) {
+				printf("%*d, %3d ", f1width[W_SIZE] - 5,
 					major(f->rdev), minor(f->rdev));
-				break;
-			default:
-				printf("%8ld ", (long) f->size);
+			} else {
+				maxise(&f1width[W_SIZE],
+						numwidth(major(f->rdev)) + 5);
+				width++;
 			}
+			break;
+		default:
+			if (doit) {
+				printf("%*lu ", f1width[W_SIZE],
+						(unsigned long) f->size);
+			} else {
+				maxise(&f1width[W_SIZE], numwidth(f->size));
+				width++;
+			}
+		}
+
+		if (doit) {
 			printf("%s ", timestamp(f));
 		} else {
-			width += (field & F_GROUP) ? 34 : 43;
+			width+= (field & L_LONGTIME) ? 21 : 13;
 		}
 	}
+
 	n= strlen(f->name);
 	if (doit) {
 		printname(f->name);
 		if (mark(f, 1) != 0) n++;
 #ifdef S_IFLNK
-		if ((field & F_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
+		if ((field & L_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
 			char *buf;
 			int r, didx;
 
@@ -768,16 +830,18 @@ void print1(struct file *f, int col, int doit)
 			n+= 4 + r;
 		}
 #endif
-		spaces(namwidth[col] - n);
+		spaces(f1width[W_NAME] - n);
 	} else {
 		if (mark(f, 0) != 0) n++;
 #ifdef S_IFLNK
-		if ((field & F_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
+		if ((field & L_LONG) && (f->mode & S_IFMT) == S_IFLNK) {
 			n+= 4 + (int) f->size;
 		}
 #endif
-		width+= maxise(&namwidth[col], n + NSEP);
-		maxise(&colwidth[col], width);
+		maxise(&f1width[W_NAME], n + NSEP);
+
+		for (n= 1; n < MAXFLDS; n++) width+= f1width[n];
+		maxise(&f1width[W_COL], width);
 	}
 }
 
@@ -818,29 +882,32 @@ int print(struct file *flist, int nplin, int doit)
  */
 {
 	register struct file *f;
-	register int i, totlen;
+	register int col, fld, totlen;
 
 	columnise(flist, nplin);
 
 	if (!doit) {
-		if (nplin==1 && !(field & F_EXTRA))
-			return 1;	/* No need to try 1 column. */
-
-		for (i=0; i<nplin; i++) {
-			colwidth[i]= sizwidth[i]= namwidth[i]= 0;
+		for (col= 0; col < nplin; col++) {
+			for (fld= 0; fld < MAXFLDS; fld++) {
+				fieldwidth[col][fld]= 0;
+			}
 		}
 	}
-	while (--nlines >= 0) {
-		totlen=0;
 
-		for (i=0; i<nplin; i++) {
-			if ((f= filecol[i]) != nil) {
-				filecol[i]= f->next;
-				print1(f, i, doit);
+	while (--nlines >= 0) {
+		totlen= 0;
+
+		for (col= 0; col < nplin; col++) {
+			if ((f= filecol[col]) != nil) {
+				filecol[col]= f->next;
+				print1(f, col, doit);
 			}
-			if (!doit && nplin>1) {
+			if (!doit && nplin > 1) {
 				/* See if this line is not too long. */
-				totlen+= colwidth[i];
+				if (fieldwidth[col][W_COL] == UCHAR_MAX) {
+					return 0;
+				}
+				totlen+= fieldwidth[col][W_COL];
 				if (totlen > ncols+NSEP) return 0;
 			}
 		}
@@ -891,7 +958,7 @@ void listfiles(struct file *flist, enum depth depth, enum state state)
 	}
 	sort(&flist);
 
-	if (depth == SUBMERGED && (field & (F_BLOCKS | F_LONG))) {
+	if (depth == SUBMERGED && (field & (L_BLOCKS | L_LONG))) {
 		printf("total %ld\n", nblk2k(countblocks(flist)));
 	}
 
@@ -995,18 +1062,20 @@ int main(int argc, char **argv)
 
 	if (SUPER_ID == 0 || present('a')) setflags("A");
 
-	if (present('i')) field|= F_INODE;
-	if (present('s')) field|= F_BLOCKS;
-	if (present('M')) field|= F_MODE;
-	if (present('X')) field|= F_EXTRA|F_MODE;
-	if (present('t')) field|= F_BYTIME;
-	if (present('u')) field|= F_ATIME;
-	if (present('c')) field|= F_CTIME;
-	if (present('l')) field= (field | F_MODE | F_LONG) & ~F_EXTRA;
-	if (present('g')) field= (field | F_MODE | F_LONG | F_GROUP) & ~F_EXTRA;
-	if (present('F')) field|= F_MARK;
-	if (present('T')) field|= F_TYPE;
-	if (present('d')) field|= F_DIR;
+	if (present('i')) field|= L_INODE;
+	if (present('s')) field|= L_BLOCKS;
+	if (present('M')) field|= L_MODE;
+	if (present('X')) field|= L_EXTRA | L_MODE;
+	if (present('t')) field|= L_BYTIME;
+	if (present('u')) field|= L_ATIME;
+	if (present('c')) field|= L_CTIME;
+	if (present('l')) field|= L_MODE | L_LONG;
+	if (present('g')) field|= L_MODE | L_LONG | L_GROUP;
+	if (present('F')) field|= L_MARK;
+	if (present('D')) field|= L_TYPE;
+	if (present('T')) field|= L_MODE | L_LONG | L_LONGTIME;
+	if (present('d')) field|= L_DIR;
+	if (field & L_LONG) field&= ~L_EXTRA;
 
 #ifdef S_IFLNK
 	status= present('L') ? stat : lstat;
@@ -1024,10 +1093,10 @@ int main(int argc, char **argv)
 	depth= SURFACE;
 
 	if (*argv == nil) {
-		if (!(field & F_DIR)) depth= SURFACE1;
+		if (!(field & L_DIR)) depth= SURFACE1;
 		pushfile(aflist, newfile("."));
 	} else {
-		if (argv[1] == nil && !(field & F_DIR)) depth= SURFACE1;
+		if (argv[1] == nil && !(field & L_DIR)) depth= SURFACE1;
 
 		do {
 			pushfile(aflist, newfile(*argv++));
@@ -1035,6 +1104,6 @@ int main(int argc, char **argv)
 		} while (*argv!=nil);
 	}
 	listfiles(flist, depth,
-		(field & F_DIR) ? BOTTOM : present('R') ? FLOATING : SINKING);
+		(field & L_DIR) ? BOTTOM : present('R') ? FLOATING : SINKING);
 	exit(ex);
 }

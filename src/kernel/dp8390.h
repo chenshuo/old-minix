@@ -73,8 +73,8 @@ Created:	before Dec 28, 1992 by Philip Homburg
 #define CR_PS		0xC0	/* Mask for Page Select              */
 #define CR_PS_P0	0x00	/* Register Page 0                   */
 #define CR_PS_P1	0x40	/* Register Page 1                   */
-#define CR_PS_T0	0x80	/* Test Mode Register Map ??         */
-#define CR_SP_T1	0xC0	/* Test Mode Register Map ??         */
+#define CR_PS_P2	0x80	/* Register Page 2                   */
+#define CR_PS_T1	0xC0	/* Test Mode Register Map            */
 
 /* Bits in dp_isr */
 #define ISR_MASK	0x3F
@@ -215,6 +215,7 @@ typedef struct dpeth
 	dp_initf_t de_initf; 
 	dp_stopf_t de_stopf; 
 	int de_prog_IO;
+	char de_name[sizeof("dp8390#n")];
 
 	/* The initf function fills the following fields. Only cards that do
 	 * programmed I/O fill in the de_pata_port field.
@@ -276,7 +277,10 @@ typedef struct dpeth
 #define DEM_SINK	0x1
 #define DEM_ENABLED	0x2
 
+#if !__minix_vmd
+#define debug		0	/* Standard Minix lacks debug variable */
+#endif
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/dp8390.h,v 1.4 1995/06/12 18:21:01 philip Exp $
+ * $PchId: dp8390.h,v 1.5 1995/12/22 08:53:00 philip Exp $
  */

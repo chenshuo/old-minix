@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#	mkdist 2.3 - Make a Minix distribution		Author: Kees J. Bot
+#	mkdist 2.5 - Make a Minix distribution		Author: Kees J. Bot
 #								20 Dec 1994
 # (An external program can use the X_* hooks to add
 # a few extra files and actions.  It needs to use a sed script to change
@@ -30,10 +30,16 @@ bin/cp
 bin/cpdir
 bin/de
 bin/df
+bin/dosdir
+bin/dosread
+bin/doswrite
 bin/edparams
 bin/getty
 bin/grep
 bin/installboot
+bin/isodir
+bin/isoinfo
+bin/isoread
 bin/kill
 bin/ln
 bin/login
@@ -122,12 +128,12 @@ fi
 read ret
 umount /dev/fd$drive 2>/dev/null
 umount /dev/fd${drive}b 2>/dev/null
-mkfs -1 -i 240 /dev/fd$drive 480 || exit
+mkfs -1 -i 272 /dev/fd$drive 480 || exit
 partition -mf /dev/fd$drive 0 81:960 81:480 >/dev/null || exit
 repartition /dev/fd$drive >/dev/null || exit
 mkfs -1 /dev/fd${drive}b || exit
 mount /dev/fd$drive /mnt || exit
-mount /dev/fd${drive}b /minix || exit		# Hide /minix for a moment
+mount /dev/fd${drive}b $rootdir/minix || exit	# Hide /minix for a moment
 cpdir -vx $rootdir /mnt || exit
 install -d -o 0 -g 0 -m 755 /mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/root || exit
@@ -135,8 +141,8 @@ install -d -o 0 -g 0 -m 555 /mnt/mnt || exit
 install -d -o 0 -g 0 -m 555 /mnt/usr || exit
 umount /dev/fd${drive}b || exit			# Unhide /minix
 install -d -o 2 -g 0 -m 755 /mnt/minix || exit
-set `ls -t /minix`				# Install the latest kernel
-install -c /minix/$1 /mnt/minix/`uname -r`.`uname -v` || exit
+set `ls -t $rootdir/minix`			# Install the latest kernel
+install -c $rootdir/minix/$1 /mnt/minix/`uname -r`.`uname -v` || exit
 
 # Change /etc/fstab.
 echo >/mnt/etc/fstab "\

@@ -11,6 +11,7 @@
 #include "kernel.h"
 #include <signal.h>
 #include <unistd.h>
+#include <a.out.h>
 #include <minix/callnr.h>
 #include <minix/com.h>
 #include "proc.h"
@@ -25,7 +26,7 @@ PUBLIC void main()
 
   register struct proc *rp;
   register int t;
-  int sizeindex;
+  int hdrindex;
   phys_clicks text_base;
   vir_clicks text_clicks;
   vir_clicks data_clicks;
@@ -33,6 +34,7 @@ PUBLIC void main()
   reg_t ktsb;			/* kernel task stack base */
   struct memory *memp;
   struct tasktab *ttp;
+  struct exec e_hdr;
 
   /* Initialize the interrupt controller. */
   intr_init(1);
@@ -49,12 +51,15 @@ PUBLIC void main()
         (pproc_addr + NR_TASKS)[t] = rp;        /* proc ptr from number */
   }
 
+  /* Resolve driver selections in the task table. */
+  mapdrivers();
+
   /* Set up proc table entries for tasks and servers.  The stacks of the
    * kernel tasks are initialized to an array in data space.  The stacks
    * of the servers have been added to the data segment by the monitor, so
    * the stack pointer is set to the end of the data segment.  All the
    * processes are in low memory on the 8086.  On the 386 only the kernel
-   * is in low memory, the rest if loaded in extended memory.
+   * is in low memory, the rest is loaded in extended memory.
    */
 
   /* Task stacks. */
@@ -73,25 +78,40 @@ PUBLIC void main()
 		rp->p_reg.sp = ktsb;
 		text_base = code_base >> CLICK_SHIFT;
 					/* tasks are all in the kernel */
-		sizeindex = 0;		/* and use the full kernel sizes */
-		memp = &mem[0];		/* remove from this memory chunk */
+		hdrindex = 0;		/* and use the first a.out header */
 	} else {
-		sizeindex = 2 * t + 2;	/* MM, FS, INIT have their own sizes */
+		hdrindex = 1 + t;	/* MM, FS, INIT follow the kernel */
 	}
-	rp->p_reg.pc = (reg_t) ttp->initial_pc;
-	rp->p_reg.psw = istaskp(rp) ? INIT_TASK_PSW : INIT_PSW;
 
-	text_clicks = sizes[sizeindex];
-	data_clicks = sizes[sizeindex + 1];
+	/* The bootstrap loader has created an array of the a.out headers at
+	 * absolute address 'aout'.
+	 */
+	phys_copy(aout + hdrindex * A_MINHDR, vir2phys(&e_hdr),
+							(phys_bytes) A_MINHDR);
+	text_base = e_hdr.a_syms >> CLICK_SHIFT;
+	text_clicks = (e_hdr.a_text + CLICK_SIZE-1) >> CLICK_SHIFT;
+	if (!(e_hdr.a_flags & A_SEP)) text_clicks = 0;	/* Common I&D */
+	data_clicks = (e_hdr.a_total + CLICK_SIZE-1) >> CLICK_SHIFT;
 	rp->p_map[T].mem_phys = text_base;
 	rp->p_map[T].mem_len  = text_clicks;
 	rp->p_map[D].mem_phys = text_base + text_clicks;
 	rp->p_map[D].mem_len  = data_clicks;
 	rp->p_map[S].mem_phys = text_base + text_clicks + data_clicks;
 	rp->p_map[S].mem_vir  = data_clicks;	/* empty - stack is in data */
-	text_base += text_clicks + data_clicks;	/* ready for next, if server */
-	memp->size -= (text_base - memp->base);
-	memp->base = text_base;			/* memory no longer free */
+
+	/* Remove server memory from the free memory list.  The boot monitor
+	 * promises to put processes at the start of memory chunks.
+	 */
+	for (memp = mem; memp < &mem[NR_MEMS]; memp++) {
+		if (memp->base == text_base) {
+			memp->base += text_clicks + data_clicks;
+			memp->size -= text_clicks + data_clicks;
+		}
+	}
+
+	/* Set initial register values. */
+	rp->p_reg.pc = (reg_t) ttp->initial_pc;
+	rp->p_reg.psw = istaskp(rp) ? INIT_TASK_PSW : INIT_PSW;
 
 	if (t >= 0) {
 		/* Initialize the server stack pointer.  Take it down one word
@@ -102,13 +122,6 @@ PUBLIC void main()
 		rp->p_reg.sp -= sizeof(reg_t);
 	}
 
-#if _WORD_SIZE == 4
-	/* Servers are loaded in extended memory if in 386 mode. */
-	if (t < 0) {
-		memp = &mem[1];
-		text_base = 0x100000 >> CLICK_SHIFT;
-	}
-#endif
 	if (!isidlehardware(t)) lock_ready(rp);	/* IDLE, HARDWARE neveready */
 	rp->p_flags = 0;
 

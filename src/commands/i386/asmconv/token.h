@@ -24,6 +24,6 @@ typedef struct token {
 void set_file(char *file, long line);
 void get_file(char **file, long *line);
 void parse_err(int err, token_t *where, const char *fmt, ...);
-void tok_init(char *file);
+void tok_init(char *file, int comment);
 token_t *get_token(int n);
 void skip_token(int n);

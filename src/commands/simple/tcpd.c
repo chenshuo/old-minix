@@ -41,7 +41,7 @@ char *argv[];
 	int result, child, sig;
 	int tcp_fd, tmp, count;
 	char *arg0, *program, **args;
-	int debug= 0;
+	int debug= 0, err;
 	struct sigaction sa;
 #if PARANOID
 	int log_fd;
@@ -84,7 +84,8 @@ char *argv[];
 
 	if (debug)
 	{
-		fprintf (stderr, "%s: listening to port: %u\n", arg0, port);
+		fprintf (stderr, "%s: listening to port: %u\n",
+			arg0, ntohs(port));
 	}
 
 	program= argv[2];
@@ -95,8 +96,12 @@ char *argv[];
 		tcp_fd= open("/dev/tcp", O_RDWR);
 		if (tcp_fd<0)
 		{
+			err= errno;
 			perror("unable to open /dev/tcp");
-			exit(1);
+			if (err == ENOENT || err == ENODEV || err == ENXIO)
+				exit(1);
+			sleep(10);
+			continue;
 		}
 
 		tcpconf.nwtc_flags= NWTC_LP_SET | NWTC_UNSET_RA | NWTC_UNSET_RP;

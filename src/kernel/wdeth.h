@@ -90,5 +90,5 @@ Created:	before Dec 28, 1992 by Philip Homburg
 #endif /* WDETH_H */
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/wdeth.h,v 1.3 1994/10/31 10:36:29 philip Exp $
+ * $PchId: wdeth.h,v 1.4 1995/12/22 08:36:57 philip Exp $
  */

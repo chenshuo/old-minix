@@ -113,6 +113,7 @@ PRIVATE struct trans {
   phys_bytes tr_dma;		/* DMA physical address */
 } wtrans[NR_IOREQS];
 
+PRIVATE int win_tasknr;			/* my task number */
 PRIVATE int w_need_reset = FALSE;	/* set when controller must be reset */
 PRIVATE int nr_drives;			/* Number of drives */
 PRIVATE int w_switches;			/* Drive type switches */
@@ -167,6 +168,8 @@ PRIVATE struct driver w_dtab = {
  *===========================================================================*/
 PUBLIC void xt_winchester_task()
 {
+  win_tasknr = proc_number(proc_ptr);
+
   init_params();
 
   put_irq_handler(XT_WINI_IRQ, w_handler);
@@ -607,7 +610,7 @@ int irq;
 		break;		/* Exit if end of int */
   }
 
-  interrupt(WINCHESTER);
+  interrupt(win_tasknr);
   return 1;
 }
 
@@ -901,7 +904,7 @@ PRIVATE void w_init()
 		mess.POSITION = 0L;
 		mess.COUNT = SECTOR_SIZE;
 		mess.ADDRESS = (char *) tmp_buf;
-		mess.PROC_NR = WINCHESTER;
+		mess.PROC_NR = win_tasknr;
 		mess.m_type = DEV_READ;
 		if (do_rdwt(&w_dtab, &mess) != SECTOR_SIZE) {
 			printf("%s: can't read parameters\n", w_name());

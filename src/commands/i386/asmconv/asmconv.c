@@ -1,7 +1,7 @@
-/*	asmconv 1.10 - convert 80X86 assembly		Author: Kees J. Bot
+/*	asmconv 1.11 - convert 80X86 assembly		Author: Kees J. Bot
  *								24 Dec 1993
  */
-static char version[] = "1.10";
+static char version[] = "1.11";
 
 #define nil 0
 #include <stdio.h>
@@ -17,7 +17,7 @@ static char version[] = "1.10";
 void fatal(char *label)
 {
 	fprintf(stderr, "asmconv: %s: %s\n", label, strerror(errno));
-	exit(1);
+	exit(EXIT_FAILURE);
 }
 
 void *allocate(void *mem, size_t size)
@@ -54,7 +54,7 @@ int isanumber(const char *s)
 
 /* "Invisible" globals. */
 int asm_mode32= (sizeof(int) == 4);
-int err_code= 0;
+int err_code= EXIT_SUCCESS;
 
 int main(int argc, char **argv)
 {
@@ -83,7 +83,7 @@ int main(int argc, char **argv)
 	if (argc < 3 || argc > 5) {
 		fprintf(stderr,
 "Usage: asmconv <input-type> <output-type> [input-file [output-file]]\n");
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	lang_parse= argv[1];
@@ -102,6 +102,11 @@ int main(int argc, char **argv)
 		parse_init= ncc_parse_init;
 		get_instruction= ncc_get_instruction;
 	} else
+	if (strcmp(lang_parse, "gnu") == 0) {
+		/* GNU assembly.  Parser by R.S. Veldema. */
+		parse_init= gnu_parse_init;
+		get_instruction= gnu_get_instruction;
+	} else
 	if (strcmp(lang_parse, "bas") == 0) {
 		/* Bruce Evans' assembler. */
 		parse_init= bas_parse_init;
@@ -109,7 +114,7 @@ int main(int argc, char **argv)
 	} else {
 		fprintf(stderr, "asmconv: '%s': unknown input language\n",
 			lang_parse);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	/* Choose the output language. */
@@ -134,7 +139,7 @@ int main(int argc, char **argv)
 	} else {
 		fprintf(stderr, "asmconv: '%s': unknown output language\n",
 			lang_emit);
-		exit(1);
+		exit(EXIT_FAILURE);
 	}
 
 	sprintf(banner, "Translated from %s to %s by asmconv %s",

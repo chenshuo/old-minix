@@ -150,6 +150,8 @@ main(argc, argv)  char **argv; {
 	init();
 	setstackmark(&smark);
 	procargs(argc, argv);
+	if (eflag) eflag = 2;	/* Truly enable [ex]flag after init. */
+	if (xflag) xflag = 2;
 	if (argv[0] && argv[0][0] == '-') {
 		state = 1;
 		read_profile("/etc/profile");
@@ -183,6 +185,10 @@ state2:
 	}
 state3:
 	if (ashrc != NULL) free(ashrc);
+	if (eflag) eflag = 1;	/* Init done, enable [ex]flag */
+	if (xflag) xflag = 1;
+	exitstatus = 0;		/* Init shouldn't influence initial $? */
+
 	state = 4;
 	if (minusc) {
 		evalstring(minusc);

@@ -14,6 +14,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#ifndef S_ISLNK
+#define lstat		stat
+#define S_ISLNK(mode)	(0)
+#endif
 
 #define STACKSIZE 12
 #define NESTINCR 16
@@ -46,6 +50,7 @@ struct operator {
 
 
 struct filestat {
+      int op;			/* OP_FILE or OP_LFILE */
       char *name;		/* name of file */
       int rcode;		/* return code from stat */
       struct stat stat;		/* status info on file */
@@ -141,13 +146,6 @@ overflow:		error("Expression too complex");
 		  continue;
 
 	    } else {
-		  if (opname[0] == '\'') {
-			for (p = opname ; *++p != '\0' ; );
-			if (--p > opname && *p == '\'') {
-			      *p = '\0';
-			      opname++;
-			}
-		  }
 		  valsp->type = STRING;
 		  valsp->u.string = opname;
 		  valsp++;
@@ -195,11 +193,19 @@ overflow:		error("Expression too complex");
 					  valsp->u.string = "";
 			      }
 			      valsp->type = STRING;
-			      if (c == OP_FILE
-			       && (fs.name == NULL
+			      if (c >= OP_FILE
+			       && (fs.op != c
+			           || fs.name == NULL
 			           || ! equal(fs.name, valsp->u.string))) {
+				    fs.op = c;
 				    fs.name = valsp->u.string;
-				    fs.rcode = stat(valsp->u.string, &fs.stat);
+				    if (c == OP_FILE) {
+					fs.rcode = stat(valsp->u.string,
+								&fs.stat);
+				    } else {
+					fs.rcode = lstat(valsp->u.string,
+								&fs.stat);
+				    }
 			      }
 			}
 			if (binary < FIRST_BINARY_OP)
@@ -341,6 +347,12 @@ filebit:
 	    sp->u.num = fs->rcode >= 0? fs->stat.st_size : 0L;
 	    sp->type = INTEGER;
 	    break;
+      case ISLINK1:
+      case ISLINK2:
+	    if (S_ISLNK(fs->stat.st_mode) && fs->rcode >= 0)
+		  goto true;
+	    fs->op = OP_FILE;	/* not a symlink, so expect a -d or so next */
+	    goto false;
       case NEWER:
 	    if (stat(sp->u.string, &st1) != 0) {
 		  sp->u.num = 0;

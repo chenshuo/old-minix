@@ -28,7 +28,7 @@ kermit: ckcmai.o ckucmd.o ckuusr.o ckuus2.o ckuus3.o ckcpro.o ckcfns.o \
 install:	/usr/bin/kermit
 
 /usr/bin/kermit:	kermit
-	install -cs -o bin kermit $@
+	install -cs -o bin -g uucp -m 2755 kermit $@
 
 ckcmai.o: ckcmai.c ckcker.h ckcdeb.h ckcsym.h
 ckuusr.o: ckuusr.c ckucmd.h ckcker.h ckuusr.h ckcdeb.h

@@ -1,11 +1,15 @@
 /*
 eth.c
+
+Copyright 1995 Philip Homburg
 */
 
 #include "inet.h"
 #include "buf.h"
 #include "clock.h"
+#include "event.h"
 #include "osdep_eth.h"
+#include "type.h"
 
 #include "assert.h"
 #include "buf.h"
@@ -13,9 +17,8 @@ eth.c
 #include "eth_int.h"
 #include "io.h"
 #include "sr.h"
-#include "type.h"
 
-INIT_PANIC();
+THIS_FILE
 
 #define ETH_FD_NR	32
 #define EXPIRE_TIME	60*HZ	/* seconds */
@@ -23,16 +26,17 @@ INIT_PANIC();
 typedef struct eth_fd
 {
 	int ef_flags;
+	nwio_ethopt_t ef_ethopt;
 	eth_port_t *ef_port;
+	struct eth_fd *ef_type_next;
 	int ef_srfd;
+	acc_t *ef_rdbuf_head;
+	acc_t *ef_rdbuf_tail;
 	get_userdata_t ef_get_userdata;
 	put_userdata_t ef_put_userdata;
-	nwio_ethopt_t ef_ethopt;
+	put_pkt_t ef_put_pkt;
+	time_t ef_exp_time;
 	size_t ef_write_count;
-	acc_t *ef_rd_buf;
-	acc_t *ef_rd_tail;
-	time_t ef_exp_tim;
-	int ef_pack_stat;
 } eth_fd_t;
 
 #define EFF_FLAGS	0xf
@@ -44,53 +48,67 @@ typedef struct eth_fd
 #	define EFF_OPTSET       0x8
 
 FORWARD int eth_checkopt ARGS(( eth_fd_t *eth_fd ));
-FORWARD void eth_buffree ARGS(( int priority, size_t reqsize ));
-FORWARD int ok_for_me ARGS(( eth_fd_t *fd, acc_t *pack ));
-FORWARD int packet2user ARGS(( eth_fd_t *fd ));
+FORWARD void hash_fd ARGS(( eth_fd_t *eth_fd ));
+FORWARD void unhash_fd ARGS(( eth_fd_t *eth_fd ));
+FORWARD void eth_buffree ARGS(( int priority ));
+#ifdef BUF_CONSISTENCY_CHECK
+FORWARD void eth_bufcheck ARGS(( void ));
+#endif
+FORWARD void packet2user ARGS(( eth_fd_t *fd, acc_t *pack, time_t exp_time ));
 FORWARD void reply_thr_get ARGS(( eth_fd_t *eth_fd,
 	size_t result, int for_ioctl ));
 FORWARD void reply_thr_put ARGS(( eth_fd_t *eth_fd,
 	size_t result, int for_ioctl ));
-FORWARD void restart_write_fd ARGS(( eth_fd_t *eth_fd ));
+FORWARD u32_t compute_rec_conf ARGS(( eth_port_t *eth_port ));
 
 PUBLIC eth_port_t eth_port_table[ETH_PORT_NR];
 
 PRIVATE eth_fd_t eth_fd_table[ETH_FD_NR];
-/* PRIVATE message mess, repl_mess; */
+PRIVATE ether_addr_t broadcast= {255, 255, 255, 255, 255, 255};
 
 PUBLIC void eth_init()
 {
-	int i;
+	int i, j;
 
 	assert (BUF_S >= sizeof(nwio_ethopt_t));
 	assert (BUF_S >= ETH_HDR_SIZE);	/* these are in fact static assertions,
 					   thus a good compiler doesn't
 					   generate any code for this */
 
-
+#if ZERO
 	for (i=0; i<ETH_FD_NR; i++)
 		eth_fd_table[i].ef_flags= EFF_EMPTY;
 	for (i=0; i<ETH_PORT_NR; i++)
+	{
 		eth_port_table[i].etp_flags= EFF_EMPTY;
+		eth_port_table[i].etp_type_any= NULL;
+		ev_init(&eth_port_table[i].etp_sendev);
+		for (j= 0; j<ETH_TYPE_HASH_NR; j++)
+			eth_port_table[i].etp_type[j]= NULL;
+	}
+#endif
 
+#ifndef BUF_CONSISTENCY_CHECK
 	bf_logon(eth_buffree);
+#else
+	bf_logon(eth_buffree, eth_bufcheck);
+#endif
 
-	eth_init0();
-	/* eth_init1(); etc */
+	osdep_eth_init();
 }
 
-PUBLIC int eth_open(port, srfd, get_userdata, put_userdata)
+PUBLIC int eth_open(port, srfd, get_userdata, put_userdata, put_pkt)
 int port, srfd;
 get_userdata_t get_userdata;
 put_userdata_t put_userdata;
+put_pkt_t put_pkt;
 {
 	int i;
 	eth_port_t *eth_port;
 	eth_fd_t *eth_fd;
 
-#if DEBUG & 256
- { where(); printf("eth_open (%d, ...)\n", port); }
-#endif
+	DBLOCK(0x20, printf("eth_open (%d, %d, %lx, %lx)\n", port, srfd, 
+		(unsigned long)get_userdata, (unsigned long)put_userdata));
 	eth_port= &eth_port_table[port];
 	if (!(eth_port->etp_flags & EPF_ENABLED))
 		return EGENERIC;
@@ -100,9 +118,7 @@ put_userdata_t put_userdata;
 
 	if (i>=ETH_FD_NR)
 	{
-#if DEBUG
- { where(); printf("out of fds\n"); }
-#endif
+		DBLOCK(1, printf("out of fds\n"));
 		return EOUTOFBUFS;
 	}
 
@@ -112,33 +128,30 @@ put_userdata_t put_userdata;
 	eth_fd->ef_ethopt.nweo_flags=NWEO_DEFAULT;
 	eth_fd->ef_port= eth_port;
 	eth_fd->ef_srfd= srfd;
-	eth_fd->ef_rd_buf= 0;
+	assert(eth_fd->ef_rdbuf_head == NULL);
 	eth_fd->ef_get_userdata= get_userdata;
 	eth_fd->ef_put_userdata= put_userdata;
+	eth_fd->ef_put_pkt= put_pkt;
 	return i;
 }
 
 PUBLIC int eth_ioctl(fd, req)
 int fd;
-int req;
+ioreq_t req;
 {
 	acc_t *data;
-	int type;
 	eth_fd_t *eth_fd;
 	eth_port_t *eth_port;
 
-#if DEBUG & 256
- { where(); printf("eth_ioctl (%d, ...)\n", fd); }
-#endif
+	DBLOCK(0x20, printf("eth_ioctl (%d, %lu)\n", fd, req));
 	eth_fd= &eth_fd_table[fd];
 	eth_port= eth_fd->ef_port;
-	type= req & IOCTYPE_MASK;
 
 	assert (eth_fd->ef_flags & EFF_INUSE);
 
-	switch (type)
+	switch (req)
 	{
-	case NWIOSETHOPT & IOCTYPE_MASK:
+	case NWIOSETHOPT:
 		{
 			nwio_ethopt_t *ethopt;
 			nwio_ethopt_t oldopt, newopt;
@@ -149,12 +162,6 @@ int req;
 			eth_fd_t *loc_fd;
 			int i;
 
-			if (req != NWIOSETHOPT)
-				break;
-	
-#if DEBUG & 256
- { where(); printf("calling *get_userdata\n"); }
-#endif
 			data= (*eth_fd->ef_get_userdata)(eth_fd->
 				ef_srfd, 0, sizeof(nwio_ethopt_t), TRUE);
 
@@ -162,9 +169,6 @@ int req;
 			oldopt= eth_fd->ef_ethopt;
 			newopt= *ethopt;
 
-#if DEBUG & 256
- { where(); printf("newopt.nweo_flags= 0x%x\n", newopt.nweo_flags); }
-#endif
 			old_en_flags= oldopt.nweo_flags & 0xffff;
 			old_di_flags= (oldopt.nweo_flags >> 16) & 0xffff;
 			new_en_flags= newopt.nweo_flags & 0xffff;
@@ -241,9 +245,11 @@ int req;
 				new_di_flags |= (old_di_flags & NWEO_RW_MASK);
 			}
 
+			if (eth_fd->ef_flags & EFF_OPTSET)
+				unhash_fd(eth_fd);
+
 			newopt.nweo_flags= ((unsigned long)new_di_flags << 16) |
 				new_en_flags;
-
 			eth_fd->ef_ethopt= newopt;
 
 			result= eth_checkopt(eth_fd);
@@ -261,36 +267,25 @@ int req;
 				if (changes & (NWEO_BROAD_MASK |
 					NWEO_MULTI_MASK | NWEO_PROMISC_MASK))
 				{
-					flags= NWEO_NOFLAGS;
-					for (i=0, loc_fd= eth_fd_table; 
-						i<ETH_FD_NR; i++, loc_fd++)
-					{
-						if (!(loc_fd->ef_flags | 
-						~(EFF_INUSE | EFF_OPTSET)))
-							continue;
-						if (loc_fd->ef_port 
-							!= eth_port)
-							continue;
-						flags |= loc_fd->ef_ethopt.
-							nweo_flags;
-					}
+					flags= compute_rec_conf(eth_port);
 					eth_set_rec_conf(eth_port, flags);
 				}
 			}
+
+			if (eth_fd->ef_flags & EFF_OPTSET)
+				hash_fd(eth_fd);
 
 			bf_afree(data);
 			reply_thr_get (eth_fd, result, TRUE);
 			return NW_OK;	
 		}
 
-	case NWIOGETHOPT & IOCTYPE_MASK:
+	case NWIOGETHOPT:
 		{
 			nwio_ethopt_t *ethopt;
 			acc_t *acc;
 			int result;
 
-			if (req != NWIOGETHOPT)
-				break;
 			acc= bf_memreq(sizeof(nwio_ethopt_t));
 
 			ethopt= (nwio_ethopt_t *)ptr2acc_data(acc);
@@ -303,16 +298,13 @@ int req;
 				reply_thr_put(eth_fd, NW_OK, TRUE);
 			return result;
 		}
-	case NWIOGETHSTAT & IOCTYPE_MASK:
+	case NWIOGETHSTAT:
 		{
 			nwio_ethstat_t *ethstat;
 			acc_t *acc;
 			int result;
 
 assert (sizeof(nwio_ethstat_t) <= BUF_S);
-
-			if (req != NWIOGETHSTAT)
-				break;
 
 			eth_port= eth_fd->ef_port;
 			if (!(eth_port->etp_flags & EPF_ENABLED))
@@ -330,9 +322,6 @@ compare (bf_bufsize(acc), ==, sizeof(*ethstat));
 
 			result= eth_get_stat(eth_port, &ethstat->nwes_stat);
 assert (result == 0);
-#if DEBUG & 256
- { where(); printf("returning NW_OK\n"); }
-#endif
 compare (bf_bufsize(acc), ==, sizeof(*ethstat));
 			result= (*eth_fd->ef_put_userdata)(eth_fd->
 				ef_srfd, 0, acc, TRUE);
@@ -353,10 +342,9 @@ size_t count;
 {
 	eth_fd_t *eth_fd;
 	eth_port_t *eth_port;
+	acc_t *user_data;
+	int r;
 
-#if DEBUG & 256
- { where(); printf("eth_write (%d, ...)\n", fd); }
-#endif
 	eth_fd= &eth_fd_table[fd];
 	eth_port= eth_fd->ef_port;
 
@@ -374,18 +362,94 @@ size_t count;
 
 	if (count<ETH_MIN_PACK_SIZE || count>ETH_MAX_PACK_SIZE)
 	{
-#if DEBUG
- { where(); printf("illegal packetsize (%d)\n",count); }
-#endif
+		DBLOCK(1, printf("illegal packetsize (%d)\n",count));
 		reply_thr_get (eth_fd, EPACKSIZE, FALSE);
 		return NW_OK;
 	}
 	eth_fd->ef_flags |= EFF_WRITE_IP;
-	restart_write_fd(eth_fd);
-	if (eth_fd->ef_flags & EFF_WRITE_IP)
+	if (eth_port->etp_wr_pack)
+	{
+		eth_port->etp_flags |= EPF_MORE2WRITE;
 		return NW_SUSPEND;
-	else
+	}
+
+	user_data= (*eth_fd->ef_get_userdata)(eth_fd->ef_srfd, 0,
+		eth_fd->ef_write_count, FALSE);
+	if (!user_data)
+	{
+		eth_fd->ef_flags &= ~EFF_WRITE_IP;
+		reply_thr_get (eth_fd, EFAULT, FALSE);
 		return NW_OK;
+	}
+	r= eth_send(fd, user_data, eth_fd->ef_write_count);
+	assert(r == NW_OK);
+
+	eth_fd->ef_flags &= ~EFF_WRITE_IP;
+	reply_thr_get(eth_fd, eth_fd->ef_write_count, FALSE);
+	return NW_OK;
+}
+
+PUBLIC int eth_send(fd, data, data_len)
+int fd;
+acc_t *data;
+size_t data_len;
+{
+	eth_fd_t *eth_fd;
+	eth_port_t *eth_port;
+	eth_hdr_t *eth_hdr;
+	acc_t *eth_pack;
+	unsigned long nweo_flags;
+	size_t count;
+	ev_arg_t ev_arg;
+
+	eth_fd= &eth_fd_table[fd];
+	eth_port= eth_fd->ef_port;
+
+	if (!(eth_fd->ef_flags & EFF_OPTSET))
+		return EBADMODE;
+
+	count= data_len;
+	if (eth_fd->ef_ethopt.nweo_flags & NWEO_RWDATONLY)
+		count += ETH_HDR_SIZE;
+
+	if (count<ETH_MIN_PACK_SIZE || count>ETH_MAX_PACK_SIZE)
+	{
+		DBLOCK(1, printf("illegal packetsize (%d)\n",count));
+		return EPACKSIZE;
+	}
+	if (eth_port->etp_wr_pack)
+		return NW_WOULDBLOCK;
+	
+	nweo_flags= eth_fd->ef_ethopt.nweo_flags;
+
+	if (nweo_flags & NWEO_RWDATONLY)
+	{
+		eth_pack= bf_memreq(ETH_HDR_SIZE);
+		eth_pack->acc_next= data;
+	}
+	else
+		eth_pack= bf_packIffLess(data, ETH_HDR_SIZE);
+
+	eth_hdr= (eth_hdr_t *)ptr2acc_data(eth_pack);
+
+	if (nweo_flags & NWEO_REMSPEC)
+		eth_hdr->eh_dst= eth_fd->ef_ethopt.nweo_rem;
+
+	eth_hdr->eh_src= eth_port->etp_ethaddr;
+
+	if (nweo_flags & NWEO_TYPESPEC)
+		eth_hdr->eh_proto= eth_fd->ef_ethopt.nweo_type;
+
+	if (eth_addrcmp(eth_hdr->eh_dst, eth_port->etp_ethaddr) == 0)
+	{
+		/* Local loopback. */
+		eth_port->etp_wr_pack= eth_pack;
+		ev_arg.ev_ptr= eth_port;
+		ev_enqueue(&eth_port->etp_sendev, eth_loop_ev, ev_arg);
+	}
+	else
+		eth_write_port(eth_port, eth_pack);
+	return NW_OK;
 }
 
 PUBLIC int eth_read (fd, count)
@@ -393,11 +457,8 @@ int fd;
 size_t count;
 {
 	eth_fd_t *eth_fd;
-	acc_t *acc, *acc2;
+	acc_t *pack;
 
-#if DEBUG & 256
- { where(); printf("eth_read (%d, ...)\n", fd); }
-#endif
 	eth_fd= &eth_fd_table[fd];
 	if (!(eth_fd->ef_flags & EFF_OPTSET))
 	{
@@ -409,23 +470,23 @@ size_t count;
 		reply_thr_put(eth_fd, EPACKSIZE, FALSE);
 		return NW_OK;
 	}
-	if (eth_fd->ef_rd_buf)
-	{
-		if (get_time() <= eth_fd->ef_exp_tim)
-			return packet2user (eth_fd);
-		for (acc= eth_fd->ef_rd_buf; acc;)
-		{
-			acc2= acc->acc_ext_link;
-			bf_afree(acc);
-			acc= acc2;
-		}
-		eth_fd->ef_rd_buf= 0;
-	}
+
+	assert(!(eth_fd->ef_flags & EFF_READ_IP));
 	eth_fd->ef_flags |= EFF_READ_IP;
-#if DEBUG & 256
- { where(); printf("eth_fd_table[%d].ef_flags= 0x%x\n",
-	eth_fd-eth_fd_table, eth_fd->ef_flags); }
-#endif
+
+	while (eth_fd->ef_rdbuf_head)
+	{
+		pack= eth_fd->ef_rdbuf_head;
+		eth_fd->ef_rdbuf_head= pack->acc_ext_link;
+		if (get_time() <= eth_fd->ef_exp_time)
+		{
+			packet2user(eth_fd, pack, eth_fd->ef_exp_time);
+			if (!(eth_fd->ef_flags & EFF_READ_IP))
+				return NW_OK;
+		}
+		else
+			bf_afree(pack);
+	}
 	return NW_SUSPEND;
 }
 
@@ -435,9 +496,7 @@ int which_operation;
 {
 	eth_fd_t *eth_fd;
 
-#if DEBUG & 2
- { where(); printf("eth_cancel (%d)\n", fd); }
-#endif
+	DBLOCK(2, printf("eth_cancel (%d)\n", fd));
 	eth_fd= &eth_fd_table[fd];
 
 	switch (which_operation)
@@ -462,23 +521,44 @@ PUBLIC void eth_close(fd)
 int fd;
 {
 	eth_fd_t *eth_fd;
-	acc_t *acc, *acc2;
+	eth_port_t *eth_port;
+	u32_t flags;
+	acc_t *pack;
 
-#if DEBUG
- { where(); printf("eth_close (%d)\n", fd); }
-#endif
 	eth_fd= &eth_fd_table[fd];
 
-	assert (eth_fd->ef_flags & EFF_INUSE);
+	assert ((eth_fd->ef_flags & EFF_INUSE) &&
+		!(eth_fd->ef_flags & EFF_BUSY));
 
-	eth_fd->ef_flags= EFF_EMPTY;
-	for (acc= eth_fd->ef_rd_buf; acc;)
+	if (eth_fd->ef_flags & EFF_OPTSET)
+		unhash_fd(eth_fd);
+	while (eth_fd->ef_rdbuf_head != NULL)
 	{
-		acc2= acc->acc_ext_link;
-		bf_afree(acc);
-		acc= acc2;
+		pack= eth_fd->ef_rdbuf_head;
+		eth_fd->ef_rdbuf_head= pack->acc_ext_link;
+		bf_afree(pack);
 	}
-	eth_fd->ef_rd_buf= 0;
+	eth_fd->ef_flags= EFF_EMPTY;
+
+	eth_port= eth_fd->ef_port;
+	flags= compute_rec_conf(eth_port);
+	eth_set_rec_conf(eth_port, flags);
+}
+
+PUBLIC void eth_loop_ev(ev, ev_arg)
+event_t *ev;
+ev_arg_t ev_arg;
+{
+	acc_t *pack;
+	eth_port_t *eth_port;
+
+	eth_port= ev_arg.ev_ptr;
+	assert(ev == &eth_port->etp_sendev);
+
+	pack= eth_port->etp_wr_pack;
+	eth_arrive(eth_port, pack, bf_bufsize(pack));
+	eth_port->etp_wr_pack= NULL;
+	eth_restart_write(eth_port);
 }
 
 PRIVATE int eth_checkopt (eth_fd)
@@ -489,14 +569,10 @@ eth_fd_t *eth_fd;
 	unsigned long flags;
 	unsigned int en_di_flags;
 	eth_port_t *eth_port;
-	acc_t *acc, *acc2;
+	acc_t *pack;
 
 	eth_port= eth_fd->ef_port;
 	flags= eth_fd->ef_ethopt.nweo_flags;
-#if DEBUG & 256
- { where(); printf("eth_fd_table[%d].ef_ethopt.nweo_flags= 0x%x\n",
-	eth_fd-eth_fd_table, flags); }
-#endif
 	en_di_flags= (flags >>16) | (flags & 0xffff);
 
 	if ((en_di_flags & NWEO_ACC_MASK) &&
@@ -509,423 +585,359 @@ eth_fd_t *eth_fd;
 		(en_di_flags & NWEO_RW_MASK))
 	{
 		eth_fd->ef_flags |= EFF_OPTSET;
-		eth_fd->ef_pack_stat= EPS_EMPTY;
-		if (flags & NWEO_EN_LOC)
-			eth_fd->ef_pack_stat |= EPS_LOC;
-		if (flags & NWEO_EN_BROAD)
-			eth_fd->ef_pack_stat |= EPS_BROAD;
-		if (flags & NWEO_EN_MULTI)
-			eth_fd->ef_pack_stat |= EPS_MULTI;
-		if (flags & NWEO_EN_PROMISC)
-			eth_fd->ef_pack_stat |= (EPS_PROMISC|EPS_MULTI|
-				EPS_BROAD);
 	}
 	else
 		eth_fd->ef_flags &= ~EFF_OPTSET;
-	
-	for (acc= eth_fd->ef_rd_buf; acc;)
+
+	while (eth_fd->ef_rdbuf_head != NULL)
 	{
-		acc2= acc->acc_ext_link;
-		bf_afree(acc);
-		acc= acc2;
+		pack= eth_fd->ef_rdbuf_head;
+		eth_fd->ef_rdbuf_head= pack->acc_ext_link;
+		bf_afree(pack);
 	}
-	eth_fd->ef_rd_buf= 0;
 
 	return NW_OK;
 }
 
-PUBLIC int eth_get_work(eth_port)
+PRIVATE void hash_fd(eth_fd)
+eth_fd_t *eth_fd;
+{
+	eth_port_t *eth_port;
+	int hash;
+
+	eth_port= eth_fd->ef_port;
+	if (eth_fd->ef_ethopt.nweo_flags & NWEO_TYPEANY)
+	{
+		eth_fd->ef_type_next= eth_port->etp_type_any;
+		eth_port->etp_type_any= eth_fd;
+	}
+	else
+	{
+		hash= eth_fd->ef_ethopt.nweo_type;
+		hash ^= (hash >> 8);
+		hash &= (ETH_TYPE_HASH_NR-1);
+
+		eth_fd->ef_type_next= eth_port->etp_type[hash];
+		eth_port->etp_type[hash]= eth_fd;
+	}
+}
+
+PRIVATE void unhash_fd(eth_fd)
+eth_fd_t *eth_fd;
+{
+	eth_port_t *eth_port;
+	eth_fd_t *prev, *curr, **eth_fd_p;
+	int hash;
+
+	eth_port= eth_fd->ef_port;
+	if (eth_fd->ef_ethopt.nweo_flags & NWEO_TYPEANY)
+	{
+		eth_fd_p= &eth_port->etp_type_any;
+	}
+	else
+	{
+		hash= eth_fd->ef_ethopt.nweo_type;
+		hash ^= (hash >> 8);
+		hash &= (ETH_TYPE_HASH_NR-1);
+
+		eth_fd_p= &eth_port->etp_type[hash];
+	}
+	for (prev= NULL, curr= *eth_fd_p; curr;
+		prev= curr, curr= curr->ef_type_next)
+	{
+		if (curr == eth_fd)
+			break;
+	}
+	assert(curr);
+	if (prev)
+		prev->ef_type_next= curr->ef_type_next;
+	else
+		*eth_fd_p= curr->ef_type_next;
+}
+
+PUBLIC void eth_restart_write(eth_port)
 eth_port_t *eth_port;
 {
 	eth_fd_t *eth_fd;
-	int i;
+	acc_t *pack;
+	int i, r;
 
-#if DEBUG & 256
- { where(); printf("eth_get_work called\n"); }
-#endif
-	if (eth_port->etp_wr_pack)
-		return 0;
+	assert(eth_port->etp_wr_pack == NULL);
+
 	if (!(eth_port->etp_flags & EPF_MORE2WRITE))
-		return 0;
+		return;
+	eth_port->etp_flags &= ~EPF_MORE2WRITE;
 
 	for (i=0, eth_fd= eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
 	{
 		if ((eth_fd->ef_flags & (EFF_INUSE|EFF_WRITE_IP)) !=
 			(EFF_INUSE|EFF_WRITE_IP))
+		{
 			continue;
+		}
 		if (eth_fd->ef_port != eth_port)
 			continue;
-#if DEBUG & 256
- { where(); printf("eth_get_work calling restart_write_fd\n"); }
-#endif
-		restart_write_fd(eth_fd);
+
 		if (eth_port->etp_wr_pack)
-			return 1;
+		{
+			eth_port->etp_flags |= EPF_MORE2WRITE;
+			return;
+		}
+
+		eth_fd->ef_flags &= ~EFF_WRITE_IP;
+		r= eth_write(eth_fd-eth_fd_table, eth_fd->ef_write_count);
+		assert(r == NW_OK);
 	}
-	eth_port->etp_flags &= ~EPF_MORE2WRITE;
-	return 0;
 }
 
-PUBLIC void eth_arrive (eth_port, pack)
+PUBLIC void eth_arrive (eth_port, pack, pack_size)
 eth_port_t *eth_port;
 acc_t *pack;
+size_t pack_size;
 {
+
 	time_t exp_tim;
 	eth_hdr_t *eth_hdr;
-	static ether_addr_t broadcast= {255, 255, 255, 255, 255, 255},
-		multi_addr, rem_addr, packaddr;
+	ether_addr_t *dst_addr;
 	int pack_stat;
 	ether_type_t type;
-	eth_fd_t *eth_fd, *share_fd;
-	acc_t *acc;
-	int i;
+	eth_fd_t *eth_fd, *first_fd, *share_fd;
+	int hash, i;
+	time_t exp_time;
 
-#if DEBUG & 256
- { where(); printf("eth_arrive(0x%x, 0x%x) called\n", eth_port, pack); }
-#endif
-assert(pack->acc_linkC);
-	exp_tim= get_time() + EXPIRE_TIME;
+	exp_time= get_time() + EXPIRE_TIME;
 
 	pack= bf_packIffLess(pack, ETH_HDR_SIZE);
-	eth_hdr= (eth_hdr_t*)ptr2acc_data(pack);
-#if DEBUG & 256
- { where(); printf("src= "); writeEtherAddr(&eth_hdr->eh_src); printf(" dst= "); 	writeEtherAddr(&eth_hdr->eh_dst);
-	printf(" proto= 0x%x\n", ntohs(eth_hdr->eh_proto));
-	printf(" my addr= "); writeEtherAddr(&eth_port->etp_ethaddr);
-	printf("\n"); }
-#endif
 
-	packaddr= eth_hdr->eh_dst;
-	if (packaddr.ea_addr[0] & 0x01)
+	eth_hdr= (eth_hdr_t*)ptr2acc_data(pack);
+	dst_addr= &eth_hdr->eh_dst;
+
+	DIFBLOCK(0x20, dst_addr->ea_addr[0] != 0xFF &&
+		(dst_addr->ea_addr[0] & 0x1),
+		printf("got multicast packet\n"));
+
+	if (dst_addr->ea_addr[0] & 0x1)
 	{
 		/* multi cast or broadcast */
-		if (!eth_addrcmp(packaddr, broadcast))
-			pack_stat= EPS_BROAD;
+		if (eth_addrcmp(*dst_addr, broadcast) == 0)
+			pack_stat= NWEO_EN_BROAD;
 		else
-		{
-			pack_stat= EPS_MULTI;
-#if DEBUG
- { where(); printf("Got a multicast packet\n"); }
-#endif
-		}
+			pack_stat= NWEO_EN_MULTI;
 	}
 	else
 	{
-		if (!eth_addrcmp (packaddr, eth_port->etp_ethaddr))
-			pack_stat= EPS_LOC;
+		if (eth_addrcmp (*dst_addr, eth_port->etp_ethaddr) == 0)
+			pack_stat= NWEO_EN_LOC;
 		else
-			pack_stat= EPS_PROMISC;
+			pack_stat= NWEO_EN_PROMISC;
 	}
 	type= eth_hdr->eh_proto;
+	hash= type;
+	hash ^= (hash >> 8);
+	hash &= (ETH_TYPE_HASH_NR-1);
 
-#if DEBUG & 256
- { where(); printf("pack_stat= 0x%x\n", pack_stat); }
-#endif
-
-	share_fd= 0;
-	for (i=0, eth_fd=eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
+	first_fd= NULL;
+	for (i= 0; i<2; i++)
 	{
-		if (!(eth_fd->ef_flags & EFF_OPTSET))
+		share_fd= NULL;
+
+		eth_fd= (i == 0) ? eth_port->etp_type_any :
+			eth_port->etp_type[hash];
+		for (; eth_fd; eth_fd= eth_fd->ef_type_next)
 		{
-#if DEBUG & 256
- { where(); printf("fd %d doesn't have EFF_OPTSET\n", i); }
-#endif
-			continue;
-		}
-		if (eth_fd->ef_port != eth_port)
-		{
-#if DEBUG
- { where(); printf("fd %d uses port %d, packet is on port %d\n", i, 
-	eth_fd->ef_port-eth_port_table, eth_port-eth_port_table); }
-#endif
-			continue;
-		}
-		if (!(eth_fd->ef_pack_stat & pack_stat))
-		{
-#if DEBUG & 256
- { where(); printf("fd %d has ef_pack_stat 0x%x, expecting 0x%x\n", i,
-	eth_fd->ef_pack_stat, pack_stat); }
-#endif
-			continue;
-		}
-		if ((eth_fd->ef_ethopt.nweo_flags & NWEO_TYPESPEC) &&
-			type != eth_fd->ef_ethopt.nweo_type)
-		{
-#if DEBUG & 256
- { where(); printf("fd %d uses type 0x%x, expecting 0x%x\n", i,
-	eth_fd->ef_ethopt.nweo_type, type); }
-#endif
-			continue;
-		}
-#if DEBUG & 256
- { where(); printf("multi OK\n"); }
-#endif
-		if (eth_fd->ef_ethopt.nweo_flags & NWEO_REMSPEC)
-		{
-			rem_addr= eth_fd->ef_ethopt.nweo_rem;
-			if (eth_addrcmp (eth_hdr->eh_src,
-				rem_addr))
+			if (i && eth_fd->ef_ethopt.nweo_type != type)
 				continue;
-		}
-#if DEBUG & 256
- { where(); printf("rem NW_OK\n"); }
-#endif
-		if (eth_fd->ef_rd_buf)
-		{
-			if (eth_fd->ef_ethopt.nweo_flags == NWEO_SHARED)
+			if (!(eth_fd->ef_ethopt.nweo_flags & pack_stat))
+				continue;
+			if (eth_fd->ef_ethopt.nweo_flags & NWEO_REMSPEC &&
+				eth_addrcmp(eth_hdr->eh_src,
+				eth_fd->ef_ethopt.nweo_rem) != 0)
 			{
-				share_fd= eth_fd;
+					continue;
+			}
+			if ((eth_fd->ef_ethopt.nweo_flags & NWEO_ACC_MASK) ==
+				NWEO_SHARED)
+			{
+				if (!share_fd)
+				{
+					share_fd= eth_fd;
+					continue;
+				}
+				if (!eth_fd->ef_rdbuf_head)
+					share_fd= eth_fd;
 				continue;
 			}
+			if (!first_fd)
+			{
+				first_fd= eth_fd;
+				continue;
+			}
+			pack->acc_linkC++;
+			packet2user(eth_fd, pack, exp_time);
 		}
-		acc= bf_dupacc(pack);
-		acc->acc_ext_link= NULL;
-		if (!eth_fd->ef_rd_buf)
+		if (share_fd)
 		{
-			eth_fd->ef_rd_buf= acc;
-			eth_fd->ef_exp_tim= exp_tim;
-		}
-		else
-			eth_fd->ef_rd_tail->acc_ext_link= acc;
-		eth_fd->ef_rd_tail= acc;
-
-		if (eth_fd->ef_flags & EFF_READ_IP)
-			packet2user(eth_fd);
-		if ((eth_fd->ef_ethopt.nweo_flags & NWEO_ACC_MASK) != NWEO_COPY)
-		{
-			bf_afree(pack);
-			pack= 0;
-			break;
+			pack->acc_linkC++;
+			packet2user(share_fd, pack, exp_time);
 		}
 	}
-	if (share_fd && pack)
+	if (first_fd)
 	{
-		acc= bf_dupacc(pack);
-		acc->acc_ext_link= NULL;
-		if (!share_fd->ef_rd_buf)
+		if (first_fd->ef_put_pkt &&
+			(first_fd->ef_flags & EFF_READ_IP) &&
+			!(first_fd->ef_ethopt.nweo_flags & NWEO_RWDATONLY))
 		{
-			share_fd->ef_rd_buf= acc;
-			share_fd->ef_exp_tim= exp_tim;
+			(*first_fd->ef_put_pkt)(first_fd->ef_srfd, pack,
+				pack_size);
 		}
 		else
-			share_fd->ef_rd_tail->acc_ext_link= acc;
-		share_fd->ef_rd_tail= acc;
+			packet2user(first_fd, pack, exp_time);
 	}
-	if (pack)
+	else
+	{
+		if (pack_stat == NWEO_EN_LOC)
+		{
+			DBLOCK(0x01,
+			printf("eth_arrive: dropping packet for proto 0x%x\n",
+				ntohs(type)));
+		}
+		else
+		{
+			DBLOCK(0x20, printf("dropping packet for proto 0x%x\n",
+				ntohs(type)));
+		}			
 		bf_afree(pack);
+	}
 }
 
-PRIVATE int packet2user (eth_fd)
+PRIVATE void packet2user (eth_fd, pack, exp_time)
 eth_fd_t *eth_fd;
+acc_t *pack;
+time_t exp_time;
 {
-	acc_t *pack, *header;
 	int result;
+	acc_t *tmp_pack;
 	size_t size;
 
-#if DEBUG & 256
- { where(); printf("packet2user() called\n"); }
-#endif
-	pack= eth_fd->ef_rd_buf;
-	eth_fd->ef_rd_buf= pack->acc_ext_link;
-	if (eth_fd->ef_ethopt.nweo_flags & NWEO_RWDATONLY)
+	assert (eth_fd->ef_flags & EFF_INUSE);
+	if (!(eth_fd->ef_flags & EFF_READ_IP))
 	{
-		pack= bf_packIffLess (pack, ETH_HDR_SIZE);
-
-		assert (pack->acc_length >= ETH_HDR_SIZE);
-
-		if (pack->acc_linkC >1)
+		if (pack->acc_linkC != 1)
 		{
-			header= bf_dupacc (pack);
+			tmp_pack= bf_dupacc(pack);
 			bf_afree(pack);
-			pack= header;
+			pack= tmp_pack;
+			tmp_pack= NULL;
 		}
-
-		assert (pack->acc_linkC == 1);
-
-		pack->acc_offset += ETH_HDR_SIZE;
-		pack->acc_length -= ETH_HDR_SIZE;
+		pack->acc_ext_link= NULL;
+		if (eth_fd->ef_rdbuf_head == NULL)
+		{
+			eth_fd->ef_rdbuf_head= pack;
+			eth_fd->ef_exp_time= exp_time;
+		}
+		else
+			eth_fd->ef_rdbuf_tail->acc_ext_link= pack;
+		eth_fd->ef_rdbuf_tail= pack;
+		return;
 	}
 
-	size= bf_bufsize (pack);
+	if (eth_fd->ef_ethopt.nweo_flags & NWEO_RWDATONLY)
+		pack= bf_delhead(pack, ETH_HDR_SIZE);
+
+	size= bf_bufsize(pack);
+
+	if (eth_fd->ef_put_pkt)
+	{
+		(*eth_fd->ef_put_pkt)(eth_fd->ef_srfd, pack, size);
+		return;
+	}
 
 	eth_fd->ef_flags &= ~EFF_READ_IP;
 	result= (*eth_fd->ef_put_userdata)(eth_fd->ef_srfd, (size_t)0, pack,
 		FALSE);
 	if (result >=0)
 		reply_thr_put(eth_fd, size, FALSE);
-	return result<0 ? result : NW_OK;
-}
-
-PRIVATE int ok_for_me (eth_fd, pack)
-eth_fd_t *eth_fd;
-acc_t *pack;
-{
-	eth_port_t *eth_port;
-	eth_hdr_t *eth_hdr;
-	ether_type_t type;
-	static ether_addr_t broadcast= {255, 255, 255, 255, 255, 255},
-		packaddr, portaddr, multi_addr, rem_addr;
-	int pack_kind;
-
-	assert (pack->acc_length >= ETH_HDR_SIZE);
-
-	eth_port= eth_fd->ef_port;
-
-	eth_hdr= (eth_hdr_t *)ptr2acc_data(pack);
-	packaddr= eth_hdr->eh_dst;
-	if (packaddr.ea_addr[0] & 0x01)
-		/* multi cast or broadcast */
-		if (!eth_addrcmp (packaddr, broadcast))
-			pack_kind= EPS_BROAD;
-		else
-			pack_kind= EPS_MULTI;
 	else
-	{
-		portaddr= eth_port->etp_ethaddr;
-		if (!eth_addrcmp(packaddr, portaddr))
-			pack_kind= EPS_LOC;
-		else
-			pack_kind= EPS_PROMISC;
-	}
-
-	pack_kind &= eth_fd->ef_pack_stat;
-
-	if (!pack_kind)
-		return FALSE;
-
-	type= eth_hdr->eh_proto;
-
-	if ((eth_fd->ef_ethopt.nweo_flags & NWEO_TYPESPEC) &&
-		type != eth_fd->ef_ethopt.nweo_type)
-		return FALSE;
-
-	if (eth_fd->ef_ethopt.nweo_flags & NWEO_REMSPEC)
-	{
-		rem_addr= eth_fd->ef_ethopt.nweo_rem;
-		if (eth_addrcmp(eth_hdr->eh_src, rem_addr))
-			return FALSE;
-	}
-	return TRUE;
+		reply_thr_put(eth_fd, result, FALSE);
 }
 
-PRIVATE void eth_buffree (priority, reqsize)
+PRIVATE void eth_buffree (priority)
 int priority;
-size_t reqsize;
 {
-	int i, once_more;
-	time_t curr_tim;
-	acc_t *acc;
+	int i;
+	eth_fd_t *eth_fd;
+	acc_t *pack;
 
-	if (priority <ETH_PRI_EXP_FDBUFS)
-		return;
-
-#if DEBUG & 256
- { where(); printf("eth_buffree called\n"); }
-#endif
-
-	curr_tim= get_time();
-	for (i=0; i<ETH_FD_NR; i++)
+	if (priority == ETH_PRI_FDBUFS_EXTRA)
 	{
-		if (!(eth_fd_table[i].ef_flags & EFF_INUSE) )
-			continue;
-		acc= eth_fd_table[i].ef_rd_buf;
-		if (acc && eth_fd_table[i].ef_exp_tim < curr_tim)
+		for (i= 0, eth_fd= eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
 		{
-			eth_fd_table[i].ef_rd_buf= acc->acc_ext_link;
-			bf_afree(acc);
-			if (bf_free_buffsize >= reqsize)
-				return;
+			while (eth_fd->ef_rdbuf_head &&
+				eth_fd->ef_rdbuf_head->acc_ext_link)
+			{
+				pack= eth_fd->ef_rdbuf_head;
+				eth_fd->ef_rdbuf_head= pack->acc_ext_link;
+				bf_afree(pack);
+			}
 		}
 	}
-
-	if (priority <ETH_PRI_FDBUFS)
-		return;
-
-	once_more= 1;
-	while (once_more)
+	if (priority == ETH_PRI_FDBUFS)
 	{
-		once_more= 0;
-		for (i=0; i<ETH_FD_NR; i++)
+		for (i= 0, eth_fd= eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
 		{
-			if (!(eth_fd_table[i].ef_flags & EFF_INUSE))
-				continue;
-			acc= eth_fd_table[i].ef_rd_buf;
-			if (acc)
+			while (eth_fd->ef_rdbuf_head)
 			{
-				eth_fd_table[i].ef_rd_buf= acc->acc_ext_link;
-				bf_afree(acc);
-				if (bf_free_buffsize >= reqsize)
-					return;
-				once_more= 1;
+				pack= eth_fd->ef_rdbuf_head;
+				eth_fd->ef_rdbuf_head= pack->acc_ext_link;
+				bf_afree(pack);
 			}
 		}
 	}
 }
 
-PRIVATE void restart_write_fd(eth_fd)
-eth_fd_t *eth_fd;
+#ifdef BUF_CONSISTENCY_CHECK
+PRIVATE void eth_bufcheck()
 {
-	eth_port_t *eth_port;
-	acc_t *user_data, *header;
-	int size;
-	unsigned long nweo_flags;
-	eth_hdr_t *eth_hdr;
+	int i;
+	eth_fd_t *eth_fd;
+	acc_t *pack;
 
-	eth_port= eth_fd->ef_port;
-
-	if (eth_port->etp_wr_pack)
+	for (i= 0; i<ETH_PORT_NR; i++)
 	{
-		eth_port->etp_flags |= EPF_MORE2WRITE;
-		return;
+		bf_check_acc(eth_port_table[i].etp_rd_pack);
+		bf_check_acc(eth_port_table[i].etp_wr_pack);
 	}
-
-assert (eth_fd->ef_flags & EFF_WRITE_IP);
-	eth_fd->ef_flags &= ~EFF_WRITE_IP;
-
-assert (!eth_port->etp_wr_pack);
-
-#if DEBUG & 256
- { where(); printf("calling *get_userdata\n"); }
+	for (i= 0, eth_fd= eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
+	{
+		for (pack= eth_fd->ef_rdbuf_head; pack;
+			pack= pack->acc_ext_link)
+		{
+			bf_check_acc(pack);
+		}
+	}
+}
 #endif
-	user_data= (*eth_fd->ef_get_userdata)(eth_fd->ef_srfd, 0,
-		eth_fd->ef_write_count, FALSE);
-	if (!user_data)
+
+PRIVATE u32_t compute_rec_conf(eth_port)
+eth_port_t *eth_port;
+{
+	eth_fd_t *eth_fd;
+	u32_t flags;
+	int i;
+
+	flags= NWEO_NOFLAGS;
+	for (i=0, eth_fd= eth_fd_table; i<ETH_FD_NR; i++, eth_fd++)
 	{
-		eth_fd->ef_flags &= ~EFF_WRITE_IP;
-		reply_thr_get (eth_fd, EFAULT, FALSE);
-		return;
+		if ((eth_fd->ef_flags & (EFF_INUSE|EFF_OPTSET)) !=
+			(EFF_INUSE|EFF_OPTSET))
+		{
+			continue;
+		}
+		if (eth_fd->ef_port != eth_port)
+			continue;
+		flags |= eth_fd->ef_ethopt.nweo_flags;
 	}
-	size= bf_bufsize (user_data);
-
-	nweo_flags= eth_fd->ef_ethopt.nweo_flags;
-
-	if (nweo_flags & NWEO_RWDATONLY)
-	{
-		header= bf_memreq(ETH_HDR_SIZE);
-		header->acc_next= user_data;
-		user_data= header;
-	}
-
-	user_data= bf_packIffLess (user_data, ETH_HDR_SIZE);
-
-	eth_hdr= (eth_hdr_t *)ptr2acc_data(user_data);
-
-	if (nweo_flags & NWEO_REMSPEC)
-		eth_hdr->eh_dst= eth_fd->ef_ethopt.nweo_rem;
-
-	eth_hdr->eh_src= eth_port->etp_ethaddr;
-
-	if (nweo_flags & NWEO_TYPESPEC)
-		eth_hdr->eh_proto= eth_fd->ef_ethopt.nweo_type;
-
-assert (!eth_port->etp_wr_pack);
-	eth_port->etp_wr_pack= user_data;
-
-	if (!(eth_port->etp_flags & EPF_WRITE_IP))
-	{
-		eth_write_port(eth_port);
-	}
-	reply_thr_get (eth_fd, size, FALSE);
+	return flags;
 }
 
 PRIVATE void reply_thr_get (eth_fd, result, for_ioctl)
@@ -935,12 +947,8 @@ int for_ioctl;
 {
 	acc_t *data;
 
-#if DEBUG & 256
- { where(); printf("calling *get_userdata(fd= %d, %d, 0)\n", eth_fd->
-	ef_srfd, result, 0); }
-#endif
 	data= (*eth_fd->ef_get_userdata)(eth_fd->ef_srfd, result, 0, for_ioctl);
-assert (!data);	
+	assert (!data);	
 }
 
 PRIVATE void reply_thr_put (eth_fd, result, for_ioctl)
@@ -952,5 +960,9 @@ int for_ioctl;
 
 	error= (*eth_fd->ef_put_userdata)(eth_fd->ef_srfd, result, (acc_t *)0,
 		for_ioctl);
-assert(!error);
+	assert(error == NW_OK);
 }
+
+/*
+ * $PchId: eth.c,v 1.11 1996/08/02 07:04:58 philip Exp $
+ */

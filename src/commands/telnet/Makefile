@@ -1,6 +1,6 @@
 # Makefile for telnet
 
-CFLAGS=	-D_MINIX -D_POSIX_SOURCE
+CFLAGS=	-D_MINIX -D_POSIX_SOURCE -m
 LDFLAGS=-i
 
 SRC=	ttn.c ttn_conf.c

@@ -1,4 +1,4 @@
-/*	nonamed 1.6 - not a name daemon, but plays one on TV.
+/*	nonamed 1.7 - not a name daemon, but plays one on TV.
  *							Author: Kees J. Bot
  *								29 Nov 1994
  */
@@ -739,8 +739,8 @@ size_t compose_reply(u8_t *qbuf, size_t qsize, u8_t *rbuf, size_t rsize)
 		return cp - rbuf;
 	}
 	/* Make an answer that looks one of these two:
-	 *   1.200.9.192.in-addr.arpa  3600  IN  PTR  darask.home.cs.vu.nl
-	 *   darask.home.cs.vu.nl      3600  IN    A  192.9.200.1
+	 *   42.231.31.192.in-addr.arpa  3600  IN  PTR  star.cs.vu.nl
+	 *   star.cs.vu.nl               3600  IN    A  192.31.231.42
 	 */
 	r= dn_comp(name, cp, rsize - (rbuf - cp), dnptrs, arraylimit(dnptrs));
 	if (r == -1) {
@@ -920,7 +920,7 @@ char *tcp_dns_tell(int fd, u8_t *buf)
 	nwio_tcpconf_t tcpconf;
 
 	if (ioctl(fd, NWIOGTCPCONF, &tcpconf) < 0) {
-		printf("???/?? TCP ");
+		printf("??\?/?? TCP ");
 	} else {
 		printf("%s/%u TCP ", inet_ntoa(tcpconf.nwtc_remaddr),
 					ntohs(tcpconf.nwtc_remport));

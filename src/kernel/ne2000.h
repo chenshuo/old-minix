@@ -24,5 +24,5 @@ Created:	March 15, 1994 by Philip Homburg <philip@cs.vu.nl>
 #endif /* NE2000_H */
 
 /*
- * $PchHeader: /mount/hd2/minix/sys/kernel/ibm/RCS/ne2000.h,v 1.1 1994/04/07 22:58:48 philip Exp $
+ * $PchId: ne2000.h,v 1.2 1995/12/22 08:42:31 philip Exp $
  */

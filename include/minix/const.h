@@ -1,8 +1,12 @@
-/* Copyright (C) 1995 by Prentice-Hall, Inc.  Permission is hereby granted
+/* Copyright (C) 1998 by Prentice-Hall, Inc.  Permission is hereby granted
  * to redistribute the binary and source programs of this system for
  * educational or research purposes.  For other use, written permission from
  * Prentice-Hall is required.  
  */
+
+#ifndef CHIP
+#error CHIP is not defined
+#endif
 
 #define EXTERN        extern	/* used in *.h files */
 #define PRIVATE       static	/* PRIVATE x limits the scope of x */
@@ -52,7 +56,7 @@
 
 /* Number of tasks. */
 #define NR_TASKS	(9 + ENABLE_WINI + ENABLE_SCSI + ENABLE_CDROM \
-			+ ENABLE_NETWORKING + 2 * ENABLE_AUDIO)
+			+ ENABLE_DOSDSK + ENABLE_NETWORKING + 2 * ENABLE_AUDIO)
 
 /* Memory is allocated in clicks. */
 #if (CHIP == INTEL)

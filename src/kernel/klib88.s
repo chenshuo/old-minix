@@ -9,9 +9,9 @@
 ! kernel.  They are:
 
 .define	_monitor	! exit Minix and return to the monitor
+.define	_int86		! make an 8086 interrupt call
 .define real2prot	! switch from real to protected mode
 .define prot2real	! switch from protected to real mode
-.define	_check_mem	! check a block of memory, return the valid size
 .define	_cp_mess	! copies messages from source to destination
 .define	_exit		! dummy for library routines
 .define	__exit		! dummy for library routines
@@ -71,6 +71,7 @@
 .extern	_vid_size
 .extern	_vid_mask
 .extern	_level0_func
+.extern	_ps_mca
 
 	.text
 !*===========================================================================*
@@ -94,88 +95,115 @@ _monitor:
 	retf				! return to the monitor
 
 
-#if ENABLE_BIOS_WINI
 !*===========================================================================*
-!*				bios13					     *
+!*				int86					     *
 !*===========================================================================*
-! PUBLIC void bios13();
-.define _bios13
-_bios13:			! make a BIOS 0x13 call for disk I/O
+! PUBLIC void int86();
+_int86:				! make an 8086 interrupt call.
+	push	bp
 	push	si
 	push	di		! save C variable registers
 	pushf			! save flags
 
-	call	int13		! make the actual call
+	call	int86		! make the actual call
 
 	popf			! restore flags
 	pop	di		! restore C registers
 	pop	si
+	pop	bp
 	ret
 
-! Make a BIOS 0x13 call from protected mode
-p_bios13:
+! Do an 8086 interrupt from protected mode
+p_int86:
 	push	bp
 	push	si
 	push	di			! save C variable registers
 	pushf				! save flags
+
 	cli				! no interruptions
 	inb	INT2_CTLMASK
 	movb	ah, al
 	inb	INT_CTLMASK
 	push	ax			! save interrupt masks
 	mov	ax, _irq_use		! map of in-use IRQs
-	and	ax, #~[1<<CLOCK_IRQ]	! there is a special clock handler
+	and	ax, #~[1<<CLOCK_IRQ]	! keep the clock ticking
 	outb	INT_CTLMASK		! enable all unused IRQs and vv.
 	movb	al, ah
 	outb	INT2_CTLMASK
 
-	smsw	ax
-	push	ax			! save machine status word
 	call	prot2real		! switch to real mode
 
-	call	int13			! make the actual call
+	xor	ax, ax
+	mov	es, ax			! vector & BIOS data segments
+   eseg	mov	0x046C, ax		! clear BIOS clock counter
+   eseg	mov	0x046E, ax
+
+	sti				! enable interrupts
+	call	int86			! make the actual call
+	cli				! disable interrupts
+
+	xor	ax, ax
+	mov	es, ax
+   eseg	mov	ax, 0x046C
+	add	_lost_ticks, ax		! record lost clock ticks
 
 	call	real2prot		! back to protected mode
-	pop	ax
-	lmsw	ax			! restore msw
 
 	pop	ax			! restore interrupt masks
 	outb	INT_CTLMASK
 	movb	al, ah
 	outb	INT2_CTLMASK
+
 	popf				! restore flags
-	pop	di
+	pop	di			! restore C registers
 	pop	si
-	pop	bp			! restore C variable registers
+	pop	bp
 	ret
 
-int13:
-	mov	ax, _Ax		! load parameters
-	mov	bx, _Bx
-	mov	cx, _Cx
-	mov	dx, _Dx
-	mov	es, _Es
-	sti			! enable interrupts
-	int	0x13		! make the BIOS call
-	cli			! disable interrupts
-	mov	_Ax, ax		! save results
-	mov	_Bx, bx
-	mov	_Cx, cx
-	mov	_Dx, dx
-	mov	_Es, es
-	mov	ax, ds
-	mov	es, ax		! restore es
-	ret
+int86:
+	mov	bp, #_reg86	! address of parameter block
+	movb	al, #0xCD	! INT instruction
+	movb	ah, (bp)	! Interrupt number?
+	testb	ah, ah
+	jnz	0f		! nonzero if INT, otherwise far call
+	push	cs
+	push	#intret+2	! far return address
+	push	6(bp)
+	push	4(bp)		! far driver address
+	mov	ax, #0x90CB	! RETF; NOP
+0: cseg	mov	intret, ax	! patch `INT n` or `RETF; NOP` into code
+	jmp	.+2		! clear instruction queue
 
-.bss
-.define	_Ax, _Bx, _Cx, _Dx, _Es		! 8086 register variables
-.comm	_Ax, 2
-.comm	_Bx, 2
-.comm	_Cx, 2
-.comm	_Dx, 2
-.comm	_Es, 2
-.text
-#endif /* ENABLE_BIOS_WINI */
+	mov	ds, 8(bp)	! Load parameters
+	mov	es, 10(bp)
+	mov	ax, 12(bp)	! (sorry, only ax set, not eax)
+	mov	bx, 16(bp)
+	mov	cx, 20(bp)
+	mov	dx, 24(bp)
+	mov	si, 28(bp)
+	mov	di, 32(bp)
+	mov	bp, 36(bp)
+
+intret:	int	0xFF		! do the interrupt or far call
+
+	push	bp
+	pushf
+	mov	bp, #_reg86	! address of parameter block
+	pop	(bp)		! eflags
+	mov	8(bp), ds
+	mov	10(bp), es
+	mov	12(bp), ax
+	mov	16(bp), bx
+	mov	20(bp), cx
+	mov	24(bp), dx
+	mov	28(bp), si
+	mov	32(bp), di
+	pop	36(bp)		! bp
+
+	mov	ax, ss
+	mov	ds, ax		! restore ds and es
+	mov	es, ax
+	ret
 
 
 !*===========================================================================*
@@ -200,7 +228,7 @@ csinit:
 	mov	ax, #TSS_SELECTOR
 	ltr	ax			! set TSS register
 
-	movb	ah, #0xDF
+	movb	ah, #0x02
 	jmp	gate_A20		! enable the A20 address line
 
 
@@ -213,13 +241,13 @@ prot2real:
 	cmp	_processor, #386	! is this a 386?
 	jae	p2r386
 p2r286:
-	mov	_gdt+ES_286_OFFSET+DESC_BASE, #0x0400
+	mov	_gdt+ES_286_OFFSET+DESC_BASE, #0x0000
 	movb	_gdt+ES_286_OFFSET+DESC_BASE_MIDDLE, #0x00
 	mov	ax, #ES_286_SELECTOR
 	mov	es, ax			! BIOS data segment
-  eseg	mov	0x0067, #real		! set return from shutdown address
+  eseg	mov	0x0467, #real		! set return from shutdown address
   cseg	mov	ax, kernel_cs
-  eseg	mov	0x0069, ax
+  eseg	mov	0x0469, ax
 	movb	al, #0x8F
 	outb	0x70			! select CMOS byte 0x0F (disable NMI)
 	jmp	.+2
@@ -253,22 +281,24 @@ real:
 	mov	ss, ax
 	mov	sp, save_sp		! restore stack
 
-	movb	ah, #0xDD
+	xorb	ah, ah
 	!jmp	gate_A20		! disable the A20 address line
 
-! Enable (ah = 0xDF) or disable (ah = 0xDD) the A20 address line.
+! Enable (ah = 0x02) or disable (ah = 0x00) the A20 address line.
 gate_A20:
+	cmp	_ps_mca, #0	! PS/2 bus?
+	jnz	gate_PS_A20
 	call	kb_wait
 	movb	al, #0xD1	! Tell keyboard that a command is coming
 	outb	0x64
 	call	kb_wait
-	movb	al, ah		! Enable or disable code
+	movb	al, #0xDD	! 0xDD = A20 disable code if ah = 0x00
+	orb	al, ah		! 0xDF = A20 enable code if ah = 0x02
 	outb	0x60
 	call	kb_wait
-	mov	ax, #25		! 25 microsec delay for slow keyboard chip
-0:	out	0xED		! Write to an unused port (1us)
-	dec	ax
-	jne	0b
+	movb	al, #0xFF	! Pulse output port
+	outb	0x64
+	call	kb_wait		! Wait for the A20 line to settle down
 	ret
 kb_wait:
 	inb	0x64
@@ -276,68 +306,16 @@ kb_wait:
 	jnz	kb_wait		! If so, wait
 	ret
 
-
-!*===========================================================================*
-!*				check_mem				     *
-!*===========================================================================*
-! PUBLIC phys_bytes check_mem(phys_bytes base, phys_bytes size);
-! Check a block of memory, return the amount valid.
-! Only every 16th byte is checked.
-! This only works in protected mode.
-! An initial size of 0 means everything.
-! This really should do some alias checks.
-
-PCM_DENSITY	=	256	! resolution of check
-				! the shift logic depends on this being 256
-TEST1PATTERN	=	0x55	! memory test pattern 1
-TEST2PATTERN	=	0xAA	! memory test pattern 2
-
-_check_mem:
-	pop	bx
-	pop	_gdt+DS_286_OFFSET+DESC_BASE
-	pop	ax		! pop base into base of source descriptor
-	movb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,al
-	pop	cx		! byte count in dx:cx
-	pop	dx
-	sub	sp,#4+4
-	push	bx
-	push	ds
-
-	sub	ax,ax		! prepare for early exit
-	test	dx,#0xFF00
-	jnz	cm_1exit	! cannot handle bases above 16M
-	movb	cl,ch		! divide size by 256 and discard high byte
-	movb	ch,dl
-	push	cx		! save divided size
-	sub	bx,bx		! test bytes at bases of segments
-cm_loop:
-	mov	ax,#DS_286_SELECTOR
-	mov	ds,ax
-	movb	dl,#TEST1PATTERN
-	xchgb	dl,(bx)		! write test pattern, remember original value
-	xchgb	dl,(bx)		! restore original value, read test pattern
-	cmpb	dl,#TEST1PATTERN	! must agree if good real memory
-	jnz	cm_exit		! if different, memory is unusable
-	movb	dl,#TEST2PATTERN
-	xchgb	dl,(bx)
-	xchgb	dl,(bx)
-	cmpb	dl,#TEST2PATTERN
-	jnz	cm_exit
-				! next segment, test for wraparound at 16M
-				! assuming es == old ds
-  eseg	add	_gdt+DS_286_OFFSET+DESC_BASE,#PCM_DENSITY
-  eseg	adcb	_gdt+DS_286_OFFSET+DESC_BASE_MIDDLE,#0
-	loopnz	cm_loop
-
-cm_exit:
-	pop	ax
-	sub	ax,cx		! verified size in multiples of PCM_DENSITY
-cm_1exit:
-	movb	dl,ah		! convert to phys_bytes in dx:ax
-	subb	dh,dh
-	movb	ah,al
-	movb	al,dh
-	pop	ds
+gate_PS_A20:		! The PS/2 can twiddle A20 using port A
+	inb	0x92		! Read port A
+	andb	al, #0xFD
+	orb	al, ah		! Set A20 bit to the required state
+	outb	0x92		! Write port A
+	jmp	.+2		! Small delay
+A20ok:	inb	0x92		! Check port A
+	andb	al, #0x02
+	cmpb	al, ah		! A20 line settled down to the new state?
+	jne	A20ok		! If not then wait
 	ret
 
 
@@ -796,10 +774,10 @@ _mem_rdw:
 !*===========================================================================*
 ! PUBLIC void reset();
 ! Reset the system.
-! In real mode we simply jump to the reset address.
+! In real mode we simply jump to the reset address at F000:FFF0.
 
 _reset:
-	jmpf	0,0xFFFF
+	jmpf	0xFFF0,0xF000
 
 
 !*===========================================================================*
@@ -1143,9 +1121,7 @@ p_level0:
 !*===========================================================================*
 	.data
 patch_table:			! pairs (old function, new function)
-#if ENABLE_BIOS_WINI
-	.data2	_bios13, p_bios13
-#endif
+	.data2	_int86, p_int86
 	.data2	_cp_mess, p_cp_mess
 	.data2	_phys_copy, p_phys_copy
 	.data2	portio_setup, p_portio_setup

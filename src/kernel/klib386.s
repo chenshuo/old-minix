@@ -13,7 +13,7 @@
 ! kernel.  They are:
 
 .define	_monitor	! exit Minix and return to the monitor
-.define	_check_mem	! check a block of memory, return the valid size
+.define	_int86		! let the monitor make an 8086 interrupt call
 .define	_cp_mess	! copies messages from source to destination
 .define	_exit		! dummy for library routines
 .define	__exit		! dummy for library routines
@@ -48,10 +48,7 @@
 .extern	_mon_return, _mon_sp
 .extern _irq_use
 .extern	_blank_color
-.extern	_ext_memsize
 .extern	_gdt
-.extern	_low_memsize
-.extern	_sizes
 .extern	_vid_seg
 .extern	_vid_size
 .extern	_vid_mask
@@ -79,16 +76,16 @@ _monitor:
     o16 retf				! return to the monitor
 
 
-#if ENABLE_BIOS_WINI
 !*===========================================================================*
-!*				bios13					     *
+!*				int86					     *
 !*===========================================================================*
-! PUBLIC void bios13();
-.define	_bios13
-_bios13:
+! PUBLIC void int86();
+_int86:
 	cmpb	(_mon_return), 0	! is the monitor there?
 	jnz	0f
-	movb	(_Ax+1), 0x01		! "invalid command"
+	movb	ah, 0x01		! an int 13 error seems appropriate
+	movb	(_reg86+ 0), ah		! reg86.w.f = 1 (set carry flag)
+	movb	(_reg86+13), ah		! reg86.b.ah = 0x01 = "invalid command"
 	ret
 0:	push	ebp			! save C registers
 	push	esi
@@ -101,36 +98,43 @@ _bios13:
 	movb	ah, al
 	inb	INT_CTLMASK
 	push	eax			! save interrupt masks
-	mov	eax, (_irq_use)		! map of in-use IRQs
-	and	eax, ~[1<<CLOCK_IRQ]	! there is a special clock handler
-	outb	INT_CTLMASK		! enable all unused IRQs and vv.
+	mov	eax, (_irq_use)		! map of in-use IRQ`s
+	and	eax, ~[1<<CLOCK_IRQ]	! keep the clock ticking
+	outb	INT_CTLMASK		! enable all unused IRQ`s and vv.
 	movb	al, ah
 	outb	INT2_CTLMASK
-
-	mov	eax, cr0
-	push	eax			! save machine status word
 
 	mov	eax, SS_SELECTOR	! monitor data segment
 	mov	ss, ax
 	xchg	esp, (_mon_sp)		! switch stacks
-    o16	push	(_Es)			! parameters used in bios 13 call
-    o16	push	(_Dx)
-    o16	push	(_Cx)
-    o16	push	(_Bx)
-    o16	push	(_Ax)
+	push	(_reg86+36)		! parameters used in INT call
+	push	(_reg86+32)
+	push	(_reg86+28)
+	push	(_reg86+24)
+	push	(_reg86+20)
+	push	(_reg86+16)
+	push	(_reg86+12)
+	push	(_reg86+ 8)
+	push	(_reg86+ 4)
+	push	(_reg86+ 0)
 	mov	ds, ax			! remaining data selectors
 	mov	es, ax
 	mov	fs, ax
 	mov	gs, ax
 	push	cs
 	push	return			! kernel return address and selector
-    o16	jmpf	16+2*4+5*2+2*4(esp)	! make the call
+    o16	jmpf	20+2*4+10*4+2*4(esp)	! make the call
 return:
-    o16	pop	(_Ax)
-    o16	pop	(_Bx)
-    o16	pop	(_Cx)
-    o16	pop	(_Dx)
-    o16	pop	(_Es)
+	pop	(_reg86+ 0)
+	pop	(_reg86+ 4)
+	pop	(_reg86+ 8)
+	pop	(_reg86+12)
+	pop	(_reg86+16)
+	pop	(_reg86+20)
+	pop	(_reg86+24)
+	pop	(_reg86+28)
+	pop	(_reg86+32)
+	pop	(_reg86+36)
 	lgdt	(_gdt+GDT_SELECTOR)	! reload global descriptor table
 	jmpf	CS_SELECTOR:csinit	! restore everything
 csinit:	mov	eax, DS_SELECTOR
@@ -142,77 +146,21 @@ csinit:	mov	eax, DS_SELECTOR
 	xchg	esp, (_mon_sp)		! unswitch stacks
 	lidt	(_gdt+IDT_SELECTOR)	! reload interrupt descriptor table
 	andb	(_gdt+TSS_SELECTOR+DESC_ACCESS), ~0x02  ! clear TSS busy bit
-	mov	ax, TSS_SELECTOR
+	mov	eax, TSS_SELECTOR
 	ltr	ax			! set TSS register
-
-	pop	eax
-	mov	cr0, eax		! restore machine status word
 
 	pop	eax
 	outb	INT_CTLMASK		! restore interrupt masks
 	movb	al, ah
 	outb	INT2_CTLMASK
 
+	add	(_lost_ticks), ecx	! record lost clock ticks
+
 	popf				! restore flags
 	pop	ebx			! restore C registers
 	pop	edi
 	pop	esi
 	pop	ebp
-	ret
-
-.sect .bss
-.define	_Ax, _Bx, _Cx, _Dx, _Es		! 8086 register variables
-.comm	_Ax, 4
-.comm	_Bx, 4
-.comm	_Cx, 4
-.comm	_Dx, 4
-.comm	_Es, 4
-.sect .text
-#endif /* ENABLE_BIOS_WINI */
-
-
-!*===========================================================================*
-!*				check_mem				     *
-!*===========================================================================*
-! PUBLIC phys_bytes check_mem(phys_bytes base, phys_bytes size);
-! Check a block of memory, return the amount valid.
-! Only every 16th byte is checked.
-! An initial size of 0 means everything.
-! This really should do some alias checks.
-
-CM_DENSITY	=	16
-CM_LOG_DENSITY	=	4
-TEST1PATTERN	=	0x55		! memory test pattern 1
-TEST2PATTERN	=	0xAA		! memory test pattern 2
-
-CHKM_ARGS	=	4 + 4 + 4	! 4 + 4
-!			ds ebx eip	base size
-
-_check_mem:
-	push	ebx
-	push	ds
-    o16	mov	ax, FLAT_DS_SELECTOR
-	mov	ds, ax
-	mov	eax, CHKM_ARGS(esp)
-	mov	ebx, eax
-	mov	ecx, CHKM_ARGS+4(esp)
-	shr	ecx, CM_LOG_DENSITY
-cm_loop:
-	movb	dl, TEST1PATTERN
-	xchgb	dl, (eax)		! write test pattern, remember original
-	xchgb	dl, (eax)		! restore original, read test pattern
-	cmpb	dl, TEST1PATTERN	! must agree if good real memory
-	jnz	cm_exit			! if different, memory is unusable
-	movb	dl, TEST2PATTERN
-	xchgb	dl, (eax)
-	xchgb	dl, (eax)
-	add	eax, CM_DENSITY
-	cmpb	dl, TEST2PATTERN
-	loopz	cm_loop
-cm_exit:
-	sub	eax, ebx
-	pop	ds
-	pop	ebx
 	ret
 
 

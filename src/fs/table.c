@@ -133,7 +133,8 @@ PUBLIC struct dmap dmap[] = {
   DT(ENABLE_SCSI,
         dev_opcl,  call_task,   dev_opcl,   SCSI)        /*10 = /dev/sd0   */
   DT(0, 0,         0,           0,          0)           /*11 = not used   */
-  DT(0, 0,         0,           0,          0)           /*12 = not used   */
+  DT(ENABLE_DOSDSK,
+        dev_opcl,  call_task,   dev_opcl,   DOSDSK)      /*12 = /dev/dosd0 */
   DT(ENABLE_AUDIO,
         dev_opcl,  call_task,   dev_opcl,   AUDIO)       /*13 = /dev/audio */
   DT(ENABLE_AUDIO,

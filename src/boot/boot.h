@@ -16,14 +16,18 @@
 
 #define HEADERPOS      0x00600L	/* Place for an array of struct exec's. */
 
-#define MINIXPOS       0x00800L	/* Minix is loaded here (rounded up towards
-				 * the click size).
-				 */
 #define FREEPOS	       0x08000L	/* Memory from FREEPOS to caddr is free to
 				 * play with.
 				 */
-#define MSEC_PER_TICK	55	/* Clock does 18.2 ticks per second. */
+#if BIOS
+#define MSEC_PER_TICK	  55	/* Clock does 18.2 ticks per second. */
 #define TICKS_PER_DAY 0x1800B0L	/* After 24 hours it wraps. */
+#endif
+
+#if UNIX
+#define MSEC_PER_TICK	1000	/* Clock does 18.2 ticks per second. */
+#define TICKS_PER_DAY  86400L	/* Doesn't wrap, but that doesn't matter. */
+#endif
 
 #define BOOTPOS	       0x07C00L	/* Bootstraps are loaded here. */
 #define SIGNATURE	0xAA55	/* Proper bootstraps have this signature. */
@@ -39,7 +43,7 @@
 #define EXTERN extern
 #endif
 
-typedef struct vector {
+typedef struct vector {		/* 8086 vector */
 	u16_t	offset;
 	u16_t	segment;
 } vector;
@@ -50,7 +54,13 @@ EXTERN u32_t caddr, daddr;	/* Code and data address of the boot program. */
 EXTERN u32_t runsize;		/* Size of this program. */
 
 EXTERN u16_t device;		/* Drive being booted from. */
-EXTERN u16_t heads, sectors;	/* Its number of heads and sectors. */
+
+typedef struct {		/* One chunk of free memory. */
+	u32_t	base;		/* Start byte. */
+	u32_t	size;		/* Number of bytes. */
+} memory;
+
+EXTERN memory mem[3];		/* List of available memory. */
 
 
 /* Functions defined by boothead.s: */
@@ -69,36 +79,35 @@ void put_word(u32_t addr, U16_t word);
 			/* Put a word anywhere. */
 void relocate(void);
 			/* Switch to a copy of this program. */
-int dev_geometry(void);
-			/* Set parameters for the current device. */
+int dev_open(void), dev_close(void);
+			/* Open device and determine params / close device. */
+int dev_boundary(u32_t sector);
+			/* True if sector is on a track boundary. */
 int readsectors(u32_t bufaddr, u32_t sector, U8_t count);
 			/* Read 1 or more sectors from "device". */
 int writesectors(u32_t bufaddr, u32_t sector, U8_t count);
 			/* Write 1 or more sectors to "device". */
-int getchar(void);
-			/* Blocking read for a keyboard character. */
-int peekchar(void);
-			/* Nonblocking keyboard read. */
-void putchar(int c);
+int getch(void);
+			/* Read a keypress. */
+int escape(void);
+			/* True if escape typed. */
+void putch(int c);
 			/* Send a character to the screen. */
-void reset_video(unsigned mode);
-			/* Reset and clear the screen. */
+void set_mode(unsigned mode);
+void clear_screen(void);
+			/* Set video mode / clear the screen. */
 
 u16_t get_bus(void);
 			/* System bus type, XT, AT, or MCA. */
 u16_t get_video(void);
 			/* Display type, MDA to VGA. */
-u16_t get_memsize(void);
-			/* Amount of "normal" memory in K. */
-u32_t get_ext_memsize(void);
-			/* Amount of extended memory in K. */
 u32_t get_tick(void);
 			/* Current value of the clock tick counter. */
 
 void bootstrap(int device, struct part_entry *entry);
 			/* Execute a bootstrap routine for a different O.S. */
 u32_t minix(u32_t koff, u32_t kcs, u32_t kds,
-					char *bootparams, size_t paramsize);
+				char *bootparams, size_t paramsize, u32_t aout);
 			/* Start Minix. */
 
 
@@ -126,7 +135,8 @@ typedef struct environment {
 
 EXTERN environment *env;	/* Lists the environment. */
 
-char *b_value(char *name);	/* Get the value of a variable. */
+char *b_value(char *name);	/* Get/set the value of a variable. */
+int b_setvar(int flags, char *name, char *value);
 
 EXTERN int fsok;	/* True if the boot device contains an FS. */
 EXTERN u32_t lowsec;	/* Offset to the file system on the boot device. */
@@ -141,8 +151,8 @@ void bootminix(void);		/* Load and start a Minix image. */
 
 void readerr(off_t sec, int err);
 			/* Report a read error. */
-char *u2a(U16_t n), *ul2a(u32_t n);
-			/* Transform an u16_t or u32_t to decimal. */
+char *ul2a(u32_t n, unsigned b), *ul2a10(u32_t n);
+			/* Transform u32_t to ASCII at base b or base 10. */
 long a2l(char *a);
 			/* Cheap atol(). */
 unsigned a2x(char *a);
@@ -155,18 +165,20 @@ int numeric(char *s);
 			/* True for a numeric string. */
 char *unix_err(int err);
 			/* Give a descriptive text for some UNIX errors. */
-void invalidate_cache(void);
-			/* About to load an image where the cache sits. */
-void init_cache(void);
-			/* Turn the block cache back on. */
-int delay(char *msec);
-			/* Delay for several millisec. */
+int run_trailer(void);
+			/* Run the trailer function. */
+
+#if BIOS
+/* Use the kernel printf(): */
+void printk(char *fmt, ...);
+#define	printf	printk
+#endif
 
 #if DOS
 /* The monitor runs under MS-DOS. */
-int dos_open(char *name);
-			/* Open file to use as the Minix virtual disk. */
 extern char PSP[256];	/* Program Segment Prefix. */
+EXTERN char *vdisk;	/* Name of the virtual disk. */
+EXTERN char *drun;	/* Initial command from DOS command line. */
 #else
 /* The monitor uses only the BIOS. */
 #define DOS	0

@@ -1,6 +1,5 @@
 /* This file contains a collection of miscellaneous procedures:
- *	mem_init:	initialize memory tables.  Some memory is reported
- *			by the BIOS, some is guesstimated and checked later
+ *	mem_init:	initialize memory tables.
  *	env_parse	parse environment variable.
  *	bad_assertion	for debugging
  *	bad_compare	for debugging
@@ -13,53 +12,47 @@
 
 #if (CHIP == INTEL)
 
-#define EM_BASE     0x100000L	/* base of extended memory on AT's */
-#define SHADOW_BASE 0xFA0000L	/* base of RAM shadowing ROM on some AT's */
-#define SHADOW_MAX  0x060000L	/* maximum usable shadow memory (16M limit) */
+/* In real mode only 1M can be addressed, and in 16-bit protected mode 16M. */
+#define MAX_86ADDR	0x00100000L
+#define MAX_286ADDR	0x01000000L
 
 /*=========================================================================*
  *				mem_init				   *
  *=========================================================================*/
 PUBLIC void mem_init()
 {
-/* Initialize the memory size tables.  This is complicated by fragmentation
- * and different access strategies for protected mode.  There must be a
- * chunk at 0 big enough to hold Minix proper.  For 286 and 386 processors,
- * there can be extended memory (memory above 1MB).  This usually starts at
- * 1MB, but there may be another chunk just below 16MB, reserved under DOS
- * for shadowing ROM, but available to Minix if the hardware can be re-mapped.
- * In protected mode, extended memory is accessible assuming CLICK_SIZE is
- * large enough, and is treated as ordinary memory.
+/* Initialize the free memory list from the 'memory' boot variable.  Translate
+ * the byte offsets and sizes in this list to clicks, properly truncated.  Also
+ * make sure that we don't exceed the maximum address space of the 286 or the
+ * 8086, i.e. when running in 16-bit protected mode or real mode.
  */
+  long base, size, limit;
+  static char env[] = "memory";
+  static char fmt[] = "x:x,\4";
+  int i;
+  struct memory *memp;
+#if _WORD_SIZE == 2
+  unsigned long max_address;
+#endif
 
-  u32_t ext_clicks;
-  phys_clicks max_clicks;
-
-  /* Get the size of ordinary memory from the BIOS. */
-  mem[0].size = k_to_click(low_memsize);	/* base = 0 */
-
-  if (pc_at && protected_mode) {
-	/* Get the size of extended memory from the BIOS.  This is special
-	 * except in protected mode, but protected mode is now normal.
-	 * Note that no more than 16M can be addressed in 286 mode, so make
-	 * sure that the highest memory address fits in a short when counted
-	 * in clicks.
-	 */
-	ext_clicks = k_to_click((u32_t) ext_memsize);
-	max_clicks = USHRT_MAX - (EM_BASE >> CLICK_SHIFT);
-	mem[1].size = MIN(ext_clicks, max_clicks);
-	mem[1].base = EM_BASE >> CLICK_SHIFT;
-
-	if (ext_memsize <= (unsigned) ((SHADOW_BASE - EM_BASE) / 1024)
-			&& check_mem(SHADOW_BASE, SHADOW_MAX) == SHADOW_MAX) {
-		/* Shadow ROM memory. */
-		mem[2].size = SHADOW_MAX >> CLICK_SHIFT;
-		mem[2].base = SHADOW_BASE >> CLICK_SHIFT;
-	}
+  tot_mem_size = 0;
+  for (i = 0; i < NR_MEMS; i++) {
+	memp = &mem[i];
+	base = size = 0;
+	env_parse(env, fmt, 2*i+0, &base, 0L, LONG_MAX);
+	env_parse(env, fmt, 2*i+1, &size, 0L, LONG_MAX);
+	limit = base + size;
+#if _WORD_SIZE == 2
+	max_address = protected_mode ? MAX_286ADDR : MAX_86ADDR;
+	if (limit > max_address) limit = max_address;
+#endif
+	base = (base + CLICK_SIZE-1) & ~(long)(CLICK_SIZE-1);
+	limit &= ~(long)(CLICK_SIZE-1);
+	if (limit <= base) continue;
+	memp->base = base >> CLICK_SHIFT;
+	memp->size = (limit - base) >> CLICK_SHIFT;
+	tot_mem_size += memp->size;
   }
-
-  /* Total system memory. */
-  tot_mem_size = mem[0].size + mem[1].size + mem[2].size;
 }
 #endif /* (CHIP == INTEL) */
 
@@ -81,7 +74,8 @@ long min, max;		/* minimum and maximum values for the parameter */
  * string, fields in the environment string may be empty, and punctuation
  * may be missing to skip fields.  The format string contains characters
  * 'd', 'o', 'x' and 'c' to indicate that 10, 8, 16, or 0 is used as the
- * last argument to strtol.
+ * last argument to strtol.  If the format string contains something like "\4"
+ * then the string is repeated at 4 characters left.
  */
 
   char *val, *end;
@@ -104,6 +98,7 @@ long min, max;		/* minimum and maximum values for the parameter */
 		/* Time to go to the next field. */
 		if (*fmt == ',' || *fmt == ':') i++;
 		if (*fmt++ == *val) val++;
+		if (*fmt < 32) fmt -= *fmt;	/* step back? */
 	} else {
 		/* Environment contains a value, get it. */
 		switch (*fmt) {

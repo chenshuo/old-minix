@@ -1,4 +1,4 @@
-/*	install 1.9 - install files.			Author: Kees J. Bot
+/*	install 1.11 - install files.			Author: Kees J. Bot
  *								21 Feb 1993
  */
 #define nil 0
@@ -228,6 +228,7 @@ void copylink(char *source, char *dest, int mode, int owner, int group)
 
 	if (!S_ISREG(sst.st_mode)) {
 		fprintf(stderr, "install: %s is not a regular file\n", source);
+		excode= 1;
 		return;
 	}
 	r= stat(dest, &dst);
@@ -237,6 +238,7 @@ void copylink(char *source, char *dest, int mode, int owner, int group)
 		if (!S_ISREG(dst.st_mode)) {
 			fprintf(stderr, "install: %s is not a regular file\n",
 									dest);
+			excode= 1;
 			return;
 		}
 
@@ -246,6 +248,7 @@ void copylink(char *source, char *dest, int mode, int owner, int group)
 				fprintf(stderr,
 				"install: %s and %s are the same, can't copy\n",
 					source, dest);
+				excode= 1;
 				return;
 			}
 			same= 1;
@@ -266,6 +269,7 @@ void copylink(char *source, char *dest, int mode, int owner, int group)
 				fprintf(stderr,
 					"install: can't link %s to %s: %s\n",
 					source, dest, strerror(errno));
+				excode= 1;
 				return;
 			}
 		}
@@ -384,7 +388,9 @@ void copylink(char *source, char *dest, int mode, int owner, int group)
 		ubuf.actime= dst.st_atime;
 		ubuf.modtime= sst.st_mtime;
 
-		if (utime(dest, &ubuf) < 0) { report(dest); return; }
+		if (utime(dest, &ubuf) < 0 && errno != EPERM) {
+			report(dest); return;
+		}
 	}
 }
 

@@ -103,12 +103,12 @@
 .define	kernel_ds
 .define	begbss
 .define	begdata
-.define	_sizes
 
 ! Imported variables.
 
 .extern kernel_cs
 .extern	_gdt
+.extern	_aout
 .extern	_code_base
 .extern	_data_base
 .extern	_held_head
@@ -127,8 +127,10 @@ MINIX:				! this is the entry point for the MINIX kernel
 	jmp	over_kernel_ds	! skip over the next few bytes
 	.data2	CLICK_SHIFT	! for the monitor: memory granularity
 kernel_ds:
-	.data2	0x0024		! boot monitor flags:  (later kernel DS)
-				!	make stack, will return
+	.data2	0x00B4		! boot monitor flags:  (later kernel DS)
+				!	call in 8086 mode, make bss, make stack,
+				!	load low, don`t patch, will return,
+				!	(has own INT calls), memory vector
 over_kernel_ds:
 
 ! Set up a C stack frame on the monitor stack.  (The monitor sets cs and ds
@@ -137,9 +139,8 @@ over_kernel_ds:
 	mov	bp, sp
 	push	si
 	push	di
-	mov	cx, 4(bp)	! monitor code segment
-	test	cx, cx		! nonzero if return possible
-	jz	noret
+	cmp	4(bp), #0	! monitor code segment is
+	jz	noret		! nonzero if return possible
 	inc	_mon_return
 noret:	mov	_mon_ss, ss	! save stack location for later return
 	mov	_mon_sp, sp
@@ -147,6 +148,10 @@ noret:	mov	_mon_ss, ss	! save stack location for later return
 ! Locate boot parameters, set up kernel segment registers and stack.
 	mov	bx, 6(bp)	! boot parameters offset
 	mov	dx, 8(bp)	! boot parameters length
+	mov	ax, 10(bp)	! address of a.out headers
+	mov	_aout+0, ax
+	mov	ax, 12(bp)
+	mov	_aout+2, ax
 	mov	ax, ds		! kernel data
 	mov	es, ax
 	mov	ss, ax
@@ -162,11 +167,10 @@ noret:	mov	_mon_ss, ss	! save stack location for later return
 	push	dx
 	push	bx
 	push	_mon_ss
-	push	cx
 	push	ds
 	push	cs
-	call	_cstart		! cstart(cs, ds, mcs, mds, parmoff, parmlen)
-	add	sp, #6*2
+	call	_cstart		! cstart(cs, ds, mds, parmoff, parmlen)
+	add	sp, #5*2
 
 	cmp	_protected_mode, #0
 	jz	nosw		! ok to switch to protected mode?
@@ -769,25 +773,15 @@ p1_exception:			! Common for all exceptions.
 !*===========================================================================*
 !*				data					     *
 !*===========================================================================*
-! These declarations assure that storage will be allocated at the very 
-! beginning of the kernel data section, so the boot monitor can be easily 
-! told how to patch these locations. Note that the magic number is put
-! here by the compiler, but will be read by, and then overwritten by,
-! the boot monitor. When the kernel starts the sizes array will be
-! found here, as if it had been initialized by the compiler.
 
 	.data
 begdata:
-_sizes:				! sizes of kernel, mm, fs filled in by boot
 	.data2	0x526F		! this must be the first data entry (magic #)
-	.space	16*2*2-2	! monitor uses previous 2 words and this space
-				! extra space allows for additional servers
+
 	.bss
 begbss:
 k_stack:
 	.space	K_STACK_BYTES	! kernel stack
 k_stktop:			! top of kernel stack
-ds_ex_number:
-	.space	2
-trap_errno:
-	.space	2
+	.comm	ds_ex_number, 2
+	.comm	trap_errno, 2

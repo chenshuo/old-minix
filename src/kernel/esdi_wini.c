@@ -101,6 +101,7 @@ PRIVATE struct trans {
   phys_bytes dma;		/* DMA physical address                  */
 } wtrans[NR_IOREQS];
 
+PRIVATE int win_tasknr;		/* my task number			 */
 PRIVATE int nr_drives;		/* actual number of physical disk drive  */
 PRIVATE int command[4];		/* controller command buffer             */
 PRIVATE unsigned int status_block[9];	/* status block output from a command */
@@ -151,6 +152,8 @@ PRIVATE struct driver w_dtab = {
  *===========================================================================*/
 PUBLIC void esdi_winchester_task()
 {
+  win_tasknr = proc_number(proc_ptr);
+
   driver_task(&w_dtab);
 }
 
@@ -658,7 +661,7 @@ int irq;
 /* Disk interrupt, send message to winchester task and reenable interrupts. */
 
   w_istat = in_byte(INT_REG);
-  interrupt(WINCHESTER);
+  interrupt(win_tasknr);
   return 1;
 }
 

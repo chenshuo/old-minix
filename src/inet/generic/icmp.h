@@ -1,5 +1,7 @@
 /*
 icmp.h
+
+Copyright 1995 Philip Homburg
 */
 
 #ifndef ICMP_H
@@ -14,3 +16,7 @@ void icmp_init ARGS(( void ));
 
 
 #endif /* ICMP_H */
+
+/*
+ * $PchId: icmp.h,v 1.4 1995/11/21 06:45:27 philip Exp $
+ */

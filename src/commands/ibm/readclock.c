@@ -4,9 +4,8 @@
 /*									*/
 /*   readclock.c							*/
 /*									*/
-/*		Read from the 64 byte CMOS RAM area, then write		*/
-/*		the time to standard output in a form usable by		*/
-/*		date(1).						*/
+/*		Read the clock value from the 64 byte CMOS RAM		*/
+/*		area, then set system time.				*/
 /*									*/
 /*		If the machine ID byte is 0xFC or 0xF8, the device	*/
 /*		/dev/mem exists and can be opened for reading,		*/
@@ -14,37 +13,26 @@
 /*		RTC, then the time is read from the clock RAM		*/
 /*		area maintained by the RTC.				*/
 /*									*/
-/*		The clock RAM values are decoded and written to		*/
-/*		standard output in the form:				*/
+/*		The clock RAM values are decoded and fed to mktime	*/
+/*		to make a time_t value, then stime(2) is called.	*/
 /*									*/
-/*			mmddyyhhmmss					*/
+/*		This fails if:						*/
 /*									*/
-/*		If the machine ID does not match 0xFC or 0xF8,		*/
-/*		then ``-q'' is written to standard output.		*/
+/*		If the machine ID does not match 0xFC or 0xF8 (no	*/
+/*		error message.)						*/
 /*									*/
 /*		If the machine ID is 0xFC or 0xF8 and /dev/mem		*/
-/*		is missing, or cannot be accessed,			*/
-/*		then an error message is written to stderr,		*/
-/*		and ``-q'' is written to stdout.			*/
+/*		is missing, or cannot be accessed.			*/
 /*									*/
-/*		If the RTC reports errors in the CMOS RAM,		*/
-/*		then an error message is written to stderr,		*/
-/*		and ``-q'' is written to stdout.			*/
-/*									*/
-/*		Readclock is used as follows when placed		*/
-/*		the ``/etc/rc'' script:					*/
-/*									*/
-/*	 	  /usr/bin/date `/usr/bin/readclock` </dev/tty  	*/
-/*									*/
-/*		It is best if this program is owned by bin and NOT	*/
-/*		SUID because of the peculiar method of reading from	*/
-/*		RTC.  When someone makes a /dev/clock driver, this	*/
-/*		warning may be removed.					*/
+/*		If the RTC reports errors in the CMOS RAM.		*/
 /*									*/
 /************************************************************************/
 /*    origination          1987-Dec-29              efth                */
 /*    robustness	   1990-Oct-06		    C. Sylvain		*/
 /* incorp. B. Evans ideas  1991-Jul-06		    C. Sylvain		*/
+/*    set time & calibrate 1992-Dec-17		    Kees J. Bot		*/
+/*    clock timezone	   1993-Oct-10		    Kees J. Bot		*/
+/*    set CMOS clock	   1994-Jun-12		    Kees J. Bot		*/
 /************************************************************************/
 
 
@@ -52,10 +40,21 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <signal.h>
+#include <ibm/portio.h>
+#include <ibm/cmos.h>
 
-#define CPU_TYPE_SEGMENT   0xFFFF	/* Segment for Machine ID in BIOS */
-#define CPU_TYPE_OFFSET    0x000E	/* Offset for Machine ID	  */
+int nflag = 0;		/* Tell what, but don't do it. */
+int wflag = 0;		/* Set the CMOS clock. */
+int Wflag = 0;		/* Also set the CMOS clock register bits. */
+int y2kflag = 0;	/* Interpret 1980 as 2000 for clock with Y2K bug. */
+
+#define MACH_ID_ADDR	0xFFFFE		/* BIOS Machine ID at FFFF:000E */
 
 #define PC_AT		   0xFC		/* Machine ID byte for PC/AT,
 					   PC/XT286, and PS/2 Models 50, 60 */
@@ -70,118 +69,134 @@
  *	published by Microsoft Press
  */
 
-#define CLK_ELE		0x70	/* CMOS RAM address register port (write only)
-				 * Bit 7 = 1  NMI disable
-				 *	   0  NMI enable
-				 * Bits 6-0 = RAM address
-				 */
+void errmsg(char *s);
+void get_time(struct tm *t);
+int read_register(int reg_addr);
+void set_time(struct tm *t);
+void write_register(int reg_addr, int value);
+int bcd_to_dec(int n);
+int dec_to_bcd(int n);
+void usage(void);
 
-#define CLK_IO		0x71	/* CMOS RAM data register port (read/write) */
-
-#define  YEAR             9	/* Clock register addresses in CMOS RAM	*/
-#define  MONTH            8
-#define  DAY              7
-#define  HOUR             4
-#define  MINUTE           2
-#define  SECOND           0
-#define  STATUS        0x0B	/* Status register B: RTC configuration	*/
-#define  HEALTH	       0x0E	/* Diagnostic status: (should be set by Power
-				 * On Self-Test [POST])
-				 * Bit  7 = RTC lost power
-				 *	6 = Checksum (for addr 0x10-0x2d) bad
-				 *	5 = Config. Info. bad at POST
-				 *	4 = Mem. size error at POST
-				 *	3 = I/O board failed initialization
-				 *	2 = CMOS time invalid
-				 *    1-0 =    reserved
-				 */
-#define  DIAG_BADBATT       0x80
-#define  DIAG_MEMDIRT       0x40
-#define  DIAG_BADTIME       0x04
-
-/* CMOS RAM and RTC information source:
- *	_System BIOS for PC/XT/AT Computers and Compatibles_
- *	by Phoenix Technologies Ltd., published by Addison-Wesley
- */
-
-#define  BCD_TO_DEC(x)      ( (x >> 4) * 10 + (x & 0x0f) )
-#define  errmsg(s)          fputs( s, stderr )
-
-struct time {
-  unsigned year;
-  unsigned month;
-  unsigned day;
-  unsigned hour;
-  unsigned minute;
-  unsigned second;
-};
-
-_PROTOTYPE(int main, (void));
-_PROTOTYPE(void get_time, (struct time *t));
-_PROTOTYPE(int read_register, (int reg_addr));
-
-/* I/O and memory functions. */
-_PROTOTYPE(unsigned inb, (U16_t _port));
-_PROTOTYPE(void outb, (U16_t _port, U8_t _value));
-_PROTOTYPE(int peek, (int a, int b));
-
-
-int main()
+int main(int argc, char **argv)
 {
-  struct time time1;
-  struct time time2;
-  int i;
-  int cpu_type, cmos_state;
+  struct tm time1;
+  struct tm time2;
+  struct tm tmnow;
+  char date[64];
+  time_t now, rtc;
+  int i, mem;
+  unsigned char mach_id, cmos_state;
+  unsigned long frac;
 
-  cpu_type = peek(CPU_TYPE_SEGMENT, CPU_TYPE_OFFSET);
-  if (cpu_type < 0) {
-	errmsg( "Memory I/O failed.\n" );
-	printf("-q\n");
+  /* Open /dev/mem to get access to physical memory. */
+  if ((mem = open("/dev/mem", O_RDONLY)) == -1) {
+	errmsg( "Permission denied." );
 	exit(1);
   }
-  if (cpu_type != PS_386 && cpu_type != PC_AT) {
-	/* This is probably an XT, exit without complaining. */
-	printf("-q\n");
+  if (lseek(mem, (off_t) MACH_ID_ADDR, SEEK_SET) == -1
+		|| read(mem, (void *) &mach_id, sizeof(mach_id)) < 0) {
+	mach_id = -1;
+  }
+  if (mach_id != PS_386 && mach_id != PC_AT) {
+	errmsg( "Machine ID unknown." );
+	fprintf( stderr, "Machine ID byte = %02x\n", mach_id );
+
 	exit(1);
   }
-  cmos_state = read_register(HEALTH);
-  if (cmos_state & (DIAG_BADBATT | DIAG_MEMDIRT | DIAG_BADTIME)) {
-	errmsg( "\nCMOS RAM error(s) found...   " );
+  cmos_state = read_register(CMOS_STATUS);
+  if (cmos_state & (CS_LOST_POWER | CS_BAD_CHKSUM | CS_BAD_TIME)) {
+	errmsg( "CMOS RAM error(s) found..." );
 	fprintf( stderr, "CMOS state = 0x%02x\n", cmos_state );
 
-	if (cmos_state & DIAG_BADBATT)
-	    errmsg( "RTC lost power. Reset CMOS RAM with SETUP.\n" );
-	if (cmos_state & DIAG_MEMDIRT)
-	    errmsg( "CMOS RAM checksum is bad. Run SETUP.\n" );
-	if (cmos_state & DIAG_BADTIME)
-	    errmsg( "Time invalid in CMOS RAM. Reset clock with setclock.\n" );
-	errmsg( "\n" );
-
-	printf("-q\n");
+	if (cmos_state & CS_LOST_POWER)
+	    errmsg( "RTC lost power. Reset CMOS RAM with SETUP." );
+	if (cmos_state & CS_BAD_CHKSUM)
+	    errmsg( "CMOS RAM checksum is bad. Run SETUP." );
+	if (cmos_state & CS_BAD_TIME)
+	    errmsg( "Time invalid in CMOS RAM. Reset clock." );
 	exit(1);
   }
+
+  /* Process options. */
+  while (argc > 1) {
+	char *p = *++argv;
+
+	if (*p++ != '-') usage();
+
+	while (*p != 0) {
+		switch (*p++) {
+		case 'n':	nflag = 1;	break;
+		case 'w':	wflag = 1;	break;
+		case 'W':	Wflag = 1;	break;
+		case '2':	y2kflag = 1;	break;
+		default:	usage();
+		}
+	}
+	argc--;
+  }
+  if (Wflag) wflag = 1;		/* -W implies -w */
+
+  /* Read the CMOS real time clock. */
   for (i = 0; i < 10; i++) {
 	get_time(&time1);
-	get_time(&time2);
+	now = time(NULL);
 
-	if (time1.year == time2.year &&
-	    time1.month == time2.month &&
-	    time1.day == time2.day &&
-	    time1.hour == time2.hour &&
-	    time1.minute == time2.minute &&
-	    time1.second == time2.second) {
-		printf("%02d%02d%02d%02d%02d%02d\n",
-		       time1.month, time1.day, time1.year,
-		       time1.hour, time1.minute, time1.second);
-		exit(0);
+	time1.tm_isdst = -1;	/* Do timezone calculations. */
+	time2 = time1;
+
+	rtc= mktime(&time1);	/* Transform to a time_t. */
+	if (rtc != -1) break;
+
+	fprintf(stderr,
+"readclock: Invalid time read from CMOS RTC: %d-%02d-%02d %02d:%02d:%02d\n",
+		time2.tm_year+1900, time2.tm_mon+1, time2.tm_mday,
+		time2.tm_hour, time2.tm_min, time2.tm_sec);
+	sleep(5);
+  }
+  if (i == 10) exit(1);
+
+  if (!wflag) {
+	/* Set system time. */
+	if (nflag) {
+		printf("stime(%lu)\n", (unsigned long) rtc);
+	} else {
+		if (stime(&rtc) < 0) {
+			errmsg( "Not allowed to set time." );
+			exit(1);
+		}
+	}
+	tmnow = *localtime(&rtc);
+	if (strftime(date, sizeof(date),
+				"%a %b %d %H:%M:%S %Z %Y", &tmnow) != 0) {
+		if (date[8] == '0') date[8]= ' ';
+		printf("%s\n", date);
+	}
+  } else {
+	/* Set the CMOS clock to the system time. */
+	if (nflag) {
+		tmnow = *localtime(&now);
+		printf("%04d-%02d-%02d %02d:%02d:%02d\n",
+			tmnow.tm_year + 1900,
+			tmnow.tm_mon + 1,
+			tmnow.tm_mday,
+			tmnow.tm_hour,
+			tmnow.tm_min,
+			tmnow.tm_sec);
+	} else {
+		set_time(&tmnow);
 	}
   }
-
-  errmsg( "Failed to get an accurate time.\n" );
-  printf("-q\n");
-  exit(1);
+  exit(0);
 }
 
+void errmsg(char *s)
+{
+  static char *prompt = "readclock: ";
+
+  fprintf(stderr, "%s%s\n", prompt, s);
+  prompt = "";
+}
 
 
 /***********************************************************************/
@@ -195,33 +210,173 @@ int main()
 /*                                                                     */
 /***********************************************************************/
 
-void get_time(t)
-struct time *t;
+int dead;
+void timeout(int sig) { dead= 1; }
+
+void get_time(struct tm *t)
 {
-  t->year = read_register(YEAR);
-  t->month = read_register(MONTH);
-  t->day = read_register(DAY);
-  t->hour = read_register(HOUR);
-  t->minute = read_register(MINUTE);
-  t->second = read_register(SECOND);
+  int osec, n;
+  unsigned long i;
+  struct sigaction sa;
 
+  /* Start a timer to keep us from getting stuck on a dead clock. */
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
+  sa.sa_handler = timeout;
+  sigaction(SIGALRM, &sa, NULL);
+  dead = 0;
+  alarm(5);
 
+  do {
+	osec = -1;
+	n = 0;
+	do {
+		if (dead) {
+			fprintf(stderr, "readclock: CMOS clock appears dead\n");
+			exit(1);
+		}
 
-  if ((read_register(STATUS) & 0x04) == 0) {
-	/* Convert BCD to binary (default RTC mode) */
-	t->year = BCD_TO_DEC(t->year);
-	t->month = BCD_TO_DEC(t->month);
-	t->day = BCD_TO_DEC(t->day);
-	t->hour = BCD_TO_DEC(t->hour);
-	t->minute = BCD_TO_DEC(t->minute);
-	t->second = BCD_TO_DEC(t->second);
+		/* Clock update in progress? */
+		if (read_register(RTC_REG_A) & RTC_A_UIP) continue;
+
+		t->tm_sec = read_register(RTC_SEC);
+		if (t->tm_sec != osec) {
+			/* Seconds changed.  First from -1, then because the
+			 * clock ticked, which is what we're waiting for to
+			 * get a precise reading.
+			 */
+			osec = t->tm_sec;
+			n++;
+		}
+	} while (n < 2);
+
+	/* Read the other registers. */
+	t->tm_min = read_register(RTC_MIN);
+	t->tm_hour = read_register(RTC_HOUR);
+	t->tm_mday = read_register(RTC_MDAY);
+	t->tm_mon = read_register(RTC_MONTH);
+	t->tm_year = read_register(RTC_YEAR);
+
+	/* Time stable? */
+  } while (read_register(RTC_SEC) != t->tm_sec
+	|| read_register(RTC_MIN) != t->tm_min
+	|| read_register(RTC_HOUR) != t->tm_hour
+	|| read_register(RTC_MDAY) != t->tm_mday
+	|| read_register(RTC_MONTH) != t->tm_mon
+	|| read_register(RTC_YEAR) != t->tm_year);
+
+  if ((read_register(RTC_REG_B) & RTC_B_DM_BCD) == 0) {
+	/* Convert BCD to binary (default RTC mode). */
+	t->tm_year = bcd_to_dec(t->tm_year);
+	t->tm_mon = bcd_to_dec(t->tm_mon);
+	t->tm_mday = bcd_to_dec(t->tm_mday);
+	t->tm_hour = bcd_to_dec(t->tm_hour);
+	t->tm_min = bcd_to_dec(t->tm_min);
+	t->tm_sec = bcd_to_dec(t->tm_sec);
+  }
+  t->tm_mon--;	/* Counts from 0. */
+
+  /* Correct the year, good until 2080. */
+  if (t->tm_year < 80) t->tm_year += 100;
+
+  if (y2kflag) {
+	/* Clock with Y2K bug, interpret 1980 as 2000, good until 2020. */
+	if (t->tm_year < 100) t->tm_year += 20;
   }
 }
 
 
-int read_register(reg_addr)
-char reg_addr;
+int read_register(int reg_addr)
 {
-  outb(CLK_ELE, reg_addr);
-  return inb(CLK_IO);
+  int r;
+
+  intr_disable();
+  outb(RTC_INDEX, reg_addr);
+  r= inb(RTC_IO);
+  intr_enable();
+  return r;
+}
+
+
+
+/***********************************************************************/
+/*                                                                     */
+/*    set_time( time )                                                 */
+/*                                                                     */
+/*    Set the CMOS RTC to the time found in the structure.             */
+/*                                                                     */
+/***********************************************************************/
+
+void set_time(struct tm *t)
+{
+  int regA, regB;
+
+  if (Wflag) {
+	/* Set A and B registers to their proper values according to the AT
+	 * reference manual.  (For if it gets messed up, but the BIOS doesn't
+	 * repair it.)
+	 */
+	write_register(RTC_REG_A, RTC_A_DV_OK | RTC_A_RS_DEF);
+	write_register(RTC_REG_B, RTC_B_24);
+  }
+
+  /* Inhibit updates. */
+  regB= read_register(RTC_REG_B);
+  write_register(RTC_REG_B, regB | RTC_B_SET);
+
+  t->tm_mon++;	/* Counts from 1. */
+
+  if (y2kflag) {
+	/* Set the clock back 20 years to avoid Y2K bug, good until 2020. */
+	if (t->tm_year >= 100) t->tm_year -= 20;
+  }
+
+  if ((regB & 0x04) == 0) {
+	/* Convert binary to BCD (default RTC mode) */
+	t->tm_year = dec_to_bcd(t->tm_year % 100);
+	t->tm_mon = dec_to_bcd(t->tm_mon);
+	t->tm_mday = dec_to_bcd(t->tm_mday);
+	t->tm_hour = dec_to_bcd(t->tm_hour);
+	t->tm_min = dec_to_bcd(t->tm_min);
+	t->tm_sec = dec_to_bcd(t->tm_sec);
+  }
+  write_register(RTC_YEAR, t->tm_year);
+  write_register(RTC_MONTH, t->tm_mon);
+  write_register(RTC_MDAY, t->tm_mday);
+  write_register(RTC_HOUR, t->tm_hour);
+  write_register(RTC_MIN, t->tm_min);
+  write_register(RTC_SEC, t->tm_sec);
+
+  /* Stop the clock. */
+  regA= read_register(RTC_REG_A);
+  write_register(RTC_REG_A, regA | RTC_A_DV_STOP);
+
+  /* Allow updates and restart the clock. */
+  write_register(RTC_REG_B, regB);
+  write_register(RTC_REG_A, regA);
+}
+
+
+void write_register(int reg_addr, int value)
+{
+  intr_disable();
+  outb(RTC_INDEX, reg_addr);
+  outb(RTC_IO, value);
+  intr_enable();
+}
+
+int bcd_to_dec(int n)
+{
+  return ((n >> 4) & 0x0F) * 10 + (n & 0x0F);
+}
+
+int dec_to_bcd(int n)
+{
+  return ((n / 10) << 4) | (n % 10);
+}
+
+void usage(void)
+{
+  fprintf(stderr, "Usage: readclock [-nwW2]\n");
+  exit(1);
 }

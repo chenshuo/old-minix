@@ -21,6 +21,7 @@
 #define IRREL		"/usr/lib/irrel"
 #define CEM		"/usr/lib/ncem"
 #define M2EM		"/usr/lib/nm2em"
+#define ENCODE		"/usr/lib/em_encode"
 #define OPT		"/usr/lib/nopt"
 #define CG		"/usr/lib/ncg"
 #define AS		"/usr/lib/as"
@@ -65,10 +66,11 @@ struct passinfo {
 #define O_OUTPUT 0100		/* -o outputfile, hack for as */
 #define PREPALWAYS	0200	/* always to be preprocessed */
 #define PREPCOND	0400	/* preprocessed when starting with '#' */
+#define PREPNOLN	01000	/* suppress line number info (cpp -P) */
 };
 
-#define MAXHEAD	6
-#define MAXTAIL	6
+#define MAXHEAD	10
+#define MAXTAIL	5
 #define MAXPASS	7
 
 /*	Every language handled by this program has a "compile" structure
@@ -101,6 +103,7 @@ struct passinfo passinfo[] = {
 	{ "cem", CEM, "i,c", "k", "m,p,wa=a,wo=o,ws=s,w,T*", INPUT|OUTPUT|PREPALWAYS },
 	{ "pc", PEM, "i,p", "k", "n=L,w,a,A,R", INPUT|OUTPUT|PREPCOND },
 	{ "m2", M2EM, "i,mod", "k", "n=L,w*,A,R,W*,3,I*", INPUT|OUTPUT|PREPCOND },
+	{ "encode", ENCODE, "i,e", "k", "", INPUT|STDOUT|PREPCOND|PREPNOLN },
 	{ "opt", OPT, "k", "m", "", STDIN|STDOUT },
 	{ "cg", CG, "m", "s", "O=p4", INPUT|OUTPUT },
 	{ "as", AS, "i,s", "o", "T*", INPUT|O_OUTPUT|PREPCOND },
@@ -109,11 +112,17 @@ struct passinfo passinfo[] = {
 	{ 0}
 };
 
-#define	PREP_FLAGS	"-D_EM_WSIZE=2", "-D_EM_PSIZE=2", "-D_EM_LSIZE=4" \
-			, "-D__ACK__", "-D__minix", "-D__i86",
+#define	PREP_FLAGS	"-D_EM_WSIZE=2", "-D_EM_PSIZE=2", "-D_EM_SSIZE=2", \
+			"-D_EM_LSIZE=4", "-D_EM_FSIZE=4", "-D_EM_DSIZE=8", \
+			"-D__ACK__", "-D__minix", "-D__i86"
 
 struct pass preprocessor = { "cpp",
 			    { PREP_FLAGS }
+			    , {0}
+			    };
+
+struct pass prepnoln = { "cpp",
+			    { PREP_FLAGS, "-P" }
 			    , {0}
 			    };
 
@@ -156,6 +165,16 @@ struct compile passes[] = {
 		{ "ld", {M2RT}, 
 			  {LIBM2,
 			    "*", END}},
+		{ "cv", {0}, {0} }
+	},
+	DEFLANG
+},
+{	"e", "encode",
+	{	{ "encode", {0}, {0}},
+		{ "opt", {0}, {0} },
+		{ "cg", {0}, {0} },
+		{ "as", {"-"}, {0} },
+		{ "ld", {0}, {"*", END}},
 		{ "cv", {0}, {0} }
 	},
 	DEFLANG
@@ -762,7 +781,9 @@ apply(pinf, cp, name, passindex, noremove, first, resultname)
 	     )
 	   ) {
 		mkstr(newfil, tmpname, passinfo[0].p_to, "");
-		mkvec(call, name, newfil, &preprocessor, &passinfo[0]);
+		mkvec(call, name, newfil,
+			(pinf->p_flags & PREPNOLN) ? &prepnoln : &preprocessor,
+			&passinfo[0]);
 		if (! runvec(call, &passinfo[0], name, newfil)) {
 			cleanup(newfil);
 			return 0;

@@ -1,4 +1,6 @@
 # Makefile for lib/ip.
+#
+# Note: The oneC_sum.c file is not used if there is an assembly equivalent.
 
 CFLAGS	= -O -D_MINIX -D_POSIX_SOURCE -I. -DNDEBUG
 CC1	= $(CC) $(CFLAGS) -c
@@ -17,6 +19,9 @@ OBJECTS	= \
 	$(LIBRARY)(gethnmadr.o) \
 	$(LIBRARY)(gethostent.o) \
 	$(LIBRARY)(gethostname.o) \
+	$(LIBRARY)(getnetent.o) \
+	$(LIBRARY)(getnetbyname.o) \
+	$(LIBRARY)(getnetbyaddr.o) \
 	$(LIBRARY)(getproto.o) \
 	$(LIBRARY)(getprotoent.o) \
 	$(LIBRARY)(getservent.o) \
@@ -24,9 +29,9 @@ OBJECTS	= \
 	$(LIBRARY)(getsrvbyport.o) \
 	$(LIBRARY)(hton.o) \
 	$(LIBRARY)(inet_addr.o) \
+	$(LIBRARY)(inet_network.o) \
 	$(LIBRARY)(inet_ntoa.o) \
 	$(LIBRARY)(memcspn.o) \
-	$(LIBRARY)(oneC_sum.o) \
 	$(LIBRARY)(rcmd.o) \
 	$(LIBRARY)(res_comp.o) \
 	$(LIBRARY)(res_init.o) \
@@ -66,6 +71,15 @@ $(LIBRARY)(gethostent.o):	gethostent.c
 $(LIBRARY)(gethostname.o):	gethostname.c
 	$(CC1) gethostname.c
 
+$(LIBRARY)(getnetent.o):	getnetent.c
+	$(CC1) getnetent.c
+
+$(LIBRARY)(getnetbyname.o):	getnetbyname.c
+	$(CC1) getnetbyname.c
+
+$(LIBRARY)(getnetbyaddr.o):	getnetbyaddr.c
+	$(CC1) getnetbyaddr.c
+
 $(LIBRARY)(getproto.o):	getproto.c
 	$(CC1) getproto.c
 
@@ -86,6 +100,9 @@ $(LIBRARY)(hton.o):	hton.c
 
 $(LIBRARY)(inet_addr.o):	inet_addr.c
 	$(CC1) inet_addr.c
+
+$(LIBRARY)(inet_network.o):	inet_network.c
+	$(CC1) inet_network.c
 
 $(LIBRARY)(inet_ntoa.o):	inet_ntoa.c
 	$(CC1) inet_ntoa.c
@@ -112,7 +129,7 @@ $(LIBRARY)(res_query.o):	res_query.c
 	$(CC1) res_query.c
 
 $(LIBRARY)(res_send.o):	res_send.c
-	$(CC1) res_send.c
+	$(CC1) -m res_send.c
 
 $(LIBRARY)(strcasecmp.o):	strcasecmp.c
 	$(CC1) strcasecmp.c

@@ -36,6 +36,8 @@
  *
  * 10 Mar 96 KJB: Termios adaption, cleanup, command key interface.
  *
+ * 27 Nov 96 KJB: Add -c flag that binds commands to keys.
+ *
  * Example usage:
  *	term			: baud, bits/char, parity from /dev/tty1
  *	term 9600 7 even	: 9600 baud, 7 bits/char, even parity
@@ -112,9 +114,10 @@ struct param_s {
 #define NIL ((char *) NULL)		/* tell(fd, ..., NIL) */
 
 _PROTOTYPE(int main, (int argc, char *argv[]));
+_PROTOTYPE(int isdialstr, (char *arg));
 _PROTOTYPE(void tell, (int fd, ...));
 _PROTOTYPE(void reader, (int on));
-_PROTOTYPE(void shell, (void));
+_PROTOTYPE(void shell, (char *cmd));
 _PROTOTYPE(void lock_device, (char *device));
 _PROTOTYPE(void fatal, (char *label));
 _PROTOTYPE(void setnum, (char *s, int n));
@@ -166,20 +169,20 @@ char *argv[];
   set_raw(&tcstdin);
   set_raw(&tccomm);
   set_uart(argc, argv, &tccomm);
-  (void) tcsetattr(0, TCSANOW, &tcstdin);
-  (void) tcsetattr(commfd, TCSANOW, &tccomm);
+  tcsetattr(0, TCSANOW, &tcstdin);
+  tcsetattr(commfd, TCSANOW, &tccomm);
 
   /* Start a reader process to copy modem output to the screen. */
   reader(1);
 
   /* Welcome message. */
   tell(1, "Connected to ", commdev,
-			", command key is CTRL-], type ^]h for help\r\n", NIL);
+			", command key is CTRL-], type ^]? for help\r\n", NIL);
 
   /* Dial. */
   candial = 0;
   for (i = 1; i < argc; ++i) {
-	if (argv[i][0] != '-') continue;
+	if (!isdialstr(argv[i])) continue;
 	tell(commfd, argv[i] + 1, "\r", NIL);
 	candial = 1;
   }
@@ -192,6 +195,23 @@ char *argv[];
 
 		switch (key) {
 		default:
+			/* Added command? */
+			for (i = 1; i < argc; ++i) {
+				char *arg = argv[i];
+
+				if (arg[0] == '-' && arg[1] == 'c'
+							&& arg[2] == key) {
+					reader(0);
+					tcsetattr(0, TCSANOW, &tcsavestdin);
+					shell(arg+3);
+					tcsetattr(0, TCSANOW, &tcstdin);
+					reader(1);
+					break;
+				}
+			}
+			if (i < argc) break;
+
+			/* Unrecognized command, print list. */
 			tell(1, "\r\nTerm commands:\r\n",
 				" ? - this help\r\n",
 				candial ? " d - redial\r\n" : "",
@@ -199,22 +219,33 @@ char *argv[];
 				" h - hangup (+++ ATH)\r\n",
 				" b - send a break\r\n",
 				" q - exit term\r\n",
-				"^] - send a CTRL-]\r\n\n",
+				NIL);
+			for (i = 1; i < argc; ++i) {
+				char *arg = argv[i];
+				static char cmd[] = " x - ";
+
+				if (arg[0] == '-' && arg[1] == 'c'
+							&& arg[2] != 0) {
+					cmd[1] = arg[2];
+					tell(1, cmd, arg+3, "\r\n", NIL);
+				}
+			}
+			tell(1, "^] - send a CTRL-]\r\n\n",
 				NIL);
 			break;
 		case 'd':
 			/* Redial by sending the dial commands again. */
 			for (i = 1; i < argc; ++i) {
-				if (argv[i][0] != '-') continue;
+				if (!isdialstr(argv[i])) continue;
 				tell(commfd, argv[i] + 1, "\r", NIL);
 			}
 			break;
 		case 's':
 			/* Subshell. */
 			reader(0);
-			(void) tcsetattr(0, TCSANOW, &tcsavestdin);
-			shell();
-			(void) tcsetattr(0, TCSANOW, &tcstdin);
+			tcsetattr(0, TCSANOW, &tcsavestdin);
+			shell(NULL);
+			tcsetattr(0, TCSANOW, &tcstdin);
 			reader(1);
 			break;
 		case 'h':
@@ -242,6 +273,16 @@ char *argv[];
   }
   tell(2, "term: nothing to copy from input to ", commdev, "?\r\n", NIL);
   quit(1);
+}
+
+
+int isdialstr(char *arg)
+{
+/* True iff arg is the start of a dial string, i.e. "-at...". */
+
+  return (arg[0] == '-'
+  	&& (arg[1] == 'a' || arg[1] == 'A')
+  	&& (arg[2] == 't' || arg[2] == 'T'));
 }
 
 
@@ -296,9 +337,11 @@ int on;
 }
 
 
-void shell()
+void shell(char *cmd)
 {
-/* Invoke a subshell to allow one to run zmodem for instance. */
+/* Invoke a subshell to allow one to run zmodem for instance.  Run sh -c 'cmd'
+ * instead if 'cmd' non-null.
+ */
 
   pid_t pid;
   char *shell, *sh0;
@@ -306,10 +349,12 @@ void shell()
   _PROTOTYPE(void (*qsav), (int));
   _PROTOTYPE(void (*tsav), (int));
 
-  tell(1, "\nExit the shell to return to term, ",
-	commdev, " is open on file descriptor 9.\n", NIL);
+  if (cmd == NULL) {
+	tell(1, "\nExit the shell to return to term, ",
+		commdev, " is open on file descriptor 9.\n", NIL);
+  }
 
-  if ((shell = getenv("SHELL")) == NULL) shell = "/bin/sh";
+  if (cmd != NULL || (shell = getenv("SHELL")) == NULL) shell = "/bin/sh";
   if ((sh0 = strrchr(shell, '/')) == NULL) sh0 = shell; else sh0++;
 
   /* Start a shell */
@@ -325,7 +370,11 @@ void shell()
 
 	if (commfd != 9) { dup2(commfd, 9); close(commfd); }
 
-	execl(shell, sh0, (char *) NULL);
+	if (cmd == NULL) {
+		execl(shell, sh0, (char *) NULL);
+	} else {
+		execl(shell, sh0, "-c", cmd, (char *) NULL);
+	}
 	tell(2, "term: can't execute ", shell, ": ", strerror(errno), "\n",NIL);
 	_exit(1);
   }
@@ -389,7 +438,7 @@ char *device;
 		n = read(fd, &pid, sizeof(pid));
 		if (n < 0) fatal(device);
 		close(fd);
-		if (n == sizeof(pid) && kill(pid, 0) == 0) {
+		if (n == sizeof(pid) && !(kill(pid, 0) < 0 && errno == ESRCH)) {
 			/* It is locked by a running process. */
 			tell(2, "term: ", device,
 				" is in use by another program\n", NIL);

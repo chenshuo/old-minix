@@ -434,7 +434,7 @@ char *argv[];
 		strcat(shell, sh);
 		execve(sh, argx, env);
 	}
-	write(1, "exec failure\n", 13);
+	fprintf(stderr, "login: can't execute %s: %s\n", sh, strerror(errno));
 	exit(1);
   }
   return(0);

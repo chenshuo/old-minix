@@ -1,10 +1,5 @@
 #
 .sect .text
-.sect .rom
-.sect .data
-.sect .bss
+.align _EM_WSIZE
 .define _etext
-.sect .text
-	.align _EM_WSIZE
-	.sect .text
 _etext:

@@ -4,7 +4,11 @@
  * isoread reads a file system in ISO9660 or HIGH SIERRA format from
  * a given device.
  *
- * Apr 5 1995     Michel R. Prevenier 
+ * Apr  5 1995    Michel R. Prevenier 
+ * Nov 16 1996    Kees J. Bot        -- bug fix: isoread filename matching 
+ * Dec  7 1997    Albert S. Woodhull -- bug fix: return values
+ *                                       "   " : isodir filename handling
+ *                                   -- added  : isoread -a option  
  */
 
 #include <ctype.h>
@@ -167,28 +171,37 @@ int Read_Dir = 0;	/* 1 = Read directory entry */
 int Read_Info = 0;      /* 1 = Read volume descriptor */
 int Recurse = 0;        /* 1 = Recursively descend directories */
 int Verbose = 0;        /* 1 = Print all info on directories */
-
+int Aflag = 0;          /* 1 = Suppress output of \r  */
 
 int iso_cmp(name, dir_ptr, dir_flag)
 char *name;
 struct dir_entry *dir_ptr;
 int dir_flag;
 {
+/* Compare name with directory entries, looking for match with a dirname.
+ * An iso9660 filename is terminated by ";n", where n will probably 
+ * be 1. A directory name is not terminated by anything special, it may be
+ * followed by a \0 if padding is needed to put the following directory 
+ * entry on an even address.
+ */
   int i;
+  int len;
 
   /* First match the filename */
-  for (i = 0; (i < strlen(name) && i < iso_711(dir_ptr->name_length)); i++)
+  len = strlen(name);
+  if (len > iso_711(dir_ptr->name_length)) return 1;
+  for (i = 0; i < len; i++)
   {
-    if (dir_ptr->name[i] == ';') break;
-    if (name[i] != LOWER_CASE(dir_ptr->name[i])) return 1;
+    if (dir_ptr->name[i] == ';') return 1;	/* found end of a filename */ 
+    if (name[i] != LOWER_CASE(dir_ptr->name[i])) return 1; /* match failed */
   }
+  if (dir_ptr->name[i] != ';' && i != len) return 1; /* incomplete match */
 
   /* The filename is ok, now look at the file type */
   if (dir_flag && !IS_DIR(dir_ptr)) return 1;  /* File type not correct */
 
   return 0; 
 }
-
 
 
 void usage()
@@ -198,7 +211,7 @@ void usage()
   else if (Read_Info)
    fprintf (STDERR, "Usage: isoinfo inputfile\n");
   else
-   fprintf (STDERR, "Usage: isoread inputfile file\n");
+   fprintf (STDERR, "Usage: isoread [-a] inputfile file\n");
   exit(1);
 }
 
@@ -223,8 +236,8 @@ char **argv;
   else if (strcmp(basename,"isoinfo") == 0) Read_Info = 1;
   else Read_File = 1;
 
-  if ((argc > 5 && Read_Dir) || (argc > 2 && Read_Info) ||
-     (argc > 3 && Read_File)) usage();
+  if ((argc > 5 && Read_Dir) || (argc != 2 && Read_Info) ||
+     (argc > 4 && Read_File)) usage();
 
   i = 1;
 
@@ -236,11 +249,18 @@ char **argv;
 
     while (*opt != '\0')
     {
-      if (!Read_Dir) usage();
+      if (Read_Info) usage();
+      if (Read_Dir)
       switch (*opt++)
       {
 	case 'r':	Recurse = 1; break;  
 	case 'l':	Verbose = 1; break;
+	default:	usage();
+      }
+      if (Read_File)
+      switch (*opt++)
+      {
+	case 'a':	Aflag = 1; break;    
 	default:	usage();
       }
     }
@@ -294,7 +314,7 @@ char **argv;
       iso_info(Iso_Vol_Desc);
     else 
       hs_info(Hs_Vol_Desc);
-    exit(1);
+    exit(0);
   }
 
   /* Lookup file */
@@ -315,6 +335,7 @@ char **argv;
     fprintf (STDERR, " %s not found\n", path);
     exit(-1);
   }
+  return 0;
 }
 
 
@@ -578,15 +599,22 @@ struct dir_entry *dir_ptr;
   int i;
   long block;
   long size;
+  char c;
 
   block = iso_733(dir_ptr->first_block);
   size = iso_733(dir_ptr->size);
 
   while (size > 0)
-  {
+  if (Aflag == 1) {
     read_device(block*BLOCK_SIZE, BLOCK_SIZE, Buffer);
-    for (i=0; ((i < size) && (i < BLOCK_SIZE)); i++)
-      fprintf(STDOUT, "%c", Buffer[i]);
+      for (i=0; ((i < size) && (i < BLOCK_SIZE)); i++)
+        if (Buffer[i] != '\r') fprintf(STDOUT, "%c", Buffer[i]);
+    size-= BLOCK_SIZE;
+    block++;
+  } else {
+    read_device(block*BLOCK_SIZE, BLOCK_SIZE, Buffer);
+      for (i=0; ((i < size) && (i < BLOCK_SIZE)); i++)
+        fprintf(STDOUT, "%c", Buffer[i]);
     size-= BLOCK_SIZE;
     block++;
   }

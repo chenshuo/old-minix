@@ -18,6 +18,8 @@
  *
  *	@(#)resolv.h	5.10 (Berkeley) 6/1/90
  */
+#ifndef _NET__GEN__RESOLV_H
+#define _NET__GEN__RESOLV_H
 
 /*
  * Resolver configuration file.
@@ -101,3 +103,5 @@ void __putshort _ARGS(( U16_t s, u8_t *msgp ));
 void __putlong _ARGS(( u32_t l, u8_t *msgp ));
 
 void p_query _ARGS(( char *msg ));
+
+#endif /* _NET__GEN__RESOLV_H */

@@ -131,7 +131,7 @@ char *argv[];
 
 	tcpconnopt.nwtcl_flags= 0;
 
-	while(1)
+	do
 	{
 		result= ioctl (tcp_fd, NWIOTCPCONN, &tcpconnopt);
 		if (result < 0 && errno == EAGAIN)
@@ -139,9 +139,8 @@ char *argv[];
 			fprintf(stderr,"%s: got EAGAIN, sleeping(1s)\r\n",
 				prog_name);
 			sleep(1);
-		} else
-			break;
-	}
+		}
+	} while (result <0 && errno == EAGAIN);
 	if (result<0)
 	{
 		perror ("unable to NWIOTCPCONN");
@@ -469,7 +468,7 @@ static void will_option (int optsrt)
 			tcgetattr(0, &termios);
 			termios.c_iflag &= ~(ICRNL|IGNCR|INLCR|IXON|IXOFF);
 			termios.c_oflag &= ~(OPOST);
-			termios.c_lflag &= ~(ECHO|ECHONL|ICANON|ISIG);
+			termios.c_lflag &= ~(ECHO|ECHONL|ICANON|IEXTEN|ISIG);
 			tcsetattr(0, TCSANOW, &termios);
 			DO_echo= TRUE;
 			reply[0]= IAC;

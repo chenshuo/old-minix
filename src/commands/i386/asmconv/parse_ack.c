@@ -361,7 +361,7 @@ static enum dialect { ACK, NCC } dialect= ACK;
 void ack_parse_init(char *file)
 /* Prepare parsing of an ACK assembly file. */
 {
-	tok_init(file);
+	tok_init(file, '!');
 }
 
 void ncc_parse_init(char *file)
@@ -474,7 +474,7 @@ static expression_t *ack_get_C_expression(int *pn)
 }
 
 static expression_t *ack_get_operand(int *pn, int deref)
-/* get something like: (memory), offset(base)(index*scale), or simpler. */
+/* Get something like: (memory), offset(base)(index*scale), or simpler. */
 {
 	expression_t *e, *offset, *base, *index;
 	token_t *t;
@@ -747,7 +747,7 @@ static asm86_t *ack_get_statement(void)
 
 	/* Read a machine instruction or pseudo op. */
 	if ((m= search_mnem(t->name)) == nil) {
-		parse_err(1, t, "unknown instruction\n");
+		parse_err(1, t, "unknown instruction '%s'\n", t->name);
 		del_asm86(a);
 		return nil;
 	}

@@ -41,6 +41,12 @@
  *
  *		Fred van Kempen, January 1990
  *		 -Final edit for 1.5
+ *
+ *		Philip Homburg, March 1992
+ *		 -Include host in output
+ *
+ *		Kees J. Bot, July 1997
+ *		 -Approximate system uptime from last reboot record
  */
 #include <sys/types.h>
 #include <signal.h>
@@ -49,10 +55,12 @@
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 
 
 #define  FALSE	0
 #define  TRUE	1
+#define  RLOGIN	1
 
 #define  BUFFER_SIZE     4096	/* Room for wtmp records */
 #define  MAX_WTMP_COUNT  ( BUFFER_SIZE / sizeof(struct utmp) )
@@ -74,7 +82,9 @@ static char *Version = "@(#) LAST 1.7 (10/24/92)";
 /* command-line option flags */
 char boot_limit = FALSE;	/* stop on latest reboot */
 char count_limit = FALSE;	/* stop after print_count */
+char tell_uptime = FALSE;	/* tell uptime since last reboot */
 int print_count;
+char *prog;			/* name of this program */
 int arg_count;			/* used to select specific */
 char **args;			/* users and ttys */
 
@@ -91,6 +101,7 @@ _PROTOTYPE(void usage, (void));
 _PROTOTYPE(void Process, (struct utmp *wtmp));
 _PROTOTYPE(int Print_Record, (struct utmp *wtmp));
 _PROTOTYPE(void Print_Duration, (long from, long to));
+_PROTOTYPE(void Print_Uptime, (void));
 _PROTOTYPE(void Record_Logout_Time, (struct utmp *wtmp));
 
 /* Sigint() and Sigquit() Flag occurrence of an interrupt. */
@@ -110,7 +121,8 @@ int sig;
 
 void usage()
 {
-  fprintf(stderr, "Usage: last [-r] [-count] [-f file] [name] [tty] ...\n");
+  fprintf(stderr,
+	"Usage: last [-r] [-u] [-count] [-f file] [name] [tty] ...\n");
   exit(-1);
 }
 
@@ -164,6 +176,7 @@ struct utmp *wtmp;
 {
   logout *link;
   logout *next_link;
+  char is_reboot;
 
   /* suppress the job number on an "ftp" line */
   if (!strncmp(wtmp->ut_line, "ftp", (size_t)3)) strncpy(wtmp->ut_line, "ftp", (size_t)8);
@@ -175,10 +188,22 @@ struct utmp *wtmp;
 	if (Print_Record(wtmp)) putchar('\n');
 	boot_time = wtmp->ut_time;
 
-	if (!strcmp(wtmp->ut_name, "reboot"))
+	is_reboot = !strcmp(wtmp->ut_name, "reboot");
+	if (is_reboot)
 		boot_down = "crash";
 	else
 		boot_down = "down ";
+
+	if (tell_uptime) {
+		if (!is_reboot) {
+			fprintf(stderr,
+		"%s: no reboot record added to wtmp file on system boot!\n",
+				prog);
+			exit(1);
+		}
+		Print_Uptime();
+		exit(0);
+	}
 
 	/* remove any logout records */
 	for (link = first_link; link != NULL; link = next_link) {
@@ -224,6 +249,9 @@ struct utmp *wtmp;
 {
   int i;
   char print_flag = FALSE;
+
+  /* just interested in the uptime? */
+  if (tell_uptime) return(FALSE);
 
   /* check if we have already printed the requested number of records */
   if (count_limit && print_count == 0) exit(0);
@@ -274,6 +302,52 @@ long to;
 }
 
 
+/* Print_Uptime() Calculate and print the "uptime" between the last recorded
+ * boot and the current time.
+ */
+void Print_Uptime()
+{
+  char *utmp_file = "/etc/utmp";
+  unsigned nusers;
+  struct utmp ut;
+  FILE *uf;
+  time_t now;
+  struct tm *tm;
+  unsigned long up;
+
+  /* Count the number of active users in the utmp file. */
+  if ((uf = fopen(utmp_file, "r")) == NULL) {
+	fprintf(stderr, "%s: %s: %s\n", prog, utmp_file, strerror(errno));
+	exit(1);
+  }
+
+  nusers = 0;
+  while (fread(&ut, sizeof(ut), 1, uf) == 1) {
+#ifdef USER_PROCESS
+	if (ut.ut_type == USER_PROCESS) nusers++;
+#else
+	if (ut.ut_name[0] != 0 && ut.ut_line[0] != 0) nusers++;
+#endif
+  }
+  fclose(uf);
+
+  /* Current time. */
+  now = time((time_t *) NULL);
+  tm = localtime(&now);
+
+  /* Uptime. */
+  up = now - boot_time;
+
+  printf(" %d:%02d  up", tm->tm_hour, tm->tm_min);
+  if (up >= 24 * 3600L) {
+	unsigned long days = up / (24 * 3600L);
+	printf(" %lu day%s,", days, days == 1 ? "" : "s");
+  }
+  printf(" %lu:%02lu,", (up % (24 * 3600L)) / 3600, (up % 3600) / 60);
+  printf("  %u user%s\n", nusers, nusers == 1 ? "" : "s");
+}
+
+
 /* Record_Logout_Time(wtmp) A linked list of "last logout time" is kept.
  * Each element of the list is for one terminal.
  */
@@ -291,7 +365,7 @@ struct utmp *wtmp;
   /* allocate a new logout record, for a tty not previously encountered */
   link = (logout *) malloc(sizeof(logout));
   if (link == NULL) {
-	fprintf(stderr, "last: malloc failure\n");
+	fprintf(stderr, "%s: malloc failure\n", prog);
 	exit(1);
   }
   strncpy(link->line, wtmp->ut_line, (size_t)8);
@@ -306,12 +380,13 @@ int main(argc, argv)
 int argc;
 char *argv[];
 {
-  char *wtmp_file = WTMP;
+  char *wtmp_file = "/usr/adm/wtmp";
   FILE *f;
   long size;			/* Number of wtmp records in the file	 */
-  long now;			/* time */
   int wtmp_count;		/* How many to read into wtmp_buffer	 */
   struct utmp wtmp_buffer[MAX_WTMP_COUNT];
+
+  if ((prog = strrchr(argv[0], '/')) == NULL) prog = argv[0]; else prog++;
 
   --argc;
   ++argv;
@@ -319,6 +394,9 @@ char *argv[];
   while (argc > 0 && *argv[0] == '-') {
 	if (!strcmp(argv[0], "-r"))
 		boot_limit = TRUE;
+	else
+	if (!strcmp(argv[0], "-u"))
+		tell_uptime = TRUE;
 	else if (argc > 1 && !strcmp(argv[0], "-f")) {
 		wtmp_file = argv[1];
 		--argc;
@@ -335,12 +413,14 @@ char *argv[];
   arg_count = argc;
   args = argv;
 
+  if (!strcmp(prog, "uptime")) tell_uptime = TRUE;
+
   if ((f = fopen(wtmp_file, "r")) == NULL) {
 	perror(wtmp_file);
 	exit(1);
   }
   if (fseek(f, 0L, 2) != 0 || (size = ftell(f)) % sizeof(struct utmp) != 0) {
-	fprintf(stderr, "last: invalid wtmp file\n");
+	fprintf(stderr, "%s: invalid wtmp file\n", prog);
 	exit(1);
   }
   if (signal(SIGINT, SIG_IGN) != SIG_IGN) {
@@ -349,11 +429,8 @@ char *argv[];
   }
   size /= sizeof(struct utmp);	/* Number of records in wtmp	 */
 
-  if (size == 0) {
-	now = time((time_t *)0);
-	printf("\nwtmp begins %.16s \n", ctime(&now));
-	exit(0);
-  }
+  if (size == 0) wtmp_buffer[0].ut_time = time((time_t *)0);
+
   while (size > 0) {
 	wtmp_count = (int) min(size, MAX_WTMP_COUNT);
 	size -= (long) wtmp_count;
@@ -363,7 +440,7 @@ char *argv[];
 
 	if (fread(&wtmp_buffer[0], sizeof(struct utmp), (size_t)wtmp_count, f)
 	    != wtmp_count) {
-		fprintf(stderr, "last: read error on wtmp file\n");
+		fprintf(stderr, "%s: read error on wtmp file\n", prog);
 		exit(1);
 	}
 	while (--wtmp_count >= 0) {
@@ -380,6 +457,13 @@ char *argv[];
 	}
 
   }				/* end while(size > 0) */
+
+  if (tell_uptime) {
+	fprintf(stderr,
+		"%s: no reboot record in wtmp file to compute uptime from\n",
+		prog);
+	return(1);
+  }
 
   printf("\nwtmp begins %.16s \n", ctime(&wtmp_buffer[0].ut_time));
   return(0);

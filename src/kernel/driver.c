@@ -31,7 +31,7 @@
 #include "driver.h"
 
 #if (CHIP == INTEL)
-#if ENABLE_ADAPTEC_SCSI && DMA_BUF_SIZE < 2048
+#if ENABLE_AHA1540_SCSI && DMA_BUF_SIZE < 2048
 /* A bit extra scratch for the Adaptec driver. */
 #define BUF_EXTRA	(2048 - DMA_BUF_SIZE)
 #else
@@ -79,14 +79,8 @@ struct driver *dp;	/* Device dependent entry points. */
 	caller = mess.m_source;
 	proc_nr = mess.PROC_NR;
 
-	switch (caller) {
-	case HARDWARE:
-		/* Leftover interrupt. */
-		continue;
-	case FS_PROC_NR:
-		/* The only legitimate caller. */
-		break;
-	default:
+	/* Check if legitimate caller: FS or a task. */
+	if (caller != FS_PROC_NR && caller >= 0) {
 		printf("%s: got message from %d\n", (*dp->dr_name)(), caller);
 		continue;
 	}
@@ -101,6 +95,9 @@ struct driver *dp;	/* Device dependent entry points. */
 	    case DEV_WRITE:	r = do_rdwt(dp, &mess);		break;
 
 	    case SCATTERED_IO:	r = do_vrdwt(dp, &mess);	break;
+
+	    case HARD_INT:	/* Leftover interrupt. */	continue;
+
 	    default:		r = EINVAL;			break;
 	}
 
@@ -186,37 +183,42 @@ message *m_ptr;		/* pointer to read or write message */
 
   struct iorequest_s *iop;
   static struct iorequest_s iovec[NR_IOREQS];
-  phys_bytes iovec_phys;
+  phys_bytes iovec_phys, user_iovec_phys;
+  size_t iovec_size;
   unsigned nr_requests;
   int request;
   int r;
-  phys_bytes user_iovec_phys;
 
   nr_requests = m_ptr->COUNT;
 
-  if (nr_requests > sizeof iovec / sizeof iovec[0])
-	panic("FS passed too big an I/O vector", nr_requests);
+  if (m_ptr->m_source < 0) {
+	/* Called by a task, no need to copy vector. */
+	iop = (struct iorequest_s *) m_ptr->ADDRESS;
+  } else {
+	if (nr_requests > NR_IOREQS)
+		panic("too big I/O vector by", m_ptr->m_source);
+	iovec_size = nr_requests * sizeof(iovec[0]);
+	user_iovec_phys = umap(proc_addr(m_ptr->m_source), D,
+				(vir_bytes) m_ptr->ADDRESS, iovec_size);
+	if (user_iovec_phys == 0) panic("bad I/O vector by", m_ptr->m_source);
 
-  iovec_phys = vir2phys(iovec);
-  user_iovec_phys = numap(m_ptr->PROC_NR, (vir_bytes) m_ptr->ADDRESS,
-			 (vir_bytes) (nr_requests * sizeof iovec[0]));
-
-  if (user_iovec_phys == 0)
-	panic("FS passed a bad I/O vector", (int) m_ptr->ADDRESS);
-
-  phys_copy(user_iovec_phys, iovec_phys,
-			    (phys_bytes) nr_requests * sizeof iovec[0]);
+	iovec_phys = vir2phys(iovec);
+	phys_copy(user_iovec_phys, iovec_phys, (phys_bytes) iovec_size);
+	iop = iovec;
+  }
 
   if ((*dp->dr_prepare)(m_ptr->DEVICE) == NIL_DEV) return(ENXIO);
 
-  for (request = 0, iop = iovec; request < nr_requests; request++, iop++) {
+  for (request = 0; request < nr_requests; request++, iop++) {
 	if ((r = (*dp->dr_schedule)(m_ptr->PROC_NR, iop)) != OK) break;
   }
 
   if (r == OK) (void) (*dp->dr_finish)();
 
-  phys_copy(iovec_phys, user_iovec_phys,
-			    (phys_bytes) nr_requests * sizeof iovec[0]);
+  /* Copy the I/O vector back to the caller. */
+  if (m_ptr->m_source >= 0) {
+	phys_copy(iovec_phys, user_iovec_phys, (phys_bytes) iovec_size);
+  }
   return(OK);
 }
 

@@ -1,4 +1,4 @@
-/*	part 1.47 - Partition table editor		Author: Kees J. Bot
+/*	part 1.48 - Partition table editor		Author: Kees J. Bot
  *								13 Mar 1992
  * Needs about 22k heap+stack.
  */
@@ -610,6 +610,8 @@ indicators_t ind_table[]= {
 	{ 0x08,		"AIX"		},
 	{ 0x09,		"COHERENT"	},
 	{ 0x0A,		"OS/2"		},
+	{ 0x0B,		"FAT32"		},
+	{ 0x0C,		"FAT32"		},
 	{ 0x10,		"OPUS"		},
 	{ 0x40,		"VENIX286"	},
 	{ 0x52,		"MICROPORT"	},

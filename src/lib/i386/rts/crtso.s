@@ -18,7 +18,7 @@ begdata:
 .sect .bss
 begbss:
 
-.define crtso, ___main, __penvp, __fpu_present
+.define crtso, ___main, __penviron, __penvp, __fpu_present
 .extern _main, _exit
 .sect .text
 crtso:
@@ -27,18 +27,20 @@ crtso:
 	lea     edx, 4(esp)		! argv
 	lea     ecx, 8(esp)(eax*4)	! envp
 
-	mov	(__penvp), ecx		! save envp in __envp
-
-	! Test whether address of environ < address of end.
-	! This is done for separate I&D systems.
+	! Test if environ is in the initialized data area and is set to our
+	! magic number.  If so then it is not redefined by the user.
 	mov	ebx, _environ
-	cmp	ebx, __end
+	cmp	ebx, __edata		! within initialized data?
 	jae	0f
-	cmp	(_environ), 0x53535353	! is it our _environ?
+	testb	bl, 3			! aligned?
+	jnz	0f
+	cmp	(ebx), 0x53535353	! is it our _environ?
 	jne	0f
-	mov	(_environ), ecx
-0:
-	push	ecx			! push environ
+	mov	(__penviron), ebx	! _penviron = &environ;
+0:	mov	ebx, (__penviron)
+	mov	(ebx), ecx		! *_penviron = envp;
+
+	push	ecx			! push envp
 	push	edx			! push argv
 	push	eax			! push argc
 
@@ -46,8 +48,7 @@ crtso:
 	! set __fpu_present if one is found.
 	smsw	ax
 	testb	al, 0x4			! EM bit in MSW
-	setz	al			! True if not set
-	movb	(__fpu_present), al
+	setz	(__fpu_present)		! True if not set
 
 	call	_main			! main(argc, argv, envp)
 
@@ -61,8 +62,13 @@ ___main:				! for GCC
 
 .sect .rom
 	.data4	0			! Common I&D: *NULL == 0
+
+.sect .data
+__penviron:
+	.data4	__penvp			! Pointer to environ, or hidden pointer
+
 .sect .bss
-	.comm	__penvp, 4		! Environment vector
+	.comm	__penvp, 4		! Hidden environment vector
 	.comm	__fpu_present, 4	! FPU present flag
 
 .extern endtext				! Force loading of end labels.

@@ -28,7 +28,7 @@ char *a1;
 {
   fprintf(stderr, "%s: ", myname);
   fprintf(stderr, msg, a1);
-  if (lineno)  fprintf(stderr, " near line %d", lineno);
+  if (lineno)  fprintf(stderr, " in %s near line %d", makefile, lineno);
   fputc('\n', stderr);
   exit(1);
 }

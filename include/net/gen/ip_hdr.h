@@ -29,4 +29,14 @@ typedef struct ip_hdr
 #define IP_OPT_COPIED	0x80
 #define IP_OPT_NUMBER	0x1f
 
+#define IP_OPT_EOL	0x00
+#define IP_OPT_NOP	0x01
+#define IP_OPT_LSRR	0x83
+#define IP_OPT_RR	0x07
+#define IP_OPT_RR_MIN		4
+
 #endif /* __SERVER__IP__GEN__HDR_H__ */
+
+/*
+ * $PchId: ip_hdr.h,v 1.4 1995/11/17 22:26:00 philip Exp $
+ */

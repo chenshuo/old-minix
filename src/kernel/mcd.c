@@ -199,7 +199,7 @@ PUBLIC void mcd_task()
   mcd_io_base = v;
 
   v = MCD_IRQ;
-  (void) env_parse(var, fmt, 0, &v, 0L, (long) NR_IRQ_VECTORS - 1);
+  (void) env_parse(var, fmt, 1, &v, 0L, (long) NR_IRQ_VECTORS - 1);
   mcd_irq = v;
 
   driver_task(&mcd_dtab);       /* Start driver task for cdrom */

@@ -32,6 +32,10 @@ char *argv[];
 	argc--;
   }
   if (argc > 1) {
+	if (argv[1][0] == '-') {
+		std_err("Usage: su [-[e]] [user [shell-arguments ...]]\n");
+		exit(1);
+	}
 	name = argv[1];
 	argv[1] = argv[0];
 	argv++;

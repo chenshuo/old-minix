@@ -20,9 +20,10 @@ HEAD =	mpx.o
 OBJS =	start.o protect.o klib.o table.o main.o proc.o \
 	exception.o system.o clock.o memory.o tty.o keyboard.o \
 	console.o i8259.o rs232.o dmp.o misc.o driver.o \
-	drvlib.o floppy.o wini.o at_wini.o bios_wini.o esdi_wini.o \
-	xt_wini.o printer.o aha_scsi.o dp8390.o pty.o \
-	wdeth.o ne2000.o mcd.o sb16_dsp.o sb16_mixer.o
+	drvlib.o floppy.o at_wini.o bios_wini.o esdi_wini.o \
+	xt_wini.o printer.o aha1540.o dp8390.o pty.o \
+	wdeth.o ne2000.o 3c503.o mcd.o sb16_dsp.o sb16_mixer.o \
+	dosfat.o dosfile.o
 
 # What to make.
 kernel: $(HEAD) $(OBJS)
@@ -98,6 +99,7 @@ keyboard.o:	keymaps/us-std.src
 main.o:	$a
 main.o:	$i/unistd.h
 main.o:	$i/signal.h
+main.o:	$i/a.out.h
 main.o:	$h/callnr.h
 main.o:	$h/com.h
 main.o:	proc.h
@@ -166,12 +168,10 @@ tty.o:		$h/keymap.h
 tty.o:		proc.h
 tty.o:		tty.h
 
-aha_scsi.o:	$a $d $(dl)
-aha_scsi.o:	$i/fcntl.h
-aha_scsi.o:	$s/mtio.h
-aha_scsi.o:	$s/ioctl.h
-
-wini.o:	$a $d $(dl)
+aha1540.o:	$a $d $(dl)
+aha1540.o:	$i/fcntl.h
+aha1540.o:	$s/mtio.h
+aha1540.o:	$s/ioctl.h
 
 at_wini.o:	$a $d $(dl)
 
@@ -184,6 +184,12 @@ xt_wini.o:	$a $d $(dl)
 mcd.o:	$a $d $(dl)
 mcd.o:	$h/cdrom.h
 mcd.o:	$s/ioctl.h
+
+dosfat.o:	$a $d $(dl)
+dosfat.o:	$i/stdlib.h
+dosfat.o:	assert.h
+
+dosfile.o:	$a $d $(dl)
 
 dp8390.o:	$a
 dp8390.o:	$i/stdlib.h
@@ -208,6 +214,12 @@ ne2000.o:	$i/net/gen/ether.h
 ne2000.o:	$i/net/gen/eth_io.h
 ne2000.o:	dp8390.h
 ne2000.o:	ne2000.h
+
+3c503.o:	$a
+3c503.o:	$i/net/gen/ether.h
+3c503.o:	$i/net/gen/eth_io.h
+3c503.o:	dp8390.h
+3c503.o:	3c503.h
 
 sb16_dsp.o:	$a
 sb16_dsp.o:	$h/com.h

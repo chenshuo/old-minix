@@ -19,10 +19,13 @@ all:
 	cd float && $(MAKE)
 	cd fphook && $(MAKE)
 	cd ip && $(MAKE)
+	cd libm2 && $(MAKE)
+	cd libp && $(MAKE)
 	cd liby && $(MAKE)
 	cd math && $(MAKE)
 	cd other && $(MAKE)
 	cd posix && $(MAKE)
+	cd rts && $(MAKE)
 	cd stdio && $(MAKE)
 	cd syscall && $(MAKE)
 	cd syslib && $(MAKE)
@@ -36,16 +39,26 @@ LIB=	/usr/lib
 
 install_i86:	\
 	$(LIB)/ncrtso.o \
+	$(LIB)/nm2rtso.o \
+	$(LIB)/nprtso.o \
 	$(LIB)/libc.a \
 	$(LIB)/libd.a \
 	$(LIB)/libe.a \
 	$(LIB)/libfp.a \
+	$(LIB)/libm2.a \
+	$(LIB)/libp.a \
 	$(LIB)/end.a \
 	$(LIB)/libcurses.a \
 	$(LIB)/libedit.a \
 	$(LIB)/liby.a \
 
 $(LIB)/ncrtso.o:	ncrtso.o
+	install -c -o bin $? $@
+
+$(LIB)/nm2rtso.o:	nm2rtso.o
+	install -c -o bin $? $@
+
+$(LIB)/nprtso.o:	nprtso.o
 	install -c -o bin $? $@
 
 $(LIB)/libc.a:	libc.a
@@ -58,6 +71,12 @@ $(LIB)/libe.a:	libe.a
 	install -c -o bin $? $@
 
 $(LIB)/libfp.a:	libfp.a
+	install -c -o bin $? $@
+
+$(LIB)/libm2.a:	libm2.a
+	install -c -o bin $? $@
+
+$(LIB)/libp.a:	libp.a
 	install -c -o bin $? $@
 
 $(LIB)/end.a:	end.a
@@ -78,10 +97,14 @@ LIB86=	/usr/lib/i86
 
 install_i386:	\
 	$(LIB386)/crtso.o \
+	$(LIB386)/m2rtso.o \
+	$(LIB386)/prtso.o \
 	$(LIB386)/libc.a \
 	$(LIB386)/libd.a \
 	$(LIB386)/libe.a \
 	$(LIB386)/libfp.a \
+	$(LIB386)/libm2.a \
+	$(LIB386)/libp.a \
 	$(LIB386)/end.a \
 	$(LIB386)/libcurses.a \
 	$(LIB386)/libedit.a \
@@ -90,6 +113,12 @@ install_i386:	\
 #	$(LIB86)/end.a \
 
 $(LIB386)/crtso.o:	crtso.o
+	install -c -o bin $? $@
+
+$(LIB386)/m2rtso.o:	m2rtso.o
+	install -c -o bin $? $@
+
+$(LIB386)/prtso.o:	prtso.o
 	install -c -o bin $? $@
 
 $(LIB386)/libc.a:	libc.a
@@ -102,6 +131,12 @@ $(LIB386)/libe.a:	libe.a
 	install -c -o bin $? $@
 
 $(LIB386)/libfp.a:	libfp.a
+	install -c -o bin $? $@
+
+$(LIB386)/libm2.a:	libm2.a
+	install -c -o bin $? $@
+
+$(LIB386)/libp.a:	libp.a
 	install -c -o bin $? $@
 
 $(LIB386)/end.a:	end.a

@@ -16,7 +16,9 @@ char *ckxv = "Unix tty I/O, 4E(047), 27 Jan 88";
 
 #include <sys/types.h>			/* Types */
 
+#ifndef MINIX
 #include <sys/dir.h>			/* Directory */
+#endif
 #include <ctype.h>			/* Character types */
 #ifdef NULL
 #undef NULL
@@ -28,6 +30,10 @@ char *ckxv = "Unix tty I/O, 4E(047), 27 Jan 88";
 #include <setjmp.h>			/* Longjumps */
 #else
 #include <setret.h>
+#endif
+
+#ifdef MINIX
+#include <sys/stat.h>			/* File attributes */
 #endif
 
 #include "ckcdeb.h"			/* Typedefs, formats for debug() */
@@ -811,10 +817,14 @@ look4lk(ttname) char *ttname; {
     char *device, *devname;
     char lockfil[50];			/* Max length for lock file name */
 
+#ifdef MINIX
+    char *lockdir = "/usr/spool/locks";
+    struct stat stbuf;
+#else
 #ifdef ISIII
     char *lockdir = "/etc/locks";
 #else
-#ifdef ATT3BX
+#if ATT3BX
     char *lockdir = "/usr/spool/locks";
 #else
 #ifdef NEWUUCP
@@ -822,37 +832,55 @@ look4lk(ttname) char *ttname; {
 #else
     char *lockdir = "/usr/spool/uucp";
 #endif /* newuucp */
-#endif /* att3bx */
+#endif /* att3bx | minix */
 #endif /* isiii */
+#endif /* minix */
 
     device = ( (devname=xxlast(ttname,'/')) != NULL ? devname+1 : ttname);
 
+#ifdef MINIX
+    if (stat(ttname, &stbuf) == -1) {
+	fprintf(stderr,"Warning, can't access %s\n", ttname);
+	return( 1 );			/* cannot check or set lock file */
+    }
+    sprintf(lockfil, "LK.%03d.%03d.%03d",
+	(int) ((stbuf.st_dev >> 8) & 0xFF),
+	(int) ((stbuf.st_rdev >> 8) & 0xFF),
+	(int) ((stbuf.st_rdev >> 0) & 0xFF));
+#else
 #ifdef ISIII
     (void) strcpy( lockfil, device );
 #else
     strcat( strcpy( lockfil, "LCK.." ), device );
 #endif /* isiii */
+#endif /* minix */
 
+#ifndef MINIX
     if (access( lockdir, 04 ) < 0) {	/* read access denied on lock dir */
 	fprintf(stderr,"Warning, read access to lock directory denied\n");
 	return( 1 );			/* cannot check or set lock file */
     }
+#endif
 	
     strcat(strcat(strcpy(flfnam,lockdir),"/"), lockfil);
     debug(F110,"look4lk",flfnam,0);
 
-    if ( ! access( flfnam, 00 ) ) {	/* print out lock file entry */
+    if ( ! stat( flfnam, &stbuf ) ) {	/* print out lock file entry */
 	char lckcmd[40] ;
 	strcat( strcpy(lckcmd, "ls -l ") , flfnam);
 	system(lckcmd);
+#ifndef MINIX
 	if (access(flfnam,02) == 0)
 	    printf("(You may type \"! rm %s\" to remove this file)\n",flfnam);
+#endif
 	return( -1 );
     }
+#ifndef MINIX
     if ( access( lockdir, 02 ) < 0 ) {	/* lock file cannot be written */
 	fprintf(stderr,"Warning, write access to lock directory denied\n");
 	return( 1 );
     }
+#endif
     return( 0 );			/* okay to go ahead and lock */
 }
 
